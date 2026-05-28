@@ -2,7 +2,7 @@
 # Undeploy Argus services
 # Usage: ./undeploy.sh [method] [service|all] [namespace]
 #   method: helm (default) or kubectl
-#   service: orchestrator, api_service, testing_api_service, or all
+#   service: orchestrator, api_service, or all
 #   namespace: default (default)
 
 set -e
@@ -83,13 +83,6 @@ undeploy_service() {
                 undeploy_with_kubectl "api_service"
             fi
             ;;
-        testing_api_service)
-            if [ "$METHOD" == "helm" ]; then
-                undeploy_with_helm "testing_api_service"
-            else
-                undeploy_with_kubectl "testing_api_service"
-            fi
-            ;;
         *)
             echo -e "${RED}Unknown service: $service${NC}"
             return 1
@@ -101,8 +94,12 @@ undeploy_service() {
 undeploy_all() {
     echo -e "${GREEN}Undeploying all services...${NC}"
     echo ""
-    
-    services=("orchestrator" "api_service" "testing_api_service")
+
+    # Note: testing_* services live in their own repos now —
+    #   github.com/gy15901580825/argus-api-testing
+    #   github.com/gy15901580825/argus-web-ui-testing
+    # Run helm uninstall on each release in those repos to clean them up.
+    services=("orchestrator" "api_service")
     
     for service in "${services[@]}"; do
         echo -e "${BLUE}--- Undeploying $service ---${NC}"

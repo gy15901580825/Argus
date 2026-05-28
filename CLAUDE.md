@@ -20,7 +20,11 @@ Argus is a black-box red-team testing tool for AI agents. Customers point Argus 
 | `demo_target` | 8000 | FastAPI | Deliberately-vulnerable chatbot used as a public demo target for `argus-probe` |
 | `terraform` | — | Terraform | Azure IaC reference (AKS, ACR, PG, Key Vault, B2C apps) |
 
-The three `testing_*` services are legacy code retained for reference; they are not part of the red-team product surface.
+The three legacy `testing_*` services moved to separate repositories on 2026-05-28:
+- `testing_api_service` + `testing_web_fetch_service` → https://github.com/gy15901580825/argus-api-testing
+- `testing_web_ui_service` (+ vendored `browser_use`) → https://github.com/gy15901580825/argus-web-ui-testing
+
+The orchestrator still references them over HTTP via `run_api_test` and `run_web_ui_cloud` planner tools; the in-cluster services must be deployed from those repos (their Helm charts ship alongside the code).
 
 ## Domain & Environment
 

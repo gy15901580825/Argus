@@ -182,8 +182,15 @@ any high-severity finding.
 | [`terraform/`](terraform/) | Azure IaC reference (AKS, ACR, PG, Key Vault, B2C apps). |
 | [`database/`](database/) | Flyway schema migrations. |
 
-The three `testing_*` services are legacy code retained for reference;
-they are not part of the red-team product surface.
+The three legacy `testing_*` services moved to separate repositories:
+- `testing_api_service` + `testing_web_fetch_service` →
+  [`gy15901580825/argus-api-testing`](https://github.com/gy15901580825/argus-api-testing)
+- `testing_web_ui_service` (+ vendored `browser-use`) →
+  [`gy15901580825/argus-web-ui-testing`](https://github.com/gy15901580825/argus-web-ui-testing)
+
+The orchestrator still references them over HTTP via `run_api_test` and
+`run_web_ui_cloud` planner tools — deploy from those repos if you need
+the in-cluster services.
 
 ## Probe library structure
 

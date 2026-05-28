@@ -20,14 +20,13 @@ spec:
             slug: orchestrator
           - service: frontend
             slug: frontend
-          - service: testing_api_service
-            slug: testing-api-service
-          - service: testing_web_fetch_service
-            slug: testing-web-fetch-service
-          - service: testing_web_ui_service
-            slug: testing-web-ui-service
           - service: demo_target
             slug: demo-target
+          # Legacy testing services moved to separate repos:
+          #   github.com/gy15901580825/argus-api-testing
+          #   github.com/gy15901580825/argus-web-ui-testing
+          # If you still deploy them, deploy via their own charts; this
+          # ApplicationSet no longer manages them.
 
   template:
     metadata:

@@ -6,6 +6,12 @@ Dispatch rule:
 
 Internal helpers _run_via_test_runner / _run_via_ssh are also tested
 independently and can be swapped via patching.
+
+In-cluster path calls a separate ``testing_api_service`` deployment that
+lives in its own repository:
+    https://github.com/gy15901580825/argus-api-testing
+This module only describes the HTTP contract; the service implementation
+ships in that repo.
 """
 
 from __future__ import annotations

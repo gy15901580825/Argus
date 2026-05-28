@@ -1,5 +1,11 @@
 # Argus CI/CD Pipeline
 
+> **Note:** This document still mentions `testing_*` services as part of the build/deploy matrix. As of 2026-05-28 those services moved to separate repositories:
+> - <https://github.com/gy15901580825/argus-api-testing>
+> - <https://github.com/gy15901580825/argus-web-ui-testing>
+>
+> The Argus orchestrator still talks to them over HTTP, but they are no longer built or deployed from this repository's pipeline.
+
 Argus uses a polyrepo layout (one independent GitHub repo per service). CI/CD has two halves:
 **GitHub Actions** (build, test, push image, bump values) + **ArgoCD** (GitOps that pulls the kubernets repo state and rolls it out to AKS).
 

@@ -66,7 +66,7 @@ show_all_services() {
     echo -e "${GREEN}Available Services:${NC}"
     echo ""
     
-    services=("orchestrator" "api_service" "testing_api_service")
+    services=("orchestrator" "api_service")
     
     for service in "${services[@]}"; do
         show_service_info "$service"
@@ -85,7 +85,10 @@ show_summary() {
     echo -e "${YELLOW}Available Services:${NC}"
     echo "  1. orchestrator              - AI Agent Orchestrator (Port: 8081)"
     echo "  2. api_service               - API Service (Port: 8881)"
-    echo "  3. testing_api_service       - Testing API Service (Port: 8000)"
+    echo ""
+    echo "  Legacy testing services live in separate repos:"
+    echo "    github.com/gy15901580825/argus-api-testing"
+    echo "    github.com/gy15901580825/argus-web-ui-testing"
     echo ""
     echo -e "${YELLOW}Quick Commands:${NC}"
     echo "  # View this help"

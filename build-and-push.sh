@@ -60,7 +60,7 @@ build_and_push() {
 build_all() {
     echo -e "${GREEN}Building and pushing all services...${NC}"
     
-    services=("orchestrator" "api_service" "client_agent" "testing_api_service" "testing_web_fetch_service" "testing_web_ui_service" "frontend")
+    services=("orchestrator" "api_service" "client_agent" "frontend" "demo_target")
 
     for service in "${services[@]}"; do
         # Map service names to directory names
@@ -74,17 +74,11 @@ build_all() {
             "client_agent")
                 build_and_push "client_agent"
                 ;;
-            "testing_api_service")
-                build_and_push "testing_api_service"
-                ;;
-            "testing_web_fetch_service")
-                build_and_push "testing_web_fetch_service"
-                ;;
-            "testing_web_ui_service")
-                build_and_push "testing_web_ui_service"
-                ;;
             "frontend")
                 build_and_push "frontend"
+                ;;
+            "demo_target")
+                build_and_push "demo_target"
                 ;;
             *)
                 echo -e "${RED}Unknown service: $service${NC}"
@@ -92,6 +86,10 @@ build_all() {
         esac
     done
 }
+
+# Legacy testing_* services moved to separate repos:
+#   github.com/gy15901580825/argus-api-testing
+#   github.com/gy15901580825/argus-web-ui-testing
 
 # Main
 if [ -z "$1" ]; then
@@ -101,10 +99,8 @@ if [ -z "$1" ]; then
     echo "  orchestrator"
     echo "  api_service"
     echo "  client_agent"
-    echo "  testing_api_service"
-    echo "  testing_web_fetch_service"
-    echo "  testing_web_ui_service"
     echo "  frontend"
+    echo "  demo_target"
     echo "  all (build and push all services)"
     echo ""
     echo "Examples:"

@@ -8,6 +8,10 @@ payload, then re-shapes each event to match the wire format the
 api_service SSE proxy and frontend chat page already understand
 (mirroring run_web_ui_local / client_web_ui_runner).
 
+The ``testing_web_ui_service`` implementation lives in its own repo:
+    https://github.com/gy15901580825/argus-web-ui-testing
+This module only describes the HTTP contract.
+
 In addition to streaming, this tool persists task lifecycle to the
 api_service so cloud-mode runs are listable via /api/v1/web-ui-tasks
 and their R2 artifacts are accessible the same way client_agent runs are:

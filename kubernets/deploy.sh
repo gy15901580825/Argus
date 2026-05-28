@@ -2,7 +2,7 @@
 # Deploy Argus services using Helm or kubectl
 # Usage: ./deploy.sh [method] [service|all] [namespace]
 #   method: helm (default) or kubectl
-#   service: orchestrator, api_service, testing_api_service, or all
+#   service: orchestrator, api_service, or all
 #   namespace: default (default)
 
 set -e
@@ -117,22 +117,11 @@ deploy_service() {
                 deploy_with_kubectl "api_service"
             fi
             ;;
-        testing_api_service)
-            if [ "$METHOD" == "helm" ]; then
-                deploy_with_helm "testing_api_service"
-            else
-                deploy_with_kubectl "testing_api_service"
-            fi
-            ;;
-        testing_web_fetch_service)
-            if [ "$METHOD" == "helm" ]; then
-                deploy_with_helm "testing_web_fetch_service"
-            else
-                deploy_with_kubectl "testing_web_fetch_service"
-            fi
-            ;;
         *)
             echo -e "${RED}Unknown service: $service${NC}"
+            echo -e "${YELLOW}Note:${NC} testing_* services moved to separate repos:"
+            echo "  https://github.com/gy15901580825/argus-api-testing"
+            echo "  https://github.com/gy15901580825/argus-web-ui-testing"
             return 1
             ;;
     esac
@@ -142,8 +131,8 @@ deploy_service() {
 deploy_all() {
     echo -e "${GREEN}Deploying all services...${NC}"
     echo ""
-    
-    services=("orchestrator" "api_service" "testing_api_service" "testing_web_fetch_service")
+
+    services=("orchestrator" "api_service")
     
     for service in "${services[@]}"; do
         echo -e "${BLUE}--- Deploying $service ---${NC}"

@@ -65,10 +65,7 @@ Thumbs.db
 CLAUDE_NOTES.md
 
 # ---- Vendored / build runtime artifacts ----
-testing_web_ui_service/skills/dev-browser/node_modules/
-testing_web_ui_service/skills/dev-browser/profiles/
-testing_web_ui_service/skills/dev-browser/tmp/
-testing_web_ui_service/output/
+# (testing_* services moved to gy15901580825/argus-{api,web-ui}-testing repos)
 
 # ---- Misc ----
 .vercel

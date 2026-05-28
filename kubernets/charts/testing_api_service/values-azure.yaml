@@ -1,8 +1,0 @@
-# Azure AKS overrides — use with: helm install -f values.yaml -f values-azure.yaml
-image:
-  repository: <YOUR_ACR>.azurecr.io/argus/testing_api_service
-  tag: "20260428-13fc08d"
-secrets:
-  azureOpenaiEndpoint: "https://openai-argus.openai.azure.com/"
-  azureOpenaiApiKey: "<change-me>"
-  azureOpenaiApiVersion: "2024-12-01-preview"
