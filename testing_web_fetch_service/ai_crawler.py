@@ -503,7 +503,7 @@ class CrawlerAgent:
                 2. Max Depth: {self.browser.max_depth}. Current Depth: {self.browser.current_depth}.
                 
                 Goal:
-                1. Login if possible (Email: testuser@arbitalhealth.com, Pass: TestPassword123!).
+                1. Login if possible (Email: testuser@example-target.com, Pass: TestPassword123!).
                 2. Explore the site to find APIs.
                 3. IF Current Depth >= Max Depth: You MUST NOT click links that go deeper. You should 'Go Back' or click 'Home' or 'DONE'.
                 4. Broadness is not limited. You can explore many links at the same depth.
@@ -601,5 +601,5 @@ def crawl_for_apis(url: str, max_steps: int = 10, max_depth: int = 3, use_smart_
 
 # if __name__ == "__main__":
 #     # Example usage for testing
-#     TARGET_URL = "https://platform.arbitalhealth.com/"
+#     TARGET_URL = "https://platform.example-target.com/"
 #     print(json.dumps(crawl_for_apis(TARGET_URL, max_steps=5), indent=2))
