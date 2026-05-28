@@ -1,0 +1,26 @@
+apiVersion: apisix.apache.org/v2
+kind: ApisixRoute
+metadata:
+  name: casdoor-route
+  namespace: default
+spec:
+  http:
+    - name: casdoor
+      priority: 1
+      match:
+        hosts:
+          - api.example.com
+        paths:
+          - /api/get-*
+          - /api/login*
+          - /api/userinfo
+          - /api/login/oauth/*
+          - /login/*
+          - /.well-known/*
+          - /images/*
+          - /static/*
+          - /assets/*
+          - /swagger/*
+      backends:
+        - serviceName: casdoor
+          servicePort: 8000

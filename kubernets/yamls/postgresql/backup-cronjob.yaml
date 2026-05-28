@@ -1,0 +1,79 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+  namespace: default
+spec:
+  # Run the backup at 2 AM every day
+  schedule: "0 2 * * *"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: postgres-backup
+            image: postgres:15
+            env:
+            - name: PGHOST
+              value: "postgresql"  # PostgreSQL Service name
+            - name: PGPORT
+              value: "5432"
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: postgresql-secret  # Replace with your Secret name
+                  key: username
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgresql-secret
+                  key: password
+            - name: PGDATABASE
+              value: "argus"  # Replace with your database name
+            command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+              BACKUP_DIR="/backups"
+              TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+              BACKUP_FILE="${BACKUP_DIR}/argus_${TIMESTAMP}.sql.gz"
+              
+              echo "Starting backup at $(date)"
+              pg_dump -h $PGHOST -U $PGUSER -d $PGDATABASE | gzip > $BACKUP_FILE
+              
+              if [ $? -eq 0 ]; then
+                echo "Backup completed successfully: $BACKUP_FILE"
+                echo "Backup size: $(du -h $BACKUP_FILE | cut -f1)"
+                
+                # Delete backups older than 7 days
+                find $BACKUP_DIR -name "*.sql.gz" -mtime +7 -delete
+                echo "Cleaned up old backups"
+              else
+                echo "Backup failed!"
+                exit 1
+              fi
+            volumeMounts:
+            - name: backup-storage
+              mountPath: /backups
+          volumes:
+          - name: backup-storage
+            persistentVolumeClaim:
+              claimName: postgres-backup-pvc  # This PVC needs to be created
+          restartPolicy: OnFailure
+---
+# Create the backup storage PVC (optional; hostPath also works)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-backup-pvc
+  namespace: default
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: local-path  # Adjust to match your storage class

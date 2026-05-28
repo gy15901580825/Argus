@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <defs>
+    <!-- slate-950 base -->
+    <linearGradient id="bg" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#020617"/>
+      <stop offset="100%" style="stop-color:#0b1120"/>
+    </linearGradient>
+    <!-- cyan radial glow vignette (matches Hero) -->
+    <radialGradient id="cyanGlow" cx="50%" cy="0%" r="70%">
+      <stop offset="0%" style="stop-color:#22d3ee;stop-opacity:0.18"/>
+      <stop offset="60%" style="stop-color:#22d3ee;stop-opacity:0.04"/>
+      <stop offset="100%" style="stop-color:#22d3ee;stop-opacity:0"/>
+    </radialGradient>
+    <linearGradient id="cyanText" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#22d3ee"/>
+      <stop offset="100%" style="stop-color:#67e8f9"/>
+    </linearGradient>
+    <filter id="softGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="4" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect width="1200" height="630" fill="url(#cyanGlow)"/>
+
+  <!-- Subtle dot grid -->
+  <g fill="#1e293b" opacity="0.6">
+    <circle cx="60"  cy="60"  r="1.5"/><circle cx="160" cy="60"  r="1.5"/><circle cx="260" cy="60"  r="1.5"/>
+    <circle cx="360" cy="60"  r="1.5"/><circle cx="460" cy="60"  r="1.5"/><circle cx="560" cy="60"  r="1.5"/>
+    <circle cx="660" cy="60"  r="1.5"/><circle cx="760" cy="60"  r="1.5"/><circle cx="860" cy="60"  r="1.5"/>
+    <circle cx="960" cy="60"  r="1.5"/><circle cx="1060" cy="60" r="1.5"/><circle cx="1160" cy="60" r="1.5"/>
+    <circle cx="60"  cy="140" r="1.5"/><circle cx="160" cy="140" r="1.5"/><circle cx="260" cy="140" r="1.5"/>
+    <circle cx="360" cy="140" r="1.5"/><circle cx="460" cy="140" r="1.5"/><circle cx="560" cy="140" r="1.5"/>
+    <circle cx="660" cy="140" r="1.5"/><circle cx="760" cy="140" r="1.5"/><circle cx="860" cy="140" r="1.5"/>
+    <circle cx="960" cy="140" r="1.5"/><circle cx="1060" cy="140" r="1.5"/><circle cx="1160" cy="140" r="1.5"/>
+  </g>
+
+  <!-- Eyebrow pill -->
+  <g transform="translate(600, 120)" text-anchor="middle">
+    <rect x="-150" y="-22" width="300" height="38" rx="19" fill="#0e7490" fill-opacity="0.18" stroke="#22d3ee" stroke-opacity="0.4" stroke-width="1"/>
+    <circle cx="-118" cy="-3" r="4" fill="#22d3ee"/>
+    <text x="-100" y="3" font-family="Inter, system-ui, sans-serif" font-size="14" font-weight="600" fill="#67e8f9" letter-spacing="2" text-anchor="start">AI AGENT TESTING PLATFORM</text>
+  </g>
+
+  <!-- Headline (matches Hero copy) -->
+  <text x="600" y="218" text-anchor="middle" font-family="Inter, system-ui, -apple-system, sans-serif" font-size="62" font-weight="800" fill="#ffffff" letter-spacing="-1.5">
+    Test AI Agents for
+  </text>
+  <text x="600" y="296" text-anchor="middle" font-family="Inter, system-ui, -apple-system, sans-serif" font-size="62" font-weight="800" fill="url(#cyanText)" letter-spacing="-1.5" filter="url(#softGlow)">
+    Reliability, Security &amp; Compliance
+  </text>
+
+  <!-- Sub -->
+  <text x="600" y="356" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="22" fill="#cbd5e1" font-weight="400">
+    Reliability scoring · Adversarial probes · EU AI Act / NIST AI RMF evidence
+  </text>
+
+  <!-- Three pillar chips -->
+  <g font-family="Inter, system-ui, sans-serif" font-size="18" font-weight="600">
+    <!-- Reliability -->
+    <g transform="translate(232, 422)">
+      <rect x="0" y="0" width="232" height="92" rx="14" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
+      <circle cx="32" cy="46" r="18" fill="#22d3ee" fill-opacity="0.12" stroke="#22d3ee" stroke-width="1.5"/>
+      <path d="M24 46 L30 52 L42 38" fill="none" stroke="#22d3ee" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="64" y="42" fill="#ffffff">Reliability</text>
+      <text x="64" y="66" font-size="13" fill="#94a3b8" font-weight="400">Task success &amp; recovery</text>
+    </g>
+    <!-- Security -->
+    <g transform="translate(484, 422)">
+      <rect x="0" y="0" width="232" height="92" rx="14" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
+      <circle cx="32" cy="46" r="18" fill="#22d3ee" fill-opacity="0.12" stroke="#22d3ee" stroke-width="1.5"/>
+      <path d="M32 36 L40 40 L40 50 Q40 56 32 58 Q24 56 24 50 L24 40 Z" fill="none" stroke="#22d3ee" stroke-width="2" stroke-linejoin="round"/>
+      <text x="64" y="42" fill="#ffffff">Security</text>
+      <text x="64" y="66" font-size="13" fill="#94a3b8" font-weight="400">Adversarial probes built-in</text>
+    </g>
+    <!-- Compliance -->
+    <g transform="translate(736, 422)">
+      <rect x="0" y="0" width="232" height="92" rx="14" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
+      <circle cx="32" cy="46" r="18" fill="#22d3ee" fill-opacity="0.12" stroke="#22d3ee" stroke-width="1.5"/>
+      <rect x="24" y="36" width="16" height="20" rx="2" fill="none" stroke="#22d3ee" stroke-width="2"/>
+      <line x1="27" y1="42" x2="37" y2="42" stroke="#22d3ee" stroke-width="1.5" stroke-linecap="round"/>
+      <line x1="27" y1="46" x2="35" y2="46" stroke="#22d3ee" stroke-width="1.5" stroke-linecap="round"/>
+      <line x1="27" y1="50" x2="37" y2="50" stroke="#22d3ee" stroke-width="1.5" stroke-linecap="round"/>
+      <text x="64" y="42" fill="#ffffff">Compliance</text>
+      <text x="64" y="66" font-size="13" fill="#94a3b8" font-weight="400">EU AI Act audit evidence</text>
+    </g>
+  </g>
+
+  <!-- Bottom brand bar -->
+  <g transform="translate(600, 580)" text-anchor="middle">
+    <text font-family="Inter, system-ui, sans-serif" font-size="20" font-weight="700" fill="#ffffff" letter-spacing="0.5">
+      AT<tspan fill="#22d3ee">Helper</tspan>
+    </text>
+    <text y="22" font-family="Inter, system-ui, sans-serif" font-size="12" fill="#64748b" letter-spacing="3">www.example.com</text>
+  </g>
+</svg>

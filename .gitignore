@@ -1,0 +1,83 @@
+# ---- Environment / secrets ----
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.crt
+# Terraform state & vars (state can contain plaintext secrets)
+*.tfstate
+*.tfstate.*
+*.tfvars
+.terraform/
+.terraform.lock.hcl
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.venv/
+venv/
+env/
+*.egg-info/
+.tox/
+
+# ---- Node / Next.js / Frontend ----
+node_modules/
+.next/
+out/
+dist/
+build/
+.turbo/
+*.tsbuildinfo
+coverage/
+playwright-report/
+playwright/.cache/
+test-results/
+
+# ---- Logs ----
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# ---- OS / Editor ----
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
+*.swo
+
+# ---- Claude Code & supporting tools (local state) ----
+**/.claude/settings.local.json
+**/.claude/cache/
+.claude/cache/
+.specify/
+.superpowers/
+.agent/
+CLAUDE_NOTES.md
+
+# ---- Vendored / build runtime artifacts ----
+testing_web_ui_service/skills/dev-browser/node_modules/
+testing_web_ui_service/skills/dev-browser/profiles/
+testing_web_ui_service/skills/dev-browser/tmp/
+testing_web_ui_service/output/
+
+# ---- Misc ----
+.vercel
+.pytest_cache
+.cache/
+*.pid
+
+# ---- Playwright / E2E test runtime auth state (NEVER commit) ----
+**/tests/e2e/.auth/
+**/playwright/.auth/
+storageState.json
+**/storageState.json

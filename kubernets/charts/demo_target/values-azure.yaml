@@ -1,0 +1,15 @@
+image:
+  repository: <YOUR_ACR>.azurecr.io/argus/demo_target
+  tag: "20260507-cf8498e-leak"
+service:
+  type: ClusterIP
+  port: 8000
+env:
+  DEMO_MODEL: "gpt-5.4-mini"
+  AZURE_API_VERSION: "2024-12-01-preview"
+# Reuses the same Azure OpenAI key/endpoint as the orchestrator chart.
+# Demo target is intentionally vulnerable; the model behind it is irrelevant
+# from a security perspective (the system prompt drives findings).
+secrets:
+  azureApiKey: "<change-me>"
+  azureApiBase: "https://openai-argus.openai.azure.com/"

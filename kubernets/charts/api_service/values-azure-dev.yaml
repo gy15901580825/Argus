@@ -1,0 +1,33 @@
+# Dev overrides for api-service — use with:
+#   helm upgrade --install argus-api-service-dev ./charts/api_service \
+#     -n dev \
+#     -f values.yaml \
+#     -f values-azure-dev.yaml
+
+replicaCount: 1
+image:
+  repository: <YOUR_ACR>.azurecr.io/argus/api_service
+  tag: "dev-b974562"
+  pullPolicy: Always # dev frequently overwrites the same tag; force a fresh pull
+service:
+  type: ClusterIP
+  port: 8881
+ingress:
+  enabled: false # managed centrally by argus-dev-ingress
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+# Reuse external Secret (created in Task 3)
+secrets:
+  existingSecretName: argus-dev-secrets
+extraEnv:
+  # Points to the dev orchestrator (note the -dev suffix)
+  ORCHESTRATOR_URL: "http://argus-orchestrator-dev.dev.svc.cluster.local:8080"
+  ORCHESTRATOR_PUBLIC_URL: "https://dev.example.com"
+  ENVIRONMENT: "dev"
+  WIZARD_MODE_ENABLED: "true"
+  WIZARD_MAX_ROUNDS: "9"

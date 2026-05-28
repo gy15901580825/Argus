@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.log
+output/
+.venv/
+.pytest_cache/
+.coverage
+coverage.xml
+junit.xml
+htmlcov/
+*.egg-info/

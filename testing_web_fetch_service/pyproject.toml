@@ -1,0 +1,24 @@
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::DeprecationWarning:fastapi.*",
+    "ignore::DeprecationWarning:starlette.*",
+    "ignore::DeprecationWarning:pydantic.*",
+]
+addopts = ["-ra", "--strict-markers", "--tb=short"]
+
+[tool.coverage.run]
+branch = true
+source = ["."]
+omit = [
+    "tests/*",
+    ".venv/*",
+    "*/__pycache__/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false

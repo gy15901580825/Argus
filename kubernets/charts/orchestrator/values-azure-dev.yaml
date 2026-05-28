@@ -1,0 +1,30 @@
+replicaCount: 1
+image:
+  repository: <YOUR_ACR>.azurecr.io/argus/orchestrator
+  tag: "dev-b7b5614"
+  pullPolicy: Always
+service:
+  type: ClusterIP
+  port: 8080
+ingress:
+  enabled: false
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 768Mi
+secrets:
+  existingSecretName: argus-dev-secrets
+# Override base env.* to point at dev-namespace services.
+# Code reads these exact keys; base values.yaml points them at `default` ns.
+env:
+  MCP_API_TESTING_URL: "http://argus-testing-api-service-dev.dev.svc.cluster.local:8000/sse"
+  API_TESTING_SERVICE_URL: "http://argus-testing-api-service-dev.dev.svc.cluster.local:8000/sse"
+  WEB_UI_TESTING_SERVICE_URL: "http://argus-testing-web-ui-service-dev.dev.svc.cluster.local:8002/agent/run"
+extraEnv:
+  API_SERVICE_URL: "http://argus-api-service-dev.dev.svc.cluster.local:8881"
+  ENVIRONMENT: "dev"
+  WIZARD_MODE_ENABLED: "true"
+  WIZARD_MAX_ROUNDS: "9"

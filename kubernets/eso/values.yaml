@@ -1,0 +1,29 @@
+# External Secrets Operator install values for <YOUR_AKS>.
+# Workload Identity bridges to Azure UAMI eso-kv-reader (<YOUR_RG_WESTUS>).
+# Tested against external-secrets chart 2.4.1.
+
+# CRD lifecycle is bound to this Helm release: `helm uninstall external-secrets`
+# will delete every CRD, which deletes every ExternalSecret cluster-wide,
+# which deletes every backing k8s Secret with creationPolicy: Owner.
+# Don't uninstall this release without an explicit migration plan.
+installCRDs: true
+
+serviceAccount:
+  annotations:
+    # MUST be overridden at install time via:
+    #   --set 'serviceAccount.annotations.azure\.workload\.identity/client-id'="$CLIENT_ID"
+    # where CLIENT_ID = `az identity show -g <YOUR_RG_WESTUS> -n eso-kv-reader --query clientId -o tsv`.
+    # Keep the literal placeholder here; do NOT commit a real GUID — the install
+    # contract assumes this file is the source for everything except the identity binding.
+    azure.workload.identity/client-id: "REPLACE_AT_INSTALL"
+
+podLabels:
+  azure.workload.identity/use: "true"
+
+webhook:
+  podLabels:
+    azure.workload.identity/use: "true"
+
+certController:
+  podLabels:
+    azure.workload.identity/use: "true"

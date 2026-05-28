@@ -1,0 +1,17 @@
+replicaCount: 1
+image:
+  repository: <YOUR_ACR>.azurecr.io/argus/frontend
+  tag: "dev-5536c22"
+  pullPolicy: Always
+service:
+  type: ClusterIP
+  port: 3000
+ingress:
+  enabled: false
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 768Mi

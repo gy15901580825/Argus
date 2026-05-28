@@ -1,0 +1,17 @@
+replicaCount: 1
+image:
+  repository: <YOUR_ACR>.azurecr.io/argus/testing_web_fetch_service
+  tag: "dev-d6d80e4"
+  pullPolicy: Always
+service:
+  type: ClusterIP
+  port: 8001
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+secrets:
+  existingSecretName: argus-dev-secrets

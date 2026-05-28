@@ -1,0 +1,22 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run Orchestrator",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "google.adk.cli",
+            "args": ["run", "orchestrator"],
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Run Web Orchestrator",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "google.adk.cli",
+            "args": ["web", "--port", "8080"],
+            "console": "integratedTerminal"
+        }
+    ]
+}
+

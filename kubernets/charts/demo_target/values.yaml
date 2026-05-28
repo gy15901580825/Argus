@@ -1,0 +1,32 @@
+replicaCount: 1
+
+image:
+  repository: <YOUR_ACR>.azurecr.io/argus/demo_target
+  pullPolicy: IfNotPresent
+  tag: ""  # set per environment in values-azure.yaml
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+service:
+  type: ClusterIP
+  port: 8000
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 256Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
+
+env:
+  DEMO_MODEL: "gpt-5.4-mini"
+  AZURE_API_VERSION: "2024-12-01-preview"
+
+# Real Azure OpenAI creds — set in values-azure.yaml (literal Secret pattern;
+# matches existing orchestrator chart convention).
+secrets:
+  azureApiKey: ""
+  azureApiBase: ""

@@ -1,0 +1,193 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "argus-api-service.fullname" . }}
+  labels:
+    {{- include "argus-api-service.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "argus-api-service.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "argus-api-service.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "argus-api-service.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          env:
+            {{- if and .Values.env (hasKey .Values.env "DATABASE_URL") .Values.env.DATABASE_URL }}
+            - name: DATABASE_URL
+              value: {{ .Values.env.DATABASE_URL | quote }}
+            {{- else if .Values.secrets.existingSecretName }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecretName }}
+                  key: DATABASE_URL
+            {{- else }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecretName | default (printf "%s-secret" (include "argus-api-service.fullname" .)) }}
+                  key: DATABASE_URL
+            {{- end }}
+            # Microsoft Entra External ID (CIAM) Configuration
+            - name: CIAM_TENANT_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecretName | default (printf "%s-secret" (include "argus-api-service.fullname" .)) }}
+                  key: CIAM_TENANT_NAME
+            - name: CIAM_TENANT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecretName | default (printf "%s-secret" (include "argus-api-service.fullname" .)) }}
+                  key: CIAM_TENANT_ID
+            - name: CIAM_BACKEND_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecretName | default (printf "%s-secret" (include "argus-api-service.fullname" .)) }}
+                  key: CIAM_BACKEND_CLIENT_ID
+            - name: CIAM_BACKEND_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecretName | default (printf "%s-secret" (include "argus-api-service.fullname" .)) }}
+                  key: CIAM_BACKEND_CLIENT_SECRET
+            - name: ENABLE_TEST_MODE
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecretName | default (printf "%s-secret" (include "argus-api-service.fullname" .)) }}
+                  key: ENABLE_TEST_MODE
+            # Cloudflare R2 Storage Configuration (optional)
+            - name: R2_ACCOUNT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecretName | default (printf "%s-secret" (include "argus-api-service.fullname" .)) }}
+                  key: R2_ACCOUNT_ID
+            - name: R2_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecretName | default (printf "%s-secret" (include "argus-api-service.fullname" .)) }}
+                  key: R2_ACCESS_KEY_ID
+            - name: R2_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecretName | default (printf "%s-secret" (include "argus-api-service.fullname" .)) }}
+                  key: R2_SECRET_ACCESS_KEY
+            - name: R2_BUCKET_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecretName | default (printf "%s-secret" (include "argus-api-service.fullname" .)) }}
+                  key: R2_BUCKET_NAME
+            - name: R2_PUBLIC_URL_BASE
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecretName | default (printf "%s-secret" (include "argus-api-service.fullname" .)) }}
+                  key: R2_PUBLIC_URL_BASE
+            - name: R2_MEDIA_BUCKET_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecretName | default (printf "%s-secret" (include "argus-api-service.fullname" .)) }}
+                  key: R2_MEDIA_BUCKET_NAME
+            - name: R2_MEDIA_PUBLIC_URL_BASE
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecretName | default (printf "%s-secret" (include "argus-api-service.fullname" .)) }}
+                  key: R2_MEDIA_PUBLIC_URL_BASE
+            - name: AZURE_OPENAI_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecretName | default (printf "%s-secret" (include "argus-api-service.fullname" .)) }}
+                  key: AZURE_OPENAI_ENDPOINT
+            - name: AZURE_OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecretName | default (printf "%s-secret" (include "argus-api-service.fullname" .)) }}
+                  key: AZURE_OPENAI_API_KEY
+            - name: AZURE_OPENAI_API_VERSION
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecretName | default (printf "%s-secret" (include "argus-api-service.fullname" .)) }}
+                  key: AZURE_OPENAI_API_VERSION
+            # Stripe Configuration
+            - name: STRIPE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecretName | default (printf "%s-secret" (include "argus-api-service.fullname" .)) }}
+                  key: STRIPE_SECRET_KEY
+            - name: STRIPE_PUBLISHABLE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecretName | default (printf "%s-secret" (include "argus-api-service.fullname" .)) }}
+                  key: STRIPE_PUBLISHABLE_KEY
+            - name: STRIPE_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecretName | default (printf "%s-secret" (include "argus-api-service.fullname" .)) }}
+                  key: STRIPE_WEBHOOK_SECRET
+            - name: STRIPE_STARTER_PRICE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecretName | default (printf "%s-secret" (include "argus-api-service.fullname" .)) }}
+                  key: STRIPE_STARTER_PRICE_ID
+            - name: STRIPE_PRO_PRICE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecretName | default (printf "%s-secret" (include "argus-api-service.fullname" .)) }}
+                  key: STRIPE_PRO_PRICE_ID
+            {{- range $key, $val := .Values.extraEnv }}
+            - name: {{ $key }}
+              value: {{ $val | quote }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /docs
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /docs
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

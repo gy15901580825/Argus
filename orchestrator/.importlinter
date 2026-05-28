@@ -1,0 +1,20 @@
+[importlinter]
+root_package = orchestrator
+
+[importlinter:contract:redteam-isolation]
+name = redteam modules must not import web_ui_test or web_ui_*
+type = forbidden
+source_modules =
+    orchestrator.redteam
+forbidden_modules =
+    orchestrator.web_ui_test
+    orchestrator.web_ui_runner
+    orchestrator.web_ui_phases
+
+[importlinter:contract:redteam_targets]
+name = Targets cannot import from non-redteam modules
+type = forbidden
+source_modules =
+    orchestrator.redteam.targets
+forbidden_modules =
+    orchestrator.web_ui_test

@@ -1,0 +1,14 @@
+websockets
+httpx
+beautifulsoup4
+python-dotenv
+argparse
+# Web UI testing support (browser-use + playwright)
+# Optional — the agent works without them but web_ui_runner will be disabled.
+browser-use
+playwright
+# redteam_runner/server.py uses aiohttp's TCPSite + reads a private attribute
+# to resolve ephemeral port (no public API in aiohttp 3.x). Pin <4 so a major
+# bump doesn't silently break ScenarioServer.start(). aiohttp arrives transitively
+# via browser-use / litellm.
+aiohttp<4

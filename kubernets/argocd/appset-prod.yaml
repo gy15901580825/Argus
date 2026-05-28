@@ -1,0 +1,91 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: argus-prod
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions:
+    - missingkey=error
+
+  generators:
+    - list:
+        # `service` = on-disk chart dir suffix (underscores allowed).
+        # `slug`    = k8s-safe name fragment (dashes only — RFC 1123 forbids underscores
+        #             in metadata.name / Helm release names).
+        elements:
+          - service: api_service
+            slug: api-service
+          - service: orchestrator
+            slug: orchestrator
+          - service: frontend
+            slug: frontend
+          - service: testing_api_service
+            slug: testing-api-service
+          - service: testing_web_fetch_service
+            slug: testing-web-fetch-service
+          - service: testing_web_ui_service
+            slug: testing-web-ui-service
+          - service: demo_target
+            slug: demo-target
+
+  template:
+    metadata:
+      name: "argus-{{ .slug }}-prod"
+      labels:
+        env: prod
+        service: "{{ .slug }}"
+    spec:
+      project: argus
+
+      source:
+        repoURL: https://github.com/<your-gh-user>/kubernets.git
+        targetRevision: main
+        path: "charts/{{ .service }}"
+        helm:
+          releaseName: "argus-{{ .slug }}"
+          valueFiles:
+            - values.yaml
+            - values-azure.yaml
+          ignoreMissingValueFiles: true
+
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: default
+
+      syncPolicy:
+        # Prod: manual sync by default. Flip automated: {} to automated: {prune: true, selfHeal: true}
+        # once you trust the bump pipeline.
+        automated: null
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+          - ApplyOutOfSyncOnly=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 10s
+            factor: 2
+            maxDuration: 3m
+
+      ignoreDifferences:
+        # Preserve hand-patched rule that was on the live ApplicationSet
+        # before this file was git-tracked: ESO writes DATABASE_URL into
+        # the Secret on every reconcile, so git diff vs live drifts.
+        - group: ""
+          kind: Secret
+          name: argus-api-service-secret
+          jsonPointers:
+            - /data/DATABASE_URL
+        # ESO controller injects server-side defaults on every ExternalSecret
+        # remoteRef entry that git manifests don't specify. No-op for services
+        # that don't ship ExternalSecret resources (orch/frontend/testing-*).
+        - group: external-secrets.io
+          kind: ExternalSecret
+          jqPathExpressions:
+            - '.spec.data[].remoteRef.conversionStrategy'
+            - '.spec.data[].remoteRef.decodingStrategy'
+            - '.spec.data[].remoteRef.metadataPolicy'
+            - '.spec.data[].remoteRef.nullBytePolicy'
+
+      revisionHistoryLimit: 10

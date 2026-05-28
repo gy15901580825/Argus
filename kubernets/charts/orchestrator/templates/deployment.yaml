@@ -1,0 +1,134 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "argus-orchestrator.fullname" . }}
+  labels:
+    {{- include "argus-orchestrator.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "argus-orchestrator.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "argus-orchestrator.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "argus-orchestrator.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          env:
+            - name: PORT
+              value: {{ .Values.env.PORT | quote }}
+            - name: MCP_API_TESTING_URL
+              value: {{ .Values.env.MCP_API_TESTING_URL | quote }}
+            - name: MCP_WEB_FETCH_URL
+              value: {{ .Values.env.MCP_WEB_FETCH_URL | quote }}
+            - name: API_TESTING_SERVICE_URL
+              value: {{ .Values.env.API_TESTING_SERVICE_URL | quote }}
+            - name: WEB_UI_TESTING_SERVICE_URL
+              value: {{ .Values.env.WEB_UI_TESTING_SERVICE_URL | quote }}
+            - name: GOOGLE_GENAI_USE_VERTEXAI
+              value: {{ .Values.env.GOOGLE_GENAI_USE_VERTEXAI | quote }}
+            - name: LLM_PROVIDER
+              value: {{ .Values.env.LLM_PROVIDER | default "azure" | quote }}
+            - name: AZURE_OPENAI_MODEL
+              value: {{ .Values.env.AZURE_OPENAI_MODEL | default "gpt-5.4-mini" | quote }}
+            - name: GEMINI_MODEL_NAME
+              value: {{ .Values.env.GEMINI_MODEL_NAME | quote }}
+            - name: R2_BUCKET_NAME
+              value: {{ .Values.env.R2_BUCKET_NAME | quote }}
+            - name: R2_ACCOUNT_ID
+              value: {{ .Values.env.R2_ACCOUNT_ID | quote }}
+            
+            {{- $secretName := .Values.secrets.existingSecretName | default (printf "%s-secret" (include "argus-orchestrator.fullname" .)) }}
+            - name: GOOGLE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: GOOGLE_API_KEY
+            - name: AZURE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: AZURE_API_KEY
+            - name: AZURE_API_BASE
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: AZURE_API_BASE
+            - name: AZURE_API_VERSION
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: AZURE_API_VERSION
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: OPENAI_API_KEY
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: ANTHROPIC_API_KEY
+            - name: R2_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: R2_ACCESS_KEY_ID
+            - name: R2_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: R2_SECRET_ACCESS_KEY
+            {{- if .Values.externalSecrets.enabled }}
+            {{- $esoSecretName := printf "%s-eso-secret" (include "argus-orchestrator.fullname" .) }}
+            {{- range $envKey, $_ := .Values.externalSecrets.keyMap }}
+            - name: {{ $envKey }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $esoSecretName }}
+                  key: {{ $envKey }}
+                  optional: true
+            {{- end }}
+            {{- end }}
+            {{- range $key, $val := .Values.extraEnv }}
+            - name: {{ $key }}
+              value: {{ $val | quote }}
+            {{- end }}
+
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

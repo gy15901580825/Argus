@@ -1,0 +1,12 @@
+mcp[cli]
+httpx
+faker
+jsonschema
+google-generativeai
+python-dotenv
+google-adk
+uvicorn
+starlette
+beautifulsoup4
+websockets
+playwright

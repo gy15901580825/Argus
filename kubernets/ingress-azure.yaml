@@ -1,0 +1,66 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: argus-ingress
+  namespace: default
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    # SSE + WebSocket support
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    # WebSocket upgrade support (NGINX ingress handles this automatically
+    # for paths with Upgrade header, but explicit config ensures it works)
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$remote_addr"
+    # TLS via cert-manager
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - www.example.com
+      secretName: argus-tls
+    - hosts:
+        - demo.example.com
+      secretName: argus-demo-tls
+  rules:
+    - host: www.example.com
+      http:
+        paths:
+          # Orchestrator — WebSocket for client agent connections
+          - path: /agent/
+            pathType: Prefix
+            backend:
+              service:
+                name: argus-orchestrator
+                port:
+                  number: 8080
+          # API Service (also proxies /api/v1/orchestrator/ internally)
+          - path: /api/
+            pathType: Prefix
+            backend:
+              service:
+                name: argus-api-service
+                port:
+                  number: 8881
+          # Frontend — catch all
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: argus-frontend
+                port:
+                  number: 3000
+    # Demo target — public deliberately-vulnerable chatbot for sales demos.
+    # Exposes POST /chat. Rate-limited to 30 req/min/IP at the app layer.
+    - host: demo.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: argus-demo-target
+                port:
+                  number: 8000

@@ -1,0 +1,36 @@
+# Azure AKS overrides — use with: helm install -f values.yaml -f values-azure.yaml
+image:
+  repository: <YOUR_ACR>.azurecr.io/argus/orchestrator
+  tag: "20260507-6db1e0e"
+service:
+  type: ClusterIP
+  port: 8080
+env:
+  PORT: "8080"
+  MCP_API_TESTING_URL: "http://argus-testing-api-service.default.svc.cluster.local:8000/sse"
+  MCP_WEB_FETCH_URL: ""
+  API_TESTING_SERVICE_URL: "http://argus-testing-api-service.default.svc.cluster.local:8000/sse"
+  WEB_UI_TESTING_SERVICE_URL: "http://argus-testing-web-ui-service.default.svc.cluster.local:8002/agent/run"
+  LLM_PROVIDER: "azure"
+  AZURE_OPENAI_MODEL: "gpt-5.4-mini"
+  GOOGLE_GENAI_USE_VERTEXAI: "FALSE"
+  GEMINI_MODEL_NAME: "gemini-3.1-pro-preview"
+  R2_BUCKET_NAME: "argus-scripts"
+  R2_ACCOUNT_ID: "<change-me>"
+secrets:
+  azureApiKey: "<change-me>"
+  azureApiBase: "https://openai-argus.openai.azure.com/"
+  azureApiVersion: "2024-12-01-preview"
+  anthropicApiKey: "<change-me>"
+# ESO sync from <YOUR_KEY_VAULT>: cost-alert recipient + SMTP creds (Hostinger).
+# All keys are mounted with optional=true on the deployment, so missing values
+# in KV degrade gracefully (alert path raises EmailAlertError instead of crashing
+# the pod). Set the corresponding KV secrets via:
+#   az keyvault secret set --vault-name <YOUR_KEY_VAULT> --name <key> --value <val>
+externalSecrets:
+  enabled: true
+  keyMap:
+    COST_ALERT_RECIPIENT: cost-alert-recipient
+    SMTP_HOST: smtp-host
+    SMTP_USER: smtp-user
+    SMTP_PASSWORD: smtp-password

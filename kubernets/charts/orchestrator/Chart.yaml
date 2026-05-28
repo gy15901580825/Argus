@@ -1,0 +1,7 @@
+apiVersion: v2
+name: argus-orchestrator
+description: A Helm chart for orchestrator
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+ 

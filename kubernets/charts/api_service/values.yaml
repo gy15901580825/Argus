@@ -1,0 +1,173 @@
+replicaCount: 1
+
+image:
+  repository: registry.registry.svc.cluster.local:5000/argus/api_service
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: "1.0.22"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext: {}
+  # fsGroup: 2000
+
+securityContext: {}
+  # capabilities:
+  #   drop:
+  #   - ALL
+  # readOnlyRootFilesystem: true
+  # runAsNonRoot: true
+  # runAsUser: 1000
+
+service:
+  type: ClusterIP
+  port: 8881
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # kubernetes.io/tls-acme: "true"
+  hosts:
+    - host: api-service.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: api-service-tls
+  #    hosts:
+  #      - api-service.local
+
+resources: {}
+  # We usually recommend not to specify default resources and to leave this as a conscious
+  # choice for the user. This also increases chances charts run on environments with little
+  # resources, such as Minikube. If you do want to specify resources, uncomment the following
+  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+  # limits:
+  #   cpu: 200m
+  #   memory: 256Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# Application specific configuration
+env: {}
+  # Database URL will be provided via Secret (DATABASE_URL)
+  # If you need to override, set it here (not recommended for production)
+  # DATABASE_URL: "postgresql+asyncpg://user:password@host:port/dbname"
+
+# Arbitrary extra env vars — used for dev/staging overrides via values-azure-dev.yaml
+extraEnv: {}
+
+# External Secrets Operator integration.
+# When enabled, the chart renders an ExternalSecret CRD instead of a literal Secret.
+# The resulting k8s Secret has the same name and keys, populated from Azure Key Vault.
+# Requires: ESO installed in cluster, ClusterSecretStore "<YOUR_AZURE_KV_STORE>" Ready.
+# Coexists with secrets.existingSecretName: either flag suppresses the legacy Secret template.
+externalSecrets:
+  enabled: false
+  clusterSecretStoreName: <YOUR_AZURE_KV_STORE>
+  refreshInterval: "1h"
+  # k8s Secret key (UPPER_SNAKE_CASE) -> Azure KV secret name (lower-kebab-case).
+  # Keep this exhaustive for all keys the deployment expects in the resulting Secret.
+  keyMap:
+    DATABASE_URL: database-url
+    AZURE_OPENAI_API_KEY: azure-openai-api-key
+    AZURE_OPENAI_ENDPOINT: azure-openai-endpoint
+    AZURE_OPENAI_API_VERSION: azure-openai-api-version
+    CIAM_BACKEND_CLIENT_ID: ciam-backend-client-id
+    CIAM_BACKEND_CLIENT_SECRET: ciam-backend-client-secret
+    CIAM_TENANT_ID: ciam-tenant-id
+    CIAM_TENANT_NAME: ciam-tenant-name
+    R2_ACCESS_KEY_ID: r2-access-key-id
+    R2_SECRET_ACCESS_KEY: r2-secret-access-key
+    R2_ACCOUNT_ID: r2-account-id
+    R2_BUCKET_NAME: r2-bucket-name
+    R2_PUBLIC_URL_BASE: r2-public-url-base
+    R2_MEDIA_BUCKET_NAME: r2-media-bucket-name
+    R2_MEDIA_PUBLIC_URL_BASE: r2-media-public-url-base
+    STRIPE_SECRET_KEY: stripe-secret-key
+    STRIPE_PUBLISHABLE_KEY: stripe-publishable-key
+    STRIPE_WEBHOOK_SECRET: stripe-webhook-secret
+    STRIPE_STARTER_PRICE_ID: stripe-starter-price-id
+    STRIPE_PRO_PRICE_ID: stripe-pro-price-id
+    ENABLE_TEST_MODE: enable-test-mode
+
+# Secrets - chart defaults. Real values are NOT in this file.
+# Production deployments use externalSecrets.enabled=true (see block above) which
+# pulls credentials from Azure Key Vault via External Secrets Operator. The
+# defaults here are intentionally empty for credential keys; non-secret config
+# (bucket names, API versions, public URLs) is kept as a usable default.
+#
+# For local-only dev:  override via `helm install --set 'secrets.databaseUrl=...'`
+#                      — never commit literal credential values here.
+secrets:
+  # Database connection string. Format: postgresql+asyncpg://user:password@host:port/dbname
+  databaseUrl: ""
+
+  # Microsoft Entra External ID (CIAM) Configuration. Tenant/client IDs are
+  # discoverable identifiers; the client SECRET must come from KV (rotated
+  # 2026-04-30 after being found in git history — see plan).
+  ciamTenantName: ""
+  ciamTenantId: ""
+  ciamBackendClientId: ""
+  ciamBackendClientSecret: ""
+
+  # OAuth test mode flag. WARNING: exposes client secrets in /api/oauth/config
+  # responses. NEVER enable in production; cluster Secret should set "false".
+  enableTestMode: "false"
+
+  # Cloudflare R2 Storage Configuration. Bucket names + public URLs are not
+  # secret and stay defaulted; the access-key pair must come from KV.
+  r2AccountId: ""
+  r2AccessKeyId: ""
+  r2SecretAccessKey: ""
+  r2BucketName: "argus-scripts"
+  r2PublicUrlBase: ""
+  r2MediaBucketName: "argus-blog-media"
+  r2MediaPublicUrlBase: "https://media.example.com"
+
+  # Azure OpenAI (LLM proxy for client agents)
+  azureOpenaiEndpoint: ""
+  azureOpenaiApiKey: ""
+  azureOpenaiApiVersion: "2024-12-01-preview"
+
+  # Stripe (subscription billing)
+  stripeSecretKey: ""
+  stripePublishableKey: ""
+  stripeWebhookSecret: ""
+  stripeStarterPriceId: ""
+  stripeProPriceId: ""
+
+  # When set, the chart skips rendering its own Secret manifest and the deployment
+  # env vars resolve against this externally-managed Secret name. Composes with
+  # externalSecrets.enabled — both can be set during ESO cutover (the ExternalSecret
+  # creates a Secret with the same name, ESO becomes the source of truth).
+  existingSecretName: ""

@@ -1,0 +1,43 @@
+# ArgoCD UI exposed at https://argocd.example.com
+#
+# Prereqs:
+#   1. ArgoCD installed (run ./bootstrap.sh first)
+#   2. Bootstrap re-run with TLS termination delegated to NGINX:
+#        edit bootstrap.sh → set configs.params."server\.insecure"=true
+#        re-run ./bootstrap.sh
+#      (otherwise NGINX → ArgoCD is HTTPS→HTTPS, which works but doubles TLS;
+#       insecure=true makes argocd-server speak plain HTTP internally)
+#   3. DNS: argocd.example.com → 4.144.5.209 (Cloudflare A record, proxied)
+#   4. Apply this manifest:  kubectl apply -f argocd/ingress.yaml
+#
+# cert-manager auto-issues the TLS cert via the existing letsencrypt-prod ClusterIssuer.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: argocd-ingress
+  namespace: argocd
+  annotations:
+    # gRPC + WebSocket support for the ArgoCD CLI / live UI updates
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    # cert-manager auto-issues TLS
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - argocd.example.com
+      secretName: argocd-tls
+  rules:
+    - host: argocd.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: argocd-server
+                port:
+                  number: 80   # plain HTTP because argocd-server runs with --insecure

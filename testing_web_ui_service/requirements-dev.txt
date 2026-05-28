@@ -1,0 +1,18 @@
+-r requirements.txt
+
+# Test runner
+pytest>=8.3,<10
+pytest-asyncio>=0.23
+pytest-mock>=3.12
+pytest-cov>=5.0
+
+# HTTP test doubles
+pytest-httpx>=0.30
+respx>=0.21
+
+# Time / async helpers
+freezegun>=1.5
+anyio>=4.4
+
+# In-memory DB for tests that touch SQLAlchemy
+aiosqlite>=0.20

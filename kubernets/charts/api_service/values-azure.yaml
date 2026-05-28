@@ -1,0 +1,23 @@
+# Azure AKS overrides — use with: helm install -f values.yaml -f values-azure.yaml
+image:
+  repository: <YOUR_ACR>.azurecr.io/argus/api_service
+  tag: "20260511-9cf73cf"
+secrets:
+  # existingSecretName + externalSecrets.enabled (below) together mean: chart
+  # renders only an ExternalSecret CRD. ESO creates/updates the named Secret
+  # from Azure Key Vault. Deployment env vars resolve against this name.
+  existingSecretName: "argus-api-service-secret"
+# ESO is the runtime source-of-truth for api-service credentials.
+# KV: <YOUR_KEY_VAULT> (eastasia, <YOUR_RG>)
+# ClusterSecretStore: <YOUR_AZURE_KV_STORE>
+# Auth: Workload Identity → UAMI eso-kv-reader (Key Vault Secrets User on KV)
+externalSecrets:
+  enabled: true
+
+# Critical routing config — without these, ORCHESTRATOR_URL falls back to the
+# dev URL hardcoded in orchestrator_client.py and prod traffic ends up on the
+# dev orchestrator pod.
+extraEnv:
+  ORCHESTRATOR_URL: "http://argus-orchestrator.default.svc.cluster.local:8080"
+  ORCHESTRATOR_PUBLIC_URL: "https://www.example.com"
+  ENVIRONMENT: "prod"

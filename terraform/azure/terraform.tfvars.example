@@ -1,0 +1,35 @@
+# Copy this file to terraform.tfvars and fill in the values
+# DO NOT commit terraform.tfvars to git
+
+subscription_id = "<YOUR_SUBSCRIPTION_ID>"
+project         = "argus"
+env             = "dev"
+location        = "eastasia"
+
+# AKS
+kubernetes_version     = "1.30"
+system_pool_vm_size    = "Standard_D2s_v5" # 2 vCPU, 8 GiB — API + lightweight services
+system_pool_node_count = 2
+browser_pool_vm_size   = "Standard_D4s_v5" # 4 vCPU, 16 GiB — Chromium workloads
+browser_pool_min_count = 1
+browser_pool_max_count = 3
+
+# PostgreSQL
+pg_sku            = "B_Standard_B1ms" # Burstable 1 vCPU, 2 GiB
+pg_storage_mb     = 32768             # 32 GiB
+pg_admin_user     = "pgadmin"
+pg_admin_password = "CHANGE_ME_strong_password_123!"
+pg_database_name  = "argus"
+
+# Secrets (API keys for LLM providers)
+openai_api_key    = ""
+anthropic_api_key = ""
+google_api_key    = ""
+
+# Cloudflare R2
+r2_access_key_id     = ""
+r2_secret_access_key = ""
+
+# Casdoor OAuth
+casdoor_client_id     = ""
+casdoor_client_secret = ""

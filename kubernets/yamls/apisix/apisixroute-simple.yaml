@@ -1,0 +1,16 @@
+apiVersion: apisix.apache.org/v2
+kind: ApisixRoute
+metadata:
+  name: api-service-simple
+  namespace: default
+spec:
+  http:
+    - name: api-service-simple
+      match:
+        hosts:
+          - api.example.com
+        paths:
+          - /api/simple/*
+      backends:
+        - serviceName: argus-api-service
+          servicePort: 8881

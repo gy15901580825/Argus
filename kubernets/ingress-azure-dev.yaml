@@ -1,0 +1,58 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: argus-dev-ingress
+  namespace: dev
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    # SSE + WebSocket
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$remote_addr"
+    # cert-manager auto-issues TLS
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - dev.example.com
+      secretName: argus-dev-tls
+  rules:
+    - host: dev.example.com
+      http:
+        paths:
+          # Orchestrator — WebSocket for client agents
+          - path: /agent/
+            pathType: Prefix
+            backend:
+              service:
+                name: argus-orchestrator-dev
+                port:
+                  number: 8080
+          # API Service (includes internal forwarding for /api/v1/orchestrator/*)
+          - path: /api/
+            pathType: Prefix
+            backend:
+              service:
+                name: argus-api-service-dev
+                port:
+                  number: 8881
+          # Legacy data-export endpoint (60-day sunset window for web-UI-testing users)
+          # Mounted outside /api/v1 so the user-facing URL is clean: /legacy-export/manifest
+          - path: /legacy-export/
+            pathType: Prefix
+            backend:
+              service:
+                name: argus-api-service-dev
+                port:
+                  number: 8881
+          # Frontend — catch-all
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: argus-frontend-dev
+                port:
+                  number: 3000

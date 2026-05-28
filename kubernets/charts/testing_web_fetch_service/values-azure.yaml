@@ -1,0 +1,7 @@
+# Azure AKS overrides — use with: helm install -f values.yaml -f values-azure.yaml
+image:
+  repository: <YOUR_ACR>.azurecr.io/argus/testing_web_fetch_service
+  tag: "20260428-d6d80e4"
+  pullPolicy: IfNotPresent
+secrets:
+  existingSecretName: argus-secrets

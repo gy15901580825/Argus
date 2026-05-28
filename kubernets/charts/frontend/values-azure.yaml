@@ -1,0 +1,4 @@
+# Azure AKS overrides — use with: helm install -f values.yaml -f values-azure.yaml
+image:
+  repository: <YOUR_ACR>.azurecr.io/argus/frontend
+  tag: "20260511-0e1ddac"

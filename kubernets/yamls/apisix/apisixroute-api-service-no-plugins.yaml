@@ -1,0 +1,20 @@
+apiVersion: apisix.apache.org/v2
+kind: ApisixRoute
+metadata:
+  name: api-service-route
+  namespace: default
+spec:
+  http:
+    - name: api-service
+      priority: 1000
+      match:
+        hosts:
+          - api.example.com
+        paths:
+          - /api/v1/blogs*
+          - /api/v1/documents*
+          - /api/v1/blogs/*
+          - /api/v1/documents/*
+      backends:
+        - serviceName: argus-api-service
+          servicePort: 8881

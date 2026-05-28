@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "argus-testing-web-fetch-service.fullname" . }}
+  labels:
+    {{- include "argus-testing-web-fetch-service.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "argus-testing-web-fetch-service.selectorLabels" . | nindent 4 }}
+

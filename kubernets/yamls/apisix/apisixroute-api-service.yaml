@@ -1,0 +1,47 @@
+apiVersion: apisix.apache.org/v2
+kind: ApisixRoute
+metadata:
+  name: api-service-route
+  namespace: default
+spec:
+  http:
+    - name: orchestrator-agent
+      priority: 1000
+      match:
+        hosts:
+          - api.example.com
+        paths:
+          - /agent/connect*
+      backends:
+        - serviceName: argus-orchestrator
+          servicePort: 8080
+      websocket: true
+    - name: api-service
+      priority: 1000
+      match:
+        hosts:
+          - api.example.com
+        paths:
+          - /api/v1/blogs*
+          - /api/v1/documents*
+          - /api/v1/blogs/*
+          - /api/v1/documents/*
+          - /api/v1/orchestrator*
+          - /api/v1/scripts*
+      backends:
+        - serviceName: argus-api-service
+          servicePort: 8881
+      timeout:
+        connect: 60s
+        send: 300s
+        read: 300s
+      plugins:
+        - name: cors
+          enable: true
+          config:
+            allow_origins: "*"
+            allow_methods: "GET,POST,PUT,DELETE,OPTIONS,PATCH"
+            allow_headers: "*"
+            expose_headers: "*"
+            max_age: 3600
+            allow_credential: true

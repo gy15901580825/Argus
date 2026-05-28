@@ -1,0 +1,12 @@
+# Dev-only tools for one-shot scripts under scripts/.
+# Do NOT install in runtime container — `garak` pulls in PyTorch + CUDA
+# transitive deps that conflict with google-adk's pin graph (causes
+# pip resolution-too-deep against the runtime requirements.txt).
+#
+# Install on a developer machine in a separate step:
+#   pip install -r requirements-tools.txt
+#
+# Used by:
+#   scripts/wrap_garak_probes.py — generates orchestrator/redteam/probes/garak/*.yaml
+
+garak>=0.10,<1

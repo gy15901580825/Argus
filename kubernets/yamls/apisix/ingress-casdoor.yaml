@@ -1,0 +1,27 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    meta.helm.sh/release-name: casdoor
+    meta.helm.sh/release-namespace: default
+  labels:
+    app.kubernetes.io/instance: casdoor
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: casdoor
+    app.kubernetes.io/version: 2.196.1
+    helm.sh/chart: casdoor-helm-charts-2.196.1
+  name: casdoor
+  namespace: default
+spec:
+  ingressClassName: traefik
+  rules:
+  - host: casdoor.localhost
+    http:
+      paths:
+      - backend:
+          service:
+            name: casdoor
+            port:
+              number: 8000
+        path: /
+        pathType: Prefix

@@ -1,0 +1,12 @@
+[flyway]
+# Path to SQL scripts (keep the filesystem: prefix)
+locations = ["filesystem:/home/ygao/Workspace/Github/argus/database/sql"]
+# If the database is non-empty, enable this to establish a baseline
+baselineOnMigrate = true
+# Specify the default environment name (if omitted, Flyway also defaults to 'default')
+environment = "default"
+
+[environments.default]
+url = "jdbc:postgresql://192.168.1.121:3778/argus"
+user = "postgres"
+password = "test@123456"

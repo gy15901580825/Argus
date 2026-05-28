@@ -1,0 +1,22 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    konghq.com/plugins: google-oidc,session-plugin
+    konghq.com/strip-path: "false"
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"networking.k8s.io/v1","kind":"Ingress","metadata":{"annotations":{"konghq.com/plugins":"google-oidc,session-plugin","konghq.com/strip-path":"false"},"name":"oidc-callback","namespace":"default"},"spec":{"ingressClassName":"kong","rules":[{"http":{"paths":[{"backend":{"service":{"name":"my-orchestrator-argus-orchestrator","port":{"number":8080}}},"path":"/oidc/callback","pathType":"Prefix"}]}}]}}
+  name: oidc-callback
+  namespace: default
+spec:
+  ingressClassName: kong
+  rules:
+  - http:
+      paths:
+      - backend:
+          service:
+            name: my-orchestrator-argus-orchestrator
+            port:
+              number: 8080
+        path: /oidc/callback
+        pathType: Prefix

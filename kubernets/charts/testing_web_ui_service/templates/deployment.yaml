@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "argus-testing-web-ui-service.fullname" . }}
+  labels:
+    {{- include "argus-testing-web-ui-service.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "argus-testing-web-ui-service.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "argus-testing-web-ui-service.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "argus-testing-web-ui-service.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          env:
+            - name: OPENAI_MODEL
+              value: {{ .Values.env.OPENAI_MODEL | quote }}
+            - name: MAX_CONCURRENT_BROWSERS
+              value: {{ .Values.env.MAX_CONCURRENT_BROWSERS | quote }}
+            - name: CLOUDFLARE_R2_BUCKET_NAME
+              value: {{ .Values.env.CLOUDFLARE_R2_BUCKET_NAME | quote }}
+            - name: CLOUDFLARE_R2_PUBLIC_URL
+              value: {{ .Values.env.CLOUDFLARE_R2_PUBLIC_URL | quote }}
+
+            {{- $secretName := .Values.secrets.existingSecretName | default (printf "%s-secret" (include "argus-testing-web-ui-service.fullname" .)) }}
+            - name: AZURE_OPENAI_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: AZURE_OPENAI_ENDPOINT
+            - name: AZURE_OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: AZURE_OPENAI_API_KEY
+            - name: AZURE_OPENAI_API_VERSION
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: AZURE_OPENAI_API_VERSION
+            - name: CLOUDFLARE_R2_ACCOUNT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: CLOUDFLARE_R2_ACCOUNT_ID
+            - name: CLOUDFLARE_R2_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: CLOUDFLARE_R2_ACCESS_KEY_ID
+            - name: CLOUDFLARE_R2_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: CLOUDFLARE_R2_SECRET_ACCESS_KEY
+            {{- range $key, $val := .Values.extraEnv }}
+            - name: {{ $key }}
+              value: {{ $val | quote }}
+            {{- end }}
+
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

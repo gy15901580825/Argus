@@ -1,0 +1,78 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: argus-dev
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions:
+    - missingkey=error
+
+  generators:
+    - list:
+        # `service` = on-disk chart dir suffix (underscores allowed).
+        # `slug`    = k8s-safe name fragment (dashes only — RFC 1123 forbids underscores
+        #             in metadata.name / Helm release names).
+        elements:
+          - service: api_service
+            slug: api-service
+          - service: orchestrator
+            slug: orchestrator
+          - service: frontend
+            slug: frontend
+          # 2026-05-01: testing_* services retired from dev (Plan 1 T15).
+          # Re-added on cutover day if needed (unlikely — wholesale replacement model).
+          # See docs/superpowers/plans/2026-05-01-argus-pivot-foundation-migration-handoff.md
+
+  template:
+    metadata:
+      name: "argus-{{ .slug }}-dev"
+      labels:
+        env: dev
+        service: "{{ .slug }}"
+    spec:
+      project: argus
+
+      source:
+        repoURL: https://github.com/<your-gh-user>/kubernets.git
+        targetRevision: main
+        path: "charts/{{ .service }}"
+        helm:
+          releaseName: "argus-{{ .slug }}-dev"
+          valueFiles:
+            - values.yaml
+            - values-azure-dev.yaml
+          ignoreMissingValueFiles: true
+
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: dev
+
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+          - ApplyOutOfSyncOnly=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 10s
+            factor: 2
+            maxDuration: 3m
+
+      # Ignore fields that External-Secrets-Operator's controller injects as
+      # server-side defaults on every ExternalSecret. Mirrors appset-prod.yaml.
+      # No-op for services that don't ship ExternalSecret resources.
+      ignoreDifferences:
+        - group: external-secrets.io
+          kind: ExternalSecret
+          jqPathExpressions:
+            - '.spec.data[].remoteRef.conversionStrategy'
+            - '.spec.data[].remoteRef.decodingStrategy'
+            - '.spec.data[].remoteRef.metadataPolicy'
+            - '.spec.data[].remoteRef.nullBytePolicy'
+
+      revisionHistoryLimit: 10

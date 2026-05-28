@@ -1,0 +1,43 @@
+name: release
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-22.04, macos-14]
+        include:
+          - os: ubuntu-22.04
+            artifact-name: argus-probe-linux-x86_64
+          - os: macos-14
+            artifact-name: argus-probe-darwin-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - run: pip install -e . pyinstaller
+      - run: pyinstaller --onefile --name argus-probe argus_probe/__main__.py
+      - name: Rename binary with platform suffix
+        run: |
+          cd dist
+          mv argus-probe* "${{ matrix.artifact-name }}" || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: dist/${{ matrix.artifact-name }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            argus-probe-linux-x86_64/*
+            argus-probe-darwin-arm64/*

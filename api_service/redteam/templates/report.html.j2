@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Argus Red-Team Report — Run {{ run.id[:8] }}</title>
+<style>
+body { font-family: -apple-system, system-ui, sans-serif; margin: 2em; max-width: 1200px; }
+h1 { border-bottom: 2px solid #333; }
+.summary { display: flex; gap: 2em; margin: 1em 0; }
+.metric { padding: 1em; border: 1px solid #ddd; border-radius: 4px; min-width: 120px; }
+.metric .v { font-size: 2em; font-weight: bold; }
+.fail { color: #c00; }
+.warn { color: #c80; }
+.pass { color: #080; }
+.severity-critical, .severity-high { font-weight: bold; color: #c00; }
+.severity-medium { color: #c80; }
+.severity-low, .severity-info { color: #888; }
+.finding { border: 1px solid #ddd; border-radius: 4px; padding: 1em; margin: 1em 0; }
+.finding pre { background: #f4f4f4; padding: 0.5em; overflow-x: auto; max-width: 100%; white-space: pre-wrap; }
+.mappings { margin: 0.5em 0; font-size: 0.9em; color: #666; }
+.mappings code { background: #eef; padding: 0.1em 0.4em; border-radius: 3px; margin-right: 0.4em; }
+</style>
+</head>
+<body>
+<h1>Argus Red-Team Report</h1>
+<p>Run ID: <code>{{ run.id }}</code> · Status: <strong>{{ run.status }}</strong> · Probes: {{ run.findings | length }}</p>
+<div class="summary">
+  <div class="metric"><div class="v fail">{{ counts.fail }} fail</div></div>
+  <div class="metric"><div class="v warn">{{ counts.warn }} warn</div></div>
+  <div class="metric"><div class="v pass">{{ counts.pass }} pass</div></div>
+  <div class="metric"><div class="v">{{ counts.escalated }} escalated</div></div>
+</div>
+<h2>Findings ({{ run.findings | length }})</h2>
+{% for f in run.findings %}
+<div class="finding">
+  <h3>{{ f.probe_id }} — <span class="{{ f.verdict }}">{{ f.verdict }}</span> · <span class="severity-{{ f.severity }}">{{ f.severity }}</span> · confidence {{ "%.2f"|format(f.confidence) }}</h3>
+  <p><strong>Attack prompt:</strong></p>
+  <pre>{{ f.attack_prompt }}</pre>
+  <p><strong>Target response:</strong></p>
+  <pre>{{ f.target_response | truncate(800) }}</pre>
+  <p><strong>Judge reasoning:</strong> {{ f.reasoning }}</p>
+  <div class="mappings">
+    {% for a in f.atlas_id %}<code>ATLAS:{{ a }}</code>{% endfor %}
+    {% for o in f.owasp_id %}<code>OWASP:{{ o }}</code>{% endfor %}
+    {% for n in f.nist_id %}<code>NIST:{{ n }}</code>{% endfor %}
+    {% for e in f.eu_ai_act_id %}<code>EU:{{ e }}</code>{% endfor %}
+  </div>
+  <p style="font-size:0.85em;color:#888">judge: {{ f.judge_model }}{% if f.escalated_model %} → {{ f.escalated_model }}{% endif %} · target latency: {{ "%.0f"|format(f.target_latency_ms) }}ms · probed at {{ f.probed_at }}</p>
+</div>
+{% endfor %}
+</body>
+</html>
