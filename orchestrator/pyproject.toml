@@ -11,7 +11,10 @@ filterwarnings = [
     "ignore::DeprecationWarning:starlette.*",
     "ignore::DeprecationWarning:pydantic.*",
 ]
-addopts = ["-ra", "--strict-markers", "--tb=short"]
+markers = ["rubric_live: hits the real judge LLM; deselected by default"]
+# `-m "not rubric_live"` keeps the live rubric tier out of every default run
+# (including CI). A command-line `-m` overrides it: `pytest -m rubric_live`.
+addopts = ["-ra", "--strict-markers", "--tb=short", "-m", "not rubric_live"]
 
 [tool.coverage.run]
 branch = true
