@@ -222,14 +222,30 @@ id: my_probe
 name: "Human-readable name"
 target_class: [http-chat, tool-using, rag, browser-using]
 attack_class: [prompt-injection, obfuscated-payload]
-severity: high
-rubric: prompt_injection         # which rubric the LLM-judge applies
+severity: high                   # info | low | medium | high | critical
 prompts:
   - |-
     The user prompt to send to the target.
   - |-
-    Multiple prompts per probe → each is judged independently.
+    Multiple prompts per probe → each is judged independently...
+conversation: false              # ...unless this is true, in which case the
+                                 # prompts are consecutive turns of ONE
+                                 # conversation (requires a target adapter
+                                 # with supports_history=True)
+mappings:                        # required — drives the report's standards IDs
+  atlas: ["AML.T0051.001"]
+  owasp_llm: ["LLM01"]
+  nist_ai_rmf: ["MEASURE-2.6"]
+  eu_ai_act: ["Article 15(3)"]
+judge:
+  model: "claude-haiku-4-5-20251001"
+  rubric_path: "rubrics/prompt_injection.md"   # which rubric the judge applies
 ```
+
+The loader ignores keys it does not recognise, so a typo in `judge.rubric_path`
+degrades silently to `rubrics/default.md` rather than erroring. Run the test
+suite after adding a probe — `tests/test_redteam_probe.py` asserts every probe
+carries `mappings`.
 
 See [`docs/probe-mapping.md`](docs/probe-mapping.md) for the full
 **probe × OWASP LLM Top 10 × MITRE ATLAS × NIST AI RMF** mapping table.
@@ -274,18 +290,23 @@ active development.
 
 ## License
 
-Apache 2.0 — see [`LICENSE`](LICENSE).
+Apache 2.0 — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE) for third-party
+attribution.
 
-Argus bundles the third-party MIT-licensed [browser-use](https://github.com/browser-use/browser-use)
-library under `testing_web_ui_service/browser_use/` (license preserved
-in-tree).
+Argus does not vendor third-party source. [browser-use](https://github.com/browser-use/browser-use)
+(MIT) and [garak](https://github.com/NVIDIA/garak) (Apache-2.0) are ordinary
+package dependencies; the `probes/garak/` wrappers reference garak's catalogue
+rather than redistributing it.
 
 ## Contributing
 
-Issues and PRs welcome. Please open an issue before sending large changes
-so we can align on direction. New probes should ship with a corresponding
-rubric, an `attack_class` taxonomy entry, and at least one demo target
-that demonstrates the probe firing.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full guide — repo layout, how to
+run the suite, and the probe schema.
+
+Issues and PRs welcome. Please open an issue before sending large changes so we
+can align on direction. New probes should ship with `mappings`, a
+`judge.rubric_path` pointing at a real rubric, and an `attack_class` taxonomy
+entry.
 
 For security-sensitive disclosures (e.g. a new probe that demonstrates a
 real CVE-class issue in an open-source LLM stack), email rather than

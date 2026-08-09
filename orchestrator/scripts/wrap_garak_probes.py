@@ -125,7 +125,7 @@ def wrap_module(module_name: str, category: str, owasp: str, atlas: str, output_
                 "model": "claude-haiku-4-5-20251001",
                 "rubric_path": rubric_for(category),
             },
-            "_attribution": f"Wrapped from {module_name}.{name} (garak, MIT, NVIDIA)",
+            "_attribution": f"Wrapped from {module_name}.{name} (garak, Apache-2.0, NVIDIA)",
         }
         out_path = output_dir / f"{probe_id}.yaml"
         out_path.write_text(yaml.safe_dump(doc, sort_keys=False, allow_unicode=True))
