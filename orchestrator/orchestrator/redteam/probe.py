@@ -37,6 +37,10 @@ class Probe:
     # Static-prompt probes (Plan 2) leave this as None.
     scenario_kind: str | None = None
     scenario_payload: str = ""
+    # When True, `prompts` are consecutive turns of ONE conversation rather than
+    # independent single shots. Requires a target with supports_history=True;
+    # the runner emits verdict=skipped otherwise.
+    conversation: bool = False
 
 
 def load_probe(path: Path) -> Probe:
@@ -69,6 +73,7 @@ def load_probe(path: Path) -> Probe:
             judge_rubric_path=raw.get("judge", {}).get("rubric_path", "rubrics/default.md"),
             scenario_kind=scenario_kind,
             scenario_payload=scenario_payload,
+            conversation=bool(raw.get("conversation", False)),
         )
     except KeyError as exc:
         raise ValueError(f"missing required key {exc.args[0]!r} in {path}") from exc
