@@ -19,6 +19,11 @@ from pydantic import BaseModel
 from orchestrator.redteam.cost_meter import CostMeter
 from orchestrator.redteam.judge import Judge
 from orchestrator.redteam.probe import load_all_probes
+from orchestrator.redteam.persona_strategy import (
+    DEFAULT_DEEP_PAIRS,
+    build_deep_probes,
+)
+from orchestrator.redteam.persona_loader import default_personas, default_strategies
 from orchestrator.redteam.runner import Runner
 from orchestrator.redteam.suites import derive_suites
 from orchestrator.redteam.targets import build_target
@@ -27,6 +32,8 @@ from orchestrator.redteam.targets import build_target
 router = APIRouter(prefix="/redteam", tags=["redteam"])
 
 PROBES_DIR = Path(__file__).parent / "probes"
+
+_VALID_MODES = frozenset({"static", "deep"})
 RUBRICS_DIR = Path(__file__).parent / "rubrics"
 DAILY_CAP_USD = float(os.environ.get("REDTEAM_DAILY_CAP_USD", "13.50"))  # ~$400/month
 # Process-level meter — single tenant for v0; per-customer meters arrive in M3+.
@@ -41,6 +48,11 @@ class RunRequest(BaseModel):
     # Auto-derived suite id (see suites.py / GET /redteam/suites). Mutually
     # exclusive with a non-empty probe_ids — supplying both is a 422.
     suite: str | None = None
+    # "static" (default) runs each probe's fixed prompts. "deep" wraps each selected
+    # probe in persona x strategy multi-turn threads — far more expensive, so it
+    # requires an explicit probe selection (see _resolve_request_probe_ids).
+    mode: str = "static"
+    deep_pairs: int = DEFAULT_DEEP_PAIRS
     # Caller-supplied per-run cost cap (overrides singleton default when present).
     per_run_cap_usd: float | None = None
 
@@ -82,6 +94,24 @@ def _resolve_request_probe_ids(req: RunRequest) -> list[str]:
     The two are mutually exclusive: an empty probe_ids means "the whole
     library" (CLI convention), so a suite request must not carry one.
     """
+    if req.mode not in _VALID_MODES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unknown mode {req.mode!r}; valid modes: {sorted(_VALID_MODES)}",
+        )
+    # Deep mode must never run the whole library. At ~$0.39/probe worst case it
+    # would cost roughly $65 across 167 probes and abort partway, leaving a partial
+    # report. Failing up front reads as a budget constraint; a mid-run abort reads
+    # as a broken product.
+    if req.mode == "deep" and req.suite is None and not req.probe_ids:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "mode=deep requires an explicit probe selection (probe_ids or suite). "
+                "Deep mode runs multi-turn persona x strategy threads per probe and "
+                "cannot be run across the whole library within the per-run cost cap."
+            ),
+        )
     if req.suite is not None:
         if req.probe_ids:
             raise HTTPException(
@@ -99,9 +129,21 @@ async def _run_probes(req: RunRequest, anthropic_api_key: str) -> AsyncIterator[
     runner = Runner(target=target, judge=judge, rubrics_dir=RUBRICS_DIR)
 
     requested = set(_resolve_request_probe_ids(req))
-    for probe in load_all_probes(PROBES_DIR):
-        if probe.id not in requested:
-            continue
+    selected = [p for p in load_all_probes(PROBES_DIR) if p.id in requested]
+
+    if req.mode == "deep":
+        personas, strategies = default_personas(), default_strategies()
+        to_run = [
+            dp
+            for base in selected
+            for dp in build_deep_probes(
+                base, personas, strategies, deep_pairs=req.deep_pairs
+            )
+        ]
+    else:
+        to_run = selected
+
+    for probe in to_run:
         async for finding in runner.run_probe(probe):
             # asdict() recurses dataclasses but does NOT convert UUIDs/datetimes.
             # When adding Finding fields, ensure they're JSON-serializable here.

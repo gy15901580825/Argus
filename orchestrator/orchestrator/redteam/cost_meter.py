@@ -31,6 +31,10 @@ _SAFETY_MARGIN = 1.2
 _DEFAULT_ITERATIVE_ROUNDS = 1
 
 
+# Half a cent: below this a remaining budget is float residue, not money.
+_BUDGET_EPSILON_USD = 0.005
+
+
 class CostExceededError(RuntimeError):
     """Raised when a daily or per-run cap would be exceeded."""
     pass
@@ -56,39 +60,83 @@ class CostMeter:
         per_run_cap_usd: float = 0.50,
         alert_threshold: float = 0.80,
         alert_cooldown_s: float = 3600.0,
+        deep_per_run_cap_usd: float = 5.00,
+        deep_budget_fraction: float = 0.60,
     ) -> None:
         self.daily_cap_usd = daily_cap_usd
         self.per_run_cap_usd = per_run_cap_usd
         self.alert_threshold = alert_threshold
         self.alert_cooldown_s = alert_cooldown_s
+        # Deep (persona x strategy) runs escalate for up to 20 rounds and cost far
+        # more than a static scan, so they get their own per-run cap.
+        self.deep_per_run_cap_usd = deep_per_run_cap_usd
+        # ...and their own slice of the day. record() rejects ALL spend once the
+        # daily cap is hit, so without a partition two $5 deep runs would exhaust a
+        # $13.50 day and every subsequent static CI gate would fail with
+        # aborted_cost. Deep runs may consume at most this fraction; the remainder
+        # is reserved for the static path.
+        self.deep_budget_fraction = deep_budget_fraction
         self._day = date.today()
         self._spent_today = 0.0
+        self._spent_today_deep = 0.0
         self._spent_in_run: Optional[float] = None  # None when no run is active
+        self._run_is_deep = False
         self._last_alert_ts = 0.0
+
+    @property
+    def deep_daily_cap_usd(self) -> float:
+        return self.daily_cap_usd * self.deep_budget_fraction
 
     def _maybe_reset_day(self) -> None:
         today = date.today()
         if today != self._day:
             self._day = today
             self._spent_today = 0.0
+            self._spent_today_deep = 0.0
             self._last_alert_ts = 0.0
 
     def spent_today(self) -> float:
         self._maybe_reset_day()
         return self._spent_today
 
+    def spent_today_deep(self) -> float:
+        self._maybe_reset_day()
+        return self._spent_today_deep
+
+    def deep_budget_remaining(self) -> float:
+        remaining = self.deep_daily_cap_usd - self.spent_today_deep()
+        # Accumulated float error leaves sub-picocent residue after a slice is
+        # drained. Treating that as "budget available" would admit a run that
+        # aborts on its first call — the partial report this partition exists to
+        # prevent. Anything under half a cent is exhausted.
+        return remaining if remaining >= _BUDGET_EPSILON_USD else 0.0
+
+    def can_start_deep_run(self) -> bool:
+        """Checked before a deep run is created, so exhaustion is an upfront refusal
+        rather than a mid-run abort that yields a partial report."""
+        return self.deep_budget_remaining() > 0.0 and self.spent_today() < self.daily_cap_usd
+
     def spent_in_current_run(self) -> float:
         return self._spent_in_run or 0.0
 
     @contextlib.contextmanager
-    def run_scope(self, run_id: str):
+    def run_scope(self, run_id: str, deep: bool = False):
         if self._spent_in_run is not None:
             raise RuntimeError(f"run_scope is non-reentrant; another run is active")
+        if deep and not self.can_start_deep_run():
+            raise CostExceededError(
+                f"deep budget ${self.deep_daily_cap_usd:.2f}/day "
+                f"(={self.deep_budget_fraction:.0%} of the ${self.daily_cap_usd:.2f} daily cap) "
+                f"is exhausted; ${self.deep_budget_remaining():.2f} remains. "
+                "Static runs are unaffected."
+            )
         self._spent_in_run = 0.0
+        self._run_is_deep = deep
         try:
             yield
         finally:
             self._spent_in_run = None
+            self._run_is_deep = False
 
     def record(self, model: str, input_tokens: int, output_tokens: int) -> float:
         self._maybe_reset_day()
@@ -100,13 +148,22 @@ class CostMeter:
         cost = (input_tokens / 1_000_000) * prices["input"] + (output_tokens / 1_000_000) * prices["output"]
 
         # Per-run check uses pre-call accounting (lookahead): the next call to
-        # record cannot push the per-run total above per_run_cap.
+        # record cannot push the per-run total above the applicable cap.
         if self._spent_in_run is not None:
-            if self._spent_in_run + cost > self.per_run_cap_usd:
+            cap = self.deep_per_run_cap_usd if self._run_is_deep else self.per_run_cap_usd
+            label = "deep per_run" if self._run_is_deep else "per_run"
+            if self._spent_in_run + cost > cap:
                 raise CostExceededError(
-                    f"per_run cap ${self.per_run_cap_usd:.2f} would be exceeded by this call"
+                    f"{label} cap ${cap:.2f} would be exceeded by this call"
+                )
+            if self._run_is_deep and self._spent_today_deep + cost > self.deep_daily_cap_usd:
+                raise CostExceededError(
+                    f"deep daily budget ${self.deep_daily_cap_usd:.2f} would be exceeded "
+                    "by this call; static runs are unaffected"
                 )
             self._spent_in_run += cost
+            if self._run_is_deep:
+                self._spent_today_deep += cost
 
         self._spent_today += cost
         self._maybe_alert()
