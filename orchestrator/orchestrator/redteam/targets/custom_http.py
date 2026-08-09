@@ -15,7 +15,7 @@ import httpx
 from jinja2 import Environment
 from jsonpath_ng import parse as jsonpath_parse
 
-from orchestrator.redteam.targets._base import Target
+from orchestrator.redteam.targets._base import Target, Turn
 
 _jinja = Environment(autoescape=False)
 
@@ -52,6 +52,8 @@ class CustomHTTPSpec:
 
 
 class CustomHTTPTarget(Target):
+    supports_history: ClassVar[bool] = True
+
     # Plan 4 names + Plan 2 legacy aliases ("http-chat" / "tool-using" / "rag").
     compatible_classes: ClassVar[frozenset[str]] = frozenset({
         "llm_chat", "agent_with_tools", "agent_with_rag",
@@ -66,8 +68,17 @@ class CustomHTTPTarget(Target):
             jsonpath_parse(spec.response_latency_jsonpath) if spec.response_latency_jsonpath else None
         )
 
-    async def send_prompt(self, prompt: str) -> tuple[str, float]:
-        ctx = {"prompt": prompt, "api_key": self.spec.api_key or ""}
+    async def send_prompt(
+        self, prompt: str, history: tuple[Turn, ...] = ()
+    ) -> tuple[str, float]:
+        # `history` is offered to the template as a list of {role, content} dicts.
+        # Templates written before conversation support simply never reference it
+        # and render exactly as they did before.
+        ctx = {
+            "prompt": prompt,
+            "api_key": self.spec.api_key or "",
+            "history": [{"role": t.role, "content": t.content} for t in history],
+        }
         body = self._body_tpl.render(**ctx)
 
         # Render headers (api_key substitution allowed in header values too).

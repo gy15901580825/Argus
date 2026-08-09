@@ -7,7 +7,7 @@ from typing import ClassVar
 
 from anthropic import AsyncAnthropic
 
-from orchestrator.redteam.targets._base import Target
+from orchestrator.redteam.targets._base import Target, Turn
 
 
 @dataclass(frozen=True)
@@ -30,6 +30,8 @@ class AnthropicNativeSpec:
 
 
 class AnthropicNativeTarget(Target):
+    supports_history: ClassVar[bool] = True
+
     # Plan 4 names + Plan 2 legacy aliases ("http-chat" / "tool-using").
     compatible_classes: ClassVar[frozenset[str]] = frozenset({
         "llm_chat", "agent_with_tools",
@@ -39,13 +41,17 @@ class AnthropicNativeTarget(Target):
     def __init__(self, spec: AnthropicNativeSpec) -> None:
         self.spec = spec
 
-    async def send_prompt(self, prompt: str) -> tuple[str, float]:
+    async def send_prompt(
+        self, prompt: str, history: tuple[Turn, ...] = ()
+    ) -> tuple[str, float]:
         client = AsyncAnthropic(api_key=self.spec.api_key, timeout=self.spec.timeout_s)
+        messages = [{"role": t.role, "content": t.content} for t in history]
+        messages.append({"role": "user", "content": prompt})
         start = time.monotonic()
         resp = await client.messages.create(
             model=self.spec.model,
             max_tokens=self.spec.max_tokens,
-            messages=[{"role": "user", "content": prompt}],
+            messages=messages,
         )
         latency_ms = (time.monotonic() - start) * 1000.0
         # Concatenate text blocks; ignore tool_use / image blocks for v0.

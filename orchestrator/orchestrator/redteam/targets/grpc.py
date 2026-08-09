@@ -20,7 +20,7 @@ import grpc
 from google.protobuf import descriptor_pb2, descriptor_pool, message_factory
 from grpc_reflection.v1alpha import reflection_pb2, reflection_pb2_grpc
 
-from orchestrator.redteam.targets._base import Target
+from orchestrator.redteam.targets._base import Target, Turn
 
 
 @dataclass(frozen=True)
@@ -130,7 +130,14 @@ class GRPCTarget(Target):
     def __init__(self, spec: GRPCSpec) -> None:
         self.spec = spec
 
-    async def send_prompt(self, prompt: str) -> tuple[str, float]:
+    # The proto carries a single prompt field; replaying a transcript would need a
+    # schema this project does not control. Multi-turn probes are skipped rather
+    # than silently flattened — see Runner._history_skip.
+    supports_history: ClassVar[bool] = False
+
+    async def send_prompt(
+        self, prompt: str, history: tuple[Turn, ...] = ()
+    ) -> tuple[str, float]:
         async with _make_channel(self.spec.endpoint, self.spec.tls) as channel:
             request, request_class, response_class = await _build_dynamic_request_async(
                 channel, self.spec.service_method, self.spec.prompt_field, prompt
