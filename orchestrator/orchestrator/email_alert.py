@@ -21,7 +21,7 @@ def send_daily_alert(spent_usd: float, cap_usd: float) -> None:
     smtp_host = os.environ.get("SMTP_HOST")
     smtp_user = os.environ.get("SMTP_USER")
     smtp_password = os.environ.get("SMTP_PASSWORD")
-    recipient = os.environ.get("COST_ALERT_RECIPIENT", "<contact@example.com>")
+    recipient = os.environ.get("COST_ALERT_RECIPIENT", "contact@example.com")
 
     if not smtp_host:
         raise EmailAlertError("SMTP_HOST not configured")

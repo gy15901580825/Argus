@@ -9,7 +9,7 @@ def test_send_daily_alert_uses_env_secrets(monkeypatch):
     monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
     monkeypatch.setenv("SMTP_USER", "u")
     monkeypatch.setenv("SMTP_PASSWORD", "p")
-    monkeypatch.setenv("COST_ALERT_RECIPIENT", "<contact@example.com>")
+    monkeypatch.setenv("COST_ALERT_RECIPIENT", "contact@example.com")
     with patch("orchestrator.email_alert.smtplib.SMTP_SSL") as SMTP:
         smtp_inst = MagicMock()
         SMTP.return_value.__enter__.return_value = smtp_inst
@@ -20,7 +20,7 @@ def test_send_daily_alert_uses_env_secrets(monkeypatch):
         msg = smtp_inst.send_message.call_args[0][0]
         # 80% threshold visible in subject (either as %, or as $X / $Y)
         assert "80%" in msg["Subject"] or "$10.80" in msg["Subject"]
-        assert msg["To"] == "<contact@example.com>"
+        assert msg["To"] == "contact@example.com"
 
 
 def test_send_daily_alert_no_smtp_host_raises(monkeypatch):
@@ -49,7 +49,7 @@ def test_send_daily_alert_uses_default_recipient_when_unset(monkeypatch):
         SMTP.return_value.__enter__.return_value = smtp_inst
         send_daily_alert(spent_usd=10.80, cap_usd=13.50)
         msg = smtp_inst.send_message.call_args[0][0]
-        assert msg["To"] == "<contact@example.com>"  # default recipient
+        assert msg["To"] == "contact@example.com"  # default recipient
 
 
 def test_send_daily_alert_custom_smtp_port(monkeypatch):

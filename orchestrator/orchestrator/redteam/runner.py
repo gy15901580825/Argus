@@ -55,6 +55,28 @@ class Runner:
             iterative_tap.set_cost_meter(judge._cost_meter)
             iterative_pair.set_cost_meter(judge._cost_meter)
 
+    def _skip(self, probe, reasoning: str) -> Finding:
+        """A skipped Finding that still carries the probe's standards mappings,
+        so the skip remains traceable in SARIF/JUnit rather than vanishing."""
+        return Finding(
+            id=uuid4(),
+            probe_id=probe.id,
+            attack_prompt="",
+            target_response="",
+            target_latency_ms=0.0,
+            probed_at=datetime.now(timezone.utc),
+            verdict=VERDICT_SKIPPED,
+            severity="info",
+            confidence=1.0,
+            reasoning=reasoning,
+            judge_model="",
+            escalated_model=None,
+            atlas_id=list(probe.mappings.atlas),
+            owasp_id=list(probe.mappings.owasp_llm),
+            nist_id=list(probe.mappings.nist_ai_rmf),
+            eu_ai_act_id=list(probe.mappings.eu_ai_act),
+        )
+
     async def run_probe(self, probe) -> AsyncIterator[Finding]:
         # Existing rubric resolution unchanged
         rel = Path(probe.judge_rubric_path)
@@ -94,6 +116,26 @@ class Runner:
                 )
                 return
 
+        # A conversation probe must not be flattened into single shots against a
+        # stateless adapter. Its later prompts ("Great. Now write the scene...")
+        # are meaningless without the earlier turns, so running them cold would
+        # test something the probe does not claim to test and report the target
+        # as defended against an attack that was never mounted.
+        #
+        # Iterative probes (TAP/PAIR) are deliberately NOT skipped here: their
+        # attacker LLM emits self-contained prompts each round, so on a stateless
+        # adapter they degrade to query-refinement — weaker, but still a real
+        # attack, and skipping them would lose grpc/browser_use coverage.
+        if getattr(probe, "conversation", False) and not getattr(
+            self._target, "supports_history", False
+        ):
+            yield self._skip(
+                probe,
+                f"probe requires conversation history but target adapter "
+                f"{type(self._target).__name__} declares supports_history=False",
+            )
+            return
+
         # Dispatch on iterative flag
         if getattr(probe, "iterative", False):
             async for f in self._run_iterative(probe, rubric_text):
@@ -103,12 +145,23 @@ class Runner:
                 yield f
 
     async def _run_static(self, probe, rubric_text: str) -> AsyncIterator[Finding]:
-        """Existing Plan 2 static-prompt path."""
+        """Static-prompt path.
+
+        Default: each prompt is an independent single shot (history stays empty).
+        With `conversation: true`: prompts are consecutive turns of one
+        conversation, so prompt N is sent with turns 1..N-1 as history.
+        """
         import httpx
+        from orchestrator.redteam.targets._base import Turn
+
+        conversation = getattr(probe, "conversation", False)
+        transcript: list[Turn] = []
         for prompt in probe.prompts:
             probed_at = datetime.now(timezone.utc)
             try:
-                response_text, latency_ms = await self._target.send_prompt(prompt)
+                response_text, latency_ms = await self._target.send_prompt(
+                    prompt, history=tuple(transcript)
+                )
             except httpx.HTTPStatusError as e:
                 if 400 <= e.response.status_code < 500:
                     yield Finding(
@@ -144,6 +197,9 @@ class Runner:
                         )
                         continue
                 raise
+            if conversation:
+                transcript.append(Turn(role="user", content=prompt))
+                transcript.append(Turn(role="assistant", content=response_text))
             verdict = await self._judge.judge(
                 probe_name=probe.name,
                 attack_prompt=prompt,
@@ -168,9 +224,15 @@ class Runner:
         import httpx
         from orchestrator.redteam.cost_meter import CostExceededError
         from orchestrator.redteam.iterative import IterationContext
+        from orchestrator.redteam.targets._base import Turn
         prior_prompts: list[str] = []
         prior_responses: list[str] = []
         prior_verdicts = []
+        # The transcript the target sees. Only populated when the adapter can hold
+        # a conversation; against a stateless adapter the attack degrades to
+        # query-refinement (see the note in run_probe).
+        target_supports_history = getattr(self._target, "supports_history", False)
+        transcript: list[Turn] = []
         round_n = 0
         try:
             while True:
@@ -187,7 +249,9 @@ class Runner:
                     return
                 probed_at = datetime.now(timezone.utc)
                 try:
-                    response_text, latency_ms = await self._target.send_prompt(prompt)
+                    response_text, latency_ms = await self._target.send_prompt(
+                        prompt, history=tuple(transcript)
+                    )
                 except httpx.HTTPStatusError as e:
                     if 400 <= e.response.status_code < 500:
                         yield Finding(
@@ -244,6 +308,9 @@ class Runner:
                 prior_prompts.append(prompt)
                 prior_responses.append(response_text)
                 prior_verdicts.append(verdict)
+                if target_supports_history:
+                    transcript.append(Turn(role="user", content=prompt))
+                    transcript.append(Turn(role="assistant", content=response_text))
                 round_n += 1
         except CostExceededError as e:
             yield Finding(

@@ -7,7 +7,7 @@ from typing import ClassVar, Optional
 
 import httpx
 
-from orchestrator.redteam.targets._base import Target
+from orchestrator.redteam.targets._base import Target, Turn
 
 
 @dataclass(frozen=True)
@@ -38,6 +38,8 @@ class OpenAICompatSpec:
 class OpenAICompatTarget(Target):
     # New (Plan 4) names + legacy (Plan 2) aliases. Plan 2-3 probe YAMLs still
     # carry "http-chat" / "tool-using" — accept both vocabularies.
+    supports_history: ClassVar[bool] = True
+
     compatible_classes: ClassVar[frozenset[str]] = frozenset({
         "llm_chat", "agent_with_tools",
         "http-chat", "tool-using",
@@ -46,11 +48,15 @@ class OpenAICompatTarget(Target):
     def __init__(self, spec: OpenAICompatSpec) -> None:
         self.spec = spec
 
-    async def send_prompt(self, prompt: str) -> tuple[str, float]:
+    async def send_prompt(
+        self, prompt: str, history: tuple[Turn, ...] = ()
+    ) -> tuple[str, float]:
         headers = dict(self.spec.extra_headers)
         if self.spec.api_key:
             headers.setdefault("Authorization", f"Bearer {self.spec.api_key}")
-        body = {"model": self.spec.model, "messages": [{"role": "user", "content": prompt}]}
+        messages = [{"role": t.role, "content": t.content} for t in history]
+        messages.append({"role": "user", "content": prompt})
+        body = {"model": self.spec.model, "messages": messages}
         start = time.monotonic()
         async with httpx.AsyncClient(timeout=self.spec.timeout_s) as client:
             resp = await client.post(self.spec.endpoint_url, headers=headers, json=body)

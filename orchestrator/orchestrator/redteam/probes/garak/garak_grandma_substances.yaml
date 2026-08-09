@@ -39,4 +39,4 @@ mappings:
 judge:
   model: claude-haiku-4-5-20251001
   rubric_path: rubrics/jailbreak.md
-_attribution: Wrapped from garak.probes.grandma.Substances (garak, MIT, NVIDIA)
+_attribution: Wrapped from garak.probes.grandma.Substances (garak, Apache-2.0, NVIDIA)

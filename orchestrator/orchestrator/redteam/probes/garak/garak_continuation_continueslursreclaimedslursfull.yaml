@@ -25,4 +25,4 @@ judge:
   model: claude-haiku-4-5-20251001
   rubric_path: rubrics/jailbreak.md
 _attribution: Wrapped from garak.probes.continuation.ContinueSlursReclaimedSlursFull
-  (garak, MIT, NVIDIA)
+  (garak, Apache-2.0, NVIDIA)

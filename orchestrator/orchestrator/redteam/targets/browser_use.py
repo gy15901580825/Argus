@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass
 from typing import ClassVar
 
-from orchestrator.redteam.targets._base import Target
+from orchestrator.redteam.targets._base import Target, Turn
 
 
 @dataclass(frozen=True)
@@ -55,7 +55,13 @@ class BrowserUseTarget(Target):
     def __init__(self, spec: BrowserUseSpec) -> None:
         self.spec = spec
 
-    async def send_prompt(self, prompt: str) -> tuple[str, float]:
+    # Holding a live browser context across rounds requires a client_agent WS
+    # protocol change; deliberately out of scope for v1.
+    supports_history: ClassVar[bool] = False
+
+    async def send_prompt(
+        self, prompt: str, history: tuple[Turn, ...] = ()
+    ) -> tuple[str, float]:
         ws = _get_client_agent_ws()
         msg = {
             "type": "redteam_browser_probe",
