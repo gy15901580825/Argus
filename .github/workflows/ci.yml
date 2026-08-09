@@ -1,0 +1,107 @@
+name: CI
+
+# The per-service .github/workflows/ directories under orchestrator/, api_service/
+# etc. are leftovers from the polyrepo split — GitHub only runs workflows from the
+# repository root, so none of them execute here. They also carry <YOUR_ACR>-style
+# placeholders and registry-push steps that cannot work on a fork.
+#
+# This workflow deliberately does test + lint only: no secrets, no registry, no
+# deploy. It runs on any fork out of the box.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  orchestrator:
+    name: orchestrator — tests + import boundary
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        # tests/test_redteam_probe.py resolves PROBES_DIR relative to this dir,
+        # so the suite must be invoked from here, not the repo root.
+        working-directory: orchestrator
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: orchestrator/requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run test suite
+        run: python -m pytest tests/ -q
+
+      - name: Check redteam import boundary
+        # redteam/ must never import web_ui_* — see .importlinter
+        run: lint-imports --config .importlinter
+
+  probe-library:
+    name: probe library — schema validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      - name: Every probe parses and declares mappings + a real rubric
+        run: |
+          python - <<'PY'
+          import sys, glob, yaml
+          from pathlib import Path
+
+          probes = sorted(glob.glob("orchestrator/orchestrator/redteam/probes/**/*.yaml", recursive=True))
+          rubrics = Path("orchestrator/orchestrator/redteam/rubrics")
+          required = {"id", "name", "target_class", "attack_class", "severity", "prompts"}
+          severities = {"info", "low", "medium", "high", "critical"}
+          errors, seen = [], {}
+
+          for f in probes:
+              try:
+                  d = yaml.safe_load(open(f))
+              except Exception as e:
+                  errors.append(f"{f}: unparseable — {e}")
+                  continue
+              if not isinstance(d, dict) or "prompts" not in d:
+                  continue
+              missing = required - d.keys()
+              if missing:
+                  errors.append(f"{f}: missing required keys {sorted(missing)}")
+              if d.get("severity") not in severities:
+                  errors.append(f"{f}: invalid severity {d.get('severity')!r}")
+              if not (d.get("mappings") or {}):
+                  errors.append(f"{f}: no mappings — findings would carry no standards IDs")
+              rp = (d.get("judge") or {}).get("rubric_path")
+              if rp and not (rubrics / Path(rp).name).exists():
+                  errors.append(f"{f}: judge.rubric_path {rp!r} does not exist")
+              if d.get("conversation") and len(d.get("prompts") or []) < 2:
+                  errors.append(f"{f}: conversation: true with fewer than 2 prompts")
+              pid = d.get("id")
+              if pid in seen:
+                  errors.append(f"{f}: duplicate id {pid!r} (also in {seen[pid]})")
+              seen[pid] = f
+
+          print(f"checked {len(seen)} probes")
+          if errors:
+              print("\n".join(errors), file=sys.stderr)
+              sys.exit(1)
+          print("probe library OK")
+          PY
