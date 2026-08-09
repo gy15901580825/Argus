@@ -51,9 +51,10 @@ class Runner:
         # Inject the meter into iterative modules so their planner LLM calls record cost.
         # The meter is extracted from judge, which was passed in from api.py.
         if hasattr(judge, "_cost_meter") and judge._cost_meter is not None:
-            from orchestrator.redteam import iterative_tap, iterative_pair
+            from orchestrator.redteam import iterative_tap, iterative_pair, persona_strategy
             iterative_tap.set_cost_meter(judge._cost_meter)
             iterative_pair.set_cost_meter(judge._cost_meter)
+            persona_strategy.set_cost_meter(judge._cost_meter)
 
     def _skip(self, probe, reasoning: str) -> Finding:
         """A skipped Finding that still carries the probe's standards mappings,

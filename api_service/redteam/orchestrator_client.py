@@ -19,13 +19,15 @@ class OrchestratorError(RuntimeError):
     """Raised when orchestrator's SSE stream emits `event: error`."""
 
 
-async def create_run(target_spec: dict, probe_ids: list[str], per_run_cap_usd: float | None = None) -> None:
+async def create_run(target_spec: dict, probe_ids: list[str], per_run_cap_usd: float | None = None, suite: str | None = None) -> None:
     """Pre-flight cost-cap check via the lightweight /redteam/run/preflight endpoint.
 
     Raises httpx.HTTPStatusError on 402 (cost cap) or other 4xx/5xx.
     Does NOT start probe execution — stream_findings() does that separately.
     """
     body: dict = {"target": target_spec, "probe_ids": probe_ids}
+    if suite is not None:
+        body["suite"] = suite
     if per_run_cap_usd is not None:
         body["per_run_cap_usd"] = per_run_cap_usd
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -33,8 +35,10 @@ async def create_run(target_spec: dict, probe_ids: list[str], per_run_cap_usd: f
         resp.raise_for_status()
 
 
-async def stream_findings(target_spec: dict, probe_ids: list[str], per_run_cap_usd: float | None = None) -> AsyncIterator[dict]:
+async def stream_findings(target_spec: dict, probe_ids: list[str], per_run_cap_usd: float | None = None, suite: str | None = None) -> AsyncIterator[dict]:
     body: dict = {"target": target_spec, "probe_ids": probe_ids}
+    if suite is not None:
+        body["suite"] = suite
     if per_run_cap_usd is not None:
         body["per_run_cap_usd"] = per_run_cap_usd
     async with httpx.AsyncClient(timeout=600.0) as client:

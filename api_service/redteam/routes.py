@@ -23,8 +23,13 @@ ORCH_URL = os.environ.get("ORCHESTRATOR_URL", "http://argus-orchestrator.default
 
 class RunCreate(BaseModel):
     target: TargetSpec
-    probe_ids: list[str]
-    suite_name: str = "ad-hoc"
+    probe_ids: list[str] = []
+    # Auto-derived suite id (owasp-llm-top10 / mitre-atlas / nist-ai-rmf / eu-ai-act).
+    # Mutually exclusive with a non-empty probe_ids; the orchestrator enforces it and
+    # returns 422. Pitfall #1: this field MUST stay in sync with the orchestrator's
+    # RunRequest — api_service silently drops unknown fields when proxying.
+    suite: Optional[str] = None
+    suite_name: str = "ad-hoc"   # free-text label stored on the run row; NOT the above
     per_run_cap_usd: Optional[float] = None  # Plan 4 T12: client override
 
 
@@ -40,7 +45,7 @@ async def create_run(
 ) -> RunResponse:
     # Pre-flight: let orchestrator reject with 402 before we create the DB row.
     try:
-        await orchestrator_client.create_run(req.target.model_dump(), req.probe_ids, per_run_cap_usd=req.per_run_cap_usd)
+        await orchestrator_client.create_run(req.target.model_dump(), req.probe_ids, per_run_cap_usd=req.per_run_cap_usd, suite=req.suite)
     except _httpx.HTTPStatusError as e:
         if e.response.status_code == 402:
             try:
@@ -48,6 +53,12 @@ async def create_run(
             except Exception:
                 detail = "cost cap exceeded"
             raise HTTPException(status_code=402, detail=detail)
+        if e.response.status_code == 422:
+            try:
+                detail = e.response.json().get("detail", "invalid probe selection")
+            except Exception:
+                detail = "invalid probe selection"
+            raise HTTPException(status_code=422, detail=detail)
         raise HTTPException(status_code=502, detail=f"orchestrator error: {e.response.status_code}")
 
     run_id = await runs.create_run(
@@ -55,7 +66,7 @@ async def create_run(
         target_spec=req.target.model_dump(),
         probe_suite=req.suite_name,
     )
-    bg.add_task(_consume_orchestrator_stream, run_id, req.target.model_dump(), req.probe_ids, req.per_run_cap_usd)
+    bg.add_task(_consume_orchestrator_stream, run_id, req.target.model_dump(), req.probe_ids, req.per_run_cap_usd, req.suite)
     return RunResponse(run_id=str(run_id))
 
 
@@ -103,10 +114,10 @@ async def list_probes(user: UserResponse = Depends(get_current_user)) -> dict:
         return resp.json()
 
 
-async def _consume_orchestrator_stream(run_id: UUID, target_spec: dict, probe_ids: list[str], per_run_cap_usd: Optional[float] = None) -> None:
+async def _consume_orchestrator_stream(run_id: UUID, target_spec: dict, probe_ids: list[str], per_run_cap_usd: Optional[float] = None, suite: Optional[str] = None) -> None:
     await runs.update_run_status(run_id, "running")
     try:
-        async for finding in orchestrator_client.stream_findings(target_spec, probe_ids, per_run_cap_usd=per_run_cap_usd):
+        async for finding in orchestrator_client.stream_findings(target_spec, probe_ids, per_run_cap_usd=per_run_cap_usd, suite=suite):
             await runs.insert_finding(run_id, finding)
         await runs.update_run_status(run_id, "completed")
     except Exception as e:
