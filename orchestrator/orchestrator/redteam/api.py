@@ -20,6 +20,7 @@ from orchestrator.redteam.cost_meter import CostMeter
 from orchestrator.redteam.judge import Judge
 from orchestrator.redteam.probe import load_all_probes
 from orchestrator.redteam.runner import Runner
+from orchestrator.redteam.suites import derive_suites
 from orchestrator.redteam.targets import build_target
 
 
@@ -36,7 +37,10 @@ class RunRequest(BaseModel):
     # Raw dict — build_target() factory validates and constructs the right spec/target.
     # Accepts all 5 adapter kinds: openai_compat, anthropic_native, custom_http, grpc, browser_use.
     target: dict[str, Any]
-    probe_ids: list[str]
+    probe_ids: list[str] = []
+    # Auto-derived suite id (see suites.py / GET /redteam/suites). Mutually
+    # exclusive with a non-empty probe_ids — supplying both is a 422.
+    suite: str | None = None
     # Caller-supplied per-run cost cap (overrides singleton default when present).
     per_run_cap_usd: float | None = None
 
@@ -61,13 +65,40 @@ def _resolve_probe_ids(probe_ids: list[str]) -> list[str]:
     return [p.id for p in load_all_probes(PROBES_DIR)]
 
 
+def _resolve_suite(suite: str) -> list[str]:
+    """Suite id → its probe ids. Raises 422 on an unknown id, listing the valid ones."""
+    suites = derive_suites(load_all_probes(PROBES_DIR))
+    if suite not in suites:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unknown suite {suite!r}; valid suites: {sorted(suites)}",
+        )
+    return suites[suite]
+
+
+def _resolve_request_probe_ids(req: RunRequest) -> list[str]:
+    """Resolve `suite` / `probe_ids` to a concrete probe id list.
+
+    The two are mutually exclusive: an empty probe_ids means "the whole
+    library" (CLI convention), so a suite request must not carry one.
+    """
+    if req.suite is not None:
+        if req.probe_ids:
+            raise HTTPException(
+                status_code=422,
+                detail="probe_ids and suite are mutually exclusive — supply exactly one",
+            )
+        return _resolve_suite(req.suite)
+    return _resolve_probe_ids(req.probe_ids)
+
+
 async def _run_probes(req: RunRequest, anthropic_api_key: str) -> AsyncIterator[dict]:
     # build_target() validates the dict and selects the right adapter — C1 fix.
     target = build_target(req.target)
     judge = Judge(api_key=anthropic_api_key, cost_meter=_COST_METER)
     runner = Runner(target=target, judge=judge, rubrics_dir=RUBRICS_DIR)
 
-    requested = set(_resolve_probe_ids(req.probe_ids))
+    requested = set(_resolve_request_probe_ids(req))
     for probe in load_all_probes(PROBES_DIR):
         if probe.id not in requested:
             continue
@@ -96,13 +127,16 @@ async def preflight(req: RunRequest):
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
+    # 422s on suite/probe_ids conflict or unknown suite id, before any cost math.
+    requested = _resolve_request_probe_ids(req)
+
     try:
         from orchestrator.redteam.cost_meter import CostExceededError
         kind = _resolve_target_kind(req.target)
         # Honor caller-supplied cap when present — C2 fix; I2 fix (kind from dict).
         # Resolve [] → full library so cost estimate reflects real run scope.
         _COST_METER.check_or_abort_pre_run(
-            probe_ids=_resolve_probe_ids(req.probe_ids),
+            probe_ids=requested,
             target_kind=kind,
             iterative_rounds=1,
             per_run_cap_override=req.per_run_cap_usd,
@@ -125,13 +159,16 @@ async def run(req: RunRequest):
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
+    # 422s on suite/probe_ids conflict or unknown suite id, before SSE streaming starts.
+    requested = _resolve_request_probe_ids(req)
+
     # Pre-run cost check (Plan 4 T7) — happens before SSE streaming starts.
     try:
         from orchestrator.redteam.cost_meter import CostExceededError
         kind = _resolve_target_kind(req.target)
         # Resolve [] → full library so cost estimate reflects real run scope.
         _COST_METER.check_or_abort_pre_run(
-            probe_ids=_resolve_probe_ids(req.probe_ids),
+            probe_ids=requested,
             target_kind=kind,
             iterative_rounds=1,
             per_run_cap_override=req.per_run_cap_usd,
@@ -157,3 +194,13 @@ async def list_probes() -> dict:
     from orchestrator.redteam.probe import load_all_probes
     probes = list(load_all_probes(PROBES_DIR))
     return {"probe_ids": [p.id for p in probes]}
+
+
+@router.get("/suites")
+async def list_suites() -> dict:
+    """Returns the suites derived from the loaded probes' standards mappings.
+
+    Suites with no probes are omitted, so every key here is runnable via
+    RunRequest.suite.
+    """
+    return {"suites": derive_suites(load_all_probes(PROBES_DIR))}
