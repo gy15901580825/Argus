@@ -27,7 +27,7 @@ This is the audit-ready output your AppSec, GRC, and compliance team can hand to
 
 ## Recommended starter sets
 
-Tell `argus-probe run` which set via `--probes <list>` or pass `all` for a full sweep:
+Tell `argus-probe run` which set via `--probes <list>`, or pass `all` on its own for a full sweep (`all` cannot be mixed with explicit ids — that combination is rejected rather than silently narrowed):
 
 | Use case | Typical runtime | Typical cost |
 |---|---|---|

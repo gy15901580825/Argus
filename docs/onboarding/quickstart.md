@@ -44,11 +44,14 @@ Output: `argus-target.json` + optionally `.github/workflows/argus-probe.yml`.
 
 ## 3. Get an Argus API token
 
-Email `<contact@example.com>` with your company name. Design partners get tokens within 24h. Set in your shell:
+Email `<contact@example.com>` with your company name. Design partners get tokens within 24h. Set in your shell, along with the Argus instance the CLI should talk to:
 
 ```bash
 export ARGUS_API_TOKEN="<your token>"
+export ARGUS_API_URL="https://<your-argus-host>"
 ```
+
+`ARGUS_API_URL` is required (or pass `--api-url` per command) — there is no default endpoint.
 
 ## 4. Validate the target is reachable (optional)
 

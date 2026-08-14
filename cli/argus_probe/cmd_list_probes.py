@@ -7,7 +7,7 @@ from argus_probe import api_client
 
 @click.command()
 @click.option("--token", envvar="ARGUS_API_TOKEN", required=True)
-@click.option("--api-url", default="https://www.example.com")
+@click.option("--api-url", envvar="ARGUS_API_URL", required=True, help="Argus API base URL (or env ARGUS_API_URL).")
 @click.option("--filter", "filter_substr", default="", help="Show only ids containing this substring.")
 def cmd_list_probes(token: str, api_url: str, filter_substr: str):
     """List probe ids available on the connected Argus instance."""
