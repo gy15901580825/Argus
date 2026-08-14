@@ -36,7 +36,7 @@ Tell `argus-probe run` which set via `--probes <list>` or pass `all` for a full 
 | **RAG-augmented agent** | ~60 s | ~$0.08 |
 | **Tool-using agent** | ~75 s | ~$0.10 |
 | **Browser / computer-use agent** | ~90 s | ~$0.15 |
-| **Full sweep** (`--probes all`) | ~3 min | up to $0.50 |
+| **Full sweep** (`--probes all`) | ~3 min | up to $0.50 (needs `--per-run-cap 6.00`: the pre-run gate budgets the worst case, all 548 prompts) |
 
 Cost figures are approximate; they scale with your agent's response length. The `--per-run-cap` flag enforces a hard ceiling — runs that would exceed your cap are rejected *before* any LLM cost is incurred.
 

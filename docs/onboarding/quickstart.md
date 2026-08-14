@@ -72,6 +72,8 @@ The CLI submits the run to the Argus API, polls for completion (typically ~10–
 
 Add `--per-run-cap 0.50` to enforce a hard cost ceiling (server-side; over-cap predicted runs return HTTP 402 before any LLM call).
 
+The pre-run estimate is a worst case: it counts every prompt of every selected probe (and, in deep mode, every persona × strategy thread at its full round budget). Runs usually cost a fraction of it, but the cap is compared against the ceiling — so a full-library sweep needs `--per-run-cap 6.00` even though it typically bills well under $1.
+
 ## 6. Read the report
 
 Open `report.html` in your browser:

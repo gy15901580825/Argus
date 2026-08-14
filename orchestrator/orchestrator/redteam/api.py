@@ -21,6 +21,7 @@ from orchestrator.redteam.judge import Judge
 from orchestrator.redteam.probe import load_all_probes
 from orchestrator.redteam.persona_strategy import (
     DEFAULT_DEEP_PAIRS,
+    DEFAULT_MAX_ROUNDS,
     build_deep_probes,
 )
 from orchestrator.redteam.persona_loader import default_personas, default_strategies
@@ -122,6 +123,26 @@ def _resolve_request_probe_ids(req: RunRequest) -> list[str]:
     return _resolve_probe_ids(req.probe_ids)
 
 
+def _estimate_exchanges(req: RunRequest, probe_ids: list[str]) -> int:
+    """Worst-case attack exchanges (one prompt sent + judged) the run will make.
+
+    A probe is not an exchange. `_run_static` sends every prompt the probe
+    declares, and deep mode expands each probe into `deep_pairs` threads of up to
+    DEFAULT_MAX_ROUNDS rounds. Estimating one exchange per probe understated a
+    deep run by ~60x, so the pre-run gate — the component whose only job is to
+    refuse a run before money is spent — waved it through.
+
+    Deep threads stop on the first `fail` verdict, so the deep number is a
+    ceiling. That is the right side to err on for a gate.
+    """
+    if req.mode == "deep":
+        return len(probe_ids) * max(1, req.deep_pairs) * DEFAULT_MAX_ROUNDS
+    by_id = {p.id: p for p in load_all_probes(PROBES_DIR)}
+    # An id the library doesn't know runs nothing, but counting it as one
+    # exchange keeps the estimate conservative rather than optimistic.
+    return sum(len(by_id[pid].prompts) if pid in by_id else 1 for pid in probe_ids)
+
+
 async def _run_probes(req: RunRequest, anthropic_api_key: str) -> AsyncIterator[dict]:
     # build_target() validates the dict and selects the right adapter — C1 fix.
     target = build_target(req.target)
@@ -180,7 +201,8 @@ async def preflight(req: RunRequest):
         _COST_METER.check_or_abort_pre_run(
             probe_ids=requested,
             target_kind=kind,
-            iterative_rounds=1,
+            total_exchanges=_estimate_exchanges(req, requested),
+            deep=req.mode == "deep",
             per_run_cap_override=req.per_run_cap_usd,
         )
     except CostExceededError as e:
@@ -212,7 +234,8 @@ async def run(req: RunRequest):
         _COST_METER.check_or_abort_pre_run(
             probe_ids=requested,
             target_kind=kind,
-            iterative_rounds=1,
+            total_exchanges=_estimate_exchanges(req, requested),
+            deep=req.mode == "deep",
             per_run_cap_override=req.per_run_cap_usd,
         )
     except CostExceededError as e:

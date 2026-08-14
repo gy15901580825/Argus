@@ -188,15 +188,29 @@ class CostMeter:
         target_kind: str,
         iterative_rounds: int = _DEFAULT_ITERATIVE_ROUNDS,
         per_run_cap_override: float | None = None,
+        total_exchanges: int | None = None,
+        deep: bool = False,
     ) -> float:
         """Estimate total cost for the proposed run; raise if > per_run_cap or > daily remaining.
 
-        per_run_cap_override: when provided, use this cap instead of self.per_run_cap_usd.
-        Callers supply this from RunRequest.per_run_cap_usd to honor client-side caps.
+        per_run_cap_override: when provided, use this cap instead of the applicable
+        per-run cap. Callers supply this from RunRequest.per_run_cap_usd to honor
+        client-side caps.
+
+        total_exchanges: total attack exchanges (one prompt sent + judged) across
+        the whole run. One probe is not one exchange — a static probe sends every
+        prompt it declares, and a deep/iterative thread runs up to max_rounds of
+        them — so the caller, which knows the run shape, supplies the real count.
+        Falls back to `len(probe_ids) * iterative_rounds` when omitted.
+
+        deep: budget this run against the deep caps (deep_per_run_cap_usd and the
+        deep slice of the day) instead of the static ones, and count the attacker
+        LLM that drives every deep round.
         """
         self._maybe_reset_day()
-        # Per-call: target send + judge call ≈ 2 LLM calls; iterative probes add planner ≈ 1 more
-        calls_per_round = 3 if target_kind in {"openai_compat", "anthropic_native"} else 2
+        # Per-exchange: target send + judge call ≈ 2 LLM calls; an attacker/planner
+        # LLM adds ≈ 1 more — always in deep mode, and assumed for the chat kinds.
+        calls_per_round = 3 if (deep or target_kind in {"openai_compat", "anthropic_native"}) else 2
         # Char-based heuristic with safety margin
         est_input_tokens = (_AVG_PROMPT_CHARS / _CHARS_PER_TOKEN) * _SAFETY_MARGIN
         est_output_tokens = (_AVG_RESPONSE_CHARS / _CHARS_PER_TOKEN) * _SAFETY_MARGIN
@@ -205,17 +219,26 @@ class CostMeter:
         cost_per_call = (est_input_tokens / 1_000_000) * prices["input"] + (
             est_output_tokens / 1_000_000
         ) * prices["output"]
-        total_calls = len(probe_ids) * iterative_rounds * calls_per_round
-        estimated = cost_per_call * total_calls
+        exchanges = total_exchanges if total_exchanges is not None else len(probe_ids) * iterative_rounds
+        estimated = cost_per_call * exchanges * calls_per_round
 
-        cap = per_run_cap_override if per_run_cap_override is not None else self.per_run_cap_usd
+        default_cap = self.deep_per_run_cap_usd if deep else self.per_run_cap_usd
+        cap = per_run_cap_override if per_run_cap_override is not None else default_cap
         if estimated > cap:
             raise CostExceededError(
                 f"estimated cost ${estimated:.4f} > per_run_cap ${cap:.2f}"
             )
-        if self._spent_today + estimated > self.daily_cap_usd:
+        remaining = self.daily_cap_usd - self._spent_today
+        label = "daily"
+        if deep:
+            # A deep run may only draw on its slice of the day; the remainder is
+            # reserved so deep scans cannot starve the static CI path.
+            if self.deep_budget_remaining() < remaining:
+                remaining = self.deep_budget_remaining()
+                label = "deep daily"
+        if estimated > remaining:
             raise CostExceededError(
-                f"estimated cost ${estimated:.4f} would exceed remaining daily budget "
-                f"(${self.daily_cap_usd - self._spent_today:.4f})"
+                f"estimated cost ${estimated:.4f} would exceed remaining {label} budget "
+                f"(${remaining:.4f})"
             )
         return estimated
