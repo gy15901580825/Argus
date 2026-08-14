@@ -28,7 +28,8 @@ assignees: ''
 - `attack_class`:
 - `severity` (`info` / `low` / `medium` / `high` / `critical`):
 - `target_class` (any of `http-chat`, `browser-using`, `tool-using`, `rag`,
-  `multi-agent`, `http-upload`):
+  `multi-agent`, `http-upload`; the adapter-side names `llm_chat`,
+  `agent_with_tools`, `agent_with_rag`, `browser_using_agent` are also accepted):
 
 ## Standards mapping
 
