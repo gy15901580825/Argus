@@ -111,3 +111,37 @@ async def test_send_prompt_propagates_http_error():
         mc.return_value.__aenter__.return_value = mock_client
         with pytest.raises(httpx.HTTPStatusError):
             await target.send_prompt("anything")
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        {"error": {"message": "insufficient_quota", "type": "invalid_request_error"}},
+        {"choices": []},
+        {"choices": [{}]},
+        {"choices": [{"message": {}}]},
+    ],
+    ids=["error-body-200", "empty-choices", "choice-without-message", "message-without-content"],
+)
+@pytest.mark.asyncio
+async def test_send_prompt_survives_non_conforming_200(malformed):
+    """A target that answers 200 with a non-OpenAI shape must not crash the run.
+
+    The adapter talks to arbitrary user-supplied endpoints, and a KeyError /
+    IndexError here escapes the runner's 4xx handling and kills the whole run
+    instead of yielding one empty response.
+    """
+    spec = OpenAICompatSpec(
+        endpoint_url="https://api.example.com/v1/chat/completions",
+        model="gpt-4",
+        api_key="sk-test",
+    )
+    target = OpenAICompatTarget(spec)
+    mock_client = AsyncMock()
+    mock_client.post.return_value.json = lambda: malformed
+    mock_client.post.return_value.raise_for_status = lambda: None
+    with patch("orchestrator.redteam.targets.openai_compat.httpx.AsyncClient") as mc:
+        mc.return_value.__aenter__.return_value = mock_client
+        text, latency_ms = await target.send_prompt("Say hi")
+    assert text == ""
+    assert latency_ms > 0
