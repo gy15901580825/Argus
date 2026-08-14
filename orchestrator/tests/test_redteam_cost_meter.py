@@ -88,3 +88,39 @@ def test_daily_cap_already_reached_blocks_record():
     with m.run_scope("r2"):
         with pytest.raises(CostExceededError, match="daily cap"):
             m.record("claude-haiku-4-5-20251001", 100, 100)
+
+
+def test_total_exchanges_overrides_probe_count():
+    """One probe is not one LLM exchange: a multi-prompt probe sends several,
+    and a deep thread sends up to max_rounds. The caller knows the real count."""
+    m = CostMeter(daily_cap_usd=13.50, per_run_cap_usd=0.50)
+    # 3 probes at one exchange each is comfortably under the cap...
+    m.check_or_abort_pre_run(probe_ids=["p1", "p2", "p3"], target_kind="openai_compat")
+    # ...the same 3 probes at 100 exchanges each is not.
+    with pytest.raises(CostExceededError, match="per_run_cap"):
+        m.check_or_abort_pre_run(
+            probe_ids=["p1", "p2", "p3"], target_kind="openai_compat", total_exchanges=300
+        )
+
+
+def test_deep_preflight_is_capped_by_the_deep_per_run_cap():
+    """Deep runs are budgeted against deep_per_run_cap_usd ($5.00), not the
+    $0.50 static cap — otherwise a single-probe deep run could never start."""
+    m = CostMeter(daily_cap_usd=13.50, per_run_cap_usd=0.50, deep_per_run_cap_usd=5.00)
+    with pytest.raises(CostExceededError, match="per_run_cap"):
+        m.check_or_abort_pre_run(probe_ids=["p1"], target_kind="openai_compat", total_exchanges=60)
+    estimated = m.check_or_abort_pre_run(
+        probe_ids=["p1"], target_kind="openai_compat", total_exchanges=60, deep=True
+    )
+    assert 0.50 < estimated < 5.00
+
+
+def test_deep_preflight_respects_the_deep_daily_slice():
+    """The deep slice ($8.10 of $13.50) exists so deep scans cannot starve the
+    static CI path; the estimate must be checked against it, not the whole day."""
+    m = CostMeter(daily_cap_usd=13.50, deep_per_run_cap_usd=50.00, deep_budget_fraction=0.60)
+    # ~$9 of estimated spend fits the day ($13.50) but not the deep slice ($8.10).
+    with pytest.raises(CostExceededError, match="deep"):
+        m.check_or_abort_pre_run(
+            probe_ids=["p1"], target_kind="openai_compat", total_exchanges=910, deep=True
+        )

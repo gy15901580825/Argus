@@ -150,7 +150,7 @@ def test_suite_resolves_to_that_suites_probe_ids(monkeypatch):
 
     captured = {}
 
-    def fake_pre_run(self, probe_ids, target_kind, iterative_rounds=1, per_run_cap_override=None):
+    def fake_pre_run(self, probe_ids, target_kind, **kwargs):
         captured["probe_ids"] = probe_ids
         return 0.0
 

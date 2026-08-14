@@ -79,7 +79,7 @@ def test_redteam_run_returns_402_when_cost_exceeded(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
 
     # Patch CostMeter.check_or_abort_pre_run to always reject
-    def reject_pre_run(self, probe_ids, target_kind, iterative_rounds=1, per_run_cap_override=None):
+    def reject_pre_run(self, probe_ids, target_kind, **kwargs):
         raise CostExceededError("estimated $1.50 > per_run_cap $0.50")
 
     monkeypatch.setattr(CostMeter, "check_or_abort_pre_run", reject_pre_run)
@@ -118,7 +118,7 @@ def test_preflight_returns_402_when_cost_exceeded(monkeypatch):
     """POST /redteam/run/preflight returns 402 without starting any probe run."""
     from orchestrator.redteam.cost_meter import CostExceededError, CostMeter
 
-    def reject_pre_run(self, probe_ids, target_kind, iterative_rounds=1, per_run_cap_override=None):
+    def reject_pre_run(self, probe_ids, target_kind, **kwargs):
         raise CostExceededError("estimated $2.00 > per_run_cap $0.50")
 
     monkeypatch.setattr(CostMeter, "check_or_abort_pre_run", reject_pre_run)
@@ -184,7 +184,7 @@ def test_preflight_with_empty_probe_ids_estimates_full_library_cost(monkeypatch)
 
     captured = {}
 
-    def fake_pre_run(self, probe_ids, target_kind, iterative_rounds=1, per_run_cap_override=None):
+    def fake_pre_run(self, probe_ids, target_kind, **kwargs):
         captured["probe_ids"] = probe_ids
         return 0.0
 
