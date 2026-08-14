@@ -63,6 +63,14 @@ class OpenAICompatTarget(Target):
             resp.raise_for_status()
             data = resp.json()
         latency_ms = (time.monotonic() - start) * 1000.0
-        message = data["choices"][0]["message"]
-        text = message.get("content") or message.get("refusal") or ""
+        # The endpoint is user-supplied, so the body may not be OpenAI-shaped at
+        # all ({"error": ...} with HTTP 200, an empty choices array). A KeyError
+        # here would escape the runner's 4xx handling and kill the whole run
+        # rather than yielding one empty response.
+        choices = data.get("choices") if isinstance(data, dict) else None
+        first = choices[0] if isinstance(choices, list) and choices else {}
+        message = first.get("message") if isinstance(first, dict) else None
+        text = ""
+        if isinstance(message, dict):
+            text = message.get("content") or message.get("refusal") or ""
         return text, latency_ms
