@@ -30,6 +30,11 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
         sys.exit(1)
 
     tokens = [s.strip() for s in probe_ids.split(",") if s.strip()]
+    if not tokens:
+        # An empty list is the wire convention for "the whole library", so an
+        # empty --probes must not fall through to it: `--probes ""` would
+        # quietly launch a full sweep the user never asked for.
+        raise click.UsageError("--probes needs at least one probe id, or 'all'")
     if "all" in tokens:
         # Silently dropping `all` from a mixed list would run a fraction of the
         # intended probes while the run still looks successful — the worst

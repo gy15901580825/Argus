@@ -151,6 +151,8 @@ jobs:
       api-token: ${{ secrets.ARGUS_API_TOKEN }}
 ```
 
+The action must also see `ARGUS_API_URL` (repository variable or job `env:`) — `argus-probe` has no default endpoint, and a job that omits it fails with `Missing option '--api-url'`.
+
 `threshold: warn` (default) reports findings without failing the build. Switch to `block-on-critical` once you trust the signal — the action then exits non-zero when a critical-severity finding lands, breaking the PR check until your team fixes or accepts.
 
 The SARIF output is automatically uploaded to GitHub's code-scanning, so findings appear in your repo's **Security** tab alongside CodeQL / Dependabot / Snyk.

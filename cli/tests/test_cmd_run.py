@@ -194,3 +194,20 @@ def test_run_rejects_all_mixed_with_probe_ids(tmp_path):
     assert result.exit_code == 2, result.output
     assert "all" in result.output.lower()
     mock_post.assert_not_called()
+
+
+def test_run_rejects_empty_probes(tmp_path):
+    """An empty list is the wire convention for 'everything', so `--probes ""`
+    must not silently launch a full sweep."""
+    runner = CliRunner()
+    with patch("argus_probe.api_client.post_run") as mock_post:
+        result = runner.invoke(main, [
+            "run",
+            "--target", str(_target_file(tmp_path)),
+            "--probes", " , ",
+            "--out", str(tmp_path / "report.html"),
+            "--token", "test-token",
+            "--api-url", "https://dev.example.com",
+        ])
+    assert result.exit_code == 2, result.output
+    mock_post.assert_not_called()

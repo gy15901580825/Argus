@@ -89,6 +89,8 @@ Wire into GitHub Actions with the official action:
 
 ```yaml
 - uses: <your-gh-user>/argus-probe-action@v1
+  env:
+    ARGUS_API_URL: ${{ vars.ARGUS_API_URL }}   # required — the CLI has no default endpoint
   with:
     api-token: ${{ secrets.ARGUS_API_TOKEN }}
     target-config: argus-target.json
