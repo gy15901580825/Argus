@@ -98,8 +98,11 @@ def test_every_rubric_has_exactly_one_fixture():
 def test_fixture_is_well_formed(path: Path):
     fixture = _load(path)
 
-    assert set(fixture) == {"rubric", "pass_case", "fail_case"}, (
+    assert set(fixture) <= {"rubric", "pass_case", "fail_case", "extra_cases"}, (
         f"{path.name}: unexpected top-level keys {sorted(fixture)}"
+    )
+    assert {"rubric", "pass_case", "fail_case"} <= set(fixture), (
+        f"{path.name}: missing required keys {sorted({'rubric','pass_case','fail_case'} - set(fixture))}"
     )
 
     rubric_name = fixture["rubric"]
@@ -107,6 +110,21 @@ def test_fixture_is_well_formed(path: Path):
     assert path.name == rubric_name.replace(".md", ".fixture.yaml"), (
         f"{path.name}: filename does not match rubric {rubric_name}"
     )
+
+    # extra_cases hold discriminators beyond the required pair — e.g. the
+    # "reports the injection" case that the 2026-08-13 browser_visual fix turns on.
+    # They carry an extra `name` for the failure message.
+    for i, extra in enumerate(fixture.get("extra_cases") or []):
+        assert set(extra) == REQUIRED_CASE_KEYS | {"name"}, (
+            f"{path.name}:extra_cases[{i}]: keys {sorted(extra)} unexpected"
+        )
+        assert extra["expect_verdict"] in {"pass", "fail", "warn", "error"}, (
+            f"{path.name}:extra_cases[{i}]: bad expect_verdict {extra['expect_verdict']!r}"
+        )
+        for key in REQUIRED_CASE_KEYS:
+            assert isinstance(extra[key], str) and extra[key].strip(), (
+                f"{path.name}:extra_cases[{i}]:{key} must be a non-empty string"
+            )
 
     for case_name, expected in (("pass_case", "pass"), ("fail_case", "fail")):
         case = fixture[case_name]

@@ -49,23 +49,44 @@ pytestmark = [
 
 _FIXTURE_PATHS = sorted(FIXTURES_DIR.glob("*.fixture.yaml"))
 
-# One param per (rubric, case) so a failure names both.
-_CASES = [
-    (path, case_name)
-    for path in _FIXTURE_PATHS
-    for case_name in ("pass_case", "fail_case")
-]
-_CASE_IDS = [
-    f"{path.name.removesuffix('.fixture.yaml')}-{case_name.removesuffix('_case')}"
-    for path, case_name in _CASES
-]
+def _enumerate_cases():
+    """One param per (rubric, case): the required pair plus any extra_cases.
+
+    extra_cases carry the discriminators that a rubric change actually turns on —
+    e.g. browser_visual's "reports the injection and still answers", which the
+    required pass/fail pair does not exercise.
+    """
+    out = []
+    for path in _FIXTURE_PATHS:
+        fixture = yaml.safe_load(path.read_text(encoding="utf-8"))
+        stem = path.name.removesuffix(".fixture.yaml")
+        out.append((path, "pass_case", f"{stem}-pass"))
+        out.append((path, "fail_case", f"{stem}-fail"))
+        for extra in fixture.get("extra_cases") or []:
+            out.append((path, f"extra:{extra['name']}", f"{stem}-{extra['name']}"))
+    return out
+
+
+_ENUMERATED = _enumerate_cases()
+_CASES = [(p, c) for p, c, _ in _ENUMERATED]
+_CASE_IDS = [i for _, _, i in _ENUMERATED]
+
+
+def _select_case(fixture: dict, case_name: str) -> dict:
+    if case_name.startswith("extra:"):
+        wanted = case_name.removeprefix("extra:")
+        for extra in fixture.get("extra_cases") or []:
+            if extra["name"] == wanted:
+                return extra
+        raise KeyError(f"no extra_case named {wanted!r}")
+    return fixture[case_name]
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("path", "case_name"), _CASES, ids=_CASE_IDS)
 async def test_rubric_grades_fixture_as_expected(path: Path, case_name: str):
     fixture = yaml.safe_load(path.read_text(encoding="utf-8"))
-    case = fixture[case_name]
+    case = _select_case(fixture, case_name)
     rubric_text = (RUBRICS_DIR / fixture["rubric"]).read_text(encoding="utf-8")
 
     judge = Judge(
