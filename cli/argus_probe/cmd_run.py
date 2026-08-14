@@ -18,7 +18,7 @@ from argus_probe.target_loader import load_target_spec, TargetLoadError
 @click.option("--format", "report_format", type=click.Choice(["html", "sarif", "junit"]), default="html")
 @click.option("--out", "out_file", type=click.Path(), required=True, help="Output report file path.")
 @click.option("--token", envvar="ARGUS_API_TOKEN", required=True, help="Your Argus API token (or env ARGUS_API_TOKEN).")
-@click.option("--api-url", default="https://www.example.com", help="Argus API base URL.")
+@click.option("--api-url", envvar="ARGUS_API_URL", required=True, help="Argus API base URL (or env ARGUS_API_URL).")
 @click.option("--max-wait", type=float, default=1800.0, help="Max seconds to wait for run completion.")
 @click.option("--per-run-cap", "per_run_cap", type=float, default=None, help="Maximum USD cost for this run (server enforces). Default: server-side default ($0.50).")
 def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, token: str, api_url: str, max_wait: float, per_run_cap: float | None):
@@ -29,13 +29,25 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
         click.echo(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
+    tokens = [s.strip() for s in probe_ids.split(",") if s.strip()]
+    if not tokens:
+        # An empty list is the wire convention for "the whole library", so an
+        # empty --probes must not fall through to it: `--probes ""` would
+        # quietly launch a full sweep the user never asked for.
+        raise click.UsageError("--probes needs at least one probe id, or 'all'")
+    if "all" in tokens:
+        # Silently dropping `all` from a mixed list would run a fraction of the
+        # intended probes while the run still looks successful — the worst
+        # outcome for a security gate. Refuse instead.
+        if len(tokens) > 1:
+            raise click.UsageError("'all' cannot be combined with specific probe ids")
+        # Empty probe_ids means "all" per orchestrator convention.
+        tokens = []
+
     body = {
         "target": spec,
-        "probe_ids": [s.strip() for s in probe_ids.split(",") if s.strip() != "all"] or [],
+        "probe_ids": tokens,
     }
-    if probe_ids.strip() == "all":
-        # Empty probe_ids means "all" per orchestrator convention.
-        body["probe_ids"] = []
     if per_run_cap is not None:
         body["per_run_cap_usd"] = per_run_cap
 

@@ -41,8 +41,9 @@ pip install git+https://github.com/<your-gh-user>/cli.git@v0.1.1
 # 1. Generate a target spec interactively
 argus-probe init --kind openai_compat
 
-# 2. Set your Argus API token
+# 2. Set your Argus API token and instance URL
 export ARGUS_API_TOKEN="<your token>"
+export ARGUS_API_URL="https://<your-argus-host>"
 
 # 3. Sanity-check the target is reachable
 argus-probe validate-target --target argus-target.json
@@ -88,6 +89,8 @@ Wire into GitHub Actions with the official action:
 
 ```yaml
 - uses: <your-gh-user>/argus-probe-action@v1
+  env:
+    ARGUS_API_URL: ${{ vars.ARGUS_API_URL }}   # required — the CLI has no default endpoint
   with:
     api-token: ${{ secrets.ARGUS_API_TOKEN }}
     target-config: argus-target.json

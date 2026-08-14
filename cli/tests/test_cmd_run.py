@@ -76,6 +76,7 @@ def test_run_passes_per_run_cap_in_body(tmp_path):
             "--probes", "p1",
             "--out", str(out_file),
             "--token", "test-token",
+            "--api-url", "https://dev.example.com",
             "--per-run-cap", "0.25",
         ])
         assert result.exit_code == 0, result.output
@@ -109,7 +110,104 @@ def test_run_returns_402_on_cost_rejection(tmp_path):
             "--probes", "p1",
             "--out", str(tmp_path / "report.html"),
             "--token", "test-token",
+            "--api-url", "https://dev.example.com",
             "--per-run-cap", "0.10",
         ])
         assert result.exit_code == 402
         assert "cost" in result.output.lower() or "cost cap" in (result.output + "").lower()
+
+
+def _target_file(tmp_path):
+    spec = {
+        "kind": "openai_compat",
+        "endpoint_url": "https://api.example.com/v1/chat/completions",
+        "model": "gpt-4",
+        "api_key": "sk-test",
+    }
+    path = tmp_path / "target.json"
+    path.write_text(json.dumps(spec))
+    return path
+
+
+def test_run_requires_api_url(tmp_path):
+    """No --api-url and no ARGUS_API_URL: fail loudly instead of POSTing to a placeholder."""
+    runner = CliRunner()
+    result = runner.invoke(main, [
+        "run",
+        "--target", str(_target_file(tmp_path)),
+        "--probes", "p1",
+        "--out", str(tmp_path / "report.html"),
+        "--token", "test-token",
+    ], env={"ARGUS_API_URL": ""})
+    assert result.exit_code == 2, result.output
+    assert "api-url" in result.output.lower()
+
+
+def test_run_reads_api_url_from_env(tmp_path):
+    """ARGUS_API_URL satisfies --api-url, mirroring ARGUS_API_TOKEN/--token."""
+    runner = CliRunner()
+    out_file = tmp_path / "report.html"
+    with patch("argus_probe.api_client.post_run", return_value={"run_id": "env-run"}) as mock_post, \
+         patch("argus_probe.api_client.poll_until_complete", return_value={"status": "completed", "findings": []}), \
+         patch("argus_probe.api_client.get_report", return_value="<html/>"):
+        result = runner.invoke(main, [
+            "run",
+            "--target", str(_target_file(tmp_path)),
+            "--probes", "p1",
+            "--out", str(out_file),
+            "--token", "test-token",
+        ], env={"ARGUS_API_URL": "https://argus.internal"})
+    assert result.exit_code == 0, result.output
+    assert mock_post.call_args.args[0] == "https://argus.internal"
+
+
+def test_run_all_alone_sends_empty_probe_ids(tmp_path):
+    """--probes all is the 'whole library' convention: an empty probe_ids list."""
+    runner = CliRunner()
+    with patch("argus_probe.api_client.post_run", return_value={"run_id": "all-run"}) as mock_post, \
+         patch("argus_probe.api_client.poll_until_complete", return_value={"status": "completed", "findings": []}), \
+         patch("argus_probe.api_client.get_report", return_value="<html/>"):
+        result = runner.invoke(main, [
+            "run",
+            "--target", str(_target_file(tmp_path)),
+            "--probes", " all ",
+            "--out", str(tmp_path / "report.html"),
+            "--token", "test-token",
+            "--api-url", "https://dev.example.com",
+        ])
+    assert result.exit_code == 0, result.output
+    assert mock_post.call_args.kwargs["body"]["probe_ids"] == []
+
+
+def test_run_rejects_all_mixed_with_probe_ids(tmp_path):
+    """`all` mixed with explicit ids used to be silently dropped, shrinking the scan."""
+    runner = CliRunner()
+    with patch("argus_probe.api_client.post_run") as mock_post:
+        result = runner.invoke(main, [
+            "run",
+            "--target", str(_target_file(tmp_path)),
+            "--probes", "owasp_01,all",
+            "--out", str(tmp_path / "report.html"),
+            "--token", "test-token",
+            "--api-url", "https://dev.example.com",
+        ])
+    assert result.exit_code == 2, result.output
+    assert "all" in result.output.lower()
+    mock_post.assert_not_called()
+
+
+def test_run_rejects_empty_probes(tmp_path):
+    """An empty list is the wire convention for 'everything', so `--probes ""`
+    must not silently launch a full sweep."""
+    runner = CliRunner()
+    with patch("argus_probe.api_client.post_run") as mock_post:
+        result = runner.invoke(main, [
+            "run",
+            "--target", str(_target_file(tmp_path)),
+            "--probes", " , ",
+            "--out", str(tmp_path / "report.html"),
+            "--token", "test-token",
+            "--api-url", "https://dev.example.com",
+        ])
+    assert result.exit_code == 2, result.output
+    mock_post.assert_not_called()
