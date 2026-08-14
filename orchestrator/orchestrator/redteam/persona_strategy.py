@@ -19,8 +19,7 @@ import random
 from dataclasses import dataclass, field
 from typing import Optional, Sequence
 
-import anthropic
-
+from orchestrator.redteam import llm
 from orchestrator.redteam.cost_meter import CostMeter
 from orchestrator.redteam.iterative import IterativeProbe, IterationContext
 from orchestrator.redteam.persona_loader import Persona, Strategy
@@ -47,20 +46,21 @@ def set_cost_meter(meter: CostMeter) -> None:
 
 async def _call_attacker_llm(system_prompt: str, user_prompt: str) -> str:
     """Single-call wrapper around the Anthropic SDK. Module-level for patchability."""
-    client = anthropic.AsyncAnthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-    resp = await client.messages.create(
-        model=_ATTACKER_MODEL,
-        max_tokens=600,
+    out = await llm.complete(
+        llm.resolve_config(),
+        role="fast",
         system=system_prompt,
-        messages=[{"role": "user", "content": user_prompt}],
+        user=user_prompt,
+        max_tokens=600,
     )
-    if _cost_meter is not None and hasattr(resp, "usage") and resp.usage is not None:
+    if _cost_meter is not None:
+        # Bill the model that answered — a provider fallback may have changed it.
         _cost_meter.record(
-            model=_ATTACKER_MODEL,
-            input_tokens=resp.usage.input_tokens,
-            output_tokens=resp.usage.output_tokens,
+            model=out.model,
+            input_tokens=out.input_tokens,
+            output_tokens=out.output_tokens,
         )
-    return resp.content[0].text.strip()
+    return out.text
 
 
 @dataclass

@@ -16,11 +16,41 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# USD per 1M tokens. Anthropic list prices; Azure entries are the operator's
+# negotiated rates and MUST be confirmed against the Azure agreement — the values
+# here are placeholders chosen so the cap errs high, not billing facts. Override
+# per-deployment with REDTEAM_PRICE_<MODEL>_INPUT / _OUTPUT if they differ.
 _PRICES_PER_M_TOKENS = {
     "claude-haiku-4-5-20251001": {"input": 1.0, "output": 5.0},
     "claude-sonnet-4-6": {"input": 3.0, "output": 15.0},
     "claude-opus-4-7": {"input": 15.0, "output": 75.0},
+    # Azure OpenAI deployments (see redteam/llm.py).
+    "gpt-5.4-mini": {"input": 1.0, "output": 5.0},
 }
+
+
+def _price_for(model: str) -> dict:
+    """Price lookup for `model`, pessimistic on a miss.
+
+    The previous behaviour fell back to the CHEAPEST entry, so an unregistered
+    model was silently under-counted and the daily cap permitted real spend past
+    its limit. For a safety limit the fallback must over-estimate: an unknown
+    model is billed at the most expensive known rate, and says so.
+    """
+    known = _PRICES_PER_M_TOKENS.get(model)
+    if known is not None:
+        return known
+    worst = {
+        "input": max(p["input"] for p in _PRICES_PER_M_TOKENS.values()),
+        "output": max(p["output"] for p in _PRICES_PER_M_TOKENS.values()),
+    }
+    logger.warning(
+        "no price registered for model %r — billing at the most expensive known rate "
+        "(in=$%.2f/out=$%.2f per 1M tokens) so the cap cannot be undershot. "
+        "Add it to _PRICES_PER_M_TOKENS.",
+        model, worst["input"], worst["output"],
+    )
+    return worst
 
 # Predictive estimator constants — char-based with margin (no real tokenizer dep).
 _AVG_PROMPT_CHARS = 1000        # typical probe prompt
@@ -144,7 +174,7 @@ class CostMeter:
             raise CostExceededError(
                 f"daily cap ${self.daily_cap_usd:.2f} already reached on {self._day}"
             )
-        prices = _PRICES_PER_M_TOKENS.get(model, _PRICES_PER_M_TOKENS["claude-haiku-4-5-20251001"])
+        prices = _price_for(model)
         cost = (input_tokens / 1_000_000) * prices["input"] + (output_tokens / 1_000_000) * prices["output"]
 
         # Per-run check uses pre-call accounting (lookahead): the next call to

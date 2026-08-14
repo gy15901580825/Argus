@@ -112,3 +112,46 @@ def test_day_rollover_resets_the_deep_slice(monkeypatch):
     monkeypatch.setattr(cm, "date", _Tomorrow)
     assert m.spent_today_deep() == 0.0
     assert m.deep_budget_remaining() == pytest.approx(8.10)
+
+
+# --------------------------------------------------------------------------
+# Pricing table — provider-agnostic since the Azure work
+# --------------------------------------------------------------------------
+
+def test_azure_models_are_priced():
+    """Without an entry, Azure traffic was billed at Haiku rates and the cap lied."""
+    from orchestrator.redteam.cost_meter import _PRICES_PER_M_TOKENS
+
+    assert "gpt-5.4-mini" in _PRICES_PER_M_TOKENS
+    for field in ("input", "output"):
+        assert _PRICES_PER_M_TOKENS["gpt-5.4-mini"][field] > 0
+
+
+def test_unknown_model_is_priced_pessimistically_not_cheaply():
+    """A cost cap must over-estimate an unpriced model, never under-estimate it.
+
+    The old fallback used the CHEAPEST entry (Haiku), so an unrecognised model
+    silently under-counted and the daily cap let real spend run past it.
+    """
+    from orchestrator.redteam.cost_meter import _PRICES_PER_M_TOKENS, _price_for
+
+    prices = _price_for("some-model-nobody-registered")
+    most_expensive_out = max(p["output"] for p in _PRICES_PER_M_TOKENS.values())
+    assert prices["output"] == most_expensive_out
+    cheapest_out = min(p["output"] for p in _PRICES_PER_M_TOKENS.values())
+    assert prices["output"] > cheapest_out, "unknown model must not be billed at the cheapest rate"
+
+
+def test_unknown_model_pricing_is_logged(caplog):
+    from orchestrator.redteam.cost_meter import _price_for
+
+    with caplog.at_level("WARNING"):
+        _price_for("mystery-model-9")
+    assert any("mystery-model-9" in r.message for r in caplog.records)
+
+
+def test_known_models_are_unaffected_by_the_pessimistic_fallback():
+    from orchestrator.redteam.cost_meter import _PRICES_PER_M_TOKENS, _price_for
+
+    for name, expected in _PRICES_PER_M_TOKENS.items():
+        assert _price_for(name) == expected
