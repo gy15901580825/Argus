@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from orchestrator.redteam import llm
 from orchestrator.redteam.cost_meter import CostMeter
 from orchestrator.redteam.judge import Judge
 from orchestrator.redteam.probe import load_all_probes
@@ -190,9 +191,22 @@ async def preflight(req: RunRequest):
 
 @router.post("/run")
 async def run(req: RunRequest):
+    # Credential requirements follow the configured provider — an Azure-primary
+    # deployment must not be blocked for lacking an Anthropic key. Fallback being
+    # enabled makes the *other* provider's credential desirable but not mandatory;
+    # llm.complete() surfaces a missing one as AllProvidersFailed at call time.
     anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not anthropic_api_key:
-        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not set in orchestrator env")
+    try:
+        cfg = llm.resolve_config()
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    if cfg.provider == llm.PROVIDER_ANTHROPIC and not anthropic_api_key:
+        raise HTTPException(
+            status_code=500,
+            detail="ANTHROPIC_API_KEY not set in orchestrator env "
+                   "(REDTEAM_MODEL_PROVIDER=anthropic). Set the key, or set "
+                   "REDTEAM_MODEL_PROVIDER=azure to run the judge on Azure OpenAI.",
+        )
 
     if not isinstance(req.target, dict):
         raise HTTPException(status_code=422, detail="target must be a JSON object")

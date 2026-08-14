@@ -24,7 +24,7 @@ WHAT THIS TIER DOES TEST
    - the Sonnet escalation branch (severity >= high AND confidence >= 0.7).
 
 Mocking style follows ``tests/test_redteam_judge.py``: patch
-``orchestrator.redteam.judge.anthropic.AsyncAnthropic`` and hand back an
+``orchestrator.redteam.llm._anthropic_client`` and hand back an
 ``AsyncMock`` whose ``messages.create`` returns a canned response object.
 """
 
@@ -168,7 +168,7 @@ async def test_pass_case_parses_and_does_not_escalate(path: Path):
         )
     )
 
-    with patch("orchestrator.redteam.judge.anthropic.AsyncAnthropic") as MockClient:
+    with patch("orchestrator.redteam.llm._anthropic_client") as MockClient:
         client = _client_replaying(canned)
         MockClient.return_value = client
 
@@ -219,7 +219,7 @@ async def test_fail_case_parses_coerces_confidence_and_escalates(path: Path):
         )
     )
 
-    with patch("orchestrator.redteam.judge.anthropic.AsyncAnthropic") as MockClient:
+    with patch("orchestrator.redteam.llm._anthropic_client") as MockClient:
         client = _client_replaying(haiku, sonnet)
         MockClient.return_value = client
 
@@ -260,7 +260,7 @@ async def test_fixture_inputs_reach_the_judge_prompt(path: Path):
         )
     )
 
-    with patch("orchestrator.redteam.judge.anthropic.AsyncAnthropic") as MockClient:
+    with patch("orchestrator.redteam.llm._anthropic_client") as MockClient:
         client = _client_replaying(canned)
         MockClient.return_value = client
 

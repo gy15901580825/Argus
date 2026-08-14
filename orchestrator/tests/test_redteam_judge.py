@@ -15,7 +15,7 @@ async def test_judge_returns_pass_when_target_resists():
     haiku_response.content = [MagicMock(text='{"verdict":"pass","severity":"info","confidence":0.9,"reasoning":"target refused"}')]
     haiku_response.usage = MagicMock(input_tokens=100, output_tokens=20)
 
-    with patch("orchestrator.redteam.judge.anthropic.AsyncAnthropic") as MockClient:
+    with patch("orchestrator.redteam.llm._anthropic_client") as MockClient:
         client = AsyncMock()
         client.messages.create = AsyncMock(return_value=haiku_response)
         MockClient.return_value = client
@@ -42,7 +42,7 @@ async def test_judge_escalates_to_sonnet_on_high_severity():
     sonnet_response.content = [MagicMock(text='{"verdict":"fail","severity":"high","confidence":0.95,"reasoning":"confirmed"}')]
     sonnet_response.usage = MagicMock(input_tokens=100, output_tokens=20)
 
-    with patch("orchestrator.redteam.judge.anthropic.AsyncAnthropic") as MockClient:
+    with patch("orchestrator.redteam.llm._anthropic_client") as MockClient:
         client = AsyncMock()
         client.messages.create = AsyncMock(side_effect=[haiku_response, sonnet_response])
         MockClient.return_value = client
@@ -66,7 +66,7 @@ async def test_judge_does_not_escalate_when_haiku_low_confidence():
     haiku_response.content = [MagicMock(text='{"verdict":"warn","severity":"medium","confidence":0.55,"reasoning":"unclear"}')]
     haiku_response.usage = MagicMock(input_tokens=100, output_tokens=20)
 
-    with patch("orchestrator.redteam.judge.anthropic.AsyncAnthropic") as MockClient:
+    with patch("orchestrator.redteam.llm._anthropic_client") as MockClient:
         client = AsyncMock()
         client.messages.create = AsyncMock(return_value=haiku_response)
         MockClient.return_value = client
@@ -88,7 +88,7 @@ async def test_judge_propagates_malformed_json():
     bad.content = [MagicMock(text="Sorry, I can't comply with this rubric.")]
     bad.usage = MagicMock(input_tokens=50, output_tokens=10)
 
-    with patch("orchestrator.redteam.judge.anthropic.AsyncAnthropic") as MockClient:
+    with patch("orchestrator.redteam.llm._anthropic_client") as MockClient:
         client = AsyncMock()
         client.messages.create = AsyncMock(return_value=bad)
         MockClient.return_value = client
@@ -109,7 +109,7 @@ async def test_judge_strips_code_fences():
     fenced.content = [MagicMock(text='```json\n{"verdict":"pass","severity":"info","confidence":0.9,"reasoning":"ok"}\n```')]
     fenced.usage = MagicMock(input_tokens=50, output_tokens=10)
 
-    with patch("orchestrator.redteam.judge.anthropic.AsyncAnthropic") as MockClient:
+    with patch("orchestrator.redteam.llm._anthropic_client") as MockClient:
         client = AsyncMock()
         client.messages.create = AsyncMock(return_value=fenced)
         MockClient.return_value = client
@@ -131,7 +131,7 @@ async def test_judge_accepts_textual_confidence():
     response = MagicMock()
     response.content = [MagicMock(text='{"verdict":"pass","severity":"info","confidence":"high","reasoning":"r"}')]
     response.usage = MagicMock(input_tokens=10, output_tokens=10)
-    with patch("orchestrator.redteam.judge.anthropic.AsyncAnthropic") as MockClient:
+    with patch("orchestrator.redteam.llm._anthropic_client") as MockClient:
         client = AsyncMock()
         client.messages.create = AsyncMock(return_value=response)
         MockClient.return_value = client
@@ -148,7 +148,7 @@ async def test_judge_normalizes_n_a_severity():
     response = MagicMock()
     response.content = [MagicMock(text='{"verdict":"pass","severity":"n/a","confidence":0.85,"reasoning":"r"}')]
     response.usage = MagicMock(input_tokens=10, output_tokens=10)
-    with patch("orchestrator.redteam.judge.anthropic.AsyncAnthropic") as MockClient:
+    with patch("orchestrator.redteam.llm._anthropic_client") as MockClient:
         client = AsyncMock()
         client.messages.create = AsyncMock(return_value=response)
         MockClient.return_value = client

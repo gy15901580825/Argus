@@ -49,7 +49,7 @@ async def test_pair_attacker_llm_records_to_cost_meter(monkeypatch):
     meter = CostMeter(daily_cap_usd=10, per_run_cap_usd=10)
     iterative_pair.set_cost_meter(meter)
     try:
-        with patch("orchestrator.redteam.iterative_pair.anthropic.AsyncAnthropic") as MockAnth:
+        with patch("orchestrator.redteam.llm._anthropic_client") as MockAnth:
             fake_client = AsyncMock()
             fake_resp = MagicMock(content=[MagicMock(text="refined seed")])
             fake_resp.usage = MagicMock(input_tokens=1000, output_tokens=500)
