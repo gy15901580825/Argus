@@ -10,7 +10,18 @@ import yaml
 
 
 VALID_SEVERITIES = {"info", "low", "medium", "high", "critical"}
-VALID_TARGET_CLASSES = {"http-chat", "browser-using", "tool-using", "rag", "multi-agent", "http-upload"}
+# Two vocabularies are live: the Plan 2 hyphenated names that the shipped probe
+# YAMLs use, and the Plan 4 underscored names the target adapters advertise in
+# `compatible_classes` (runner.py does its skip/compat check against those). The
+# loader must accept both, or a probe written in the newer convention is rejected
+# at load time and never reaches an adapter — see tests/test_redteam_probe.py
+# ::test_valid_target_classes_covers_every_adapter, which fails if they drift.
+VALID_TARGET_CLASSES = {
+    # Plan 2 (probe YAMLs)
+    "http-chat", "browser-using", "tool-using", "rag", "multi-agent", "http-upload",
+    # Plan 4 (target adapters)
+    "llm_chat", "agent_with_tools", "agent_with_rag", "browser_using_agent",
+}
 
 
 @dataclass(frozen=True)

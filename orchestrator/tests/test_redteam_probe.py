@@ -106,3 +106,30 @@ def test_skill_aware_family_rubrics_exist():
     rubric_root = PROBES_DIR.parent / "rubrics"
     for name in ("missing_gate.md", "encoded_payload.md", "install_time_exec.md", "obfuscated_code_body.md"):
         assert (rubric_root / name).is_file(), f"missing rubric: {name}"
+
+
+@pytest.mark.parametrize(
+    "target_class",
+    ["llm_chat", "agent_with_tools", "agent_with_rag", "browser_using_agent"],
+)
+def test_probe_accepts_plan4_target_class_names(tmp_path, target_class):
+    """The adapters advertise these names in compatible_classes, so a probe
+    author following that convention must not be rejected at load time."""
+    p = tmp_path / "plan4.yaml"
+    p.write_text(
+        f"id: plan4\nname: plan4\ntarget_class: [{target_class}]\n"
+        "attack_class: [x]\nseverity: medium\nprompts: [hi]\n"
+    )
+    assert load_probe(p).target_class == (target_class,)
+
+
+def test_valid_target_classes_covers_every_adapter():
+    """Drift guard: a class an adapter can serve but the loader rejects means
+    every probe declaring it is dropped from the library — silently, or by
+    taking down load_all_probes() for the whole directory."""
+    from orchestrator.redteam.probe import VALID_TARGET_CLASSES
+    from orchestrator.redteam.targets import _BUILDERS
+
+    for kind, (_spec, target_cls) in sorted(_BUILDERS.items()):
+        unknown = set(target_cls.compatible_classes) - VALID_TARGET_CLASSES
+        assert not unknown, f"{kind} accepts {sorted(unknown)}, which the probe loader rejects"

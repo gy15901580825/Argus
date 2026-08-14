@@ -125,7 +125,14 @@ Every entry in `target_class` must be one of `VALID_TARGET_CLASSES`:
 
 ```
 http-chat  browser-using  tool-using  rag  multi-agent  http-upload
+llm_chat   agent_with_tools  agent_with_rag  browser_using_agent
 ```
+
+The first row is the vocabulary the shipped probes use; the second is the
+equivalent set the target adapters advertise in `compatible_classes`. Both are
+accepted. Prefer the first row for new probes so the library stays uniform —
+the runner matches a probe to an adapter by set intersection, so mixing the two
+vocabularies across probes and adapters just means fewer matches.
 
 Optional keys:
 
