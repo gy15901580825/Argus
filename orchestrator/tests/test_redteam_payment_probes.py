@@ -1,5 +1,6 @@
 """The shipped payment probe family."""
 
+import json
 from pathlib import Path
 
 from orchestrator.redteam.api import PROBES_DIR, RunRequest, _estimate_exchanges, _judged_exchanges
@@ -43,6 +44,15 @@ def test_every_payment_probe_carries_a_testbed_script():
     for p in _payment_probes():
         assert p.scenario_kind, p.id
         assert p.scenario_payload.startswith("{"), p.id
+
+
+def test_every_shipped_script_parses_into_a_merchant_setup():
+    """The adapter stages each probe's payload and fails closed on one it cannot
+    read, so a malformed payload in a shipped YAML would abort a customer's run
+    rather than silently probing a benign merchant. Catch it here instead."""
+    for p in _payment_probes():
+        script = json.loads(p.scenario_payload)
+        assert isinstance(script, dict), p.id
 
 
 def test_probes_that_need_the_merchant_url_say_so():

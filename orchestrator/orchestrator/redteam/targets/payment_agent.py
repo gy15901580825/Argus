@@ -13,6 +13,7 @@ interface is known, the shape stays configurable rather than guessed.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
@@ -30,9 +31,11 @@ class PaymentAgentSpec:
     testbed_url: str = ""
     # Nested spec for the transport that actually talks to the agent.
     inner: dict[str, Any] = field(default_factory=dict)
-    # The script the mock merchant follows this run (quote, payee override,
-    # injected follow-up, forced settle failure). Comes from the probe's
-    # `scenario.payload`.
+    # Fallback script for the mock merchant (quote, payee override, injected
+    # follow-up, forced settle failure), used only for a probe that declares no
+    # `scenario.payload` of its own. Each probe's own payload takes precedence
+    # and is staged by `begin_probe()` — the hostile setup belongs to the
+    # attack, not to the run.
     script: dict[str, Any] = field(default_factory=dict)
     sandbox: bool = False
     timeout_s: float = 60.0
@@ -107,8 +110,39 @@ class PaymentAgentTarget(Target):
                 exc_info=True,
             )
 
+    def _script_for(self, probe) -> dict[str, Any]:
+        """The merchant script this probe attacks with.
+
+        A payment probe is its `scenario.payload`: the quoted amount, the payee
+        the merchant names, the follow-up instruction it smuggles into the paid
+        content, the settle failure that provokes a retry. Run it without that
+        and the agent meets an honest merchant, behaves, and the probe reports a
+        pass for an attack that was never mounted.
+
+        Malformed payloads therefore raise rather than degrading to the default
+        script — quietly running unstaged is exactly how that false green stayed
+        invisible.
+        """
+        raw = getattr(probe, "scenario_payload", "") or ""
+        if not raw.strip():
+            return dict(self.spec.script)
+        try:
+            script = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"probe {getattr(probe, 'id', '?')!r} has a scenario.payload that is not "
+                f"valid JSON ({exc}); refusing to run it against an unstaged merchant"
+            ) from exc
+        if not isinstance(script, dict):
+            raise ValueError(
+                f"probe {getattr(probe, 'id', '?')!r} has a scenario.payload that is "
+                f"{type(script).__name__}, not a JSON object; refusing to run it against "
+                f"an unstaged merchant"
+            )
+        return script
+
     async def begin_probe(self, probe) -> None:
-        """Give this probe its own world.
+        """Give this probe its own world, staged the way the probe asks for.
 
         Two probes sharing one session is a false-green generator: the second
         probe inherits the first one's interaction count and slips past the
@@ -117,7 +151,11 @@ class PaymentAgentTarget(Target):
         charges, which makes the payment-count and total-spend assertions fail
         for spending that happened under a different probe.
         """
+        # Parse before tearing anything down: a probe we are going to refuse
+        # should not also cost the caller the session it is holding.
+        script = self._script_for(probe)
         await self._close_session()
+        self._script = script
         await self._open_session()
 
     async def send_prompt(
