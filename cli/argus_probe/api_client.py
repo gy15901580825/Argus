@@ -48,3 +48,11 @@ def list_probes(api_url: str, token: str, timeout: float = 30.0) -> list[str]:
         resp = client.get(f"{api_url}/api/v1/redteam/probes", headers={"x-api-token": token})
         resp.raise_for_status()
         return resp.json()["probe_ids"]
+
+
+def get_coverage(api_url: str, token: str, timeout: float = 30.0) -> dict:
+    """GET /api/v1/redteam/coverage — what the probe library covers. Runs no probes, costs nothing."""
+    with httpx.Client(timeout=timeout) as client:
+        resp = client.get(f"{api_url}/api/v1/redteam/coverage", headers={"x-api-token": token})
+        resp.raise_for_status()
+        return resp.json()["coverage"]
