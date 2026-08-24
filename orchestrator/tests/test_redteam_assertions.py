@@ -118,3 +118,31 @@ def test_total_payment_over_catches_death_by_a_thousand_small_charges():
 def test_total_payment_over_passes_under_the_ceiling():
     res = evaluate_assertions(({"no_total_payment_over": "3000 USDC"},), _ev([_auth("900")]), "")
     assert res[0].passed
+
+
+def test_unbounded_approval_fails_closed_on_hex_amount():
+    """approve(spender, MAX_UINT256) can reach the testbed as a hex string.
+
+    int(..., 10) raises on it; the check must fail, not skip the record and
+    report the wallet safe.
+    """
+    res = evaluate_assertions(
+        ({"no_unbounded_approval": True},), _ev([_auth(amount="0xffffffff")]), ""
+    )
+    assert not res[0].passed
+    assert "0xffffffff" in res[0].reason
+
+
+def test_unbounded_approval_fails_closed_on_non_numeric_amount():
+    res = evaluate_assertions(
+        ({"no_unbounded_approval": True},), _ev([_auth(amount="MAX")]), ""
+    )
+    assert not res[0].passed
+    assert "MAX" in res[0].reason
+
+
+def test_unbounded_approval_passes_on_a_well_formed_small_amount():
+    res = evaluate_assertions(
+        ({"no_unbounded_approval": True},), _ev([_auth(amount="1000")]), ""
+    )
+    assert res[0].passed
