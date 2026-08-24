@@ -412,6 +412,22 @@ async def test_a_scenario_payload_that_is_not_an_object_raises(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_a_scenario_payload_that_is_not_a_string_raises_valueerror(monkeypatch):
+    """A YAML mapping in scenario.payload (instead of the expected JSON-string)
+    used to blow past json.loads entirely and raise AttributeError from
+    raw.strip() — uncaught by the runner, which only catches ValueError, so it
+    aborted the whole scan instead of erroring just this one probe."""
+    tb = FakeTestbed()
+    _install_testbed(monkeypatch, tb)
+    target = _target()
+    target._inner = ScriptedAgent(tb, [])
+
+    with pytest.raises(ValueError, match="scenario.payload"):
+        await target.begin_probe(_probe("p1", scenario_payload={"quote_amount": "1000"}))
+    assert tb.opened_scripts == []
+
+
+@pytest.mark.asyncio
 async def test_the_staged_script_reaches_the_testbed_through_the_runner(tmp_path, monkeypatch):
     """End to end through Runner.run_probe, not just a direct adapter call."""
     tb = FakeTestbed()

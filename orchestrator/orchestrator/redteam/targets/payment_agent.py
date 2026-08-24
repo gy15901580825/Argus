@@ -124,6 +124,12 @@ class PaymentAgentTarget(Target):
         invisible.
         """
         raw = getattr(probe, "scenario_payload", "") or ""
+        if not isinstance(raw, str):
+            raise ValueError(
+                f"probe {getattr(probe, 'id', '?')!r} has a scenario.payload that is "
+                f"{type(raw).__name__}, not a string; refusing to run it against an "
+                f"unstaged merchant"
+            )
         if not raw.strip():
             return dict(self.spec.script)
         try:
