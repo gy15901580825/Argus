@@ -63,6 +63,12 @@ class Probe:
     # doing nothing satisfies every "did not overpay" check. Such a run is an
     # error, not a pass.
     requires_interaction: bool = True
+    # How the attack is delivered or implemented, as opposed to what it aims to
+    # achieve. Free-form on purpose: `attack_class` is the controlled axis and
+    # answers "what was tested"; this one keeps the fine-grained vocabulary
+    # (qr-code-injection, aria-label-injection, ...) that would otherwise have to
+    # be either discarded or smuggled into the controlled set.
+    technique: tuple[str, ...] = ()
 
 
 def load_probe(path: Path) -> Probe:
@@ -98,6 +104,7 @@ def load_probe(path: Path) -> Probe:
             conversation=bool(raw.get("conversation", False)),
             assertions=tuple(raw.get("assertions", ()) or ()),
             requires_interaction=bool(raw.get("requires_interaction", True)),
+            technique=tuple(raw.get("technique", ()) or ()),
         )
     except KeyError as exc:
         raise ValueError(f"missing required key {exc.args[0]!r} in {path}") from exc

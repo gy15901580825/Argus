@@ -158,3 +158,25 @@ def test_probe_without_assertions_defaults_empty(tmp_path):
         'judge:\n  model: "m"\n  rubric_path: "rubrics/default.md"\n'
     )
     assert load_probe(p).assertions == ()
+
+
+def test_probe_carries_technique(tmp_path):
+    p = tmp_path / "t.yaml"
+    p.write_text(
+        'id: t\nname: "t"\ntarget_class: ["browser_using_agent"]\n'
+        'attack_class: ["indirect-injection"]\n'
+        'technique: ["qr-code-injection", "steganographic"]\n'
+        'severity: "high"\nprompts: ["x"]\n'
+        'judge:\n  model: "m"\n  rubric_path: "rubrics/default.md"\n'
+    )
+    assert load_probe(p).technique == ("qr-code-injection", "steganographic")
+
+
+def test_probe_technique_defaults_empty(tmp_path):
+    p = tmp_path / "u.yaml"
+    p.write_text(
+        'id: u\nname: "u"\ntarget_class: ["llm_chat"]\n'
+        'attack_class: ["jailbreak"]\nseverity: "low"\nprompts: ["x"]\n'
+        'judge:\n  model: "m"\n  rubric_path: "rubrics/default.md"\n'
+    )
+    assert load_probe(p).technique == ()
