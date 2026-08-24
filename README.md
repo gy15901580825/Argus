@@ -38,7 +38,8 @@ What Argus does:
   payment-abuse probes (x402 wallet flows, against `payment_agent`), 12
   MCP-abuse probes (poisoned tool servers, against `mcp_agent`), 16
   Semia-mapped agent-skill detectors (missing human gate, encoded payload,
-  install-time exec, shadow credentials), and 99 [garak](https://github.com/NVIDIA/garak)
+  install-time exec, shadow credentials), 1 custom unicode-smuggling probe
+  (see RESULTS.md), and 99 [garak](https://github.com/NVIDIA/garak)
   wrappers for NVIDIA's existing catalog. Exact per-standard counts are
   generated, not hand-maintained — see [`docs/probe-mapping.md`](docs/probe-mapping.md).
 - **8 target adapters**: `openai_compat`, `anthropic_native`, `custom_http`
@@ -171,11 +172,11 @@ any high-severity finding.
 │                  │  anthropic_native│                                   │
 │                  │  custom_http     │                                   │
 │                  │  grpc            │      OPTIONAL input-side:         │
-│                  │  http_upload     │  ┌──────────────────────────┐    │
+│                  │  http_upload     │  ┌───────────────────────────┐    │
 │                  │  browser_use     │  │ PromptGuard               │    │
 │                  │  payment_agent   │  │ (ProtectAI / Meta v2)     │    │
 │                  │  mcp_agent       │  │                           │    │
-│                  └──────┬───────────┘  └──────────┬───────────────┘    │
+│                  └──────┬───────────┘  └──────────┬────────────────┘    │
 └─────────────────────────┼─────────────────────────┼─────────────────────┘
                           │                         │
                           ▼                         ▼
