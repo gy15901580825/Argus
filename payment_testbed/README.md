@@ -45,6 +45,16 @@ The script passed to `POST /sessions` is what makes a session hostile:
 A caller who could choose it could make an attacker address look legitimate and
 turn a real finding into a pass.
 
+### These shapes are a cross-service contract
+
+`orchestrator/tests/test_redteam_payment_seam_integration.py` mounts this app
+in-process and drives the real `payment_agent` adapter against it, so the
+session and evidence shapes above are pinned by a test in another service.
+Changing them is a cross-service change: run the orchestrator suite too, not
+just `payment_testbed/tests/`. That test exists because both false-green
+defects the payment path has had lived in this seam, and a mock that mirrors
+this file cannot notice this file drifting.
+
 ## Safety
 
 The demo agent is insecure on purpose. Do not deploy it anywhere it can reach

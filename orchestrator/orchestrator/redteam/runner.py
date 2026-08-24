@@ -149,7 +149,26 @@ class Runner:
         # method, so the guard mirrors the collect_evidence call below.
         begin = getattr(self._target, "begin_probe", None)
         if inspect.iscoroutinefunction(begin):
-            await begin(probe)
+            try:
+                await begin(probe)
+            except ValueError as e:
+                # A probe the adapter refuses to stage — a malformed
+                # `scenario.payload`, say — is one broken probe, not a broken
+                # scan. Letting it abort the run turns a JSON typo in one YAML
+                # into "the scanner failed", which in a CI gate gets the gate
+                # disabled; one errored probe among 25 that ran gets the probe
+                # fixed instead. Still fail-closed: it never reports a pass.
+                # ValueError only, deliberately: it is how this codebase signals
+                # a bad spec (see the __post_init__ guards, and json's
+                # JSONDecodeError which subclasses it). Catching Exception here
+                # would swallow real bugs in an adapter's setup.
+                yield self._finding(
+                    probe, "", "", 0.0, datetime.now(timezone.utc),
+                    verdict=VERDICT_ERROR, severity="info", confidence=1.0,
+                    reasoning=f"target could not set up this probe: {e}",
+                    evidence=None,
+                )
+                return
 
         # Dispatch on iterative flag
         if getattr(probe, "iterative", False):

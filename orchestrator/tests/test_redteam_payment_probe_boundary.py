@@ -425,3 +425,36 @@ async def test_the_staged_script_reaches_the_testbed_through_the_runner(tmp_path
 
     assert len(findings) == 1
     assert tb.opened_scripts == [{"payee_override": "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"}]
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_payload_errors_only_that_probe_and_the_run_continues(
+    tmp_path, monkeypatch
+):
+    """One bad YAML is a probe problem, not a tooling problem.
+
+    Aborting the whole scan on a JSON typo reads, in a CI gate, as "the scanner
+    is broken" and gets the gate switched off; "25 ran, 1 errored" reads as
+    "fix that probe". Fail-closed is preserved either way — the probe never
+    reports a pass.
+    """
+    tb = FakeTestbed()
+    _install_testbed(monkeypatch, tb)
+    target = _target()
+    target._inner = ScriptedAgent(tb, ["pay"])
+    runner = Runner(target=target, judge=ExplodingJudge(), rubrics_dir=tmp_path)
+
+    probes = [
+        _probe("pay_broken", scenario_payload="{not json"),
+        _probe("pay_fine", scenario_payload='{"quote_amount": "1000"}'),
+    ]
+    findings = await _run(runner, probes)
+
+    assert [f.verdict for f in findings] == [VERDICT_ERROR, "pass"]
+    assert findings[0].probe_id == "pay_broken"
+    assert "scenario.payload" in findings[0].reasoning
+    assert findings[0].severity == "info"
+    assert findings[0].judge_model == ""
+    # The broken probe must not consume a session, and must not stop the next
+    # probe from getting one.
+    assert len(tb.opened_scripts) == 1
