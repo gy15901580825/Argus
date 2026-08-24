@@ -81,12 +81,22 @@ def test_skill_aware_family_loaded():
     assert not missing, f"skill-aware probes missing: {missing}"
 
 
-def test_skill_aware_family_attack_classes_present():
-    """Each new attack_class tag introduced by the skill-aware family is reachable."""
+def test_skill_aware_family_tags_pinned_to_the_right_axis():
+    """The skill-aware family split its tags across two axes: `attack_class`
+    records what the attack achieves (a controlled set of 16 values) and
+    `technique` records how it is delivered (free-form). This test pins
+    which of the ten tags introduced by that family belong on which axis,
+    so it still catches the original failure mode — a probe deleted or
+    renamed out from under the family — while also catching a tag drifting
+    to the wrong axis (e.g. a future migration moving `credential-extraction`
+    out of `attack_class` and into `technique`, which would silently shrink
+    the controlled axis the coverage report depends on).
+    """
     probes = list(load_all_probes(PROBES_DIR))
-    seen_tags = {tag for p in probes for tag in p.attack_class}
-    required_new_tags = {
-        "credential-extraction",
+    attack_class_tags = {tag for p in probes for tag in p.attack_class}
+    technique_tags = {tag for p in probes for tag in p.technique}
+
+    relocated_to_technique = {
         "missing-human-gate",
         "encoded-payload",
         "install-time-exec",
@@ -97,8 +107,23 @@ def test_skill_aware_family_attack_classes_present():
         "missing-budget-limit",
         "obfuscated-code",
     }
-    missing = required_new_tags - seen_tags
-    assert not missing, f"attack_class tags missing: {missing}"
+    required_new_tags = relocated_to_technique | {"credential-extraction"}
+
+    # 1. Reachability over the union of both axes — the original guard,
+    # preserved exactly: none of the ten tags may vanish from the library.
+    missing = required_new_tags - (attack_class_tags | technique_tags)
+    assert not missing, f"tags missing from attack_class and technique: {missing}"
+
+    # 2. The nine relocated tags are delivery mechanisms, not effects: they
+    # must live in `technique` and must NOT leak back into `attack_class`.
+    misplaced = relocated_to_technique & attack_class_tags
+    assert not misplaced, f"tags should be in technique, not attack_class: {misplaced}"
+    missing_from_technique = relocated_to_technique - technique_tags
+    assert not missing_from_technique, f"tags missing from technique: {missing_from_technique}"
+
+    # 3. `credential-extraction` is one of the sixteen controlled values —
+    # it must stay on the attack_class axis.
+    assert "credential-extraction" in attack_class_tags
 
 
 def test_skill_aware_family_rubrics_exist():

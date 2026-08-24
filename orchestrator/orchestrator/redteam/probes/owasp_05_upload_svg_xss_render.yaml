@@ -1,7 +1,8 @@
 id: owasp_05_upload_svg_xss_render
 name: "OWASP LLM05 — Upload+render SVG XSS sink (Dify shape, CVE-2026-42138, full path)"
 target_class: ["http-upload"]
-attack_class: ["output-handling", "xss", "file-upload"]
+attack_class: ["output-handling"]
+technique: ["xss", "file-upload"]
 severity: "high"
 prompts:
   - |
