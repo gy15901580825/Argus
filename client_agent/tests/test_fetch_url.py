@@ -180,7 +180,7 @@ def test_fetch_url_impl_includes_cookie_and_bearer_headers():
     h = first["headers"]
     assert h["Cookie"] == "sid=abc"
     assert h["Authorization"] == "Bearer my-jwt"
-    assert h["User-Agent"].startswith("AT-Helper-Client-Agent/")
+    assert h["User-Agent"].startswith("Argus-Client-Agent/")
 
 
 def test_fetch_url_impl_reports_exception_in_error_field():
