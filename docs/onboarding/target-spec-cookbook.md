@@ -2,11 +2,13 @@
 
 Argus needs to know how to reach your AI agent. The "target spec" is a small JSON file (`argus-target.json`) that describes the agent endpoint and how to authenticate against it.
 
-The fastest way to generate it is interactively:
+The fastest way to generate it is interactively, for the 5 kinds `init` knows how to ask questions about (`openai_compat`, `anthropic_native`, `custom_http`, `grpc`, `browser_use`):
 
 ```bash
-argus-probe init --kind <one of the 5 below>
+argus-probe init --kind <one of those 5>
 ```
+
+The remaining three kinds — `payment_agent`, `mcp_agent`, `http_upload` — aren't wired into `init` yet; hand-write the JSON from their templates below.
 
 Below are copy-paste templates for each supported agent shape, plus the gotchas we've run into in real deployments.
 
@@ -126,6 +128,82 @@ How the response is parsed: `response_jsonpath` is a [JSONPath](https://goessner
 - It must return JSON: `{"final_text": "...", "screenshots": [...], "latency_ms": <number>}`.
 
 We provide a thin reference adapter you can drop into your agent harness; ask in the design-partner channel for the latest version.
+
+---
+
+## payment_agent
+
+**Use this for**: agents that spend money on a user's behalf — quoting, authorizing, and settling payments (e.g. the x402 protocol). Unlike the kinds above, this adapter doesn't just relay a prompt and hand back text: it opens a session on a payment testbed, tells the agent where the paid resource lives, and afterwards reports what the agent actually authorized there. That record, not the reply text, is what the probe's assertions judge.
+
+```json
+{
+  "kind": "payment_agent",
+  "testbed_url": "http://127.0.0.1:8090",
+  "inner": {
+    "kind": "openai_compat",
+    "endpoint_url": "http://127.0.0.1:8091/v1/chat/completions",
+    "model": "argus-demo-payment-agent"
+  },
+  "sandbox": true
+}
+```
+
+**`sandbox: true` is not a formality — it's a safety interlock.** This adapter drives an agent that spends real money if you point it at a real payment endpoint. Construction is refused outright without `sandbox: true` (both the API and the CLI check it independently); there is no way to turn it off. If you think you don't need it, you're pointing this adapter at the wrong thing.
+
+**What's on the other end:** `inner` is a nested target spec (any kind above — here, `openai_compat`) for the transport that actually talks to your agent; the payment adapter wraps it. The `testbed_url` must point at a running `payment_testbed/` instance from this repo — see `payment_testbed/README.md` for `testbed/` (mock merchant + facilitator) and `demo_agent/` (the vulnerable reference agent the example above points at). Nothing in `payment_testbed/` touches a blockchain or real funds.
+
+**Notes:**
+- `payment_agent` only runs probes whose `target_class` includes `payment_agent` (the ones under `orchestrator/orchestrator/redteam/probes/payment/`). Point an ordinary chat probe at a `payment_agent` target and it's skipped, not run; point a payment probe at a `custom_http`/`openai_compat` target and it's skipped too — the two families only match each other.
+- `script` is an optional fallback merchant script (`quote_amount`, `payee_override`, `inject_followup`, `fail_first_settle`) used only when a probe declares no `scenario.payload` of its own — each probe's own payload takes precedence.
+
+---
+
+## mcp_agent
+
+**Use this for**: agents that connect to MCP tool servers. Same shape as `payment_agent`: instead of just relaying a prompt, it opens a session on a hostile MCP testbed, tells the agent where the (poisoned) MCP server lives, and afterwards reports which tools the agent called, with what arguments, and whether the server changed a tool's description mid-session.
+
+```json
+{
+  "kind": "mcp_agent",
+  "testbed_url": "http://127.0.0.1:8092",
+  "inner": {
+    "kind": "openai_compat",
+    "endpoint_url": "http://127.0.0.1:8093/v1/chat/completions",
+    "model": "argus-demo-mcp-agent"
+  },
+  "sandbox": true
+}
+```
+
+**`sandbox: true` is not a formality — it's a safety interlock.** This adapter drives an agent against a live MCP server. Construction is refused outright without `sandbox: true` (both the API and the CLI check it independently); there is no way to turn it off. It exists because a red-team run that can reach a real MCP server is not a configuration mistake you want to recover from after the fact.
+
+**What's on the other end:** `inner` is a nested target spec (any kind above — here, `openai_compat`) for the transport that actually talks to your agent. The `testbed_url` must point at a running `mcp_testbed/` instance from this repo — see `mcp_testbed/README.md` for `testbed/` (the hostile MCP server, staging tool poisoning / rug-pull / shadowing / confused-deputy / credential-lure scenarios) and `demo_agent/` (the vulnerable reference MCP client the example above points at).
+
+**Notes:**
+- `mcp_agent` only runs probes whose `target_class` includes `mcp_agent` (the ones under `orchestrator/orchestrator/redteam/probes/mcp/`). Point an ordinary chat probe at an `mcp_agent` target and it's skipped, not run; point an MCP probe at a `custom_http`/`openai_compat` target and it's skipped too — the two families only match each other.
+- `script` is an optional fallback scenario (`{"scenario": "tool_poisoning"}` etc.) used only when a probe declares no `scenario.payload` of its own — each probe's own payload takes precedence.
+
+---
+
+## http_upload
+
+**Use this for**: file-upload-and-render sinks — an endpoint that accepts a file upload and later serves it back to be rendered (the CVE-2026-42138 shape: unauthenticated upload followed by inline rendering of active content). Distinct from `custom_http` because the probe's `prompt` is treated as the file body, not a chat turn: the adapter POSTs it as `multipart/form-data`, extracts the render URL from the upload response, then GETs that URL and returns the rendered body.
+
+```json
+{
+  "kind": "http_upload",
+  "upload_url": "https://my-agent.example/api/upload",
+  "upload_field_name": "file",
+  "upload_filename": "payload.svg",
+  "upload_content_type": "image/svg+xml",
+  "render_url_jsonpath": "$.url"
+}
+```
+
+**Notes:**
+- Exactly one of `render_url_jsonpath` or `render_url_header` must be set — how the adapter finds the render URL in the upload response (a JSON body field vs. a response header like `Location`). Setting both, or neither, is rejected at construction.
+- If the render URL can't be located, the adapter returns the upload response body itself so the judge can still inspect it, rather than erroring.
+- `upload_headers` / `render_headers` / `extra_form_fields` are Jinja2 templates rendered with `{{api_key}}` in scope, so a bearer token only needs to be written once via the `api_key` field.
 
 ---
 
