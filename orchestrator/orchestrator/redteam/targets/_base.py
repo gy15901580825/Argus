@@ -56,3 +56,14 @@ class Target(ABC):
         self, prompt: str, history: tuple[Turn, ...] = ()
     ) -> tuple[str, float]:
         ...
+
+    async def collect_evidence(self) -> dict:
+        """Side effects this target observed while the probe ran.
+
+        A text-only adapter has none, which is why this defaults to empty rather
+        than being abstract. An adapter that instruments the world the agent acts
+        in — payments, tools, a filesystem — returns what it recorded, and the
+        runner attaches it to the Finding so a verdict can rest on facts instead
+        of on the judge's reading of the reply text.
+        """
+        return {}
