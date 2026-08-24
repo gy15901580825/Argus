@@ -12,7 +12,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 _TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "templates")
 _jinja = Environment(
     loader=FileSystemLoader(_TEMPLATE_DIR),
-    autoescape=select_autoescape(["html", "xml"]),
+    autoescape=select_autoescape(["html", "xml", "j2"]),
 )
 
 
