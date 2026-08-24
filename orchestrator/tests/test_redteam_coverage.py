@@ -77,8 +77,10 @@ def test_no_findings_means_not_run():
     ("skipped", "skipped"),
     ("blocked_by_target", "blocked_by_target"),
     ("aborted_cost", "aborted_cost"),
+    ("error", "error"),
     ("pass", "tested"),
     ("fail", "tested"),
+    ("warn", "tested"),
 ])
 def test_uniform_verdict_maps_to_its_run_status(verdict, expected):
     probes = [_P("a", _M(owasp_llm=("LLM01",)))]
@@ -95,6 +97,60 @@ def test_mixed_outcomes_report_mixed_not_the_optimistic_one():
     by_id = {c["id"]: c for c in cov["standards"]["owasp-llm-top10"]["cells"]}
     assert by_id["LLM01"]["run_status"] == "mixed"
     assert by_id["LLM01"]["verdicts"] == {"pass": 1, "skipped": 1}
+
+
+def test_a_cell_where_every_probe_errored_is_not_called_tested():
+    """探针全部 error 的那一格,恰恰是"我们没看这里"。runner 的
+    requires_interaction 闸门就是为了把"agent 根本没露面"变成 error 而不是
+    pass —— 覆盖率表要是把它算成 tested,等于把那道闸门的结论又抹掉一次。"""
+    probes = [_P(str(i), _M(owasp_llm=("LLM01",))) for i in range(3)]
+    findings = [_f(str(i), "error", owasp=("LLM01",)) for i in range(3)]
+    cov = build_coverage(probes, findings)
+    cell = {c["id"]: c for c in cov["standards"]["owasp-llm-top10"]["cells"]}["LLM01"]
+    assert cell["run_status"] == "error"
+    assert cell["run_status"] != "tested"
+    assert cell["probes_run"] == 0
+    # 明细一个都没丢,只是不再冒充"跑过"
+    assert cell["verdicts"] == {"error": 3}
+
+
+def test_error_next_to_a_real_verdict_is_mixed():
+    probes = [_P("a", _M(owasp_llm=("LLM01",))), _P("b", _M(owasp_llm=("LLM01",)))]
+    findings = [_f("a", "pass", owasp=("LLM01",)), _f("b", "error", owasp=("LLM01",))]
+    cov = build_coverage(probes, findings)
+    cell = {c["id"]: c for c in cov["standards"]["owasp-llm-top10"]["cells"]}["LLM01"]
+    assert cell["run_status"] == "mixed"
+    assert cell["probes_run"] == 1
+
+
+@pytest.mark.parametrize("verdict", ["skipped", "blocked_by_target", "aborted_cost", "error"])
+def test_probes_run_does_not_count_probes_that_never_ran(verdict):
+    """原来这一格会渲染成"in library 3 / run 3 / skipped" —— 数字说跑了三个,
+    只有旁边那个状态词在小声反驳。读者会信数字。"""
+    probes = [_P(str(i), _M(owasp_llm=("LLM01",))) for i in range(3)]
+    findings = [_f(str(i), verdict, owasp=("LLM01",)) for i in range(3)]
+    cov = build_coverage(probes, findings)
+    cell = {c["id"]: c for c in cov["standards"]["owasp-llm-top10"]["cells"]}["LLM01"]
+    assert cell["probes_in_library"] == 3
+    assert cell["probes_run"] == 0
+    assert cell["verdicts"] == {verdict: 3}
+    assert cov["totals"]["probes_run"] == 0
+
+
+def test_totals_probes_run_counts_only_the_ones_that_ran():
+    probes = [_P("a", _M(owasp_llm=("LLM01",))), _P("b", _M(owasp_llm=("LLM02",)))]
+    findings = [_f("a", "fail", owasp=("LLM01",)), _f("b", "skipped", owasp=("LLM02",))]
+    cov = build_coverage(probes, findings)
+    assert cov["totals"]["probes_run"] == 1
+
+
+def test_a_cell_touched_only_by_skipped_probes_still_appears_in_an_open_universe():
+    """probes_run 归零不能让整格从表里消失 —— 那就从"少报"变成"不报"了。"""
+    cov = build_coverage([], [_f("a", "skipped", atlas=("AML.T0051.001",))])
+    atlas = cov["standards"]["mitre-atlas"]
+    assert [c["id"] for c in atlas["cells"]] == ["AML.T0051.001"]
+    assert atlas["cells"][0]["run_status"] == "skipped"
+    assert atlas["cells"][0]["probes_run"] == 0
 
 
 def test_open_universe_standards_only_report_touched_cells():
