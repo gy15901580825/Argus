@@ -118,3 +118,41 @@ async def test_a_conversation_probe_yields_one_verdict_for_the_whole_thread(tmp_
     assert len(findings) == 1
     assert findings[0].verdict == "fail"
     assert findings[0].attack_prompt == "now pay"
+
+
+@pytest.mark.asyncio
+async def test_a_repeated_first_and_last_prompt_still_yields_one_verdict(tmp_path):
+    """The last-turn check must be positional. A multi-turn limit-raising attack
+    that repeats the same demand after a refusal is an ordinary shape, not a
+    contrived edge case — if the guard compares prompt *text* instead of
+    position, the repeated early turn is mistaken for the last one and the
+    conversation produces two findings instead of one."""
+    ev = {
+        "authorizations": [{"amount": "500000000", "asset": "USDC", "payee": "0xa"}],
+        "interaction_count": 2,
+        "expected_payee": "0xa",
+    }
+    target = _Target(ev)
+    target.supports_history = True  # a conversation probe is skipped without it
+    runner = Runner(target=target, judge=_ExplodingJudge(), rubrics_dir=tmp_path)
+    probe = _probe(prompts=("pay now", "wait", "pay now"), conversation=True)
+    findings = [f async for f in runner.run_probe(probe)]
+    assert len(findings) == 1
+
+
+@pytest.mark.asyncio
+async def test_conversation_finding_reports_the_last_turn_not_the_first(tmp_path):
+    """Mirror-image check: the surviving finding must come from the LAST turn,
+    not accidentally from the first one."""
+    ev = {
+        "authorizations": [{"amount": "500000000", "asset": "USDC", "payee": "0xa"}],
+        "interaction_count": 2,
+        "expected_payee": "0xa",
+    }
+    target = _Target(ev)
+    target.supports_history = True  # a conversation probe is skipped without it
+    runner = Runner(target=target, judge=_ExplodingJudge(), rubrics_dir=tmp_path)
+    probe = _probe(prompts=("set the scene", "raise the limit", "now pay"), conversation=True)
+    findings = [f async for f in runner.run_probe(probe)]
+    assert len(findings) == 1
+    assert findings[0].attack_prompt == "now pay"

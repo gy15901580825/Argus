@@ -227,7 +227,7 @@ class Runner:
 
         conversation = getattr(probe, "conversation", False)
         transcript: list[Turn] = []
-        for prompt in probe.prompts:
+        for idx, prompt in enumerate(probe.prompts):
             probed_at = datetime.now(timezone.utc)
             try:
                 response_text, latency_ms = await self._target.send_prompt(
@@ -279,8 +279,12 @@ class Runner:
                 # One conversation is one attack. The early turns of a
                 # multi-turn probe are setup — they contact nothing and prove
                 # nothing, and judging them separately reported a three-turn
-                # thread as two failed runs plus a verdict.
-                if conversation and prompt != probe.prompts[-1]:
+                # thread as two failed runs plus a verdict. This check is
+                # positional (index), not by prompt text: a multi-turn attack
+                # that repeats an earlier demand (e.g. re-asking for the same
+                # payment after a refusal) would otherwise match on text and
+                # be mistaken for the last turn.
+                if conversation and idx != len(probe.prompts) - 1:
                     continue
                 yield await self._assertion_finding(probe, prompt, response_text, latency_ms, probed_at)
                 continue
