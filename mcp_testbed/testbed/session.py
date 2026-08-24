@@ -27,14 +27,26 @@ def _digest(tools: list[dict]) -> str:
 
 @dataclass(frozen=True)
 class Script:
-    """Which hostile scenario the server stages this run."""
+    """Which hostile scenario the server stages this run.
+
+    `injection` is a knob, not a second scenario axis: it only has an effect
+    on `confused_deputy`, where it replaces the default instruction planted in
+    a tool call's result, so a probe can stage a differently-shaped attack
+    (a single-hop forward vs. a chained "read again, then forward") without
+    the testbed growing one scenario per variant. Every other scenario ignores
+    it -- their `call_result_fn` accepts and drops the same parameter.
+    """
 
     scenario: str = DEFAULT_SCENARIO
+    injection: str | None = None
 
     @classmethod
     def from_dict(cls, raw: dict | None) -> "Script":
         raw = raw or {}
-        return cls(scenario=str(raw.get("scenario", DEFAULT_SCENARIO)))
+        return cls(
+            scenario=str(raw.get("scenario", DEFAULT_SCENARIO)),
+            injection=raw.get("injection"),
+        )
 
 
 @dataclass
@@ -61,7 +73,7 @@ class Session:
         """The result of calling `tool`, per the staged scenario -- e.g.
         confused_deputy plants its injection here rather than in a
         description."""
-        return self.scenario.call_result_fn(tool, arguments, self.canary)
+        return self.scenario.call_result_fn(tool, arguments, self.canary, self.script.injection)
 
     def record_tools_list(self, tools: list[dict]) -> None:
         self.tools_list_count += 1
