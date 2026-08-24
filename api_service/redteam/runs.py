@@ -29,33 +29,44 @@ async def create_run(user_id: UUID, target_spec: dict, probe_suite: str) -> UUID
     return row["id"]
 
 
-async def update_run_status(run_id: UUID, status: str, summary: dict | None = None) -> None:
+async def update_run_status(run_id: UUID, status: str, summary: dict | None = None, coverage: dict | None = None) -> None:
     await database.execute(
         """
         UPDATE redteam_runs
         SET status = :status,
             finished_at = CASE WHEN :status IN ('completed', 'failed', 'cancelled') THEN NOW() ELSE finished_at END,
-            summary = COALESCE(:summary, summary)
+            summary = COALESCE(:summary, summary),
+            coverage = COALESCE(:coverage, coverage)
         WHERE id = :id
         """,
-        {"id": run_id, "status": status, "summary": json.dumps(summary) if summary else None},
+        {
+            "id": run_id,
+            "status": status,
+            "summary": json.dumps(summary) if summary else None,
+            "coverage": json.dumps(coverage) if coverage else None,
+        },
     )
+
+
+# JSONB columns on redteam_runs that asyncpg hands back as raw text.
+_RUN_JSONB_COLUMNS = ("target_spec", "coverage")
 
 
 def decode_run_row(row: dict) -> dict:
     """JSONB comes back from the driver as text.
 
-    Left as a string, `target_spec` would still be truthy in the report
+    Left as a string, a JSONB column would still be truthy in the report
     template while every attribute lookup on it (e.g. `target_spec.kind`)
     silently returned undefined — a blank Target line instead of an error.
     """
     run = dict(row)
-    raw = run.get("target_spec")
-    if isinstance(raw, str):
-        try:
-            run["target_spec"] = json.loads(raw)
-        except ValueError:
-            run["target_spec"] = None
+    for col in _RUN_JSONB_COLUMNS:
+        raw = run.get(col)
+        if isinstance(raw, str):
+            try:
+                run[col] = json.loads(raw)
+            except ValueError:
+                run[col] = None
     return run
 
 

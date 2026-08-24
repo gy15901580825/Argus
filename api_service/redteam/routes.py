@@ -128,8 +128,12 @@ async def get_coverage(user: UserResponse = Depends(get_current_user)) -> dict:
 async def _consume_orchestrator_stream(run_id: UUID, target_spec: dict, probe_ids: list[str], per_run_cap_usd: Optional[float] = None, suite: Optional[str] = None) -> None:
     await runs.update_run_status(run_id, "running")
     try:
-        async for finding in orchestrator_client.stream_findings(target_spec, probe_ids, per_run_cap_usd=per_run_cap_usd, suite=suite):
-            await runs.insert_finding(run_id, finding)
-        await runs.update_run_status(run_id, "completed")
+        coverage = None
+        async for event in orchestrator_client.stream_findings(target_spec, probe_ids, per_run_cap_usd=per_run_cap_usd, suite=suite):
+            if event.get("type") == "coverage":
+                coverage = event.get("coverage")
+                continue
+            await runs.insert_finding(run_id, event)
+        await runs.update_run_status(run_id, "completed", coverage=coverage)
     except Exception as e:
         await runs.update_run_status(run_id, "failed", summary={"error": str(e)})
