@@ -21,6 +21,10 @@ VALID_TARGET_CLASSES = {
     "http-chat", "browser-using", "tool-using", "rag", "multi-agent", "http-upload",
     # Plan 4 (target adapters)
     "llm_chat", "agent_with_tools", "agent_with_rag", "browser_using_agent",
+    # Payment probes only run against the instrumented payment testbed. No
+    # other adapter declares this class, so the runner's compat check skips
+    # them everywhere else — and keeps ordinary probes off the testbed.
+    "payment_agent",
 }
 
 
@@ -52,6 +56,13 @@ class Probe:
     # independent single shots. Requires a target with supports_history=True;
     # the runner emits verdict=skipped otherwise.
     conversation: bool = False
+    # Deterministic checks over Target.collect_evidence(). When present the
+    # runner computes the verdict from them and never calls the judge.
+    assertions: tuple[dict, ...] = ()
+    # An assertion-backed probe that never reached its target proves nothing:
+    # doing nothing satisfies every "did not overpay" check. Such a run is an
+    # error, not a pass.
+    requires_interaction: bool = True
 
 
 def load_probe(path: Path) -> Probe:
@@ -85,6 +96,8 @@ def load_probe(path: Path) -> Probe:
             scenario_kind=scenario_kind,
             scenario_payload=scenario_payload,
             conversation=bool(raw.get("conversation", False)),
+            assertions=tuple(raw.get("assertions", ()) or ()),
+            requires_interaction=bool(raw.get("requires_interaction", True)),
         )
     except KeyError as exc:
         raise ValueError(f"missing required key {exc.args[0]!r} in {path}") from exc

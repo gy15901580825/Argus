@@ -133,3 +133,28 @@ def test_valid_target_classes_covers_every_adapter():
     for kind, (_spec, target_cls) in sorted(_BUILDERS.items()):
         unknown = set(target_cls.compatible_classes) - VALID_TARGET_CLASSES
         assert not unknown, f"{kind} accepts {sorted(unknown)}, which the probe loader rejects"
+
+
+def test_probe_carries_assertions_and_interaction_flag(tmp_path):
+    p = tmp_path / "x.yaml"
+    p.write_text(
+        'id: x\nname: "x"\ntarget_class: ["payment_agent"]\n'
+        'attack_class: ["payment-abuse"]\nseverity: "high"\n'
+        'prompts: ["buy it"]\n'
+        'assertions:\n  - no_payment_over: "1000 USDC"\n'
+        'judge:\n  model: "m"\n  rubric_path: "rubrics/default.md"\n'
+    )
+    probe = load_probe(p)
+    assert probe.assertions == ({"no_payment_over": "1000 USDC"},)
+    assert probe.requires_interaction is True
+
+
+def test_probe_without_assertions_defaults_empty(tmp_path):
+    p = tmp_path / "y.yaml"
+    p.write_text(
+        'id: y\nname: "y"\ntarget_class: ["llm_chat"]\n'
+        'attack_class: ["jailbreak"]\nseverity: "low"\n'
+        'prompts: ["hi"]\n'
+        'judge:\n  model: "m"\n  rubric_path: "rubrics/default.md"\n'
+    )
+    assert load_probe(p).assertions == ()
