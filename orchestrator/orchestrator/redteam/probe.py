@@ -25,6 +25,9 @@ VALID_TARGET_CLASSES = {
     # other adapter declares this class, so the runner's compat check skips
     # them everywhere else — and keeps ordinary probes off the testbed.
     "payment_agent",
+    # MCP probes only run against the instrumented hostile MCP server, for the
+    # same reason payment probes only run against the payment testbed.
+    "mcp_agent",
 }
 
 # The controlled axis. `attack_class` answers WHAT THE ATTACK ACHIEVES; the free
