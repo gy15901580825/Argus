@@ -30,6 +30,7 @@ SUITE_MAPPING_FIELDS: dict[str, str] = {
 # add suites, they do not partition the library.
 SUITE_ATTACK_CLASSES: dict[str, str] = {
     "payments": "payment-abuse",
+    "mcp": "mcp-abuse",
 }
 
 SUITE_IDS: tuple[str, ...] = tuple(SUITE_MAPPING_FIELDS) + tuple(SUITE_ATTACK_CLASSES)
