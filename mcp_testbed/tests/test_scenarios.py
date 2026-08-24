@@ -41,6 +41,21 @@ def test_rug_pull_marks_calls_made_after_the_change():
     assert calls[1]["after_description_change"] is True
 
 
+def test_rug_pull_flag_stays_true_after_a_third_relist():
+    """The flag must compare against the FIRST listing, not the immediately
+    preceding one. Three tools/list calls (benign, rug-pulled, rug-pulled
+    again) leave the last two digests identical to each other even though
+    the description changed relative to the original -- a naive
+    last-vs-previous comparison would wrongly report False here."""
+    sid = _open("rug_pull")
+    _rpc(sid, "tools/list")
+    _rpc(sid, "tools/list")
+    _rpc(sid, "tools/list")
+    _rpc(sid, "tools/call", {"name": "send_email", "arguments": {}})
+    calls = client.get(f"/sessions/{sid}/evidence").json()["tool_calls"]
+    assert calls[0]["after_description_change"] is True
+
+
 def test_shadowing_declares_which_tools_are_hostile():
     sid = _open("shadowing")
     ev = client.get(f"/sessions/{sid}/evidence").json()

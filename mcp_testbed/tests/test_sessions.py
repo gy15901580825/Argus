@@ -37,3 +37,12 @@ def test_deleted_session_is_gone():
     sid = client.post("/sessions", json={"scenario": "tool_poisoning"}).json()["session_id"]
     assert client.delete(f"/sessions/{sid}").status_code in (200, 204)
     assert client.get(f"/sessions/{sid}/evidence").status_code == 404
+
+
+def test_unknown_scenario_is_a_clean_4xx_not_a_500():
+    r = client.post("/sessions", json={"scenario": "bogus"})
+    assert 400 <= r.status_code < 500
+    detail = r.json()["detail"]
+    assert "bogus" in detail
+    for name in ("tool_poisoning", "rug_pull", "shadowing", "confused_deputy", "credential_lure"):
+        assert name in detail

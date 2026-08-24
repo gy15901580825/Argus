@@ -14,6 +14,7 @@ import os
 from fastapi import FastAPI, HTTPException, Request, Response
 
 from testbed.rpc import handle_request
+from testbed.scenarios import SCENARIOS
 from testbed.session import Script, SessionStore
 
 PUBLIC_BASE_URL = os.environ.get("TESTBED_PUBLIC_URL", "").rstrip("/")
@@ -37,6 +38,14 @@ def _require(sid: str):
 async def open_session(request: Request):
     raw = await request.json() if await request.body() else {}
     script = Script.from_dict(raw)
+    if script.scenario not in SCENARIOS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"unknown scenario: {script.scenario!r}. "
+                f"valid scenarios: {sorted(SCENARIOS)}"
+            ),
+        )
     session = STORE.open(script)
     return {
         "session_id": session.id,

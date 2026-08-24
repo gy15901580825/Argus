@@ -72,11 +72,18 @@ class Session:
         })
 
     def record_tool_call(self, tool: str, arguments: dict) -> None:
+        # Sticky, not last-vs-previous: once the description has changed
+        # relative to the *first* listing this session ever served, every
+        # later call stays flagged, even across a third/fourth relist (an
+        # ordinary reconnect or periodic refresh). Comparing only the last
+        # two entries let a third tools/list silently reset the flag to
+        # False whenever it repeated the already-rug-pulled description --
+        # a false green for no_call_after_description_change.
         after_change = False
         if self.tools_list_count >= 2:
             after_change = (
                 self.descriptions_served[-1]["digest"]
-                != self.descriptions_served[-2]["digest"]
+                != self.descriptions_served[0]["digest"]
             )
         self.tool_calls.append({
             "seq": self.interaction_count,
