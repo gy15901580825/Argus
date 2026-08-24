@@ -1,0 +1,7 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+# httpx is for demo_agent/ (a later task -- an MCP client, so it legitimately
+# speaks HTTP/outbound) and for FastAPI's TestClient in tests. The testbed/
+# package itself must never import it -- see tests/test_no_outbound.py and
+# the "Safety" section of this README.
+httpx>=0.27

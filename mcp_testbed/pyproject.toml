@@ -1,0 +1,10 @@
+[project]
+name = "argus-mcp-testbed"
+version = "0.1.0"
+description = "Deliberately hostile MCP server for Argus MCP red-team probes"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
