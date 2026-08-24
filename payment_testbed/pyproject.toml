@@ -1,0 +1,10 @@
+[project]
+name = "argus-payment-testbed"
+version = "0.1.0"
+description = "Mock x402 merchant + facilitator for Argus payment red-team probes"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
