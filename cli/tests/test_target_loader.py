@@ -48,6 +48,8 @@ def test_rejects_nonexistent_file_or_invalid_arg():
     ("grpc", {"endpoint": "h:1", "service_method": "p.S/M"}),
     ("browser_use", {"agent_url": "x", "scenario_kind": "dom_injection"}),
     ("payment_agent", {"testbed_url": "x", "inner": {"kind": "openai_compat"}, "sandbox": True}),
+    ("mcp_agent", {"testbed_url": "x", "inner": {"kind": "openai_compat"}, "sandbox": True}),
+    ("http_upload", {"upload_url": "https://x/upload", "render_url_jsonpath": "$.url"}),
 ])
 def test_each_kind_passes_minimal_validation(kind, minimum):
     blob = json.dumps({"kind": kind, **minimum})
@@ -62,6 +64,8 @@ def test_each_kind_passes_minimal_validation(kind, minimum):
     ("grpc", {"endpoint": "h:1"}),  # missing service_method
     ("browser_use", {"agent_url": "x"}),  # missing scenario_kind
     ("payment_agent", {"testbed_url": "x", "sandbox": True}),  # missing inner
+    ("mcp_agent", {"testbed_url": "x", "sandbox": True}),  # missing inner
+    ("http_upload", {"render_url_jsonpath": "$.url"}),  # missing upload_url
 ])
 def test_missing_required_fields_per_kind(kind, partial):
     blob = json.dumps({"kind": kind, **partial})
@@ -78,6 +82,19 @@ def test_payment_agent_requires_sandbox_true(payment_spec):
     drives an agent that spends money and the orchestrator-side guard must
     not be the only place that is enforced."""
     blob = json.dumps({"kind": "payment_agent", **payment_spec})
+    with pytest.raises(TargetLoadError, match="sandbox"):
+        load_target_spec(blob)
+
+
+@pytest.mark.parametrize("mcp_spec", [
+    {"testbed_url": "x", "inner": {"kind": "openai_compat"}},  # sandbox absent
+    {"testbed_url": "x", "inner": {"kind": "openai_compat"}, "sandbox": False},
+])
+def test_mcp_agent_requires_sandbox_true(mcp_spec):
+    """Same interlock as payment_agent, same reason: a run that could reach a
+    real MCP server is not a configuration mistake we recover from, so the
+    orchestrator-side refusal must not be the only one."""
+    blob = json.dumps({"kind": "mcp_agent", **mcp_spec})
     with pytest.raises(TargetLoadError, match="sandbox"):
         load_target_spec(blob)
 

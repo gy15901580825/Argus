@@ -1,7 +1,7 @@
 """Loader + minimal client-side validator for target specs.
 
 Server is the source of truth (Pydantic union in api_service); CLI only checks
-that `kind` is one of the 6 known values and that the file is valid JSON with
+that `kind` is one of the 8 known values and that the file is valid JSON with
 the per-kind required fields. This catches most operator mistakes before
 round-tripping to the server.
 """
@@ -14,7 +14,7 @@ from typing import Any
 
 _KNOWN_KINDS = frozenset({
     "openai_compat", "anthropic_native", "custom_http", "grpc", "browser_use",
-    "payment_agent",
+    "payment_agent", "mcp_agent", "http_upload",
 })
 
 _REQUIRED_FIELDS = {
@@ -24,6 +24,17 @@ _REQUIRED_FIELDS = {
     "grpc": {"endpoint", "service_method"},
     "browser_use": {"agent_url", "scenario_kind"},
     "payment_agent": {"testbed_url", "inner", "sandbox"},
+    "mcp_agent": {"testbed_url", "inner", "sandbox"},
+    "http_upload": {"upload_url"},
+}
+
+# Adapters that act on the world rather than only exchanging text. For these
+# `sandbox` must be present AND true — the orchestrator enforces the same rule,
+# but that must not be the only place it is checked. The value is the reason
+# shown to the operator, so each family says what it would actually reach.
+_SANDBOX_REQUIRED_KINDS = {
+    "payment_agent": "drives an agent that spends money",
+    "mcp_agent": "drives an agent against a live MCP server",
 }
 
 
@@ -72,13 +83,11 @@ def load_target_spec(target_arg: str) -> dict[str, Any]:
         raise TargetLoadError(
             f"target.kind={spec['kind']!r} missing required fields: {sorted(missing)}"
         )
-    if spec["kind"] == "payment_agent" and spec["sandbox"] is not True:
-        # This adapter drives an agent that spends money. sandbox must be
-        # true, not just present — the orchestrator enforces the same rule,
-        # but that must not be the only place it is checked.
+    sandbox_reason = _SANDBOX_REQUIRED_KINDS.get(spec["kind"])
+    if sandbox_reason is not None and spec["sandbox"] is not True:
         raise TargetLoadError(
             f"target.kind={spec['kind']!r} requires sandbox: true — this adapter "
-            "drives an agent that spends money and may only be pointed at a "
+            f"{sandbox_reason} and may only be pointed at a "
             "simulated testbed"
         )
     spec = _expand_env(spec)

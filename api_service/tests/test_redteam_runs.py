@@ -275,6 +275,62 @@ def test_redteam_run_rejects_payment_agent_without_sandbox_true(authenticated_cl
     assert response.status_code == 422
 
 
+def test_redteam_run_accepts_mcp_agent_target(authenticated_client, mock_db, fake_user_id):
+    """mcp_agent was missing from the TargetSpec union exactly the way
+    payment_agent had been: the adapter, the 12 mcp probes, the mcp suite, the
+    rubric and the whole mcp_testbed service existed, and a customer asking for
+    an MCP scan still got a 422 before the request ever left api_service."""
+    body = {
+        "target": {
+            "kind": "mcp_agent",
+            "testbed_url": "https://mcp-tb.example.com",
+            "inner": {"kind": "openai_compat", "endpoint_url": "https://x", "model": "y"},
+            "sandbox": True,
+        },
+        "probe_ids": ["owasp_07_system_prompt_leakage"],
+    }
+    mock_db.fetch_one.return_value = {"id": uuid4()}
+    with patch("redteam.orchestrator_client.create_run", _noop_create_run), \
+         patch("redteam.orchestrator_client.stream_findings", _empty_async_stream):
+        response = authenticated_client.post("/api/v1/redteam/runs", json=body)
+    assert response.status_code == 200, response.text
+
+
+@pytest.mark.parametrize("mcp_spec", [
+    # sandbox absent
+    {"testbed_url": "https://mcp-tb.example.com", "inner": {"kind": "openai_compat"}},
+    # sandbox explicitly false
+    {"testbed_url": "https://mcp-tb.example.com", "inner": {"kind": "openai_compat"},
+     "sandbox": False},
+])
+def test_redteam_run_rejects_mcp_agent_without_sandbox_true(authenticated_client, mcp_spec):
+    """A red-team run that could reach a real MCP server is not a config
+    mistake to recover from. The orchestrator refuses it; so must this."""
+    body = {
+        "target": {"kind": "mcp_agent", **mcp_spec},
+        "probe_ids": ["owasp_07_system_prompt_leakage"],
+    }
+    response = authenticated_client.post("/api/v1/redteam/runs", json=body)
+    assert response.status_code == 422
+
+
+def test_redteam_run_accepts_http_upload_target(authenticated_client, mock_db, fake_user_id):
+    """http_upload had the same hole and predates the payment/mcp families."""
+    body = {
+        "target": {
+            "kind": "http_upload",
+            "upload_url": "https://x/upload",
+            "render_url_jsonpath": "$.url",
+        },
+        "probe_ids": ["owasp_07_system_prompt_leakage"],
+    }
+    mock_db.fetch_one.return_value = {"id": uuid4()}
+    with patch("redteam.orchestrator_client.create_run", _noop_create_run), \
+         patch("redteam.orchestrator_client.stream_findings", _empty_async_stream):
+        response = authenticated_client.post("/api/v1/redteam/runs", json=body)
+    assert response.status_code == 200, response.text
+
+
 def test_redteam_run_rejects_unknown_kind_with_422(authenticated_client):
     body = {"target": {"kind": "telepathy", "endpoint_url": "x"}, "probe_ids": ["p1"]}
     response = authenticated_client.post("/api/v1/redteam/runs", json=body)
