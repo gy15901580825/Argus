@@ -57,6 +57,23 @@ class Target(ABC):
     ) -> tuple[str, float]:
         ...
 
+    async def begin_probe(self, probe) -> None:
+        """A new probe is about to start; reset whatever this adapter carries.
+
+        A text-only adapter has nothing to reset, which is why this defaults to
+        a no-op rather than being abstract. An adapter that instruments the
+        world the agent acts in needs the boundary: evidence gathered for one
+        probe must never be visible to another probe's assertions. Sharing it
+        makes a probe that never ran look like a probe that behaved — the
+        `requires_interaction` gate reads the previous probe's contact as this
+        probe's, and reports a false pass.
+
+        It is also the only point at which the adapter learns which probe it is
+        serving, so a probe-specific hostile setup (`scenario.payload`) can be
+        staged here.
+        """
+        return None
+
     async def collect_evidence(self) -> dict:
         """Side effects this target observed while the probe ran.
 

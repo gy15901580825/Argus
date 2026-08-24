@@ -141,6 +141,16 @@ class Runner:
             )
             return
 
+        # The probe is going to run: tell a stateful adapter where the previous
+        # probe ended. Deliberately after both skip decisions — a skipped probe
+        # must not open a session — and before any exchange, so nothing the
+        # previous probe did is still visible to this one's assertions.
+        # Duck-typed mock targets are everywhere in the suite and have no such
+        # method, so the guard mirrors the collect_evidence call below.
+        begin = getattr(self._target, "begin_probe", None)
+        if inspect.iscoroutinefunction(begin):
+            await begin(probe)
+
         # Dispatch on iterative flag
         if getattr(probe, "iterative", False):
             inner = self._run_iterative(probe, rubric_text)

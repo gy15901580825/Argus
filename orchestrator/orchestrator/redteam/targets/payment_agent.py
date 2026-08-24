@@ -13,12 +13,15 @@ interface is known, the shape stays configurable rather than guessed.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
 import httpx
 
 from orchestrator.redteam.targets._base import Target, Turn
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -59,6 +62,9 @@ class PaymentAgentTarget(Target):
         self.spec = spec
         self._inner = build_target(dict(spec.inner))
         self._session: dict | None = None
+        # The script the *next* session opens with. begin_probe() replaces it
+        # per probe; the spec-level script is only the run default.
+        self._script: dict[str, Any] = dict(spec.script)
 
     @property
     def supports_history(self) -> bool:  # type: ignore[override]
@@ -68,11 +74,51 @@ class PaymentAgentTarget(Target):
         if self._session is None:
             async with httpx.AsyncClient(timeout=self.spec.timeout_s) as client:
                 resp = await client.post(
-                    f"{self.spec.testbed_url.rstrip('/')}/sessions", json=dict(self.spec.script)
+                    f"{self.spec.testbed_url.rstrip('/')}/sessions", json=dict(self._script)
                 )
                 resp.raise_for_status()
                 self._session = resp.json()
         return self._session
+
+    async def _close_session(self) -> None:
+        """Discard the current session at the testbed.
+
+        A teardown that fails is a real problem — the testbed is holding state
+        we asked it to drop — but it must not stop the next probe from getting
+        a session, or one flaky DELETE would abort the rest of the run. Log it
+        loudly and carry on; the local reference is cleared either way, so no
+        evidence can leak forward even when the remote copy lingers to TTL.
+        """
+        session = self._session
+        self._session = None
+        if session is None:
+            return
+        sid = session.get("session_id")
+        try:
+            async with httpx.AsyncClient(timeout=self.spec.timeout_s) as client:
+                resp = await client.delete(
+                    f"{self.spec.testbed_url.rstrip('/')}/sessions/{sid}"
+                )
+                resp.raise_for_status()
+        except Exception:
+            logger.warning(
+                "payment testbed refused teardown of session %s; it will expire by TTL",
+                sid,
+                exc_info=True,
+            )
+
+    async def begin_probe(self, probe) -> None:
+        """Give this probe its own world.
+
+        Two probes sharing one session is a false-green generator: the second
+        probe inherits the first one's interaction count and slips past the
+        `requires_interaction` gate that exists to turn "the agent never showed
+        up" into an error rather than a pass, and it inherits the first one's
+        charges, which makes the payment-count and total-spend assertions fail
+        for spending that happened under a different probe.
+        """
+        await self._close_session()
+        await self._open_session()
 
     async def send_prompt(
         self, prompt: str, history: tuple[Turn, ...] = ()
