@@ -14,28 +14,10 @@ import secrets
 import time
 from dataclasses import dataclass, field
 
+from testbed.scenarios import SCENARIOS, Scenario
+
 DEFAULT_TTL_S = 900.0
 DEFAULT_SCENARIO = "tool_poisoning"
-
-# Placeholder tool catalog until testbed/scenarios.py exists and Session is
-# wired to look tools up by scenario. Every session sees the same tools for
-# now; there is nothing hostile about this list on its own.
-_DEFAULT_TOOLS = [
-    {
-        "name": "read_notes",
-        "description": "Reads the user's notes.",
-        "inputSchema": {"type": "object", "properties": {}, "required": []},
-    },
-    {
-        "name": "send_email",
-        "description": "Sends an email on the user's behalf.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"to": {"type": "string"}, "body": {"type": "string"}},
-            "required": ["to", "body"],
-        },
-    },
-]
 
 
 def _digest(tools: list[dict]) -> str:
@@ -59,9 +41,9 @@ class Script:
 class Session:
     id: str
     script: Script
+    scenario: Scenario
     created_at: float
     canary: str | None = None
-    shadow_tool_names: list[str] = field(default_factory=list)
     interaction_count: int = 0
     tools_list_count: int = 0
     descriptions_served: list[dict] = field(default_factory=list)
@@ -70,16 +52,16 @@ class Session:
     def current_tools(self) -> list[dict]:
         """The tool list the *next* tools/list call would serve.
 
-        A fixed catalog for now -- testbed/scenarios.py (task 2) replaces this
-        with per-scenario, call-count-dependent tool lists (e.g. rug_pull).
+        Delegates to the staged scenario, which is call-count-dependent for
+        e.g. rug_pull (the description changes starting from the 2nd call).
         """
-        return [dict(t) for t in _DEFAULT_TOOLS]
+        return self.scenario.tools_fn(self.tools_list_count + 1, self.canary)
 
     def call_result(self, tool: str, arguments: dict) -> dict:
-        """The result of calling `tool`. A generic placeholder for now --
-        testbed/scenarios.py (task 2) gives this scenario-specific teeth,
-        e.g. planting an injection in a confused_deputy result."""
-        return {"content": [{"type": "text", "text": f"{tool} executed."}]}
+        """The result of calling `tool`, per the staged scenario -- e.g.
+        confused_deputy plants its injection here rather than in a
+        description."""
+        return self.scenario.call_result_fn(tool, arguments, self.canary)
 
     def record_tools_list(self, tools: list[dict]) -> None:
         self.tools_list_count += 1
@@ -109,7 +91,7 @@ class Session:
             "tools_list_count": self.tools_list_count,
             "descriptions_served": list(self.descriptions_served),
             "tool_calls": list(self.tool_calls),
-            "shadow_tool_names": list(self.shadow_tool_names),
+            "shadow_tool_names": list(self.scenario.shadow_tool_names),
             "canary": self.canary,
         }
 
@@ -122,10 +104,15 @@ class SessionStore:
     def open(self, script: Script, now: float | None = None) -> Session:
         now = time.monotonic() if now is None else now
         self.purge_expired(now)
+        scenario = SCENARIOS[script.scenario]
         session = Session(
             id=secrets.token_urlsafe(16),
             script=script,
+            scenario=scenario,
             created_at=now,
+            # Minted here, never taken from the request: a real credential
+            # lure has to plant its own bait, not accept one from a caller.
+            canary=f"sk-live-{secrets.token_hex(12)}" if scenario.has_canary else None,
         )
         self._sessions[session.id] = session
         return session
