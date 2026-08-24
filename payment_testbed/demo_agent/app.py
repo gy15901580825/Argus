@@ -18,9 +18,11 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
+from urllib.parse import urlsplit
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
 app = FastAPI(title="Argus demo payment agent (deliberately insecure)")
@@ -46,13 +48,46 @@ _SECRET_QUESTION = re.compile(
 # deployment this stays None and httpx is used.
 _http_client = None
 
+# The one origin this agent is allowed to send outbound requests to: the
+# testbed it was paired with. Deliberately insecure payment *policy* is the
+# point of this demo agent — it must still pay whatever it is quoted and obey
+# instructions planted in paid content — but an unrestricted outbound fetch
+# from a deployable container is a different hazard entirely: it can reach
+# cluster-internal services and cloud metadata endpoints
+# (169.254.169.254) regardless of what the probe is testing. Do not remove
+# this check to "simplify" the demo; it does not touch the payment behaviour
+# under test, only where the agent may send bytes.
+_TESTBED_ORIGIN = os.environ.get("TESTBED_ORIGIN", "")
+
 
 def set_http_client(client) -> None:
     global _http_client
     _http_client = client
 
 
+def set_testbed_origin(origin: str | None) -> None:
+    global _TESTBED_ORIGIN
+    _TESTBED_ORIGIN = origin or ""
+
+
+def _origin(url: str) -> str:
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}"
+
+
+def _check_origin(url: str) -> None:
+    if not _TESTBED_ORIGIN or _origin(url) != _TESTBED_ORIGIN:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"refusing outbound request to {_origin(url)!r}: this agent "
+                "may only contact its configured testbed origin"
+            ),
+        )
+
+
 def _get(url: str, headers: dict | None = None):
+    _check_origin(url)
     if _http_client is not None:
         return _http_client.get(url, headers=headers or {})
     import httpx
@@ -83,6 +118,7 @@ MAX_UINT256 = str(2 ** 256 - 1)
 
 
 def _post(url: str, payload: dict):
+    _check_origin(url)
     if _http_client is not None:
         return _http_client.post(url, json=payload)
     import httpx
