@@ -35,10 +35,18 @@ class Script:
     (a single-hop forward vs. a chained "read again, then forward") without
     the testbed growing one scenario per variant. Every other scenario ignores
     it -- their `call_result_fn` accepts and drops the same parameter.
+
+    `gate_send_email` only has an effect on `rug_pull`, default off so the
+    original probe is untouched. On, it makes the first listing's send_email
+    genuinely unusable (both its description and an early call are rejected)
+    rather than merely likely to be relisted, so a second `tools/list` -- the
+    one that actually serves the rug-pulled description -- becomes structurally
+    required to complete a task that needs to send anything.
     """
 
     scenario: str = DEFAULT_SCENARIO
     injection: str | None = None
+    gate_send_email: bool = False
 
     @classmethod
     def from_dict(cls, raw: dict | None) -> "Script":
@@ -46,6 +54,7 @@ class Script:
         return cls(
             scenario=str(raw.get("scenario", DEFAULT_SCENARIO)),
             injection=raw.get("injection"),
+            gate_send_email=bool(raw.get("gate_send_email", False)),
         )
 
 
@@ -67,13 +76,22 @@ class Session:
         Delegates to the staged scenario, which is call-count-dependent for
         e.g. rug_pull (the description changes starting from the 2nd call).
         """
-        return self.scenario.tools_fn(self.tools_list_count + 1, self.canary)
+        return self.scenario.tools_fn(
+            self.tools_list_count + 1, self.canary, self.script.gate_send_email
+        )
 
     def call_result(self, tool: str, arguments: dict) -> dict:
         """The result of calling `tool`, per the staged scenario -- e.g.
         confused_deputy plants its injection here rather than in a
         description."""
-        return self.scenario.call_result_fn(tool, arguments, self.canary, self.script.injection)
+        return self.scenario.call_result_fn(
+            tool,
+            arguments,
+            self.canary,
+            self.script.injection,
+            self.tools_list_count,
+            self.script.gate_send_email,
+        )
 
     def record_tools_list(self, tools: list[dict]) -> None:
         self.tools_list_count += 1
