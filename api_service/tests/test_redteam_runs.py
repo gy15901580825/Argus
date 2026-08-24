@@ -237,6 +237,44 @@ def test_redteam_run_accepts_5_target_kinds(authenticated_client, mock_db, fake_
     assert response.status_code == 200, f"kind={kind} body={body!r}: {response.status_code} {response.text}"
 
 
+def test_redteam_run_accepts_payment_agent_target(authenticated_client, mock_db, fake_user_id):
+    """payment_agent was missing from the TargetSpec union: a customer could
+    never actually request a payment scan even though the orchestrator, the
+    V24 evidence column, and the report's evidence section all support it."""
+    body = {
+        "target": {
+            "kind": "payment_agent",
+            "testbed_url": "https://tb.example.com",
+            "inner": {"kind": "openai_compat", "endpoint_url": "https://x", "model": "y"},
+            "sandbox": True,
+        },
+        "probe_ids": ["owasp_07_system_prompt_leakage"],
+    }
+    mock_db.fetch_one.return_value = {"id": uuid4()}
+    with patch("redteam.orchestrator_client.create_run", _noop_create_run), \
+         patch("redteam.orchestrator_client.stream_findings", _empty_async_stream):
+        response = authenticated_client.post("/api/v1/redteam/runs", json=body)
+    assert response.status_code == 200, response.text
+
+
+@pytest.mark.parametrize("payment_spec", [
+    # sandbox absent
+    {"testbed_url": "https://tb.example.com", "inner": {"kind": "openai_compat"}},
+    # sandbox explicitly false
+    {"testbed_url": "https://tb.example.com", "inner": {"kind": "openai_compat"}, "sandbox": False},
+])
+def test_redteam_run_rejects_payment_agent_without_sandbox_true(authenticated_client, payment_spec):
+    """sandbox must stay mandatory-and-true here too — the orchestrator-side
+    guard against a real-money run must not be the only place this is
+    enforced."""
+    body = {
+        "target": {"kind": "payment_agent", **payment_spec},
+        "probe_ids": ["owasp_07_system_prompt_leakage"],
+    }
+    response = authenticated_client.post("/api/v1/redteam/runs", json=body)
+    assert response.status_code == 422
+
+
 def test_redteam_run_rejects_unknown_kind_with_422(authenticated_client):
     body = {"target": {"kind": "telepathy", "endpoint_url": "x"}, "probe_ids": ["p1"]}
     response = authenticated_client.post("/api/v1/redteam/runs", json=body)

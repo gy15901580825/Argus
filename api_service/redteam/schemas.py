@@ -1,13 +1,13 @@
 """Discriminated union TargetSpec for /redteam/runs API.
 
-Mirrors the 5 adapter spec classes in
+Mirrors the 6 adapter spec classes in
 orchestrator/orchestrator/redteam/targets/*.py. Field names must
 stay in lockstep — api_service forwards the JSON body verbatim. If a field
 diverges, orchestrator rejects with ValueError → 500.
 """
 from __future__ import annotations
 
-from typing import Annotated, Literal, Optional, Union
+from typing import Annotated, Any, Literal, Optional, Union
 from pydantic import BaseModel, Field
 
 
@@ -58,7 +58,27 @@ class BrowserUseTarget(BaseModel):
     extra_context: dict[str, str] = Field(default_factory=dict)
 
 
+class PaymentAgentTarget(BaseModel):
+    kind: Literal["payment_agent"] = "payment_agent"
+    testbed_url: str
+    inner: dict[str, Any]
+    script: dict[str, Any] = Field(default_factory=dict)
+    # This adapter drives an agent that spends money. sandbox must be
+    # present and true — not just true by default — so a customer cannot
+    # reach real funds by omitting the field. The orchestrator enforces the
+    # same rule; this is not the only place it may be checked.
+    sandbox: Literal[True]
+    timeout_s: float = 60.0
+
+
 TargetSpec = Annotated[
-    Union[OpenAICompatTarget, AnthropicNativeTarget, CustomHTTPTarget, GRPCTarget, BrowserUseTarget],
+    Union[
+        OpenAICompatTarget,
+        AnthropicNativeTarget,
+        CustomHTTPTarget,
+        GRPCTarget,
+        BrowserUseTarget,
+        PaymentAgentTarget,
+    ],
     Field(discriminator="kind"),
 ]
