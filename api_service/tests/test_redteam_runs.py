@@ -146,6 +146,34 @@ def test_get_redteam_report_html(authenticated_client, mock_db, fake_user_id):
     assert "Argus" in resp.text
 
 
+def test_get_redteam_report_html_shows_target_kind(authenticated_client, mock_db, fake_user_id):
+    """target_spec is JSONB — asyncpg hands it back as a string. Left undecoded,
+    `{{ run.target_spec.kind }}` in the template silently renders blank instead
+    of the target kind. Assert the kind text itself appears, not just 200 OK."""
+    body = {"target": {"kind": "openai_compat", "endpoint_url": "https://x", "model": "y"}, "probe_ids": ["p1"]}
+    run_uuid = uuid4()
+    mock_db.fetch_one.side_effect = [
+        {"id": run_uuid},
+        {
+            "id": run_uuid, "user_id": fake_user_id, "status": "completed",
+            "target_spec": '{"kind": "openai_compat", "label": "prod chatbot"}',
+            "probe_suite": "ad-hoc",
+        },
+    ]
+    mock_db.fetch_all.return_value = []
+    async def _empty(*a, **k):
+        return
+        yield
+    with patch("redteam.orchestrator_client.create_run", _noop_create_run), \
+         patch("redteam.orchestrator_client.stream_findings", _empty):
+        run_resp = authenticated_client.post("/api/v1/redteam/runs", json=body)
+    rid = run_resp.json()["run_id"]
+
+    resp = authenticated_client.get(f"/api/v1/redteam/runs/{rid}/report?format=html")
+    assert resp.status_code == 200
+    assert "openai_compat" in resp.text
+
+
 def test_get_redteam_report_sarif(authenticated_client, mock_db, fake_user_id):
     body = {"target": {"kind": "openai_compat", "endpoint_url": "https://x", "model": "y"}, "probe_ids": ["p1"]}
     run_uuid = uuid4()

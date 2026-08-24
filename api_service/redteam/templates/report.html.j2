@@ -15,8 +15,15 @@ h1 { border-bottom: 2px solid #333; }
 .severity-critical, .severity-high { font-weight: bold; color: #c00; }
 .severity-medium { color: #c80; }
 .severity-low, .severity-info { color: #888; }
+.target { color: #555; margin-top: -0.6em; }
 .finding { border: 1px solid #ddd; border-radius: 4px; padding: 1em; margin: 1em 0; }
 .finding pre { background: #f4f4f4; padding: 0.5em; overflow-x: auto; max-width: 100%; white-space: pre-wrap; }
+.evidence { border-left: 3px solid #7a5; background: #f6faf4; padding: 0.6em 0.9em; margin: 0.8em 0; }
+.evidence table { border-collapse: collapse; margin: 0.4em 0; font-size: 0.92em; }
+.evidence th, .evidence td { border: 1px solid #cfd8cc; padding: 0.25em 0.6em; text-align: left; }
+.evidence .num { font-variant-numeric: tabular-nums; text-align: right; }
+.evidence .note { font-size: 0.85em; color: #555; margin: 0.4em 0 0; }
+.deterministic { font-size: 0.8em; color: #567; border: 1px solid #ccd; padding: 0 0.35em; }
 .mappings { margin: 0.5em 0; font-size: 0.9em; color: #666; }
 .mappings code { background: #eef; padding: 0.1em 0.4em; border-radius: 3px; margin-right: 0.4em; }
 </style>
@@ -24,6 +31,9 @@ h1 { border-bottom: 2px solid #333; }
 <body>
 <h1>Argus Red-Team Report</h1>
 <p>Run ID: <code>{{ run.id }}</code> · Status: <strong>{{ run.status }}</strong> · Probes: {{ run.findings | length }}</p>
+{% if run.target_spec %}
+<p class="target">Target: <code>{{ run.target_spec.kind }}</code>{% if run.target_spec.label %} — {{ run.target_spec.label }}{% endif %}{% if run.probe_suite %} · Suite: <code>{{ run.probe_suite }}</code>{% endif %}</p>
+{% endif %}
 <div class="summary">
   <div class="metric"><div class="v fail">{{ counts.fail }} fail</div></div>
   <div class="metric"><div class="v warn">{{ counts.warn }} warn</div></div>
@@ -38,14 +48,43 @@ h1 { border-bottom: 2px solid #333; }
   <pre>{{ f.attack_prompt }}</pre>
   <p><strong>Target response:</strong></p>
   <pre>{{ f.target_response | truncate(800) }}</pre>
+  {% if f.judge_model %}
   <p><strong>Judge reasoning:</strong> {{ f.reasoning }}</p>
+  {% else %}
+  <p><strong>Verdict basis:</strong> {{ f.reasoning }} <span class="deterministic">deterministic — no model consulted</span></p>
+  {% endif %}
+  {% if f.evidence %}
+  <div class="evidence">
+    <p><strong>Evidence — what the target actually did</strong></p>
+    {% if f.evidence.authorizations %}
+    <table>
+      <tr><th>Amount</th><th>Asset</th><th>Paid to</th><th>Settled</th></tr>
+      {% for a in f.evidence.authorizations %}
+      <tr>
+        <td class="num">{{ a.amount }}</td>
+        <td>{{ a.asset }}</td>
+        <td><code>{{ a.payee }}</code></td>
+        <td>{{ "yes" if a.settled else "no" }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p>No payment authorization was presented.</p>
+    {% endif %}
+    <p class="note">
+      {{ f.evidence.interaction_count }} request(s) to the testbed.
+      {% if f.evidence.expected_payee %}Session payee: <code>{{ f.evidence.expected_payee }}</code>.{% endif %}
+      All payments are simulated against a mock facilitator; no real transfer occurred.
+    </p>
+  </div>
+  {% endif %}
   <div class="mappings">
     {% for a in f.atlas_id %}<code>ATLAS:{{ a }}</code>{% endfor %}
     {% for o in f.owasp_id %}<code>OWASP:{{ o }}</code>{% endfor %}
     {% for n in f.nist_id %}<code>NIST:{{ n }}</code>{% endfor %}
     {% for e in f.eu_ai_act_id %}<code>EU:{{ e }}</code>{% endfor %}
   </div>
-  <p style="font-size:0.85em;color:#888">judge: {{ f.judge_model }}{% if f.escalated_model %} → {{ f.escalated_model }}{% endif %} · target latency: {{ "%.0f"|format(f.target_latency_ms) }}ms · probed at {{ f.probed_at }}</p>
+  <p style="font-size:0.85em;color:#888">{% if f.judge_model %}judge: {{ f.judge_model }}{% if f.escalated_model %} → {{ f.escalated_model }}{% endif %}{% else %}verdict: deterministic, from captured evidence{% endif %} · target latency: {{ "%.0f"|format(f.target_latency_ms) }}ms · probed at {{ f.probed_at }}</p>
 </div>
 {% endfor %}
 </body>
