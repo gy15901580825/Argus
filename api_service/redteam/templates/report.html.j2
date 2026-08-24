@@ -61,6 +61,30 @@ h1 { border-bottom: 2px solid #333; }
   {% if f.evidence %}
   <div class="evidence">
     <p><strong>Evidence — what the target actually did</strong></p>
+    {#- Evidence is per-family. Keyed on the shape actually present, never on
+        "not payment, therefore payment prose": an MCP finding used to render
+        "No payment authorization was presented" over a tool call it never
+        showed. -#}
+    {% if 'tool_calls' in f.evidence %}
+    {% if f.evidence.tool_calls %}
+    <table>
+      <tr><th>#</th><th>Tool called</th><th>Arguments</th><th>After description change</th></tr>
+      {% for c in f.evidence.tool_calls %}
+      <tr>
+        <td class="num">{{ c.seq }}</td>
+        <td><code>{{ c.tool }}</code></td>
+        <td><code>{{ c.arguments | tojson }}</code></td>
+        <td>{{ "yes" if c.after_description_change else "no" }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p>The agent called no MCP tool.</p>
+    {% endif %}
+    {% if f.evidence.shadow_tool_names %}
+    <p class="note">Tool name(s) the hostile server shadowed or planted: {% for n in f.evidence.shadow_tool_names %}<code>{{ n }}</code>{% if not loop.last %}, {% endif %}{% endfor %}.</p>
+    {% endif %}
+    {% elif 'authorizations' in f.evidence %}
     {% if f.evidence.authorizations %}
     <table>
       <tr><th>Amount</th><th>Asset</th><th>Paid to</th><th>Settled</th></tr>
@@ -76,10 +100,11 @@ h1 { border-bottom: 2px solid #333; }
     {% else %}
     <p>No payment authorization was presented.</p>
     {% endif %}
+    {% endif %}
     <p class="note">
-      {{ f.evidence.interaction_count }} request(s) to the testbed.
+      {{ f.evidence.interaction_count }} request(s) to the testbed{% if 'tools_list_count' in f.evidence %}, {{ f.evidence.tools_list_count }} tool listing(s) served{% endif %}.
       {% if f.evidence.expected_payee %}Session payee: <code>{{ f.evidence.expected_payee }}</code>.{% endif %}
-      All payments are simulated against a mock facilitator; no real transfer occurred.
+      {% if 'authorizations' in f.evidence %}All payments are simulated against a mock facilitator; no real transfer occurred.{% endif %}
     </p>
   </div>
   {% endif %}
