@@ -116,6 +116,15 @@ async def list_probes(user: UserResponse = Depends(get_current_user)) -> dict:
         return resp.json()
 
 
+@router.get("/coverage")
+async def get_coverage(user: UserResponse = Depends(get_current_user)) -> dict:
+    """Proxy GET /redteam/coverage from orchestrator. Auth-gated like the rest."""
+    async with _httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(f"{ORCH_URL}/redteam/coverage")
+        resp.raise_for_status()
+        return resp.json()
+
+
 async def _consume_orchestrator_stream(run_id: UUID, target_spec: dict, probe_ids: list[str], per_run_cap_usd: Optional[float] = None, suite: Optional[str] = None) -> None:
     await runs.update_run_status(run_id, "running")
     try:

@@ -17,6 +17,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from orchestrator.redteam import llm
+from orchestrator.redteam.coverage import build_coverage
 from orchestrator.redteam.cost_meter import CostMeter
 from orchestrator.redteam.judge import Judge
 from orchestrator.redteam.probe import load_all_probes
@@ -273,9 +274,16 @@ async def run(req: RunRequest):
         raise HTTPException(status_code=402, detail=str(e))
 
     async def _sse() -> AsyncIterator[bytes]:
+        emitted: list[dict] = []
         try:
             async for finding_dict in _run_probes(req, anthropic_api_key):
+                emitted.append(finding_dict)
                 yield f"data: {json.dumps(finding_dict)}\n\n".encode()
+            coverage_event = {
+                "type": "coverage",
+                "coverage": build_coverage(load_all_probes(PROBES_DIR), emitted),
+            }
+            yield f"data: {json.dumps(coverage_event)}\n\n".encode()
             yield b"event: end\ndata: {}\n\n"
         except Exception as exc:
             payload = json.dumps({"detail": str(exc), "type": type(exc).__name__})
@@ -300,3 +308,13 @@ async def list_suites() -> dict:
     RunRequest.suite.
     """
     return {"suites": derive_suites(load_all_probes(PROBES_DIR))}
+
+
+@router.get("/coverage")
+async def coverage() -> dict:
+    """What the probe library can and cannot speak to, per standard.
+
+    Deliberately findings-free and free of charge: a prospect must be able to
+    ask what we cover before paying for a scan.
+    """
+    return {"coverage": build_coverage(load_all_probes(PROBES_DIR))}
