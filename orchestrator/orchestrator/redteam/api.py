@@ -144,6 +144,23 @@ def _estimate_exchanges(req: RunRequest, probe_ids: list[str]) -> int:
     return sum(len(by_id[pid].prompts) if pid in by_id else 1 for pid in probe_ids)
 
 
+def _judged_exchanges(req: RunRequest, probe_ids: list[str]) -> int:
+    """Of those exchanges, how many actually call the judge.
+
+    An assertion-backed probe is decided from evidence and never reaches the
+    judge, so billing it for a judge call would over-estimate the run and reject
+    scans that cost nothing to judge.
+    """
+    if req.mode == "deep":
+        return _estimate_exchanges(req, probe_ids)
+    by_id = {p.id: p for p in load_all_probes(PROBES_DIR)}
+    return sum(
+        len(by_id[pid].prompts) if pid in by_id else 1
+        for pid in probe_ids
+        if not (pid in by_id and by_id[pid].assertions)
+    )
+
+
 async def _run_probes(req: RunRequest, anthropic_api_key: str) -> AsyncIterator[dict]:
     # build_target() validates the dict and selects the right adapter — C1 fix.
     target = build_target(req.target)
@@ -202,7 +219,7 @@ async def preflight(req: RunRequest):
         _COST_METER.check_or_abort_pre_run(
             probe_ids=requested,
             target_kind=kind,
-            total_exchanges=_estimate_exchanges(req, requested),
+            total_exchanges=_judged_exchanges(req, requested),
             deep=req.mode == "deep",
             per_run_cap_override=req.per_run_cap_usd,
         )
@@ -248,7 +265,7 @@ async def run(req: RunRequest):
         _COST_METER.check_or_abort_pre_run(
             probe_ids=requested,
             target_kind=kind,
-            total_exchanges=_estimate_exchanges(req, requested),
+            total_exchanges=_judged_exchanges(req, requested),
             deep=req.mode == "deep",
             per_run_cap_override=req.per_run_cap_usd,
         )
