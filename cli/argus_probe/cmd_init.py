@@ -35,6 +35,29 @@ _KIND_QUESTIONS: dict[str, list[tuple[str, str, str | None]]] = {
         ("agent_url", "Browser-using agent URL", None),
         ("scenario_kind", "Scenario kind (dom_injection/ui_phishing/visual_injection/os_cmd)", "dom_injection"),
     ],
+    "payment_agent": [
+        ("testbed_url", "Payment testbed URL", "http://127.0.0.1:8090"),
+        (
+            "inner_json",
+            "Inner target spec (JSON) for the transport that talks to your agent",
+            '{"kind": "openai_compat", "endpoint_url": "http://127.0.0.1:8091/v1/chat/completions", "model": "argus-demo-payment-agent"}',
+        ),
+    ],
+    "mcp_agent": [
+        ("testbed_url", "MCP testbed URL", "http://127.0.0.1:8092"),
+        (
+            "inner_json",
+            "Inner target spec (JSON) for the transport that talks to your agent",
+            '{"kind": "openai_compat", "endpoint_url": "http://127.0.0.1:8093/v1/chat/completions", "model": "argus-demo-mcp-agent"}',
+        ),
+    ],
+    "http_upload": [
+        ("upload_url", "Upload URL", None),
+        ("upload_field_name", "Upload form field name", "file"),
+        ("upload_filename", "Upload filename", "payload.svg"),
+        ("upload_content_type", "Upload content type", "image/svg+xml"),
+        ("render_url_jsonpath", "Render URL JSONPath (extracts the render URL from the upload response)", "$.url"),
+    ],
 }
 
 _WORKFLOW_TEMPLATE = """\
@@ -95,6 +118,23 @@ def init_command(kind: str, output: str, workflow: bool | None) -> None:
     if "api_key_env" in spec:
         env_var = spec.pop("api_key_env")
         spec["api_key"] = "${" + str(env_var) + "}"
+
+    # inner_json → inner (payment_agent / mcp_agent nest another target spec
+    # for the transport that actually talks to the agent)
+    if "inner_json" in spec:
+        raw_inner = spec.pop("inner_json")
+        try:
+            spec["inner"] = json.loads(str(raw_inner))
+        except json.JSONDecodeError as exc:
+            raise click.UsageError(f"inner target spec is not valid JSON: {exc}") from exc
+
+    # sandbox is a safety interlock, not a question: payment_agent and
+    # mcp_agent drive an agent that spends money / reaches a live MCP server,
+    # and both api_service and the CLI loader refuse a spec without
+    # sandbox: true — there is no way to turn it off, so it must never be
+    # presented as something a user could answer "no" to.
+    if kind in ("payment_agent", "mcp_agent"):
+        spec["sandbox"] = True
 
     # Confirm-overwrite if target file exists
     target_path = Path(output)
