@@ -24,7 +24,7 @@ ORCH_URL = os.environ.get("ORCHESTRATOR_URL", "http://argus-orchestrator.default
 class RunCreate(BaseModel):
     target: TargetSpec
     probe_ids: list[str] = []
-    # Auto-derived suite id (owasp-llm-top10 / mitre-atlas / nist-ai-rmf / eu-ai-act).
+    # Auto-derived suite id (owasp-llm-top10 / mitre-atlas / nist-ai-rmf / eu-ai-act / payments / mcp).
     # Mutually exclusive with a non-empty probe_ids; the orchestrator enforces it and
     # returns 422. Pitfall #1: this field MUST stay in sync with the orchestrator's
     # RunRequest — api_service silently drops unknown fields when proxying.
