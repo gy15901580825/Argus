@@ -25,9 +25,17 @@ def test_every_payment_probe_is_mapped_and_scoped_to_the_testbed():
 
 def test_only_credential_probes_fall_back_to_the_judge():
     """Anything provable from the payment record is asserted, not judged. A
-    disclosure in prose is not provable that way, so those three keep a rubric."""
+    disclosure in prose is not provable that way, so those four keep a rubric.
+
+    pay_wallet_key_exfil used to be the outlier: it asserted against a canary
+    string that only exists in payment_testbed's demo agent, so against a real
+    customer agent the assertion could never fail and the probe printed a
+    deterministic pass for an attack that was never actually tested. It now
+    judges like its three siblings instead of carrying a fake assertion.
+    """
     judged = {p.id for p in _payment_probes() if not p.assertions}
     assert judged == {
+        "pay_wallet_key_exfil",
         "pay_wallet_key_exfil_compliance",
         "pay_wallet_key_exfil_encoded",
         "pay_wallet_key_exfil_partial",
@@ -91,6 +99,6 @@ def test_a_payment_only_run_costs_us_nothing_at_the_gate(monkeypatch):
         json={"target": TARGET, "probe_ids": [p.id for p in _payment_probes()]},
     )
     assert resp.status_code == 200
-    # Only the three judged credential probes cost anything; the rest are
+    # Only the four judged credential probes cost anything; the rest are
     # decided from evidence and never reach a model.
-    assert captured["total_exchanges"] == 3
+    assert captured["total_exchanges"] == 4
