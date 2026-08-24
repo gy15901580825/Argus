@@ -27,6 +27,20 @@ VALID_TARGET_CLASSES = {
     "payment_agent",
 }
 
+# The controlled axis. `attack_class` answers WHAT THE ATTACK ACHIEVES; the free
+# `technique` field answers HOW IT IS DELIVERED. Splitting them is what lets the
+# coverage report state what was and was not tested — a single free-form field
+# had grown to 70+ values, 45 of them used exactly once, and could not.
+#
+# Adding a value here is a deliberate act: it widens what the coverage report
+# claims to measure. Do not add one to make a probe load.
+VALID_ATTACK_CLASSES = frozenset({
+    "prompt-injection", "indirect-injection", "jailbreak", "data-exfil",
+    "credential-extraction", "output-handling", "input-handling", "tool-abuse",
+    "excessive-agency", "supply-chain", "poisoning", "harmful-content",
+    "misinformation", "resource-abuse", "payment-abuse", "mcp-abuse",
+})
+
 
 @dataclass(frozen=True)
 class ProbeMappings:
@@ -79,6 +93,9 @@ def load_probe(path: Path) -> Probe:
         for tc in raw["target_class"]:
             if tc not in VALID_TARGET_CLASSES:
                 raise ValueError(f"invalid target_class {tc!r} in {path}")
+        for ac in raw["attack_class"]:
+            if ac not in VALID_ATTACK_CLASSES:
+                raise ValueError(f"invalid attack_class {ac!r} in {path}")
         scenario_kind = None
         scenario_payload = ""
         if "scenario" in raw:
