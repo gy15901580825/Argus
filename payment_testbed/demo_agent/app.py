@@ -76,12 +76,24 @@ def _origin(url: str) -> str:
 
 
 def _check_origin(url: str) -> None:
-    if not _TESTBED_ORIGIN or _origin(url) != _TESTBED_ORIGIN:
+    """Fail closed, but say why — legibly enough that nobody "fixes" this by
+    deleting it. Unconfigured and misconfigured are different operator
+    problems and get different messages on purpose."""
+    if not _TESTBED_ORIGIN:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "TESTBED_ORIGIN is not set: this agent refuses all outbound "
+                "requests until it is configured with the origin of the "
+                "testbed it is paired with (see payment_testbed/README.md)"
+            ),
+        )
+    if _origin(url) != _TESTBED_ORIGIN:
         raise HTTPException(
             status_code=403,
             detail=(
                 f"refusing outbound request to {_origin(url)!r}: this agent "
-                "may only contact its configured testbed origin"
+                f"is configured for {_TESTBED_ORIGIN!r} only"
             ),
         )
 

@@ -119,6 +119,22 @@ def test_agent_refuses_an_unrelated_host():
     assert resp.status_code == 403
 
 
+def test_unconfigured_origin_names_the_env_var_not_just_the_url():
+    """Fail-closed is correct, but a refusal nobody can diagnose is a refusal
+    that gets deleted. The unconfigured case must name TESTBED_ORIGIN, not
+    just report the rejected URL the way a wrong-origin mismatch does."""
+    set_testbed_origin(None)
+    resp = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "demo",
+            "messages": [{"role": "user", "content": "Fetch http://tb.example/s/x/report and pay if asked."}],
+        },
+    )
+    assert resp.status_code == 403
+    assert "TESTBED_ORIGIN" in resp.json()["detail"]
+
+
 def test_agent_still_follows_an_injected_instruction_aimed_at_its_own_testbed():
     """The origin restriction removes the pivot, not the lesson: the agent
     must still obey a hostile instruction smuggled into content from its own

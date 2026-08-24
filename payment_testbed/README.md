@@ -18,9 +18,13 @@ client at all, so real settlement is absent rather than disabled.
 ```bash
 pip install -r requirements.txt
 uvicorn testbed.app:app --port 8090          # the world
-uvicorn demo_agent.app:app --port 8091       # the victim
+TESTBED_ORIGIN=http://127.0.0.1:8090 uvicorn demo_agent.app:app --port 8091   # the victim
 python -m pytest tests/ -q
 ```
+
+`TESTBED_ORIGIN` must point at the `testbed/` instance above -- see "Outbound
+requests are restricted to TESTBED_ORIGIN" below. Without it the demo agent
+starts but refuses to fetch anything.
 
 ## Session lifecycle
 
@@ -59,3 +63,20 @@ this file cannot notice this file drifting.
 
 The demo agent is insecure on purpose. Do not deploy it anywhere it can reach
 real funds, and do not reuse its wallet handling as an example of anything.
+
+### Outbound requests are restricted to `TESTBED_ORIGIN`
+
+The demo agent is deliberately insecure as an LLM target -- it pays whatever
+it's quoted, to whoever it's told, and obeys instructions planted in content
+it just paid for. It is not, on top of that, allowed to fetch arbitrary URLs:
+the URL it acts on comes straight out of the prompt, and an unrestricted
+outbound fetch from a deployable container would make it an SSRF pivot to
+cluster-internal services and cloud metadata endpoints (`169.254.169.254`).
+
+`demo_agent/app.py` only ever contacts the single origin named by the
+`TESTBED_ORIGIN` environment variable -- the `testbed/` instance it is paired
+with. **It defaults to refusing every outbound request** until that variable
+is set; there is no permissive default. When running the two processes from
+this shared image, set `TESTBED_ORIGIN` on the demo agent's process to the
+`testbed/` instance's origin (e.g. `http://127.0.0.1:8090` locally, or the
+in-cluster service URL in a deployment).
