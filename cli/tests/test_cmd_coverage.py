@@ -81,3 +81,35 @@ def test_standard_flag_filters_to_one_table(monkeypatch):
     assert result.exit_code == 0, result.output
     assert "owasp-llm-top10" in result.output
     assert "mitre-atlas" not in result.output
+
+
+def test_standard_flag_filters_the_json_manifest_too(monkeypatch):
+    """--json must honour --standard rather than dumping the full manifest — a caller
+
+    scripting against --json has the same reason to filter as an interactive one.
+    """
+    monkeypatch.setattr(api_client, "get_coverage", lambda api_url, token: FAKE_MANIFEST)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cmd_coverage,
+        ["--token", "t", "--api-url", "http://x", "--standard", "owasp-llm-top10", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    parsed = json.loads(result.output)
+    assert list(parsed["standards"].keys()) == ["owasp-llm-top10"]
+    assert "mitre-atlas" not in parsed["standards"]
+
+
+def test_unknown_standard_is_rejected_not_silently_empty(monkeypatch):
+    """An unrecognised --standard must error, never silently yield an empty result."""
+    monkeypatch.setattr(api_client, "get_coverage", lambda api_url, token: FAKE_MANIFEST)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cmd_coverage, ["--token", "t", "--api-url", "http://x", "--standard", "bogus-standard"]
+    )
+
+    assert result.exit_code != 0
+    assert "bogus-standard" in result.output

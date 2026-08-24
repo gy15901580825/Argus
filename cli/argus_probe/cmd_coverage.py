@@ -25,6 +25,8 @@ def cmd_coverage(token: str, api_url: str, standard: str, as_json: bool):
     """Show what the probe library covers, offline — no probes run."""
     coverage = api_client.get_coverage(api_url, token)
     if as_json:
+        if standard:
+            coverage = {**coverage, "standards": {standard: coverage["standards"][standard]}}
         click.echo(json.dumps(coverage))
         return
 
