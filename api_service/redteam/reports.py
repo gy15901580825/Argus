@@ -28,7 +28,11 @@ def _verdict_counts(findings: list[dict]) -> dict:
 
 def render_html(run: dict) -> str:
     template = _jinja.get_template("report.html.j2")
-    return template.render(run=run, counts=_verdict_counts(run.get("findings", [])))
+    return template.render(
+        run=run,
+        counts=_verdict_counts(run.get("findings", [])),
+        coverage=run.get("coverage"),
+    )
 
 
 def render_sarif(run: dict) -> str:

@@ -96,6 +96,7 @@ async def get_run_report(
         "finished_at": str(row.get("finished_at")) if row.get("finished_at") else None,
         "target_spec": row.get("target_spec"),
         "probe_suite": row.get("probe_suite"),
+        "coverage": row.get("coverage"),
         "findings": [{**f, "id": str(f["id"]), "probed_at": str(f["probed_at"]) if f.get("probed_at") else None} for f in findings],
     }
     if format == "html":
