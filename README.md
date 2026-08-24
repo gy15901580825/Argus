@@ -1,8 +1,9 @@
 # Argus
 
 **Black-box red-team testing for AI agents.** Point Argus at any HTTP, gRPC,
-or browser-using agent endpoint, run 160+ adversarial probes (OWASP LLM Top 10,
-MITRE ATLAS, NIST AI RMF, garak wrappers, TAP / PAIR / GCG), and get
+MCP, payment-agent, or browser-using agent endpoint, run 205 adversarial
+probes (OWASP LLM Top 10, MITRE ATLAS, NIST AI RMF, garak wrappers, TAP / PAIR
+/ GCG), and get
 LLM-judged findings as SARIF 2.1.0 / JUnit XML / HTML — drop straight into CI
 as a GitHub Code Scanning gate.
 
@@ -31,21 +32,33 @@ AI RMF** controls without translation.
 
 What Argus does:
 
-- **167 probes** in the bundled library — 10 OWASP LLM Top 10 hand-authored,
+- **205 probes** in the bundled library — 15 OWASP LLM Top 10 hand-authored,
   5 from public LLM system cards (best-of-N, crescendo, confused deputy,
-  many-shot jailbreak, sleeper agent), 30+ browser-agent specific,
+  many-shot jailbreak, sleeper agent), 31 browser-agent specific, 26
+  payment-abuse probes (x402 wallet flows, against `payment_agent`), 12
+  MCP-abuse probes (poisoned tool servers, against `mcp_agent`), 16
   Semia-mapped agent-skill detectors (missing human gate, encoded payload,
   install-time exec, shadow credentials), and 99 [garak](https://github.com/NVIDIA/garak)
-  wrappers for NVIDIA's existing catalog. See [`docs/probe-mapping.md`](docs/probe-mapping.md).
-- **5 target adapters**: `openai_compat`, `anthropic_native`, `custom_http`
-  (Jinja2 + JSONPath), `grpc` (with reflection auto-discovery), and
-  `browser_use` (Playwright-driven full-browser flows).
+  wrappers for NVIDIA's existing catalog. Exact per-standard counts are
+  generated, not hand-maintained — see [`docs/probe-mapping.md`](docs/probe-mapping.md).
+- **8 target adapters**: `openai_compat`, `anthropic_native`, `custom_http`
+  (Jinja2 + JSONPath), `grpc` (with reflection auto-discovery), `http_upload`
+  (file-upload-and-render sinks), `browser_use` (Playwright-driven
+  full-browser flows), `payment_agent` (x402 wallet-carrying agents, runs
+  against `payment_testbed/`), and `mcp_agent` (MCP tool-server abuse, runs
+  against `mcp_testbed/`).
+- **Scan suites** — pass `suite` instead of enumerating `probe_ids` on
+  `POST /api/v1/redteam/runs`: `owasp-llm-top10`, `mitre-atlas`,
+  `nist-ai-rmf`, `eu-ai-act`, `payments`, `mcp`.
 - **Algorithmic iterative attacks**: TAP, PAIR, GCG black-box.
 - **LLM-judge harness** (default Anthropic Haiku, escalation to Sonnet on
   high-severity findings) with per-probe rubrics in
   `orchestrator/orchestrator/redteam/rubrics/`.
 - **Report formats**: SARIF 2.1.0 (drops into GitHub Code Scanning), JUnit
-  XML (CI gate), HTML (humans).
+  XML (CI gate), HTML (humans). SARIF and HTML also carry a per-standard
+  coverage section (what the library does and does not test) and, for
+  probes with captured evidence (payment/MCP interactions), an evidence
+  section alongside the judge's verdict.
 - **Daily cost cap + per-run cap** with predictive abort, so the judge
   bill stays bounded.
 - **Optional runtime guardrail control** — `PromptGuard` wraps Meta
@@ -111,8 +124,8 @@ model: "your-agent-prod-v3"
 ```
 
 Other `kind` values: `anthropic_native`, `custom_http` (with Jinja2 body
-templates and JSONPath response extractors), `grpc`, `browser_use`. Full
-target-spec cookbook in
+templates and JSONPath response extractors), `grpc`, `http_upload`,
+`browser_use`, `payment_agent`, `mcp_agent`. Full target-spec cookbook in
 [`docs/onboarding/target-spec-cookbook.md`](docs/onboarding/target-spec-cookbook.md).
 
 Once you have a target spec, run a scan with the `argus-probe` CLI:
@@ -150,15 +163,18 @@ any high-severity finding.
 │  orchestrator  (FastAPI + Google ADK)                                   │
 │    probe loader  ──▶  target adapter  ──▶  judge harness                │
 │        │                  ▲                      │                      │
-│        └──── 167 YAML     │                      └──▶ Anthropic Haiku   │
+│        └──── 205 YAML     │                      └──▶ Anthropic Haiku   │
 │              probes       │                          (escalation:       │
 │                           │                           Sonnet on sev≥H,  │
 │                  ┌────────┴─────────┐                  conf≥0.7)        │
 │                  │  openai_compat   │                                   │
-│                  │  anthropic_native│      OPTIONAL input-side:         │
-│                  │  custom_http     │  ┌──────────────────────────┐    │
-│                  │  grpc            │  │ PromptGuard               │    │
-│                  │  browser_use     │  │ (ProtectAI / Meta v2)     │    │
+│                  │  anthropic_native│                                   │
+│                  │  custom_http     │                                   │
+│                  │  grpc            │      OPTIONAL input-side:         │
+│                  │  http_upload     │  ┌──────────────────────────┐    │
+│                  │  browser_use     │  │ PromptGuard               │    │
+│                  │  payment_agent   │  │ (ProtectAI / Meta v2)     │    │
+│                  │  mcp_agent       │  │                           │    │
 │                  └──────┬───────────┘  └──────────┬───────────────┘    │
 └─────────────────────────┼─────────────────────────┼─────────────────────┘
                           │                         │
@@ -173,11 +189,13 @@ any high-severity finding.
 | Sub-project | Role |
 |---|---|
 | [`api_service/`](api_service/) | Central REST API (FastAPI + asyncpg + PostgreSQL). Owns the `redteam_runs`, `redteam_findings`, `redteam_design_partners` tables. |
-| [`orchestrator/`](orchestrator/) | Probe dispatcher + judge harness + 5 target adapters + guardrail wrappers. |
+| [`orchestrator/`](orchestrator/) | Probe dispatcher + judge harness + 8 target adapters + guardrail wrappers. |
 | [`client_agent/`](client_agent/) | Edge agent (browser-use + Playwright) for browser-driven probes. |
 | [`frontend/`](frontend/) | Next.js 16 web UI: dashboard, chat, marketing pages. |
 | [`cli/`](cli/) | `argus-probe` Python CLI (PyPI). |
 | [`demo_target/`](demo_target/) | Deliberately-vulnerable FastAPI chatbot for offline demos. |
+| [`payment_testbed/`](payment_testbed/) | Mock x402 payment world + insecure demo agent, for `payment_agent` probes. |
+| [`mcp_testbed/`](mcp_testbed/) | Hostile MCP tool server + insecure demo agent, for `mcp_agent` probes. |
 | [`kubernets/`](kubernets/) | Helm charts + ArgoCD ApplicationSets for AKS / k3s deploys. |
 | [`terraform/`](terraform/) | Azure IaC reference (AKS, ACR, PG, Key Vault, B2C apps). |
 | [`database/`](database/) | Flyway schema migrations. |
@@ -196,7 +214,7 @@ the in-cluster services.
 
 ```
 orchestrator/orchestrator/redteam/probes/
-├── owasp_01_prompt_injection_basic.yaml      ← 10 hand-authored OWASP probes
+├── owasp_01_prompt_injection_basic.yaml      ← 15 hand-authored OWASP probes
 ├── owasp_02_…                                   (LLM01–LLM10)
 ├── …
 ├── syscard_bon.yaml                           ← 5 system-card scenarios
@@ -209,6 +227,10 @@ orchestrator/orchestrator/redteam/probes/
 ├── install_time_*.yaml
 ├── browser/                                   ← browser-agent specific
 │   └── browser_visual_inject_*.yaml
+├── payment/                                   ← x402 wallet-abuse, for payment_agent
+│   └── pay_*.yaml
+├── mcp/                                       ← poisoned MCP tool servers, for mcp_agent
+│   └── mcp_*.yaml
 ├── custom/
 │   └── unicode_invisible_smuggling.yaml       ← see RESULTS.md for analysis
 └── garak/                                     ← 99 NVIDIA garak wrappers
