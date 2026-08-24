@@ -10,6 +10,7 @@ from orchestrator.redteam.targets.custom_http import CustomHTTPSpec, CustomHTTPT
 from orchestrator.redteam.targets.grpc import GRPCSpec, GRPCTarget
 from orchestrator.redteam.targets.http_upload import HTTPUploadSpec, HTTPUploadTarget
 from orchestrator.redteam.targets.openai_compat import OpenAICompatSpec, OpenAICompatTarget
+from orchestrator.redteam.targets.payment_agent import PaymentAgentSpec, PaymentAgentTarget
 
 _BUILDERS = {
     "anthropic_native": (AnthropicNativeSpec, AnthropicNativeTarget),
@@ -18,6 +19,7 @@ _BUILDERS = {
     "grpc": (GRPCSpec, GRPCTarget),
     "http_upload": (HTTPUploadSpec, HTTPUploadTarget),
     "openai_compat": (OpenAICompatSpec, OpenAICompatTarget),
+    "payment_agent": (PaymentAgentSpec, PaymentAgentTarget),
 }
 
 
