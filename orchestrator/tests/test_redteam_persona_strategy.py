@@ -93,11 +93,18 @@ def test_composite_id_is_traceable_back_to_its_parts():
     assert (base_id, persona_id, strategy_id) == (BASE.id, PERSONA.id, STRATEGY.id)
 
 
-def test_attack_class_gains_deep_and_multi_turn():
+def test_deep_markers_go_on_technique_not_on_attack_class():
+    """`attack_class` answers WHAT the attack achieves and is a closed vocabulary
+    the probe loader enforces; `technique` answers HOW it is delivered and is
+    free-form. Multi-turn persona play is a technique. Deep mode used to append
+    "deep"/"multi-turn" to attack_class instead — and being the one path that
+    builds a probe outside the loader, it was the one path that could."""
     p = _probe()
-    assert "deep" in p.attack_class
-    assert "multi-turn" in p.attack_class
+    assert p.technique == ("deep", "multi-turn")
+    assert "deep" not in p.attack_class
+    assert "multi-turn" not in p.attack_class
     # ...without losing the base classes, which drive strategy matching.
+    assert p.attack_class == BASE.attack_class
     assert "prompt-injection" in p.attack_class
 
 

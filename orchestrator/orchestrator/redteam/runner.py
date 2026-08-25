@@ -355,10 +355,24 @@ class Runner:
         import httpx
         from orchestrator.redteam.cost_meter import CostExceededError
         from orchestrator.redteam.iterative import IterationContext
+        from orchestrator.redteam.judge import Verdict
         from orchestrator.redteam.targets._base import Turn
         prior_prompts: list[str] = []
         prior_responses: list[str] = []
         prior_verdicts = []
+        # A probe carrying assertions is judged on what the target *did*, on this
+        # path exactly as on the static one. Deep mode wraps assertion-backed
+        # payment and MCP probes, and without this the iterative path handed them
+        # to the prose judge — which reads a polite reply and says `pass`.
+        #
+        # A deep thread is ONE probe: one begin_probe, one session, many rounds.
+        # So evidence accumulates across the rounds and the verdict rests on the
+        # final state. The per-round result is computed anyway, but only to steer
+        # the attacker and to let should_halt stop the thread the moment the
+        # attack lands; the single Finding that survives is the last one computed,
+        # which is why `pending` is yielded after the loop rather than inside it.
+        assertions = getattr(probe, "assertions", ())
+        pending: Finding | None = None
         # The transcript the target sees. Only populated when the adapter can hold
         # a conversation; against a stateless adapter the attack degrades to
         # query-refinement (see the note in run_probe).
@@ -374,10 +388,10 @@ class Runner:
                     prior_verdicts=tuple(prior_verdicts),
                 )
                 if probe.should_halt(ctx):
-                    return
+                    break
                 prompt = await probe.next_prompt(ctx)
                 if prompt is None:
-                    return
+                    break
                 probed_at = datetime.now(timezone.utc)
                 try:
                     response_text, latency_ms = await self._target.send_prompt(
@@ -418,35 +432,47 @@ class Runner:
                             )
                             return  # iterative attacks abort on 4xx — target won't engage
                     raise
-                try:
-                    verdict = await self._judge.judge(
-                        probe_name=probe.name,
-                        attack_prompt=prompt,
-                        target_response=response_text,
-                        rubric_text=rubric_text,
+                if assertions:
+                    pending = await self._assertion_finding(
+                        probe, prompt, response_text, latency_ms, probed_at
                     )
-                except ValueError as e:
-                    # Same reasoning as the static path. The next round needs
-                    # this round's verdict, so the attack ends here.
-                    yield self._finding(
-                        probe, prompt, response_text, latency_ms, probed_at,
-                        verdict=VERDICT_ERROR, severity="info", confidence=1.0,
-                        reasoning=f"judge reply could not be used: {str(e)[:200]}",
-                        evidence=None,
+                    # Fed back as a Verdict purely so the attacker LLM and
+                    # should_halt see the round the way they see a judged one.
+                    verdict = Verdict(
+                        verdict=pending.verdict, severity=pending.severity,
+                        confidence=pending.confidence, reasoning=pending.reasoning,
+                        judge_model="", escalated_model=None,
                     )
-                    return
-                yield Finding(
-                    id=uuid4(), probe_id=probe.id,
-                    attack_prompt=prompt, target_response=response_text,
-                    target_latency_ms=latency_ms, probed_at=probed_at,
-                    verdict=verdict.verdict, severity=verdict.severity,
-                    confidence=verdict.confidence, reasoning=verdict.reasoning,
-                    judge_model=verdict.judge_model, escalated_model=verdict.escalated_model,
-                    atlas_id=list(probe.mappings.atlas),
-                    owasp_id=list(probe.mappings.owasp_llm),
-                    nist_id=list(probe.mappings.nist_ai_rmf),
-                    eu_ai_act_id=list(probe.mappings.eu_ai_act),
-                )
+                else:
+                    try:
+                        verdict = await self._judge.judge(
+                            probe_name=probe.name,
+                            attack_prompt=prompt,
+                            target_response=response_text,
+                            rubric_text=rubric_text,
+                        )
+                    except ValueError as e:
+                        # Same reasoning as the static path. The next round needs
+                        # this round's verdict, so the attack ends here.
+                        yield self._finding(
+                            probe, prompt, response_text, latency_ms, probed_at,
+                            verdict=VERDICT_ERROR, severity="info", confidence=1.0,
+                            reasoning=f"judge reply could not be used: {str(e)[:200]}",
+                            evidence=None,
+                        )
+                        return
+                    yield Finding(
+                        id=uuid4(), probe_id=probe.id,
+                        attack_prompt=prompt, target_response=response_text,
+                        target_latency_ms=latency_ms, probed_at=probed_at,
+                        verdict=verdict.verdict, severity=verdict.severity,
+                        confidence=verdict.confidence, reasoning=verdict.reasoning,
+                        judge_model=verdict.judge_model, escalated_model=verdict.escalated_model,
+                        atlas_id=list(probe.mappings.atlas),
+                        owasp_id=list(probe.mappings.owasp_llm),
+                        nist_id=list(probe.mappings.nist_ai_rmf),
+                        eu_ai_act_id=list(probe.mappings.eu_ai_act),
+                    )
                 prior_prompts.append(prompt)
                 prior_responses.append(response_text)
                 prior_verdicts.append(verdict)
@@ -468,3 +494,10 @@ class Runner:
                 nist_id=list(probe.mappings.nist_ai_rmf),
                 eu_ai_act_id=list(probe.mappings.eu_ai_act),
             )
+            return
+
+        # One thread, one finding. A clean early round is setup, not a defended
+        # result, so the rounds are not reported separately — the same rule
+        # `_run_static` applies to a `conversation: true` probe.
+        if pending is not None:
+            yield pending
