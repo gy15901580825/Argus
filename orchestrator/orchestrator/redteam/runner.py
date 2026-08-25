@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncIterator
@@ -41,6 +42,9 @@ class Finding:
     nist_id: list[str] = field(default_factory=list)
     eu_ai_act_id: list[str] = field(default_factory=list)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    # What the target observed, when it can observe anything (see
+    # Target.collect_evidence). None for the text-only adapters.
+    evidence: dict | None = None
 
 
 class Runner:
@@ -137,13 +141,108 @@ class Runner:
             )
             return
 
+        # The probe is going to run: tell a stateful adapter where the previous
+        # probe ended. Deliberately after both skip decisions — a skipped probe
+        # must not open a session — and before any exchange, so nothing the
+        # previous probe did is still visible to this one's assertions.
+        # Duck-typed mock targets are everywhere in the suite and have no such
+        # method, so the guard mirrors the collect_evidence call below.
+        begin = getattr(self._target, "begin_probe", None)
+        if inspect.iscoroutinefunction(begin):
+            try:
+                await begin(probe)
+            except ValueError as e:
+                # A probe the adapter refuses to stage — a malformed
+                # `scenario.payload`, say — is one broken probe, not a broken
+                # scan. Letting it abort the run turns a JSON typo in one YAML
+                # into "the scanner failed", which in a CI gate gets the gate
+                # disabled; one errored probe among 25 that ran gets the probe
+                # fixed instead. Still fail-closed: it never reports a pass.
+                # ValueError only, deliberately: it is how this codebase signals
+                # a bad spec (see the __post_init__ guards, and json's
+                # JSONDecodeError which subclasses it). Catching Exception here
+                # would swallow real bugs in an adapter's setup.
+                yield self._finding(
+                    probe, "", "", 0.0, datetime.now(timezone.utc),
+                    verdict=VERDICT_ERROR, severity="info", confidence=1.0,
+                    reasoning=f"target could not set up this probe: {e}",
+                    evidence=None,
+                )
+                return
+
         # Dispatch on iterative flag
         if getattr(probe, "iterative", False):
-            async for f in self._run_iterative(probe, rubric_text):
-                yield f
+            inner = self._run_iterative(probe, rubric_text)
         else:
-            async for f in self._run_static(probe, rubric_text):
-                yield f
+            inner = self._run_static(probe, rubric_text)
+
+        # Attach whatever the target observed. Text-only adapters return {} and
+        # their findings keep evidence=None, so nothing downstream changes for
+        # them. A finding that already carries evidence built its own verdict
+        # from it and is left alone.
+        async for f in inner:
+            if f.evidence is None:
+                # Duck-typed targets are everywhere in the test suite; only call
+                # a collector that is genuinely an async method, so a bare mock
+                # target keeps working.
+                collector = getattr(self._target, "collect_evidence", None)
+                if inspect.iscoroutinefunction(collector):
+                    observed = await collector()
+                    if observed:
+                        f = replace(f, evidence=observed)
+            yield f
+
+    async def _assertion_finding(self, probe, prompt, response_text, latency_ms, probed_at) -> Finding:
+        """Build a Finding whose verdict comes from captured evidence."""
+        from orchestrator.redteam.assertions import evaluate_assertions
+
+        evidence = {}
+        collector = getattr(self._target, "collect_evidence", None)
+        if inspect.iscoroutinefunction(collector):
+            evidence = await collector() or {}
+
+        # An assertion-backed probe that never reached its target proves nothing.
+        # Every "did not overpay" check is satisfied by doing nothing at all, so
+        # reporting a pass here would hand the customer a false green.
+        if probe.requires_interaction and not evidence.get("interaction_count"):
+            return self._finding(
+                probe, prompt, response_text, latency_ms, probed_at,
+                verdict=VERDICT_ERROR, severity="info", confidence=1.0,
+                reasoning=(
+                    "target never contacted the payment testbed, so the probe did "
+                    "not actually run; this is not a defended result"
+                ),
+                evidence=evidence or None,
+            )
+
+        results = evaluate_assertions(probe.assertions, evidence, response_text)
+        failed = [r for r in results if not r.passed]
+        reasoning = "; ".join(r.reason for r in (failed or results))
+        return self._finding(
+            probe, prompt, response_text, latency_ms, probed_at,
+            verdict=VERDICT_FAIL if failed else VERDICT_PASS,
+            severity=probe.severity if failed else "info",
+            confidence=1.0,
+            reasoning=reasoning,
+            evidence=evidence or None,
+        )
+
+    def _finding(self, probe, prompt, response_text, latency_ms, probed_at,
+                 *, verdict, severity, confidence, reasoning, evidence) -> Finding:
+        return Finding(
+            id=uuid4(), probe_id=probe.id,
+            attack_prompt=prompt, target_response=response_text,
+            target_latency_ms=latency_ms, probed_at=probed_at,
+            verdict=verdict, severity=severity, confidence=confidence,
+            reasoning=reasoning,
+            # Deterministic verdicts name no model, because none was consulted.
+            judge_model="", escalated_model=None,
+            atlas_id=list(probe.mappings.atlas),
+            owasp_id=list(probe.mappings.owasp_llm),
+            nist_id=list(probe.mappings.nist_ai_rmf),
+            eu_ai_act_id=list(probe.mappings.eu_ai_act),
+            evidence=evidence,
+        )
 
     async def _run_static(self, probe, rubric_text: str) -> AsyncIterator[Finding]:
         """Static-prompt path.
@@ -157,7 +256,7 @@ class Runner:
 
         conversation = getattr(probe, "conversation", False)
         transcript: list[Turn] = []
-        for prompt in probe.prompts:
+        for idx, prompt in enumerate(probe.prompts):
             probed_at = datetime.now(timezone.utc)
             try:
                 response_text, latency_ms = await self._target.send_prompt(
@@ -201,6 +300,24 @@ class Runner:
             if conversation:
                 transcript.append(Turn(role="user", content=prompt))
                 transcript.append(Turn(role="assistant", content=response_text))
+
+            # A probe carrying assertions is judged on what the target *did*.
+            # Asking an LLM to also form an opinion would cost money and could
+            # only disagree with a fact.
+            if probe.assertions:
+                # One conversation is one attack. The early turns of a
+                # multi-turn probe are setup — they contact nothing and prove
+                # nothing, and judging them separately reported a three-turn
+                # thread as two failed runs plus a verdict. This check is
+                # positional (index), not by prompt text: a multi-turn attack
+                # that repeats an earlier demand (e.g. re-asking for the same
+                # payment after a refusal) would otherwise match on text and
+                # be mistaken for the last turn.
+                if conversation and idx != len(probe.prompts) - 1:
+                    continue
+                yield await self._assertion_finding(probe, prompt, response_text, latency_ms, probed_at)
+                continue
+
             verdict = await self._judge.judge(
                 probe_name=probe.name,
                 attack_prompt=prompt,

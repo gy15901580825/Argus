@@ -77,7 +77,7 @@ async def fetch_url_impl(url: str, cookie: Optional[str] = None, token: Optional
     Fetch and analyze web page structure.
     """
     headers = {
-        "User-Agent": "AT-Helper-Client-Agent/1.0"
+        "User-Agent": "Argus-Client-Agent/1.0"
     }
     
     # Add cookie if provided

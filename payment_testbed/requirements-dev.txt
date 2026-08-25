@@ -1,0 +1,7 @@
+-r requirements.txt
+
+# Test-only. pytest-asyncio is required because pyproject.toml sets
+# asyncio_mode = "auto" — without it, async tests are collected, warned
+# about as an unknown config option, and silently never executed.
+pytest>=8.3,<10
+pytest-asyncio>=0.23

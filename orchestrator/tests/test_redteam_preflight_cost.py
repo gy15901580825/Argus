@@ -101,3 +101,30 @@ def test_deep_run_over_the_caller_cap_is_rejected_where_static_passes():
     resp = client.post("/redteam/run/preflight", json=deep_body)
     assert resp.status_code == 402, resp.text
     assert "per_run_cap" in resp.json()["detail"]
+
+
+def test_assertion_probe_costs_no_judge_call():
+    """断言探针不叫 judge，估算成本时不能按 judge 调用计。"""
+    from orchestrator.redteam.api import _estimate_exchanges, _judged_exchanges, RunRequest
+
+    req = RunRequest(
+        target={"kind": "openai_compat", "endpoint_url": "https://x/v1/chat/completions", "model": "m"},
+        probes=["pay_x402_payto_swap"],
+        mode="static",
+    )
+    ids = ["pay_x402_payto_swap"]
+    assert _estimate_exchanges(req, ids) == 1
+    assert _judged_exchanges(req, ids) == 0
+
+
+def test_deep_mode_still_estimates_every_exchange():
+    """deep 模式下 persona×strategy 仍要判定，不能因为带断言就白算。"""
+    from orchestrator.redteam.api import _estimate_exchanges, _judged_exchanges, RunRequest
+
+    req = RunRequest(
+        target={"kind": "openai_compat", "endpoint_url": "https://x/v1/chat/completions", "model": "m"},
+        probes=["pay_x402_payto_swap"],
+        mode="deep",
+    )
+    ids = ["pay_x402_payto_swap"]
+    assert _judged_exchanges(req, ids) == _estimate_exchanges(req, ids)

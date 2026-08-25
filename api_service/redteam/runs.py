@@ -29,17 +29,45 @@ async def create_run(user_id: UUID, target_spec: dict, probe_suite: str) -> UUID
     return row["id"]
 
 
-async def update_run_status(run_id: UUID, status: str, summary: dict | None = None) -> None:
+async def update_run_status(run_id: UUID, status: str, summary: dict | None = None, coverage: dict | None = None) -> None:
     await database.execute(
         """
         UPDATE redteam_runs
         SET status = :status,
             finished_at = CASE WHEN :status IN ('completed', 'failed', 'cancelled') THEN NOW() ELSE finished_at END,
-            summary = COALESCE(:summary, summary)
+            summary = COALESCE(:summary, summary),
+            coverage = COALESCE(:coverage, coverage)
         WHERE id = :id
         """,
-        {"id": run_id, "status": status, "summary": json.dumps(summary) if summary else None},
+        {
+            "id": run_id,
+            "status": status,
+            "summary": json.dumps(summary) if summary else None,
+            "coverage": json.dumps(coverage) if coverage else None,
+        },
     )
+
+
+# JSONB columns on redteam_runs that asyncpg hands back as raw text.
+_RUN_JSONB_COLUMNS = ("target_spec", "coverage")
+
+
+def decode_run_row(row: dict) -> dict:
+    """JSONB comes back from the driver as text.
+
+    Left as a string, a JSONB column would still be truthy in the report
+    template while every attribute lookup on it (e.g. `target_spec.kind`)
+    silently returned undefined — a blank Target line instead of an error.
+    """
+    run = dict(row)
+    for col in _RUN_JSONB_COLUMNS:
+        raw = run.get(col)
+        if isinstance(raw, str):
+            try:
+                run[col] = json.loads(raw)
+            except ValueError:
+                run[col] = None
+    return run
 
 
 async def get_run(run_id: UUID, user_id: UUID) -> dict | None:
@@ -47,20 +75,20 @@ async def get_run(run_id: UUID, user_id: UUID) -> dict | None:
         "SELECT * FROM redteam_runs WHERE id = :id AND user_id = :user_id",
         {"id": run_id, "user_id": user_id},
     )
-    return dict(row) if row else None
+    return decode_run_row(row) if row else None
 
 
 async def insert_finding(run_id: UUID, finding: dict) -> None:
     await database.execute(
         """
         INSERT INTO redteam_findings (
-            id, run_id, probe_id, verdict, severity, evidence_blob_url,
+            id, run_id, probe_id, verdict, severity, evidence_blob_url, evidence,
             atlas_id, owasp_id, nist_id, eu_ai_act_id,
             attack_prompt, target_response, target_latency_ms, probed_at,
             confidence, reasoning, judge_model, escalated_model
         )
         VALUES (
-            :id, :run_id, :probe_id, :verdict, :severity, :evidence_blob_url,
+            :id, :run_id, :probe_id, :verdict, :severity, :evidence_blob_url, :evidence,
             :atlas_id, :owasp_id, :nist_id, :eu_ai_act_id,
             :attack_prompt, :target_response, :target_latency_ms, :probed_at,
             :confidence, :reasoning, :judge_model, :escalated_model
@@ -73,6 +101,12 @@ async def insert_finding(run_id: UUID, finding: dict) -> None:
             "verdict": finding["verdict"],
             "severity": finding.get("severity"),
             "evidence_blob_url": finding.get("evidence_blob_url"),
+            # What the target was observed doing. Serialised here rather than
+            # passed as a dict: asyncpg binds JSONB from text, and a finding
+            # from a text-only adapter carries None.
+            "evidence": (
+                json.dumps(finding["evidence"]) if finding.get("evidence") is not None else None
+            ),
             "atlas_id": finding.get("atlas_id", []),
             "owasp_id": finding.get("owasp_id", []),
             "nist_id": finding.get("nist_id", []),
@@ -89,9 +123,27 @@ async def insert_finding(run_id: UUID, finding: dict) -> None:
     )
 
 
+def decode_finding_row(row: dict) -> dict:
+    """JSONB comes back from the driver as text.
+
+    Left as a string, `evidence` would still be truthy in the report template
+    while every attribute lookup on it silently returned undefined — a finding
+    that quietly renders "no payment authorization was presented" over the top
+    of captured evidence.
+    """
+    finding = dict(row)
+    raw = finding.get("evidence")
+    if isinstance(raw, str):
+        try:
+            finding["evidence"] = json.loads(raw)
+        except ValueError:
+            finding["evidence"] = None
+    return finding
+
+
 async def list_findings(run_id: UUID) -> list[dict]:
     rows = await database.fetch_all(
         "SELECT * FROM redteam_findings WHERE run_id = :run_id ORDER BY created_at",
         {"run_id": run_id},
     )
-    return [dict(r) for r in rows]
+    return [decode_finding_row(r) for r in rows]

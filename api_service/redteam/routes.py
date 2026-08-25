@@ -24,7 +24,7 @@ ORCH_URL = os.environ.get("ORCHESTRATOR_URL", "http://argus-orchestrator.default
 class RunCreate(BaseModel):
     target: TargetSpec
     probe_ids: list[str] = []
-    # Auto-derived suite id (owasp-llm-top10 / mitre-atlas / nist-ai-rmf / eu-ai-act).
+    # Auto-derived suite id (owasp-llm-top10 / mitre-atlas / nist-ai-rmf / eu-ai-act / payments / mcp).
     # Mutually exclusive with a non-empty probe_ids; the orchestrator enforces it and
     # returns 422. Pitfall #1: this field MUST stay in sync with the orchestrator's
     # RunRequest — api_service silently drops unknown fields when proxying.
@@ -94,6 +94,9 @@ async def get_run_report(
         "status": row["status"],
         "started_at": str(row.get("started_at")) if row.get("started_at") else None,
         "finished_at": str(row.get("finished_at")) if row.get("finished_at") else None,
+        "target_spec": row.get("target_spec"),
+        "probe_suite": row.get("probe_suite"),
+        "coverage": row.get("coverage"),
         "findings": [{**f, "id": str(f["id"]), "probed_at": str(f["probed_at"]) if f.get("probed_at") else None} for f in findings],
     }
     if format == "html":
@@ -114,11 +117,24 @@ async def list_probes(user: UserResponse = Depends(get_current_user)) -> dict:
         return resp.json()
 
 
+@router.get("/coverage")
+async def get_coverage(user: UserResponse = Depends(get_current_user)) -> dict:
+    """Proxy GET /redteam/coverage from orchestrator. Auth-gated like the rest."""
+    async with _httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(f"{ORCH_URL}/redteam/coverage")
+        resp.raise_for_status()
+        return resp.json()
+
+
 async def _consume_orchestrator_stream(run_id: UUID, target_spec: dict, probe_ids: list[str], per_run_cap_usd: Optional[float] = None, suite: Optional[str] = None) -> None:
     await runs.update_run_status(run_id, "running")
     try:
-        async for finding in orchestrator_client.stream_findings(target_spec, probe_ids, per_run_cap_usd=per_run_cap_usd, suite=suite):
-            await runs.insert_finding(run_id, finding)
-        await runs.update_run_status(run_id, "completed")
+        coverage = None
+        async for event in orchestrator_client.stream_findings(target_spec, probe_ids, per_run_cap_usd=per_run_cap_usd, suite=suite):
+            if event.get("type") == "coverage":
+                coverage = event.get("coverage")
+                continue
+            await runs.insert_finding(run_id, event)
+        await runs.update_run_status(run_id, "completed", coverage=coverage)
     except Exception as e:
         await runs.update_run_status(run_id, "failed", summary={"error": str(e)})

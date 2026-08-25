@@ -68,6 +68,9 @@ Get an API token by emailing `<contact@example.com>`.
 | `custom_http` | Production agents wrapping an LLM behind their own HTTP shape (Jinja2 request templates + JSONPath response selectors) |
 | `grpc` | gRPC services with server reflection enabled |
 | `browser_use` | Browser-using agents driving Playwright / computer-use / browser-use |
+| `payment_agent` | Agents that spend money on a user's behalf (e.g. x402), run against a payment testbed |
+| `mcp_agent` | Agents that connect to MCP tool servers, run against a hostile MCP testbed |
+| `http_upload` | File-upload-and-render sinks (upload then inline-render an active payload) |
 
 Full configuration reference: [target spec cookbook](https://www.example.com/docs).
 

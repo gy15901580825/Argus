@@ -17,6 +17,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from orchestrator.redteam import llm
+from orchestrator.redteam.coverage import build_coverage
 from orchestrator.redteam.cost_meter import CostMeter
 from orchestrator.redteam.judge import Judge
 from orchestrator.redteam.probe import load_all_probes
@@ -144,6 +145,23 @@ def _estimate_exchanges(req: RunRequest, probe_ids: list[str]) -> int:
     return sum(len(by_id[pid].prompts) if pid in by_id else 1 for pid in probe_ids)
 
 
+def _judged_exchanges(req: RunRequest, probe_ids: list[str]) -> int:
+    """Of those exchanges, how many actually call the judge.
+
+    An assertion-backed probe is decided from evidence and never reaches the
+    judge, so billing it for a judge call would over-estimate the run and reject
+    scans that cost nothing to judge.
+    """
+    if req.mode == "deep":
+        return _estimate_exchanges(req, probe_ids)
+    by_id = {p.id: p for p in load_all_probes(PROBES_DIR)}
+    return sum(
+        len(by_id[pid].prompts) if pid in by_id else 1
+        for pid in probe_ids
+        if not (pid in by_id and by_id[pid].assertions)
+    )
+
+
 async def _run_probes(req: RunRequest, anthropic_api_key: str) -> AsyncIterator[dict]:
     # build_target() validates the dict and selects the right adapter — C1 fix.
     target = build_target(req.target)
@@ -202,7 +220,7 @@ async def preflight(req: RunRequest):
         _COST_METER.check_or_abort_pre_run(
             probe_ids=requested,
             target_kind=kind,
-            total_exchanges=_estimate_exchanges(req, requested),
+            total_exchanges=_judged_exchanges(req, requested),
             deep=req.mode == "deep",
             per_run_cap_override=req.per_run_cap_usd,
         )
@@ -248,7 +266,7 @@ async def run(req: RunRequest):
         _COST_METER.check_or_abort_pre_run(
             probe_ids=requested,
             target_kind=kind,
-            total_exchanges=_estimate_exchanges(req, requested),
+            total_exchanges=_judged_exchanges(req, requested),
             deep=req.mode == "deep",
             per_run_cap_override=req.per_run_cap_usd,
         )
@@ -256,9 +274,16 @@ async def run(req: RunRequest):
         raise HTTPException(status_code=402, detail=str(e))
 
     async def _sse() -> AsyncIterator[bytes]:
+        emitted: list[dict] = []
         try:
             async for finding_dict in _run_probes(req, anthropic_api_key):
+                emitted.append(finding_dict)
                 yield f"data: {json.dumps(finding_dict)}\n\n".encode()
+            coverage_event = {
+                "type": "coverage",
+                "coverage": build_coverage(load_all_probes(PROBES_DIR), emitted),
+            }
+            yield f"data: {json.dumps(coverage_event)}\n\n".encode()
             yield b"event: end\ndata: {}\n\n"
         except Exception as exc:
             payload = json.dumps({"detail": str(exc), "type": type(exc).__name__})
@@ -283,3 +308,13 @@ async def list_suites() -> dict:
     RunRequest.suite.
     """
     return {"suites": derive_suites(load_all_probes(PROBES_DIR))}
+
+
+@router.get("/coverage")
+async def coverage() -> dict:
+    """What the probe library can and cannot speak to, per standard.
+
+    Deliberately findings-free and free of charge: a prospect must be able to
+    ask what we cover before paying for a scan.
+    """
+    return {"coverage": build_coverage(load_all_probes(PROBES_DIR))}

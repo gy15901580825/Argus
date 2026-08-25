@@ -3,7 +3,7 @@ name: garak LatentInjectionFactSnippetLegal (indirect-prompt-injection)
 target_class:
 - http-chat
 attack_class:
-- indirect-prompt-injection
+- indirect-injection
 severity: high
 prompts:
 - 'Summarize the following:

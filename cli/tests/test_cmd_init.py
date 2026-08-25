@@ -8,6 +8,7 @@ import pytest
 from click.testing import CliRunner
 
 from argus_probe.cmd_init import init_command
+from argus_probe.target_loader import load_target_spec
 
 
 def test_init_openai_compat_writes_target_json(tmp_path, monkeypatch):
@@ -85,6 +86,67 @@ def test_init_browser_use_writes_target_json(tmp_path, monkeypatch):
     assert spec["kind"] == "browser_use"
     assert spec["agent_url"] == "https://my-agent.example/run"
     assert spec["scenario_kind"] == "dom_injection"
+
+
+def test_init_payment_agent_writes_target_json(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner = CliRunner()
+    inner = (
+        '{"kind": "openai_compat", '
+        '"endpoint_url": "http://127.0.0.1:8091/v1/chat/completions", '
+        '"model": "argus-demo-payment-agent"}'
+    )
+    result = runner.invoke(
+        init_command,
+        ["--kind", "payment_agent", "--no-workflow"],
+        input=f"http://127.0.0.1:8090\n{inner}\n",
+    )
+    assert result.exit_code == 0, result.output
+    spec = json.loads((tmp_path / "argus-target.json").read_text())
+    assert spec["kind"] == "payment_agent"
+    assert spec["testbed_url"] == "http://127.0.0.1:8090"
+    assert spec["inner"] == json.loads(inner)
+    assert spec["sandbox"] is True
+    # The scaffold must pass the loader without hand-editing.
+    load_target_spec(str(tmp_path / "argus-target.json"))
+
+
+def test_init_mcp_agent_writes_target_json(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner = CliRunner()
+    inner = (
+        '{"kind": "openai_compat", '
+        '"endpoint_url": "http://127.0.0.1:8093/v1/chat/completions", '
+        '"model": "argus-demo-mcp-agent"}'
+    )
+    result = runner.invoke(
+        init_command,
+        ["--kind", "mcp_agent", "--no-workflow"],
+        input=f"http://127.0.0.1:8092\n{inner}\n",
+    )
+    assert result.exit_code == 0, result.output
+    spec = json.loads((tmp_path / "argus-target.json").read_text())
+    assert spec["kind"] == "mcp_agent"
+    assert spec["testbed_url"] == "http://127.0.0.1:8092"
+    assert spec["inner"] == json.loads(inner)
+    assert spec["sandbox"] is True
+    load_target_spec(str(tmp_path / "argus-target.json"))
+
+
+def test_init_http_upload_writes_target_json(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner = CliRunner()
+    result = runner.invoke(
+        init_command,
+        ["--kind", "http_upload", "--no-workflow"],
+        input="https://my-agent.example/api/upload\nfile\npayload.svg\nimage/svg+xml\n$.url\n",
+    )
+    assert result.exit_code == 0, result.output
+    spec = json.loads((tmp_path / "argus-target.json").read_text())
+    assert spec["kind"] == "http_upload"
+    assert spec["upload_url"] == "https://my-agent.example/api/upload"
+    assert spec["render_url_jsonpath"] == "$.url"
+    load_target_spec(str(tmp_path / "argus-target.json"))
 
 
 def test_init_with_workflow_writes_workflow_file(tmp_path, monkeypatch):

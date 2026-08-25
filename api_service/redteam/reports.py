@@ -12,7 +12,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 _TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "templates")
 _jinja = Environment(
     loader=FileSystemLoader(_TEMPLATE_DIR),
-    autoescape=select_autoescape(["html", "xml"]),
+    autoescape=select_autoescape(["html", "xml", "j2"]),
 )
 
 
@@ -28,7 +28,11 @@ def _verdict_counts(findings: list[dict]) -> dict:
 
 def render_html(run: dict) -> str:
     template = _jinja.get_template("report.html.j2")
-    return template.render(run=run, counts=_verdict_counts(run.get("findings", [])))
+    return template.render(
+        run=run,
+        counts=_verdict_counts(run.get("findings", [])),
+        coverage=run.get("coverage"),
+    )
 
 
 def render_sarif(run: dict) -> str:
@@ -99,25 +103,32 @@ def render_sarif(run: dict) -> str:
     status = run.get("status")
     findings_count = len(run.get("findings", []))
     execution_successful = status == "completed" or findings_count > 0
+    sarif_run = {
+        "tool": {
+            "driver": {
+                "name": "Argus",
+                "informationUri": "https://www.example.com",
+                "rules": list(rules.values()),
+            }
+        },
+        "results": results,
+        "invocations": [{
+            "executionSuccessful": execution_successful,
+            "exitCode": 0 if execution_successful else 1,
+            "startTimeUtc": run.get("started_at"),
+            "endTimeUtc": run.get("finished_at"),
+        }],
+    }
+    # Coverage is what we did NOT test — never a finding. Riding in
+    # run.properties keeps it out of results[] so it can't inflate GitHub
+    # Code Scanning's alert count.
+    coverage = run.get("coverage")
+    if coverage:
+        sarif_run["properties"] = {"coverage": coverage}
     sarif = {
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
         "version": "2.1.0",
-        "runs": [{
-            "tool": {
-                "driver": {
-                    "name": "Argus",
-                    "informationUri": "https://www.example.com",
-                    "rules": list(rules.values()),
-                }
-            },
-            "results": results,
-            "invocations": [{
-                "executionSuccessful": execution_successful,
-                "exitCode": 0 if execution_successful else 1,
-                "startTimeUtc": run.get("started_at"),
-                "endTimeUtc": run.get("finished_at"),
-            }],
-        }],
+        "runs": [sarif_run],
     }
     return json.dumps(sarif, indent=2)
 

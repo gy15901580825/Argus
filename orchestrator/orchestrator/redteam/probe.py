@@ -21,7 +21,28 @@ VALID_TARGET_CLASSES = {
     "http-chat", "browser-using", "tool-using", "rag", "multi-agent", "http-upload",
     # Plan 4 (target adapters)
     "llm_chat", "agent_with_tools", "agent_with_rag", "browser_using_agent",
+    # Payment probes only run against the instrumented payment testbed. No
+    # other adapter declares this class, so the runner's compat check skips
+    # them everywhere else — and keeps ordinary probes off the testbed.
+    "payment_agent",
+    # MCP probes only run against the instrumented hostile MCP server, for the
+    # same reason payment probes only run against the payment testbed.
+    "mcp_agent",
 }
+
+# The controlled axis. `attack_class` answers WHAT THE ATTACK ACHIEVES; the free
+# `technique` field answers HOW IT IS DELIVERED. Splitting them is what lets the
+# coverage report state what was and was not tested — a single free-form field
+# had grown to 70+ values, 45 of them used exactly once, and could not.
+#
+# Adding a value here is a deliberate act: it widens what the coverage report
+# claims to measure. Do not add one to make a probe load.
+VALID_ATTACK_CLASSES = frozenset({
+    "prompt-injection", "indirect-injection", "jailbreak", "data-exfil",
+    "credential-extraction", "output-handling", "input-handling", "tool-abuse",
+    "excessive-agency", "supply-chain", "poisoning", "harmful-content",
+    "misinformation", "resource-abuse", "payment-abuse", "mcp-abuse",
+})
 
 
 @dataclass(frozen=True)
@@ -52,6 +73,19 @@ class Probe:
     # independent single shots. Requires a target with supports_history=True;
     # the runner emits verdict=skipped otherwise.
     conversation: bool = False
+    # Deterministic checks over Target.collect_evidence(). When present the
+    # runner computes the verdict from them and never calls the judge.
+    assertions: tuple[dict, ...] = ()
+    # An assertion-backed probe that never reached its target proves nothing:
+    # doing nothing satisfies every "did not overpay" check. Such a run is an
+    # error, not a pass.
+    requires_interaction: bool = True
+    # How the attack is delivered or implemented, as opposed to what it aims to
+    # achieve. Free-form on purpose: `attack_class` is the controlled axis and
+    # answers "what was tested"; this one keeps the fine-grained vocabulary
+    # (qr-code-injection, aria-label-injection, ...) that would otherwise have to
+    # be either discarded or smuggled into the controlled set.
+    technique: tuple[str, ...] = ()
 
 
 def load_probe(path: Path) -> Probe:
@@ -62,6 +96,9 @@ def load_probe(path: Path) -> Probe:
         for tc in raw["target_class"]:
             if tc not in VALID_TARGET_CLASSES:
                 raise ValueError(f"invalid target_class {tc!r} in {path}")
+        for ac in raw["attack_class"]:
+            if ac not in VALID_ATTACK_CLASSES:
+                raise ValueError(f"invalid attack_class {ac!r} in {path}")
         scenario_kind = None
         scenario_payload = ""
         if "scenario" in raw:
@@ -85,6 +122,9 @@ def load_probe(path: Path) -> Probe:
             scenario_kind=scenario_kind,
             scenario_payload=scenario_payload,
             conversation=bool(raw.get("conversation", False)),
+            assertions=tuple(raw.get("assertions", ()) or ()),
+            requires_interaction=bool(raw.get("requires_interaction", True)),
+            technique=tuple(raw.get("technique", ()) or ()),
         )
     except KeyError as exc:
         raise ValueError(f"missing required key {exc.args[0]!r} in {path}") from exc

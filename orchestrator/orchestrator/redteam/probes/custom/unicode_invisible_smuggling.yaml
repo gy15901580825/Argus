@@ -6,7 +6,9 @@ target_class:
   - rag
   - browser-using
 attack_class:
+  - indirect-injection
   - prompt-injection
+technique:
   - obfuscated-payload
   - unicode-confusable
 severity: high

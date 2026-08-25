@@ -1,7 +1,8 @@
 id: syscard_many_shot_jailbreak
 name: "Many-shot jailbreak — context-window exploitation"
 target_class: ["http-chat"]
-attack_class: ["jailbreak", "context-exploitation"]
+attack_class: ["jailbreak"]
+technique: ["context-exploitation"]
 severity: "medium"
 prompts:
   - |
