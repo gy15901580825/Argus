@@ -52,9 +52,13 @@ What Argus does:
   `POST /api/v1/redteam/runs`: `owasp-llm-top10`, `mitre-atlas`,
   `nist-ai-rmf`, `eu-ai-act`, `payments`, `mcp`.
 - **Algorithmic iterative attacks**: TAP, PAIR, GCG black-box.
-- **LLM-judge harness** (default Anthropic Haiku, escalation to Sonnet on
-  high-severity findings) with per-probe rubrics in
-  `orchestrator/orchestrator/redteam/rubrics/`.
+- **LLM-judge harness** with per-probe rubrics in
+  `orchestrator/orchestrator/redteam/rubrics/`. A fast model judges every
+  response (Anthropic Haiku 4.5 by default); a strong model (Sonnet 4.6)
+  re-judges when the first pass says high/critical with confidence ≥ 0.7.
+  Set `REDTEAM_MODEL_PROVIDER=azure` to run the judge on Azure OpenAI.
+  Probes that carry `assertions` (payment, MCP) are decided by deterministic
+  checks on captured evidence and skip the judge.
 - **Report formats**: SARIF 2.1.0 (drops into GitHub Code Scanning), JUnit
   XML (CI gate), HTML (humans). SARIF and HTML also carry a per-standard
   coverage section (what the library does and does not test) and, for
@@ -114,14 +118,16 @@ in [`RESULTS.md`](RESULTS.md).
 
 ## Running against your own agent
 
-Targets are described in a small YAML file:
+Targets are described in a small JSON file. `argus-probe init --kind <kind>`
+writes a starter one. `${VAR}` references are expanded from the environment:
 
-```yaml
-# my_target.yaml
-kind: openai_compat
-base_url: "https://api.your-agent.example.com/v1"
-api_key_env: AGENT_API_KEY
-model: "your-agent-prod-v3"
+```json
+{
+  "kind": "openai_compat",
+  "endpoint_url": "https://api.your-agent.example.com/v1/chat/completions",
+  "model": "your-agent-prod-v3",
+  "api_key": "${AGENT_API_KEY}"
+}
 ```
 
 Other `kind` values: `anthropic_native`, `custom_http` (with Jinja2 body
@@ -129,58 +135,67 @@ templates and JSONPath response extractors), `grpc`, `http_upload`,
 `browser_use`, `payment_agent`, `mcp_agent`. Full target-spec cookbook in
 [`docs/onboarding/target-spec-cookbook.md`](docs/onboarding/target-spec-cookbook.md).
 
-Once you have a target spec, run a scan with the `argus-probe` CLI:
+The `argus-probe` CLI is a client of an Argus API server; it does not run
+probes on your machine. It submits the run, polls until it finishes, and
+writes the report:
 
 ```bash
 pip install argus-probe
-argus-probe run --target my_target.yaml --probes owasp_*,syscard_* \
-                --judge anthropic --report sarif > argus.sarif
+export ARGUS_API_URL=https://<your-argus-api>
+export ARGUS_API_TOKEN=<your-api-token>
+argus-probe run --target argus-target.json \
+                --probes owasp_01_prompt_injection_basic,syscard_crescendo \
+                --format sarif --out argus.sarif
 ```
 
-Output is a SARIF 2.1.0 file you can attach to GitHub Code Scanning, plus
-a JSON dump of all per-prompt verdicts.
+`--probes all` runs the whole library. `--format` is `html` (default),
+`sarif` (SARIF 2.1.0, uploads to GitHub Code Scanning) or `junit`.
+`--per-run-cap` sets a USD ceiling for the run.
 
-For CI-gated scans, see the bundled `argus-probe-action@v1`
-composite GitHub Action — `--block-on-critical` will fail the workflow on
-any high-severity finding.
+For CI-gated scans, use the separate `argus-probe-action@v1` composite
+GitHub Action (`argus-probe init --workflow` generates a starter workflow).
+With `threshold: block-on-critical` the workflow fails on any
+critical-severity finding.
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  argus-probe CLI  /  GitHub Action  /  Argus Web UI                    │
+│  argus-probe CLI  /  argus-probe-action  /  REST API                    │
 └──────────┬──────────────────────────────────────────────────────────────┘
-           │  HTTPS
+           │  HTTPS, x-api-token
            ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  api_service  (FastAPI)                                                 │
-│    POST /api/v1/redteam/runs       ← submit a run                      │
-│    GET  /api/v1/redteam/runs/{id}  ← stream findings                   │
-│    GET  /api/v1/redteam/runs/{id}/report?format=sarif|junit|html       │
+│  api_service  (FastAPI + PostgreSQL)                                    │
+│    POST /api/v1/redteam/runs       ← submit a run (cost preflight)      │
+│    GET  /api/v1/redteam/runs/{id}  ← status + findings so far           │
+│    GET  /api/v1/redteam/runs/{id}/report?format=sarif|junit|html        │
+│    a background task reads the orchestrator's SSE stream and            │
+│    writes each finding to redteam_findings                              │
 └──────────┬──────────────────────────────────────────────────────────────┘
-           │
+           │  POST /redteam/run/preflight, then POST /redteam/run (SSE)
            ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  orchestrator  (FastAPI + Google ADK)                                   │
+│  orchestrator  /redteam  (FastAPI)                                      │
 │    probe loader  ──▶  target adapter  ──▶  judge harness                │
-│        │                  ▲                      │                      │
-│        └──── 205 YAML     │                      └──▶ Anthropic Haiku   │
-│              probes       │                          (escalation:       │
-│                           │                           Sonnet on sev≥H,  │
-│                  ┌────────┴─────────┐                  conf≥0.7)        │
-│                  │  openai_compat   │                                   │
-│                  │  anthropic_native│                                   │
-│                  │  custom_http     │                                   │
-│                  │  grpc            │      OPTIONAL input-side:         │
-│                  │  http_upload     │  ┌───────────────────────────┐    │
-│                  │  browser_use     │  │ PromptGuard               │    │
-│                  │  payment_agent   │  │ (ProtectAI / Meta v2)     │    │
-│                  │  mcp_agent       │  │                           │    │
-│                  └──────┬───────────┘  └──────────┬────────────────┘    │
-└─────────────────────────┼─────────────────────────┼─────────────────────┘
-                          │                         │
-                          ▼                         ▼
-                   ┌────────────────┐       blocked / pass
+│        │                  │                      │                      │
+│        └──── 205 YAML     │                      └──▶ fast model, then  │
+│              probes       │                           strong model on   │
+│                           │                           high/critical,    │
+│                  ┌────────┴─────────┐                 confidence ≥ 0.7  │
+│                  │  openai_compat   │                 (Anthropic or     │
+│                  │  anthropic_native│                  Azure OpenAI);   │
+│                  │  custom_http     │                 assertion probes  │
+│                  │  grpc            │                 skip the judge    │
+│                  │  http_upload     │                                   │
+│                  │  payment_agent   │                                   │
+│                  │  mcp_agent       │                                   │
+│                  │  browser_use ────┼──▶ client_agent (WebSocket)       │
+│                  └──────┬───────────┘                                   │
+└─────────────────────────┼───────────────────────────────────────────────┘
+                          │
+                          ▼
+                   ┌────────────────┐
                    │  YOUR AGENT    │
                    │  (any HTTP /   │
                    │   gRPC / web)  │
@@ -190,7 +205,7 @@ any high-severity finding.
 | Sub-project | Role |
 |---|---|
 | [`api_service/`](api_service/) | Central REST API (FastAPI + asyncpg + PostgreSQL). Owns the `redteam_runs`, `redteam_findings`, `redteam_design_partners` tables. |
-| [`orchestrator/`](orchestrator/) | Probe dispatcher + judge harness + 8 target adapters + guardrail wrappers. |
+| [`orchestrator/`](orchestrator/) | Probe dispatcher + judge harness + 8 target adapters + guardrail wrappers (used by the local demo runner). |
 | [`client_agent/`](client_agent/) | Edge agent (browser-use + Playwright) for browser-driven probes. |
 | [`frontend/`](frontend/) | Next.js 16 web UI: dashboard, chat, marketing pages. |
 | [`cli/`](cli/) | `argus-probe` Python CLI (PyPI). |
@@ -227,7 +242,10 @@ orchestrator/orchestrator/redteam/probes/
 ├── shadow_credentials_*.yaml
 ├── install_time_*.yaml
 ├── browser/                                   ← browser-agent specific
-│   └── browser_visual_inject_*.yaml
+│   ├── browser_dom_inject_*.yaml
+│   ├── browser_ui_phishing_*.yaml
+│   ├── browser_visual_inject_*.yaml
+│   └── browser_os_cmd_*.yaml
 ├── payment/                                   ← x402 wallet-abuse, for payment_agent
 │   └── pay_*.yaml
 ├── mcp/                                       ← poisoned MCP tool servers, for mcp_agent
@@ -261,9 +279,12 @@ mappings:                        # required — drives the report's standards ID
   nist_ai_rmf: ["MEASURE-2.6"]
   eu_ai_act: ["Article 15(3)"]
 judge:
-  model: "claude-haiku-4-5-20251001"
   rubric_path: "rubrics/prompt_injection.md"   # which rubric the judge applies
 ```
+
+The judge model is not set per probe. It comes from the orchestrator's
+`REDTEAM_MODEL_PROVIDER`, `REDTEAM_FAST_MODEL` and `REDTEAM_STRONG_MODEL`
+environment variables; a `judge.model` key in a probe is read but ignored.
 
 The loader ignores keys it does not recognise, so a typo in `judge.rubric_path`
 degrades silently to `rubrics/default.md` rather than erroring. Run the test
@@ -284,8 +305,8 @@ can measure how much your guardrail actually buys you. Wrappers live in
 | `PromptGuard` (default) | `protectai/deberta-v3-base-prompt-injection-v2` | Open access (180M, DeBERTa-v3-base) |
 | `PromptGuard` (alt) | `meta-llama/Llama-Prompt-Guard-2-86M` | Gated — requires `huggingface-cli login` and Meta-approved access (86M) |
 
-Enable via `--guardrail prompt-guard` on the local demo runner, or via
-the orchestrator's `guardrail` field on `POST /api/v1/redteam/runs`.
+Enable via `--guardrail prompt-guard` on the local demo runner. The API
+has no guardrail option; runs submitted through it never apply one.
 
 [`RESULTS.md`](RESULTS.md) walks through a real before/after experiment
 on this repo's demo target: Prompt Guard cuts the attack-success rate
