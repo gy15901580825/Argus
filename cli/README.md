@@ -16,10 +16,10 @@ $ argus-probe run --target argus-target.json --probes owasp_07_system_prompt_lea
 Python 3.11+ is required. There are no prebuilt binaries and no PyPI package; install from the Argus repo:
 
 ```bash
-pip install "git+https://github.com/gy15901580825/Argus.git#subdirectory=cli"
+pip install "argus-probe[local] @ git+https://github.com/gy15901580825/Argus.git#subdirectory=cli"
 ```
 
-From a clone of the repo, `pip install ./cli` does the same.
+The `[local]` extra installs the probe engine for `--local`. Without it the CLI only talks to an Argus API server. From a clone of the repo, `pip install ./orchestrator ./cli` does the same.
 
 ## Quickstart
 
@@ -27,19 +27,20 @@ From a clone of the repo, `pip install ./cli` does the same.
 # 1. Generate a target spec interactively
 argus-probe init --kind openai_compat
 
-# 2. Set your Argus API token and instance URL
+# 2a. Run locally: set a judge key, no server needed
+export ANTHROPIC_API_KEY="<your key>"
+argus-probe run --local --target argus-target.json \
+  --probes owasp_07_system_prompt_leakage --format html --out report.html
+
+# 2b. Or submit to your own Argus API server
 export ARGUS_API_TOKEN="<your token>"
 export ARGUS_API_URL="https://<your-argus-host>"
-
-# 3. Sanity-check the target is reachable
 argus-probe validate-target --target argus-target.json
-
-# 4. Run a probe
-argus-probe run \
-  --target argus-target.json \
-  --probes owasp_07_system_prompt_leakage \
-  --format html --out report.html
+argus-probe run --target argus-target.json \
+  --probes owasp_07_system_prompt_leakage --format html --out report.html
 ```
+
+`--local` does not support `browser_use` targets; submit those to a server.
 
 There is no hosted Argus instance. `ARGUS_API_URL` is your own `api_service` deployment, and the token is the `api_token` of a user on that server. An admin mints one with `POST /api/v1/admin/users` and `"api_token_only": true`; see the [quickstart](../docs/onboarding/quickstart.md) for the first-admin step.
 
@@ -62,7 +63,7 @@ Full configuration reference: [target spec cookbook](../docs/onboarding/target-s
 
 ## What it does
 
-`argus-probe` is a thin client. It submits the target spec and probe selection to the Argus service over HTTPS; the service runs the probes against your agent and returns the report. The CLI itself does not call LLMs or store secrets.
+Without `--local`, `argus-probe` is a thin client: it submits the target spec and probe selection to an Argus service over HTTPS; the service runs the probes against your agent and returns the report. With `--local` the same engine runs in this process and calls the judge model directly with your key.
 
 Secret references in your target spec (`${OPENAI_API_KEY}`, etc.) are resolved from the local shell environment at run time and sent only as outbound headers to your agent — they never enter the target.json file or the Argus service.
 
@@ -85,7 +86,7 @@ There is no published GitHub Action. Run the CLI in a workflow step and upload t
 - run: >
     argus-probe run --target argus-target.json
     --probes owasp_01_prompt_injection_basic,syscard_crescendo
-    --format sarif --out argus.sarif
+    --format sarif --out argus.sarif --fail-on critical
   env:
     ARGUS_API_URL: ${{ vars.ARGUS_API_URL }}      # the CLI has no default endpoint
     ARGUS_API_TOKEN: ${{ secrets.ARGUS_API_TOKEN }}
@@ -96,7 +97,7 @@ There is no published GitHub Action. Run the CLI in a workflow step and upload t
 
 The job needs `permissions: security-events: write` for the SARIF upload. `argus-probe init --workflow` writes a complete workflow file with that set.
 
-`argus-probe run` does not exit non-zero on findings. To fail the build on severity, read `argus.sarif` in a later step.
+`--fail-on <severity>` exits 3 when a failing finding is at or above that level; the SARIF is written first, so it still uploads. Exit codes: 0 success, 1 run or configuration error, 2 usage error or `--local` without the engine installed, 3 threshold hit, 402 cost cap.
 
 ## Cost controls
 

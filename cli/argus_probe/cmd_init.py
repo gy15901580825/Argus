@@ -85,7 +85,7 @@ jobs:
       - run: >
           argus-probe run --target {target_path}
           --probes owasp_01_prompt_injection_basic,syscard_crescendo
-          --format sarif --out argus.sarif
+          --format sarif --out argus.sarif --fail-on critical
         env:
           ARGUS_API_URL: ${{{{ vars.ARGUS_API_URL }}}}
           ARGUS_API_TOKEN: ${{{{ secrets.ARGUS_API_TOKEN }}}}

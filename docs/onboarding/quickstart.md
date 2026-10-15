@@ -7,11 +7,11 @@ Point Argus at any AI agent endpoint and get a SARIF report. You need a running 
 Python 3.11+ is required. There are no prebuilt binaries and no PyPI package; install from this repo:
 
 ```bash
-pip install "git+https://github.com/gy15901580825/Argus.git#subdirectory=cli"
+pip install "argus-probe[local] @ git+https://github.com/gy15901580825/Argus.git#subdirectory=cli"
 argus-probe --version
 ```
 
-From a clone, `pip install ./cli` does the same.
+The `[local]` extra pulls in the probe engine so step 3a works without a server. From a clone, `pip install ./orchestrator ./cli` does the same.
 
 ## 2. Generate a target spec
 
@@ -28,7 +28,20 @@ The 8 supported `kind` values: `openai_compat`, `anthropic_native`, `custom_http
 
 Output: `argus-target.json`, plus `.github/workflows/argus-probe.yml` if you say yes to the workflow prompt.
 
-## 3. Get an Argus API token
+## 3a. Run locally (no server)
+
+Set a judge key and add `--local`. The CLI loads the 205 probes, sends them to your agent and judges the replies in this process:
+
+```bash
+export ANTHROPIC_API_KEY="<your key>"        # or REDTEAM_MODEL_PROVIDER=azure plus the Azure variables
+argus-probe run --local --target argus-target.json --probes owasp_07_system_prompt_leakage --format html --out report.html
+```
+
+`--local` does not support `browser_use` targets; submit those to a server.
+
+`--per-run-cap` and `--fail-on` work the same way as in server mode. Skip step 3 if this is all you need.
+
+## 3. Get an Argus API token (server mode)
 
 There is no hosted Argus instance. Run your own `api_service` (see [local-dev.md](../runbooks/local-dev.md)); the token is the `api_token` column of a row in its `users` table. An admin mints one with `POST /api/v1/admin/users` and `"api_token_only": true`. There is no bootstrap step for the first admin, so insert that first row directly in the database with role `SUPER_ADMIN`. Then set the token and the server URL in your shell:
 
@@ -90,7 +103,7 @@ See [Threat coverage overview](./probe-id-cheatsheet.md) for the categories the 
 
 ## What's next
 
-- **Add to CI**: `argus-probe init --workflow` writes a starter workflow; see [target-spec-cookbook.md](./target-spec-cookbook.md) § "GitHub Actions integration". There is no published GitHub Action
+- **Add to CI**: `argus-probe init --workflow` writes a starter workflow that uploads SARIF and fails on critical findings (`--fail-on critical`); see [target-spec-cookbook.md](./target-spec-cookbook.md) § "GitHub Actions integration". There is no published GitHub Action
 - **Understand the verdicts**: each finding's `verdict` is one of:
   - `pass` — agent resisted the attack
   - `fail` — agent fell for the attack (look at `severity`: critical/high/medium/low)
@@ -118,5 +131,7 @@ Each command's `--help` lists its flags. The most common flags on `run`:
 | `--format` | `html` / `sarif` / `junit` |
 | `--out` | output report file path |
 | `--per-run-cap` | USD cap; over-budget runs reject with HTTP 402 (default $0.50) |
+| `--local` | run probes in this process; needs the `[local]` extra and a judge key, no `--api-url`/`--token` |
+| `--fail-on` | `info` / `low` / `medium` / `high` / `critical`; exit 3 when a failing finding is at or above it |
 | `--token` | API token (or set `ARGUS_API_TOKEN`) |
 | `--max-wait` | how long to poll for run completion (default 1800 s) |

@@ -148,22 +148,34 @@ argus-probe run --target argus-target.json \
                 --format sarif --out argus.sarif
 ```
 
-The CLI is not on PyPI; install it from this repo as above. There is no
-hosted Argus instance. `ARGUS_API_URL` is your own `api_service`
-deployment (see [`docs/runbooks/local-dev.md`](docs/runbooks/local-dev.md)),
-and the token is a `users.api_token` row on that server. An admin mints
-one with `POST /api/v1/admin/users` and `"api_token_only": true`.
+The CLI is not on PyPI; install it from this repo as above. There are two
+ways to run it:
+
+- **Local mode** (`--local`): probes run in this process. Install the
+  engine with the `[local]` extra and set a judge key:
+
+  ```bash
+  pip install "argus-probe[local] @ git+https://github.com/gy15901580825/Argus.git#subdirectory=cli"
+  export ANTHROPIC_API_KEY=<your key>      # or REDTEAM_MODEL_PROVIDER=azure with the Azure variables
+  argus-probe run --local --target argus-target.json \
+                  --probes owasp_01_prompt_injection_basic,syscard_crescendo \
+                  --format sarif --out argus.sarif
+  ```
+
+- **Server mode**: `ARGUS_API_URL` is your own `api_service` deployment
+  (see [`docs/runbooks/local-dev.md`](docs/runbooks/local-dev.md)) and the
+  token is a `users.api_token` row on that server, minted by an admin with
+  `POST /api/v1/admin/users` and `"api_token_only": true`. There is no
+  hosted instance.
 
 `--probes all` runs the whole library. `--format` is `html` (default),
 `sarif` (SARIF 2.1.0, uploads to GitHub Code Scanning) or `junit`.
 `--per-run-cap` sets a USD ceiling for the run.
 
-There is no published GitHub Action. To run in CI, install the CLI in a
-workflow step, run it, and upload the SARIF with
-`github/codeql-action/upload-sarif`; `argus-probe init --workflow` writes
-such a workflow (example in [`cli/README.md`](cli/README.md)).
-`argus-probe run` does not exit non-zero on findings, so a severity gate
-has to read the SARIF.
+There is no published GitHub Action. `argus-probe init --workflow` writes a
+workflow that installs the CLI, runs it, uploads the SARIF with
+`github/codeql-action/upload-sarif`, and fails the job with
+`--fail-on critical` (example in [`cli/README.md`](cli/README.md)).
 
 ## Architecture
 
