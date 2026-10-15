@@ -7,8 +7,11 @@ from pathlib import Path
 
 import click
 import httpx
+from click.core import ParameterSource
 
 from argus_probe import api_client
+from argus_probe.local_run import LocalUnavailable, run_local_and_render
+from argus_probe.severity import SEVERITY_ORDER, findings_at_or_above
 from argus_probe.target_loader import load_target_spec, TargetLoadError
 
 
@@ -17,11 +20,15 @@ from argus_probe.target_loader import load_target_spec, TargetLoadError
 @click.option("--probes", "probe_ids", required=True, help="Comma-separated probe ids OR 'all'.")
 @click.option("--format", "report_format", type=click.Choice(["html", "sarif", "junit"]), default="html")
 @click.option("--out", "out_file", type=click.Path(), required=True, help="Output report file path.")
-@click.option("--token", envvar="ARGUS_API_TOKEN", required=True, help="Your Argus API token (or env ARGUS_API_TOKEN).")
-@click.option("--api-url", envvar="ARGUS_API_URL", required=True, help="Argus API base URL (or env ARGUS_API_URL).")
-@click.option("--max-wait", type=float, default=1800.0, help="Max seconds to wait for run completion.")
-@click.option("--per-run-cap", "per_run_cap", type=float, default=None, help="Maximum USD cost for this run (server enforces). Default: server-side default ($0.50).")
-def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, token: str, api_url: str, max_wait: float, per_run_cap: float | None):
+@click.option("--token", envvar="ARGUS_API_TOKEN", default=None, help="Your Argus API token (or env ARGUS_API_TOKEN). Not used with --local.")
+@click.option("--api-url", envvar="ARGUS_API_URL", default=None, help="Argus API base URL (or env ARGUS_API_URL). Not used with --local.")
+@click.option("--max-wait", type=float, default=1800.0, help="Max seconds to wait for run completion. Ignored with --local.")
+@click.option("--per-run-cap", "per_run_cap", type=float, default=None, help="Maximum USD cost for this run; enforced before any LLM call in both server and local mode. Default: $0.50.")
+@click.option("--fail-on", "fail_on", type=click.Choice(SEVERITY_ORDER), default=None,
+              help="Exit 3 when any finding has verdict=fail and severity at or above this level.")
+@click.option("--local", "local", is_flag=True, default=False,
+              help="Run probes in this process instead of submitting to an Argus API server. Needs the argus-orchestrator package and a judge API key in the environment.")
+def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, token: str | None, api_url: str | None, max_wait: float, per_run_cap: float | None, fail_on: str | None, local: bool):
     """Submit a red-team run and write the report to disk."""
     try:
         spec = load_target_spec(target)
@@ -43,6 +50,21 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
             raise click.UsageError("'all' cannot be combined with specific probe ids")
         # Empty probe_ids means "all" per orchestrator convention.
         tokens = []
+
+    if local:
+        ctx = click.get_current_context()
+        typed = [
+            name for name, param in (("--api-url", "api_url"), ("--token", "token"))
+            if ctx.get_parameter_source(param) == ParameterSource.COMMANDLINE
+        ]
+        if typed:
+            raise click.UsageError(f"--local runs in this process; do not pass {' or '.join(typed)}")
+        _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on)
+        return
+    if api_url is None:
+        raise click.UsageError("Missing option '--api-url'")
+    if token is None:
+        raise click.UsageError("Missing option '--token'")
 
     body = {
         "target": spec,
@@ -74,3 +96,47 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
     report = api_client.get_report(api_url, token, run_id, report_format)
     Path(out_file).write_text(report)
     click.echo(f"Wrote report to {out_file}")
+    if run["status"] != "completed":
+        click.echo(f"Error: run {run_id} ended with status {run['status']}", file=sys.stderr)
+        sys.exit(1)
+    _apply_fail_on(run.get("findings", []), fail_on)
+
+
+def _apply_fail_on(findings: list[dict], fail_on: str | None) -> None:
+    """Exit 3 when findings cross the --fail-on threshold. Report is already on disk."""
+    if fail_on is None:
+        return
+    hits = findings_at_or_above(findings, fail_on)
+    if hits:
+        ids = ", ".join(sorted({h.get("probe_id", "?") for h in hits}))
+        click.echo(
+            f"{len(hits)} finding(s) at or above {fail_on}: {ids}",
+            file=sys.stderr,
+        )
+        sys.exit(3)
+
+
+def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on) -> None:
+    if spec.get("kind") == "browser_use":
+        click.echo(
+            "Error: --local does not support browser_use targets; they need the "
+            "orchestrator service and a client_agent. Submit the run to an Argus API server instead.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    click.echo(f"Running {('all probes' if not tokens else f'{len(tokens)} probe(s)')} locally ...")
+    try:
+        report, findings = run_local_and_render(spec, tokens, per_run_cap, report_format)
+    except LocalUnavailable as e:
+        click.echo(f"Error: {e}", file=sys.stderr)
+        sys.exit(2)
+    except Exception as e:  # LocalRunError or a mid-run failure; no traceback for the operator
+        code = getattr(e, "code", None)
+        if code == "cost":
+            click.echo(f"Run rejected for cost: {e}", file=sys.stderr)
+            sys.exit(402)
+        click.echo(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    Path(out_file).write_text(report)
+    click.echo(f"Wrote report to {out_file}")
+    _apply_fail_on(findings, fail_on)

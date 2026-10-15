@@ -168,6 +168,7 @@ def test_init_with_workflow_writes_workflow_file(tmp_path, monkeypatch):
     assert "<your-gh-user>" not in content
     assert 'pip install "git+https://github.com/gy15901580825/Argus.git#subdirectory=cli"' in content
     assert "--target argus-target.json" in content
+    assert "--fail-on critical" in content
     assert "github/codeql-action/upload-sarif@v3" in content
     wf = yaml.safe_load(content)
     steps = wf["jobs"]["redteam"]["steps"]

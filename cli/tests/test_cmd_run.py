@@ -8,7 +8,9 @@ import httpx
 import pytest
 from click.testing import CliRunner
 
+from argus_probe import api_client
 from argus_probe.__main__ import main
+from argus_probe.cmd_run import cmd_run
 
 
 def test_run_calls_api_and_writes_report(tmp_path):
@@ -211,3 +213,70 @@ def test_run_rejects_empty_probes(tmp_path):
         ])
     assert result.exit_code == 2, result.output
     mock_post.assert_not_called()
+
+
+def _stub_remote(monkeypatch, findings):
+    monkeypatch.setattr(api_client, "post_run", lambda *a, **k: {"run_id": "r1"})
+    monkeypatch.setattr(
+        api_client, "poll_until_complete", lambda *a, **k: {"status": "completed", "findings": findings}
+    )
+    monkeypatch.setattr(api_client, "get_report", lambda *a, **k: "<html></html>")
+
+
+def test_run_fail_on_exits_3_when_threshold_hit(tmp_path, monkeypatch):
+    _stub_remote(monkeypatch, [{"probe_id": "p", "verdict": "fail", "severity": "critical"}])
+    target = tmp_path / "t.json"
+    target.write_text('{"kind":"openai_compat","endpoint_url":"https://x","model":"m"}')
+    out = tmp_path / "r.html"
+    result = CliRunner().invoke(
+        cmd_run,
+        ["--target", str(target), "--probes", "p", "--out", str(out), "--token", "t",
+         "--api-url", "https://argus.example", "--fail-on", "high"],
+    )
+    assert result.exit_code == 3, result.output
+    assert "1 finding" in result.output
+    assert out.read_text() == "<html></html>"
+
+
+def test_run_without_fail_on_exits_0_on_findings(tmp_path, monkeypatch):
+    _stub_remote(monkeypatch, [{"probe_id": "p", "verdict": "fail", "severity": "critical"}])
+    target = tmp_path / "t.json"
+    target.write_text('{"kind":"openai_compat","endpoint_url":"https://x","model":"m"}')
+    out = tmp_path / "r.html"
+    result = CliRunner().invoke(
+        cmd_run,
+        ["--target", str(target), "--probes", "p", "--out", str(out), "--token", "t",
+         "--api-url", "https://argus.example"],
+    )
+    assert result.exit_code == 0, result.output
+
+
+def test_run_exits_1_when_run_failed_but_still_writes_report(tmp_path, monkeypatch):
+    _stub_remote(monkeypatch, [])
+    monkeypatch.setattr(
+        api_client, "poll_until_complete", lambda *a, **k: {"status": "failed", "findings": []}
+    )
+    target = tmp_path / "t.json"
+    target.write_text('{"kind":"openai_compat","endpoint_url":"https://x","model":"m"}')
+    out = tmp_path / "r.html"
+    result = CliRunner().invoke(
+        cmd_run,
+        ["--target", str(target), "--probes", "p", "--out", str(out), "--token", "t",
+         "--api-url", "https://argus.example", "--fail-on", "critical"],
+    )
+    assert result.exit_code == 1, result.output
+    assert "ended with status failed" in result.output
+    assert out.read_text() == "<html></html>"
+
+
+def test_run_fail_on_exits_0_below_threshold(tmp_path, monkeypatch):
+    _stub_remote(monkeypatch, [{"probe_id": "p", "verdict": "fail", "severity": "low"}])
+    target = tmp_path / "t.json"
+    target.write_text('{"kind":"openai_compat","endpoint_url":"https://x","model":"m"}')
+    out = tmp_path / "r.html"
+    result = CliRunner().invoke(
+        cmd_run,
+        ["--target", str(target), "--probes", "p", "--out", str(out), "--token", "t",
+         "--api-url", "https://argus.example", "--fail-on", "high"],
+    )
+    assert result.exit_code == 0, result.output
