@@ -9,6 +9,7 @@ import click
 import httpx
 
 from argus_probe import api_client
+from argus_probe.severity import SEVERITY_ORDER, findings_at_or_above
 from argus_probe.target_loader import load_target_spec, TargetLoadError
 
 
@@ -21,7 +22,9 @@ from argus_probe.target_loader import load_target_spec, TargetLoadError
 @click.option("--api-url", envvar="ARGUS_API_URL", required=True, help="Argus API base URL (or env ARGUS_API_URL).")
 @click.option("--max-wait", type=float, default=1800.0, help="Max seconds to wait for run completion.")
 @click.option("--per-run-cap", "per_run_cap", type=float, default=None, help="Maximum USD cost for this run (server enforces). Default: server-side default ($0.50).")
-def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, token: str, api_url: str, max_wait: float, per_run_cap: float | None):
+@click.option("--fail-on", "fail_on", type=click.Choice(SEVERITY_ORDER), default=None,
+              help="Exit 3 when any finding has verdict=fail and severity at or above this level.")
+def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, token: str, api_url: str, max_wait: float, per_run_cap: float | None, fail_on: str | None):
     """Submit a red-team run and write the report to disk."""
     try:
         spec = load_target_spec(target)
@@ -74,3 +77,18 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
     report = api_client.get_report(api_url, token, run_id, report_format)
     Path(out_file).write_text(report)
     click.echo(f"Wrote report to {out_file}")
+    _apply_fail_on(run.get("findings", []), fail_on)
+
+
+def _apply_fail_on(findings: list[dict], fail_on: str | None) -> None:
+    """Exit 3 when findings cross the --fail-on threshold. Report is already on disk."""
+    if fail_on is None:
+        return
+    hits = findings_at_or_above(findings, fail_on)
+    if hits:
+        ids = ", ".join(sorted({h.get("probe_id", "?") for h in hits}))
+        click.echo(
+            f"{len(hits)} finding(s) at or above {fail_on}: {ids}",
+            file=sys.stderr,
+        )
+        sys.exit(3)
