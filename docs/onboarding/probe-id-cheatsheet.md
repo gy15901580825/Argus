@@ -52,24 +52,13 @@ Each finding carries one of:
 - **low** — the agent's behavior was subtly biased
 - **info** — the agent ignored the attack (verdict=pass) or the attack never reached the agent (verdict=blocked_by_target / skipped)
 
-Use the `threshold` input on the GitHub Action to fail CI based on severity:
-
-```yaml
-- uses: <your-gh-user>/argus-probe-action@v1
-  with:
-    api-token: ${{ secrets.ARGUS_API_TOKEN }}
-    target-config: argus-target.json
-    threshold: block-on-critical   # warn (default) | block-on-critical | block-on-high
-```
+There is no published GitHub Action, and `argus-probe run` does not exit non-zero on findings. To fail CI by severity, read the SARIF in a later workflow step; the workflow itself is in [target-spec-cookbook.md](./target-spec-cookbook.md) § "GitHub Actions integration".
 
 ## Custom probes
 
-Need coverage we don't ship?
-
-1. **OSS contribution** — submit a probe YAML to the public probe library (MIT). See the contribution flow on the OSS repo.
-2. **Enterprise tier** — we author custom probes against your specific threat model as part of the engagement. Email `<contact@example.com>`.
+Need coverage we don't ship? Add a probe YAML under `orchestrator/orchestrator/redteam/probes/` in this repo (Apache 2.0) and open a PR; the schema and the required `mappings` are in [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 ## Next
 
-- [Quickstart](./quickstart.md) — install + first run in 5 minutes
-- [Target spec cookbook](./target-spec-cookbook.md) — configure for your specific agent shape (OpenAI-compat / Anthropic / Custom HTTP / gRPC / Browser-use)
+- [Quickstart](./quickstart.md) — install + first run
+- [Target spec cookbook](./target-spec-cookbook.md) — configure for your specific agent shape

@@ -72,13 +72,26 @@ on:
 
 jobs:
   redteam:
-    uses: <your-gh-user>/argus-probe-action/.github/workflows/argus-probe-reusable.yml@v1
-    with:
-      target-config: {target_path}
-      threshold: warn
-      per-run-cap: '0.50'
-    secrets:
-      api-token: ${{{{ secrets.ARGUS_API_TOKEN }}}}
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write   # upload-sarif
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install "git+https://github.com/gy15901580825/Argus.git#subdirectory=cli"
+      - run: >
+          argus-probe run --target {target_path}
+          --probes owasp_01_prompt_injection_basic,syscard_crescendo
+          --format sarif --out argus.sarif
+        env:
+          ARGUS_API_URL: ${{{{ vars.ARGUS_API_URL }}}}
+          ARGUS_API_TOKEN: ${{{{ secrets.ARGUS_API_TOKEN }}}}
+      - uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: argus.sarif
 """
 
 
@@ -156,4 +169,4 @@ def init_command(kind: str, output: str, workflow: bool | None) -> None:
 
     click.echo("")
     click.echo(f"Next: argus-probe run --target {target_path.name}")
-    click.echo("Add ARGUS_API_TOKEN to your CI secrets to enable scheduled runs.")
+    click.echo("Set ARGUS_API_URL (repository variable) and ARGUS_API_TOKEN (secret) in CI to enable scheduled runs.")

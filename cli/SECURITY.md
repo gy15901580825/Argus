@@ -1,39 +1,34 @@
 # Security policy
 
+`argus-probe` is the CLI sub-project of [Argus](https://github.com/gy15901580825/Argus). The repo-level [SECURITY.md](../SECURITY.md) is the policy of record: how to report a vulnerability, what is in and out of scope, and the ethical-use boundary. This file adds only what is specific to the CLI.
+
 ## Reporting a vulnerability
 
-If you believe you've found a security issue in `argus-probe`, please report it privately to **<contact@example.com>**.
+Report privately to **contact@veyon.solutions**. Do not open a public GitHub issue for a security-sensitive report.
 
 Please include:
 
 - A description of the issue
 - Steps to reproduce
-- Affected versions (e.g. `argus-probe --version`)
+- The commit or tag of this repository you installed from
 - Your assessment of impact
 
-We aim to acknowledge reports within 2 business days and ship a fix or mitigation within 30 days, depending on severity.
-
-**Please do not** open a public GitHub issue for security-sensitive reports.
+We aim to acknowledge reports within 2 business days and to ship a fix or mitigation within 30 days, depending on severity.
 
 ## Scope
 
-In scope:
+In scope: the code under `cli/` in this repository. There are no prebuilt binaries and no PyPI package; the only distribution is `pip install` from this repository.
 
-- The `argus-probe` CLI itself (this repository)
-- The PyInstaller-built binaries published under [Releases](https://github.com/<your-gh-user>/cli/releases)
+Covered by the repo-level policy, not this file: the Argus API service, the orchestrator, probe content, and judge behavior.
 
-Out of scope (report to `<contact@example.com>` separately if relevant):
-
-- The Argus service / API
-- Probe content or judge behavior
-- Findings reported by the tool against your own agent (those are the tool's intended output, not vulnerabilities in this CLI)
+Not a vulnerability: findings the tool reports about your own agent. Those are its intended output.
 
 ## Supported versions
 
-Only the latest released version receives security patches. Pin to `@vX.Y.Z` in CI; upgrade promptly when an advisory lands.
+Argus is pre-1.0. Security fixes land on the default branch; there is no backport channel. Pin to a commit or tag of this repository in CI and upgrade when a fix lands.
 
 ## Handling secrets
 
 `argus-probe` is designed so that API keys and other credentials referenced in `argus-target.json` (e.g. `${OPENAI_API_KEY}`) are read from the local environment at run time and used only as outbound headers to your own agent endpoint. They are not written to the target file, transmitted to the Argus service, or logged.
 
-If you observe behavior that contradicts this — for example, secrets appearing in logs, transcripts, or transmitted payloads — that is a security issue and should be reported via the address above.
+If you observe behavior that contradicts this, for example secrets appearing in logs, transcripts, or transmitted payloads, that is a security issue. Report it to the address above.

@@ -4,8 +4,8 @@
 MCP, payment-agent, or browser-using agent endpoint, run 205 adversarial
 probes (OWASP LLM Top 10, MITRE ATLAS, NIST AI RMF, garak wrappers, TAP / PAIR
 / GCG), and get
-LLM-judged findings as SARIF 2.1.0 / JUnit XML / HTML — drop straight into CI
-as a GitHub Code Scanning gate.
+LLM-judged findings as SARIF 2.1.0 / JUnit XML / HTML — upload straight to
+GitHub Code Scanning.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](cli/pyproject.toml)
@@ -140,7 +140,7 @@ probes on your machine. It submits the run, polls until it finishes, and
 writes the report:
 
 ```bash
-pip install argus-probe
+pip install "git+https://github.com/gy15901580825/Argus.git#subdirectory=cli"
 export ARGUS_API_URL=https://<your-argus-api>
 export ARGUS_API_TOKEN=<your-api-token>
 argus-probe run --target argus-target.json \
@@ -148,20 +148,28 @@ argus-probe run --target argus-target.json \
                 --format sarif --out argus.sarif
 ```
 
+The CLI is not on PyPI; install it from this repo as above. There is no
+hosted Argus instance. `ARGUS_API_URL` is your own `api_service`
+deployment (see [`docs/runbooks/local-dev.md`](docs/runbooks/local-dev.md)),
+and the token is a `users.api_token` row on that server. An admin mints
+one with `POST /api/v1/admin/users` and `"api_token_only": true`.
+
 `--probes all` runs the whole library. `--format` is `html` (default),
 `sarif` (SARIF 2.1.0, uploads to GitHub Code Scanning) or `junit`.
 `--per-run-cap` sets a USD ceiling for the run.
 
-For CI-gated scans, use the separate `argus-probe-action@v1` composite
-GitHub Action (`argus-probe init --workflow` generates a starter workflow).
-With `threshold: block-on-critical` the workflow fails on any
-critical-severity finding.
+There is no published GitHub Action. To run in CI, install the CLI in a
+workflow step, run it, and upload the SARIF with
+`github/codeql-action/upload-sarif`; `argus-probe init --workflow` writes
+such a workflow (example in [`cli/README.md`](cli/README.md)).
+`argus-probe run` does not exit non-zero on findings, so a severity gate
+has to read the SARIF.
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  argus-probe CLI  /  argus-probe-action  /  REST API                    │
+│  argus-probe CLI  /  CI pipeline         /  REST API                    │
 └──────────┬──────────────────────────────────────────────────────────────┘
            │  HTTPS, x-api-token
            ▼
@@ -208,7 +216,7 @@ critical-severity finding.
 | [`orchestrator/`](orchestrator/) | Probe dispatcher + judge harness + 8 target adapters + guardrail wrappers (used by the local demo runner). |
 | [`client_agent/`](client_agent/) | Edge agent (browser-use + Playwright) for browser-driven probes. |
 | [`frontend/`](frontend/) | Next.js 16 web UI: dashboard, chat, marketing pages. |
-| [`cli/`](cli/) | `argus-probe` Python CLI (PyPI). |
+| [`cli/`](cli/) | `argus-probe` Python CLI, installed from this repo with pip. |
 | [`demo_target/`](demo_target/) | Deliberately-vulnerable FastAPI chatbot for offline demos. |
 | [`payment_testbed/`](payment_testbed/) | Mock x402 payment world + insecure demo agent, for `payment_agent` probes. |
 | [`mcp_testbed/`](mcp_testbed/) | Hostile MCP tool server + insecure demo agent, for `mcp_agent` probes. |

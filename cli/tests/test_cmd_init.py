@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 from click.testing import CliRunner
 
 from argus_probe.cmd_init import init_command
@@ -161,8 +162,18 @@ def test_init_with_workflow_writes_workflow_file(tmp_path, monkeypatch):
     wf_path = tmp_path / ".github" / "workflows" / "argus-probe.yml"
     assert wf_path.exists()
     content = wf_path.read_text()
-    assert "<your-gh-user>/argus-probe-action" in content
-    assert "argus-target.json" in content
+    # No published action exists; the workflow must install the CLI from the
+    # repo and run it directly.
+    assert "argus-probe-action" not in content
+    assert "<your-gh-user>" not in content
+    assert 'pip install "git+https://github.com/gy15901580825/Argus.git#subdirectory=cli"' in content
+    assert "--target argus-target.json" in content
+    assert "github/codeql-action/upload-sarif@v3" in content
+    wf = yaml.safe_load(content)
+    steps = wf["jobs"]["redteam"]["steps"]
+    run_step = next(s for s in steps if "argus-probe run" in s.get("run", ""))
+    assert run_step["env"]["ARGUS_API_URL"] == "${{ vars.ARGUS_API_URL }}"
+    assert run_step["env"]["ARGUS_API_TOKEN"] == "${{ secrets.ARGUS_API_TOKEN }}"
 
 
 def test_init_refuses_overwrite_without_confirmation(tmp_path, monkeypatch):
