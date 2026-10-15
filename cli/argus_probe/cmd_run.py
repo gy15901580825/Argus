@@ -22,8 +22,8 @@ from argus_probe.target_loader import load_target_spec, TargetLoadError
 @click.option("--out", "out_file", type=click.Path(), required=True, help="Output report file path.")
 @click.option("--token", envvar="ARGUS_API_TOKEN", default=None, help="Your Argus API token (or env ARGUS_API_TOKEN). Not used with --local.")
 @click.option("--api-url", envvar="ARGUS_API_URL", default=None, help="Argus API base URL (or env ARGUS_API_URL). Not used with --local.")
-@click.option("--max-wait", type=float, default=1800.0, help="Max seconds to wait for run completion.")
-@click.option("--per-run-cap", "per_run_cap", type=float, default=None, help="Maximum USD cost for this run (server enforces). Default: server-side default ($0.50).")
+@click.option("--max-wait", type=float, default=1800.0, help="Max seconds to wait for run completion. Ignored with --local.")
+@click.option("--per-run-cap", "per_run_cap", type=float, default=None, help="Maximum USD cost for this run; enforced before any LLM call in both server and local mode. Default: $0.50.")
 @click.option("--fail-on", "fail_on", type=click.Choice(SEVERITY_ORDER), default=None,
               help="Exit 3 when any finding has verdict=fail and severity at or above this level.")
 @click.option("--local", "local", is_flag=True, default=False,
@@ -96,6 +96,9 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
     report = api_client.get_report(api_url, token, run_id, report_format)
     Path(out_file).write_text(report)
     click.echo(f"Wrote report to {out_file}")
+    if run["status"] != "completed":
+        click.echo(f"Error: run {run_id} ended with status {run['status']}", file=sys.stderr)
+        sys.exit(1)
     _apply_fail_on(run.get("findings", []), fail_on)
 
 
