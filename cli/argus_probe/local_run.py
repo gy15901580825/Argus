@@ -30,8 +30,10 @@ def run_local_and_render(
     """
     try:
         from orchestrator.redteam.local import run_local
-    except ImportError as e:
-        raise LocalUnavailable(_INSTALL_HINT) from e
+    except ModuleNotFoundError as e:
+        if e.name == "orchestrator" or (e.name or "").startswith("orchestrator."):
+            raise LocalUnavailable(_INSTALL_HINT) from e
+        raise
 
     started_at = datetime.now(timezone.utc)
     findings: list[dict] = []

@@ -5,7 +5,6 @@ import json
 import sys
 import types
 
-import pytest
 from click.testing import CliRunner
 
 from argus_probe.cmd_run import cmd_run
@@ -115,6 +114,7 @@ def test_local_cost_cap_exits_402(tmp_path, monkeypatch):
     )
     assert result.exit_code == 402, result.output
     assert "per-run cap" in result.output
+    assert "Run rejected for cost" in result.output
 
 
 def test_local_config_error_exits_1(tmp_path, monkeypatch):
@@ -183,3 +183,29 @@ def test_local_rejects_browser_use_target(tmp_path, monkeypatch):
     )
     assert result.exit_code == 1, result.output
     assert "browser_use" in result.output
+
+
+def test_local_ignores_env_api_url_and_token(tmp_path, monkeypatch):
+    _install_fake_orchestrator(monkeypatch, _ok_run)
+    monkeypatch.setenv("ARGUS_API_URL", "https://argus.example")
+    monkeypatch.setenv("ARGUS_API_TOKEN", "t")
+    out = tmp_path / "r.sarif"
+    result = CliRunner().invoke(
+        cmd_run, ["--local", "--target", _target(tmp_path), "--probes", "p", "--format", "sarif", "--out", str(out)],
+    )
+    assert result.exit_code == 0, result.output
+    assert out.exists()
+
+
+def test_local_missing_transitive_dependency_is_not_the_install_hint(tmp_path, monkeypatch):
+    async def _dep(target, probe_ids, **kw):
+        raise ModuleNotFoundError("No module named 'litellm'", name="litellm")
+        yield  # pragma: no cover
+
+    _install_fake_orchestrator(monkeypatch, _dep)
+    result = CliRunner().invoke(
+        cmd_run, ["--local", "--target", _target(tmp_path), "--probes", "p", "--out", str(tmp_path / "r.html")],
+    )
+    assert result.exit_code == 1, result.output
+    assert "litellm" in result.output
+    assert "argus-probe[local]" not in result.output

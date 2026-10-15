@@ -7,6 +7,7 @@ from pathlib import Path
 
 import click
 import httpx
+from click.core import ParameterSource
 
 from argus_probe import api_client
 from argus_probe.local_run import LocalUnavailable, run_local_and_render
@@ -51,8 +52,13 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
         tokens = []
 
     if local:
-        if api_url is not None or token is not None:
-            raise click.UsageError("--local runs in this process; do not pass --api-url or --token")
+        ctx = click.get_current_context()
+        typed = [
+            name for name, param in (("--api-url", "api_url"), ("--token", "token"))
+            if ctx.get_parameter_source(param) == ParameterSource.COMMANDLINE
+        ]
+        if typed:
+            raise click.UsageError(f"--local runs in this process; do not pass {' or '.join(typed)}")
         _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on)
         return
     if api_url is None:
@@ -124,7 +130,7 @@ def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on) ->
     except Exception as e:  # LocalRunError or a mid-run failure; no traceback for the operator
         code = getattr(e, "code", None)
         if code == "cost":
-            click.echo(f"Argus rejected run for cost: {e}", file=sys.stderr)
+            click.echo(f"Run rejected for cost: {e}", file=sys.stderr)
             sys.exit(402)
         click.echo(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
