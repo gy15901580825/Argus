@@ -1,5 +1,41 @@
+[project]
+name = "argus-orchestrator"
+version = "0.3.0"
+description = "Argus red-team engine: probe library, target adapters, judge harness"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+dependencies = [
+    "fastapi>=0.110",
+    "pydantic>=2.5",
+    "pyyaml>=6.0,<7",
+    "httpx>=0.27",
+    "jinja2>=3.1",
+    "jsonpath-ng>=1.6",
+    "anthropic>=0.40.0",
+    "litellm",
+    "grpcio>=1.60",
+    "grpcio-reflection>=1.60",
+    "protobuf>=4.25",
+]
+
 [project.optional-dependencies]
 dev = ["import-linter>=2.0,<3.0"]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["orchestrator*"]
+
+[tool.setuptools.package-data]
+"orchestrator.redteam" = [
+    "probes/*.yaml",
+    "probes/*/*.yaml",
+    "rubrics/*.md",
+    "data/*/*.md",
+]
 
 [tool.pytest.ini_options]
 minversion = "8.0"
