@@ -16,6 +16,13 @@ dependencies = [
 [project.scripts]
 argus-probe = "argus_probe.__main__:main"
 
+[project.optional-dependencies]
+# Direct URL dependencies are refused by PyPI. Before the first PyPI upload,
+# publish argus-orchestrator too and change this to a version specifier.
+local = [
+    "argus-orchestrator @ git+https://github.com/gy15901580825/Argus.git#subdirectory=orchestrator",
+]
+
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
