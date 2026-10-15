@@ -27,4 +27,12 @@ cd database
 flyway migrate    # Uses flyway.toml for connection config
 ```
 
+On a fresh PostgreSQL server, create the `dblink` extension first: `V1__initial_schema.sql` calls `dblink_exec` to create the `argus` database and nothing before it installs the extension, so a clean setup stops at V1 (issue #19).
+
+```sql
+CREATE EXTENSION IF NOT EXISTS dblink;
+```
+
+V1 itself is left unchanged because existing deployments already have its Flyway checksum recorded; editing it would fail `flyway validate` there.
+
 Note: production PostgreSQL (`<YOUR_PG_SERVER>`) has `publicNetworkAccess=Disabled` — Flyway against prod/dev must run from an in-cluster pod, not your laptop.
