@@ -53,14 +53,20 @@ async def run_local(
             code="config",
         )
 
+    if not isinstance(target, dict):
+        raise LocalRunError("target must be a JSON object", code="input")
     try:
         build_target(target)
-    except ValueError as e:
+    except (ValueError, TypeError) as e:
+        # TypeError: SpecClass(**spec) rejects unexpected or missing fields.
         raise LocalRunError(str(e), code="input") from e
 
-    req = api.RunRequest(
-        target=target, probe_ids=probe_ids, mode=mode, per_run_cap_usd=per_run_cap_usd
-    )
+    try:
+        req = api.RunRequest(
+            target=target, probe_ids=probe_ids, mode=mode, per_run_cap_usd=per_run_cap_usd
+        )
+    except ValueError as e:  # pydantic ValidationError is a ValueError subclass
+        raise LocalRunError(str(e), code="input") from e
     try:
         requested = api._resolve_request_probe_ids(req)
     except HTTPException as e:
@@ -78,9 +84,14 @@ async def run_local(
         raise LocalRunError(str(e), code="cost") from e
 
     emitted: list[dict] = []
-    async for finding in api._run_probes(req, anthropic_api_key):
-        emitted.append(finding)
-        yield finding
+    try:
+        async for finding in api._run_probes(req, anthropic_api_key):
+            emitted.append(finding)
+            yield finding
+    except CostExceededError as e:
+        # Raised by cost_meter.record() once the run is underway. Other mid-run
+        # exceptions propagate unchanged for the CLI to report.
+        raise LocalRunError(str(e), code="cost") from e
     yield {
         "type": "coverage",
         "coverage": build_coverage(load_all_probes(api.PROBES_DIR), emitted),

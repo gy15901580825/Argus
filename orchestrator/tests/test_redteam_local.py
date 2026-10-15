@@ -91,3 +91,86 @@ async def test_run_local_translates_cost_cap(monkeypatch):
             await _collect(run_local(TARGET, ["owasp_01_prompt_injection_basic"]))
     assert exc.value.code == "cost"
     assert "per-run cap" in str(exc.value)
+
+
+async def test_run_local_rejects_target_with_unknown_field(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    target = {"kind": "openai_compat", "endpoint_url": "https://x", "model": "m", "bogus": 1}
+    with pytest.raises(LocalRunError) as exc:
+        await _collect(run_local(target, ["owasp_01_prompt_injection_basic"]))
+    assert exc.value.code == "input"
+
+
+async def test_run_local_rejects_non_dict_target(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    with pytest.raises(LocalRunError) as exc:
+        await _collect(run_local("not-a-dict", ["owasp_01_prompt_injection_basic"]))
+    assert exc.value.code == "input"
+    assert "JSON object" in str(exc.value)
+
+
+async def test_run_local_rejects_deep_mode_without_probes(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    with pytest.raises(LocalRunError) as exc:
+        await _collect(run_local(TARGET, [], mode="deep"))
+    assert exc.value.code == "input"
+    assert "deep" in str(exc.value)
+
+
+async def test_run_local_translates_mid_stream_cost_cap(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+
+    async def _cap_mid_run(*args, **kwargs):
+        yield FAKE_FINDING
+        raise CostExceededError("daily cap reached")
+
+    with patch("orchestrator.redteam.api._run_probes", _cap_mid_run):
+        with pytest.raises(LocalRunError) as exc:
+            await _collect(run_local(TARGET, ["owasp_01_prompt_injection_basic"]))
+    assert exc.value.code == "cost"
+    assert "daily cap" in str(exc.value)
+
+
+async def test_run_local_propagates_other_mid_stream_errors(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+
+    async def _judge_down(*args, **kwargs):
+        yield FAKE_FINDING
+        raise RuntimeError("judge down")
+
+    with patch("orchestrator.redteam.api._run_probes", _judge_down):
+        with pytest.raises(RuntimeError, match="judge down"):
+            await _collect(run_local(TARGET, ["owasp_01_prompt_injection_basic"]))
+
+
+async def test_run_local_azure_provider_needs_no_anthropic_key(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    with patch("orchestrator.redteam.api._run_probes", _fake_run):
+        events = await _collect(
+            run_local(
+                TARGET,
+                ["owasp_01_prompt_injection_basic"],
+                env={"REDTEAM_MODEL_PROVIDER": "azure"},
+            )
+        )
+    assert events[0] == FAKE_FINDING
+    assert events[-1]["type"] == "coverage"
+
+
+async def test_run_local_uses_explicit_env_over_os_environ(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    seen = {}
+
+    async def _spy(req, anthropic_api_key):
+        seen["key"] = anthropic_api_key
+        yield FAKE_FINDING
+
+    with patch("orchestrator.redteam.api._run_probes", _spy):
+        await _collect(
+            run_local(
+                TARGET,
+                ["owasp_01_prompt_injection_basic"],
+                env={"ANTHROPIC_API_KEY": "sk-ant-explicit"},
+            )
+        )
+    assert seen["key"] == "sk-ant-explicit"
