@@ -10,6 +10,7 @@ dependencies = [
     "httpx>=0.27",
     "pyyaml>=6.0,<7",
     "pydantic>=2.5",
+    "jinja2>=3.1",
 ]
 
 [project.scripts]
@@ -18,3 +19,6 @@ argus-probe = "argus_probe.__main__:main"
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.package-data]
+argus_probe = ["templates/*.j2"]

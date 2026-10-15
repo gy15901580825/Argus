@@ -56,7 +56,7 @@ def render_sarif(run: dict) -> str:
                 "name": rid,
                 "shortDescription": {"text": rid},
                 "fullDescription": {"text": f"Argus red-team probe {rid}"},
-                "helpUri": f"https://github.com/argus-research/probes/tree/main/probes#{rid}",
+                "helpUri": "https://github.com/gy15901580825/Argus/tree/main/orchestrator/orchestrator/redteam/probes",
                 "properties": {
                     "atlas": f.get("atlas_id", []),
                     "owasp_llm": f.get("owasp_id", []),
@@ -107,7 +107,7 @@ def render_sarif(run: dict) -> str:
         "tool": {
             "driver": {
                 "name": "Argus",
-                "informationUri": "https://www.example.com",
+                "informationUri": "https://github.com/gy15901580825/Argus",
                 "rules": list(rules.values()),
             }
         },
