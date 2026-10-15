@@ -105,7 +105,7 @@ The job needs `permissions: security-events: write` for the SARIF upload. `argus
 argus-probe run --target ... --per-run-cap 0.50
 ```
 
-Runs that would exceed the cap are rejected by the service before any LLM cost is incurred (HTTP 402).
+Runs that would exceed the cap are rejected before any LLM cost is incurred, in both server and local mode (exit code 402).
 
 ## Subcommands
 

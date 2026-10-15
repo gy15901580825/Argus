@@ -1,6 +1,6 @@
 # Argus quickstart
 
-Point Argus at any AI agent endpoint and get a SARIF report. You need a running Argus API server; step 3 says where the token comes from.
+Point Argus at any AI agent endpoint and get a SARIF report. Local mode (step 3a) needs only a judge API key. Server mode (step 3) needs a running Argus API server.
 
 ## 1. Install the CLI
 
@@ -39,7 +39,7 @@ argus-probe run --local --target argus-target.json --probes owasp_07_system_prom
 
 `--local` does not support `browser_use` targets; submit those to a server.
 
-`--per-run-cap` and `--fail-on` work the same way as in server mode. Skip step 3 if this is all you need.
+`--per-run-cap` and `--fail-on` work the same way as in server mode. If this is all you need, skip steps 3 to 5 and continue at step 6 to read the report.
 
 ## 3. Get an Argus API token (server mode)
 
@@ -52,7 +52,7 @@ export ARGUS_API_URL="https://<your-argus-host>"
 
 `ARGUS_API_URL` is required (or pass `--api-url` per command) — there is no default endpoint.
 
-## 4. Validate the target is reachable (optional)
+## 4. Validate the target is reachable (server mode, optional)
 
 ```bash
 argus-probe validate-target --target argus-target.json
@@ -60,7 +60,7 @@ argus-probe validate-target --target argus-target.json
 
 Sends a tiny "Reply with OK" message and reports if the target endpoint accepts the OpenAI-compat shape. If this fails, fix the target spec before continuing.
 
-## 5. Run your first probe
+## 5. Run your first probe (server mode)
 
 ```bash
 argus-probe run \
@@ -69,6 +69,8 @@ argus-probe run \
   --format html \
   --out report.html
 ```
+
+In local mode, add `--local` to the same command and drop the server variables.
 
 The CLI submits the run to the Argus API, polls for completion (typically ~10–30 s), then writes the chosen format to disk.
 
