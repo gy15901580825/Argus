@@ -78,6 +78,19 @@ TESTBED_ORIGIN=http://127.0.0.1:8092 uvicorn demo_agent.app:app --port 8093 # th
 python -m pytest tests/ -q
 ```
 
+By default the demo agent falls to tool poisoning, shadowing and the
+credential lure, and passes the rug-pull, confused-deputy and loop probes,
+because it never relists tools, never acts on tool results, and calls each
+tool once. Set `DEMO_AGENT_WEAKNESSES` to a comma-separated subset of
+`relist`, `obey_results`, `loop` to add those weaknesses. With all three on,
+all 12 MCP probes report `fail`, so each probe family has been shown to catch
+its attack at least once:
+
+```bash
+DEMO_AGENT_WEAKNESSES=relist,obey_results,loop TESTBED_ORIGIN=http://127.0.0.1:8092 \
+  uvicorn demo_agent.app:app --port 8093
+```
+
 `TESTBED_ORIGIN` must point at the `testbed/` instance above -- see "Safety:
 `demo_agent/` is restricted to `TESTBED_ORIGIN`" above. Without it the demo
 agent starts but refuses to contact any MCP server.
