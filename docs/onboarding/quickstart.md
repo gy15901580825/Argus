@@ -30,7 +30,7 @@ Output: `argus-target.json`, plus `.github/workflows/argus-probe.yml` if you say
 
 ## 3a. Run locally (no server)
 
-Set a judge key and add `--local`. The CLI loads the 205 probes, sends them to your agent and judges the replies in this process:
+Set a judge key and add `--local`. The CLI loads the probe library, sends them to your agent and judges the replies in this process:
 
 ```bash
 export ANTHROPIC_API_KEY="<your key>"        # or REDTEAM_MODEL_PROVIDER=azure plus the Azure variables
@@ -74,7 +74,7 @@ In local mode, add `--local` to the same command and drop the server variables.
 
 The CLI submits the run to the Argus API, polls for completion (typically ~10–30 s), then writes the chosen format to disk.
 
-Add `--per-run-cap 0.50` to enforce a hard cost ceiling (server-side; over-cap predicted runs return HTTP 402 before any LLM call).
+Add `--per-run-cap 0.50` to enforce a hard cost ceiling (checked before any LLM call in both modes; an over-cap run exits with code 402).
 
 The pre-run estimate is a worst case: it counts every prompt of every selected probe (and, in deep mode, every persona × strategy thread at its full round budget). Runs usually cost a fraction of it, but the cap is compared against the ceiling — so a full-library sweep needs `--per-run-cap 6.00` even though it typically bills well under $1.
 
@@ -132,7 +132,7 @@ Each command's `--help` lists its flags. The most common flags on `run`:
 | `--probes` | comma-separated probe ids OR `all` |
 | `--format` | `html` / `sarif` / `junit` |
 | `--out` | output report file path |
-| `--per-run-cap` | USD cap; over-budget runs reject with HTTP 402 (default $0.50) |
+| `--per-run-cap` | USD cap; over-budget runs exit with code 402 (default $0.50) |
 | `--local` | run probes in this process; needs the `[local]` extra and a judge key, no `--api-url`/`--token` |
 | `--fail-on` | `info` / `low` / `medium` / `high` / `critical`; exit 3 when a failing finding is at or above it |
 | `--token` | API token (or set `ARGUS_API_TOKEN`) |

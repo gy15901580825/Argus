@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.11, click, setuptools, jinja2, pytest (asyncio_mode=auto in orchestrator).
 
-**Spec:** This plan's Design section below is the spec. It implements phase 1, tasks 1 and 3, of the roadmap doc "Argus 落地计划" (https://claude.ai/code/artifact/173f00ef-8988-4846-872a-0bc22cf071db). Design verdicts from TypeSafe/Jev on 2026-10-15: package the orchestrator 0.93; mirror the renderer with a drift test 0.97; local mode feasible 0.86 (settled empirically by Task 7).
+**Spec:** This plan's Design section below is the spec. It implements phase 1, tasks 1 and 3, of the roadmap doc "Argus 落地计划". Design verdicts from TypeSafe/Jev on 2026-10-15: package the orchestrator 0.93; mirror the renderer with a drift test 0.97; local mode feasible 0.86 (settled empirically by Task 7).
 
 ## Design
 
