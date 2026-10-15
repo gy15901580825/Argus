@@ -207,7 +207,7 @@ We provide a thin reference adapter you can drop into your agent harness; ask in
 
 ## GitHub Actions integration
 
-Once your `argus-target.json` is committed (or generated on the fly in CI), wire Argus into the same CI that runs your tests:
+There is no published GitHub Action. Once your `argus-target.json` is committed (or generated on the fly in CI), run the CLI in a workflow step. `argus-probe init --workflow` writes this file for you:
 
 ```yaml
 # .github/workflows/argus-probe.yml
@@ -218,18 +218,31 @@ on:
   workflow_dispatch: {}
 jobs:
   redteam:
-    uses: <your-gh-user>/argus-probe-action/.github/workflows/argus-probe-reusable.yml@v1
-    with:
-      target-config: argus-target.json
-      threshold: warn               # warn | block-on-critical | block-on-high
-      per-run-cap: '0.50'           # USD ceiling per run
-    secrets:
-      api-token: ${{ secrets.ARGUS_API_TOKEN }}
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write   # upload-sarif
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install "git+https://github.com/gy15901580825/Argus.git#subdirectory=cli"
+      - run: >
+          argus-probe run --target argus-target.json
+          --probes owasp_01_prompt_injection_basic,syscard_crescendo
+          --format sarif --out argus.sarif
+        env:
+          ARGUS_API_URL: ${{ vars.ARGUS_API_URL }}
+          ARGUS_API_TOKEN: ${{ secrets.ARGUS_API_TOKEN }}
+      - uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: argus.sarif
 ```
 
-The action must also see `ARGUS_API_URL` (repository variable or job `env:`) — `argus-probe` has no default endpoint, and a job that omits it fails with `Missing option '--api-url'`.
+Set `ARGUS_API_URL` as a repository variable and `ARGUS_API_TOKEN` as a secret. `argus-probe` has no default endpoint, and a job that omits the URL fails with `Missing option '--api-url'`.
 
-`threshold: warn` (default) reports findings without failing the build. Switch to `block-on-critical` once you trust the signal — the action then exits non-zero when a critical-severity finding lands, breaking the PR check until your team fixes or accepts.
+`argus-probe run` does not exit non-zero on findings, so this workflow reports but does not block. To fail the build by severity, read `argus.sarif` in a later step.
 
 The SARIF output is automatically uploaded to GitHub's code-scanning, so findings appear in your repo's **Security** tab alongside CodeQL / Dependabot / Snyk.
 

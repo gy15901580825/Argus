@@ -1,31 +1,17 @@
-# Argus 5-minute quickstart
+# Argus quickstart
 
-Point Argus at any AI agent endpoint and get a SARIF report in 5 minutes.
+Point Argus at any AI agent endpoint and get a SARIF report. You need a running Argus API server; step 3 says where the token comes from.
 
-## 1. Install the binary
+## 1. Install the CLI
 
-Linux x86_64:
+Python 3.11+ is required. There are no prebuilt binaries and no PyPI package; install from this repo:
 
 ```bash
-curl -sSL https://github.com/<your-gh-user>/cli/releases/download/v0.1.1/argus-probe-linux-x86_64 \
-  -o /usr/local/bin/argus-probe
-chmod +x /usr/local/bin/argus-probe
+pip install "git+https://github.com/gy15901580825/Argus.git#subdirectory=cli"
 argus-probe --version
 ```
 
-macOS arm64:
-
-```bash
-curl -sSL https://github.com/<your-gh-user>/cli/releases/download/v0.1.1/argus-probe-darwin-arm64 \
-  -o /usr/local/bin/argus-probe
-chmod +x /usr/local/bin/argus-probe
-```
-
-Or via pip (if you have Python 3.11+):
-
-```bash
-pip install git+https://github.com/<your-gh-user>/cli.git@v0.1.1
-```
+From a clone, `pip install ./cli` does the same.
 
 ## 2. Generate a target spec
 
@@ -38,13 +24,13 @@ Interactive prompts walk you through:
 - `Model name` — e.g. `gpt-4o-mini`, `claude-sonnet-4-6`, your own model id
 - `API key env var` — name of the env var holding your agent API key (e.g. `OPENAI_API_KEY`); the value is resolved at run time so the secret is never persisted in `target.json`
 
-The 5 supported `kind` values: `openai_compat`, `anthropic_native`, `custom_http`, `grpc`, `browser_use`. See [target-spec-cookbook.md](./target-spec-cookbook.md) for non-OpenAI shapes.
+The 8 supported `kind` values: `openai_compat`, `anthropic_native`, `custom_http`, `grpc`, `http_upload`, `browser_use`, `payment_agent`, `mcp_agent`. See [target-spec-cookbook.md](./target-spec-cookbook.md) for non-OpenAI shapes.
 
-Output: `argus-target.json` + optionally `.github/workflows/argus-probe.yml`.
+Output: `argus-target.json`, plus `.github/workflows/argus-probe.yml` if you say yes to the workflow prompt.
 
 ## 3. Get an Argus API token
 
-Email `<contact@example.com>` with your company name. Design partners get tokens within 24h. Set in your shell, along with the Argus instance the CLI should talk to:
+There is no hosted Argus instance. Run your own `api_service` (see [local-dev.md](../runbooks/local-dev.md)); the token is the `api_token` column of a row in its `users` table. An admin mints one with `POST /api/v1/admin/users` and `"api_token_only": true`. There is no bootstrap step for the first admin, so insert that first row directly in the database with role `SUPER_ADMIN`. Then set the token and the server URL in your shell:
 
 ```bash
 export ARGUS_API_TOKEN="<your token>"
@@ -98,14 +84,13 @@ argus-probe run --target argus-target.json --probes owasp_07_system_prompt_leaka
 | Use case | `--probes` value |
 |---|---|
 | Quick smoke (1 probe, 3 prompts) | `owasp_07_system_prompt_leakage` |
-| Curated starter set | (probe-id list ships in your design-partner welcome email) |
-| Full sweep (~$0.50, ~3 min) | `all` |
+| Full sweep (needs `--per-run-cap 6.00`, see step 5) | `all` |
 
 See [Threat coverage overview](./probe-id-cheatsheet.md) for the categories the library covers and recommended use-case → probe-set mappings.
 
 ## What's next
 
-- **Add to GitHub Actions**: see [target-spec-cookbook.md](./target-spec-cookbook.md) § "GitHub Actions integration"
+- **Add to CI**: `argus-probe init --workflow` writes a starter workflow; see [target-spec-cookbook.md](./target-spec-cookbook.md) § "GitHub Actions integration". There is no published GitHub Action
 - **Understand the verdicts**: each finding's `verdict` is one of:
   - `pass` — agent resisted the attack
   - `fail` — agent fell for the attack (look at `severity`: critical/high/medium/low)
@@ -121,6 +106,7 @@ argus-probe validate-target           Sanity-check target reachability
 argus-probe list-probes               List probe ids the server has loaded
 argus-probe run                       Submit a run + write the report
 argus-probe report                    Re-render an existing run's report
+argus-probe coverage                  Show what the probe library covers, offline
 ```
 
 Each command's `--help` lists its flags. The most common flags on `run`:
@@ -133,4 +119,4 @@ Each command's `--help` lists its flags. The most common flags on `run`:
 | `--out` | output report file path |
 | `--per-run-cap` | USD cap; over-budget runs reject with HTTP 402 (default $0.50) |
 | `--token` | API token (or set `ARGUS_API_TOKEN`) |
-| `--max-wait` | how long to poll for run completion (default 600 s) |
+| `--max-wait` | how long to poll for run completion (default 1800 s) |

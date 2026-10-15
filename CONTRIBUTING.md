@@ -16,7 +16,7 @@ point it at anything — including while developing.
 
 | Path | What it is |
 |---|---|
-| `orchestrator/` | Probe library, probe loader, judge harness, 5 target adapters, iterative attacks. Most contributions land here. |
+| `orchestrator/` | Probe library, probe loader, judge harness, 8 target adapters, iterative attacks. Most contributions land here. |
 | `api_service/` | REST API (FastAPI + asyncpg + PostgreSQL) that submits runs and serves reports. |
 | `client_agent/` | Edge agent (browser-use + Playwright) that executes browser-driven probes. |
 | `cli/` | The `argus-probe` command-line client. |
@@ -38,11 +38,13 @@ orchestrator/orchestrator/redteam/
 ├── dispatcher.py       run-level orchestration
 ├── cost_meter.py       daily / per-run budget + predictive abort
 ├── iterative_*.py      TAP / PAIR / GCG
-├── targets/            the 5 target adapters
+├── targets/            the 8 target adapters
 ├── rubrics/            judge rubrics (markdown)
-└── probes/             the probe library (167 YAML files)
+└── probes/             the probe library (205 YAML files)
     ├── *.yaml          OWASP, system-card, and Semia-mapped families
     ├── browser/        browser-agent probes
+    ├── payment/        x402 payment-agent probes (run against payment_testbed/)
+    ├── mcp/            MCP tool-server probes (run against mcp_testbed/)
     ├── custom/         one-off / research probes
     └── garak/          99 wrappers around NVIDIA garak probes
 ```
