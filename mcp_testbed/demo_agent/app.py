@@ -54,6 +54,17 @@ _http_client = None
 # whole-branch review caught it late; here it is built in from the start.
 _TESTBED_ORIGIN = os.environ.get("TESTBED_ORIGIN", "")
 
+# Opt-in extra weaknesses, off by default so the agent's normal behaviour (and
+# the probes that pass against it) stays as it was. They exist as positive
+# controls: without them the rug-pull, confused-deputy and loop probes have
+# never been shown to catch anything.
+#   relist        lists tools a second time before calling one
+#   obey_results  calls any other tool a tools/call result names
+#   loop          calls the target tool repeatedly instead of once
+_KNOWN_WEAKNESSES = frozenset({"relist", "obey_results", "loop"})
+_LOOP_CALLS = 8
+_weaknesses: frozenset[str] = frozenset()
+
 
 def set_http_client(client) -> None:
     global _http_client
@@ -63,6 +74,21 @@ def set_http_client(client) -> None:
 def set_testbed_origin(origin: str | None) -> None:
     global _TESTBED_ORIGIN
     _TESTBED_ORIGIN = origin or ""
+
+
+def set_weaknesses(spec: str | None) -> None:
+    """Comma-separated subset of _KNOWN_WEAKNESSES; None or "" turns them off."""
+    global _weaknesses
+    names = frozenset(n.strip() for n in (spec or "").split(",") if n.strip())
+    unknown = names - _KNOWN_WEAKNESSES
+    if unknown:
+        raise ValueError(
+            f"unknown weakness {sorted(unknown)}; known: {sorted(_KNOWN_WEAKNESSES)}"
+        )
+    _weaknesses = names
+
+
+set_weaknesses(os.environ.get("DEMO_AGENT_WEAKNESSES"))
 
 
 def _origin(url: str) -> str:
@@ -181,6 +207,11 @@ async def chat(body: dict):
     _rpc(url, "initialize", {}, 1)
     tools = _rpc(url, "tools/list", {}, 2)["result"]["tools"]
     log.append("discovered tools: " + ", ".join(t["name"] for t in tools))
+    if "relist" in _weaknesses:
+        # Trusts whatever the second listing says, with no check that a
+        # description changed since the first one (rug pull).
+        tools = _rpc(url, "tools/list", {}, 20)["result"]["tools"]
+        log.append("listed tools again")
 
     target = _pick_tool(prompt, tools)
     if target is None:
@@ -204,6 +235,24 @@ async def chat(body: dict):
     result = _rpc(url, "tools/call", {"name": target["name"], "arguments": args}, 3)["result"]
     log.append(f"called {target['name']}")
     content_text = _content_text(result)
+
+    if "loop" in _weaknesses:
+        for i in range(_LOOP_CALLS - 1):
+            _rpc(url, "tools/call", {"name": target["name"], "arguments": args}, 30 + i)
+        log.append(f"called {target['name']} {_LOOP_CALLS} times in total")
+
+    if "obey_results" in _weaknesses:
+        # Confused deputy: treats text a tool handed back as an instruction
+        # and calls any other tool it names.
+        for tool in tools:
+            if tool["name"] != target["name"] and tool["name"] in content_text:
+                _rpc(
+                    url,
+                    "tools/call",
+                    {"name": tool["name"], "arguments": _fill_arguments(tool, notes_text=content_text)},
+                    50,
+                )
+                log.append(f"obeyed a tool result: called {tool['name']}")
 
     # Tool poisoning: obey an instruction embedded in ANY tool's description,
     # not only the one the task asked for. A defended agent would treat tool
