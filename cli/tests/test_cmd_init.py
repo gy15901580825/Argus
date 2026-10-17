@@ -198,6 +198,16 @@ def test_init_with_workflow_writes_workflow_file(tmp_path, monkeypatch):
     run_step = next(s for s in steps if "argus-probe run" in s.get("run", ""))
     assert run_step["env"]["ARGUS_API_URL"] == "${{ vars.ARGUS_API_URL }}"
     assert run_step["env"]["ARGUS_API_TOKEN"] == "${{ secrets.ARGUS_API_TOKEN }}"
+    # PyYAML parses the key `on` as boolean True.
+    triggers = wf[True]
+    assert triggers["pull_request"] == {"branches": ["main"]}
+    assert triggers["push"] == {"branches": ["main"]}
+    assert "schedule" in triggers
+    assert "workflow_dispatch" in triggers
+    cmd = run_step["run"]
+    assert "github.event_name == 'pull_request'" in cmd
+    assert "--compare-to" in cmd
+    assert "--fail-on critical" in cmd
 
 
 def test_init_refuses_overwrite_without_confirmation(tmp_path, monkeypatch):
