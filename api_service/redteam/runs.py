@@ -17,16 +17,45 @@ def _parse_iso(v):
     return datetime.fromisoformat(v)
 
 
-async def create_run(user_id: UUID, target_spec: dict, probe_suite: str) -> UUID:
+async def create_run(
+    user_id: UUID,
+    target_spec: dict,
+    probe_suite: str,
+    repo: str | None = None,
+    branch: str | None = None,
+    commit_sha: str | None = None,
+) -> UUID:
     row = await database.fetch_one(
         """
-        INSERT INTO redteam_runs (user_id, target_spec, probe_suite, status)
-        VALUES (:user_id, :target_spec, :probe_suite, 'queued')
+        INSERT INTO redteam_runs (user_id, target_spec, probe_suite, status, repo, branch, commit_sha)
+        VALUES (:user_id, :target_spec, :probe_suite, 'queued', :repo, :branch, :commit_sha)
         RETURNING id
         """,
-        {"user_id": user_id, "target_spec": json.dumps(target_spec), "probe_suite": probe_suite},
+        {
+            "user_id": user_id,
+            "target_spec": json.dumps(target_spec),
+            "probe_suite": probe_suite,
+            "repo": repo,
+            "branch": branch,
+            "commit_sha": commit_sha,
+        },
     )
     return row["id"]
+
+
+async def find_baseline_run(user_id: UUID, repo: str, branch: str, exclude_run_id: UUID) -> dict | None:
+    """Latest completed run of this user on repo/branch, other than the head run."""
+    row = await database.fetch_one(
+        """
+        SELECT * FROM redteam_runs
+        WHERE user_id = :user_id AND repo = :repo AND branch = :branch
+          AND status = 'completed' AND id <> :exclude
+        ORDER BY finished_at DESC
+        LIMIT 1
+        """,
+        {"user_id": user_id, "repo": repo, "branch": branch, "exclude": exclude_run_id},
+    )
+    return decode_run_row(row) if row else None
 
 
 async def update_run_status(run_id: UUID, status: str, summary: dict | None = None, coverage: dict | None = None) -> None:

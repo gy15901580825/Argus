@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from auth import get_current_user
 from models import UserResponse
-from redteam import orchestrator_client, reports as report_render, runs
+from redteam import diff, orchestrator_client, reports as report_render, runs
 from redteam.schemas import TargetSpec  # discriminated union (5 kinds)
 
 
@@ -31,6 +31,9 @@ class RunCreate(BaseModel):
     suite: Optional[str] = None
     suite_name: str = "ad-hoc"   # free-text label stored on the run row; NOT the above
     per_run_cap_usd: Optional[float] = None  # Plan 4 T12: client override
+    repo: Optional[str] = None
+    branch: Optional[str] = None
+    commit: Optional[str] = None
 
 
 class RunResponse(BaseModel):
@@ -65,6 +68,9 @@ async def create_run(
         user_id=user.id,
         target_spec=req.target.model_dump(),
         probe_suite=req.suite_name,
+        repo=req.repo,
+        branch=req.branch,
+        commit_sha=req.commit,
     )
     bg.add_task(_consume_orchestrator_stream, run_id, req.target.model_dump(), req.probe_ids, req.per_run_cap_usd, req.suite)
     return RunResponse(run_id=str(run_id))
@@ -77,6 +83,29 @@ async def get_run(run_id: UUID, user: UserResponse = Depends(get_current_user)) 
         raise HTTPException(status_code=404, detail="run not found")
     findings = await runs.list_findings(run_id)
     return {"id": str(run_id), "status": row["status"], "findings": findings}
+
+
+@router.get("/runs/{run_id}/diff")
+async def get_run_diff(
+    run_id: UUID,
+    base: str = Query(..., min_length=1),
+    user: UserResponse = Depends(get_current_user),
+) -> dict:
+    head = await runs.get_run(run_id, user.id)
+    if not head:
+        raise HTTPException(status_code=404, detail="run not found")
+    if not head.get("repo"):
+        raise HTTPException(status_code=409, detail="run has no repo recorded; resubmit with repo/branch/commit")
+    baseline = await runs.find_baseline_run(user.id, head["repo"], base, run_id)
+    head_findings = await runs.list_findings(run_id)
+    base_findings = await runs.list_findings(baseline["id"]) if baseline else None
+    return {
+        "run_id": str(run_id),
+        "base_run_id": str(baseline["id"]) if baseline else None,
+        "base_branch": base,
+        "repo": head.get("repo"),
+        **diff.compare(base_findings, head_findings),
+    }
 
 
 @router.get("/runs/{run_id}/report")

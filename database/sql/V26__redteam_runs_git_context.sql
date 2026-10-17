@@ -1,0 +1,9 @@
+-- Which code a run tested, so a run can be compared with the latest run on a
+-- base branch. Nullable: older clients do not send it.
+ALTER TABLE redteam_runs ADD COLUMN repo TEXT;
+ALTER TABLE redteam_runs ADD COLUMN branch TEXT;
+ALTER TABLE redteam_runs ADD COLUMN commit_sha TEXT;
+
+CREATE INDEX idx_redteam_runs_baseline
+    ON redteam_runs (user_id, repo, branch, finished_at DESC)
+    WHERE status = 'completed';
