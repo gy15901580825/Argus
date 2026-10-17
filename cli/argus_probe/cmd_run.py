@@ -80,7 +80,7 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
     body.update(git_context.detect())
     if compare_to and "repo" not in body:
         raise click.UsageError("--compare-to needs the repository name; run inside a git checkout with an origin remote, or set GITHUB_REPOSITORY")
-    body["baseline_key"] = baseline_key(spec, tokens)
+    body["baseline_key"] = baseline_key(spec)
 
     click.echo(f"Submitting run to {api_url}/api/v1/redteam/runs ...")
     try:

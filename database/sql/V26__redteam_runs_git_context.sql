@@ -3,7 +3,7 @@
 ALTER TABLE redteam_runs ADD COLUMN repo TEXT;
 ALTER TABLE redteam_runs ADD COLUMN branch TEXT;
 ALTER TABLE redteam_runs ADD COLUMN commit_sha TEXT;
--- Hash of the target spec (secrets removed) and probe selection; a baseline only matches runs with the same key.
+-- Hash of the target spec with secrets removed; a baseline only matches runs with the same key.
 ALTER TABLE redteam_runs ADD COLUMN baseline_key TEXT;
 
 CREATE INDEX idx_redteam_runs_baseline

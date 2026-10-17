@@ -1,4 +1,4 @@
-"""Stable id of what a run tests (target and probe set), so a baseline only matches like with like."""
+"""Stable id of the target a run tests, so a baseline only matches runs against the same target."""
 from __future__ import annotations
 
 import hashlib
@@ -15,6 +15,5 @@ def _clean(value):
     return value
 
 
-def baseline_key(target: dict, probe_ids: list[str]) -> str:
-    payload = {"target": _clean(target), "probes": sorted(probe_ids) or ["all"]}
-    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:32]
+def baseline_key(target: dict) -> str:
+    return hashlib.sha256(json.dumps(_clean(target), sort_keys=True).encode()).hexdigest()[:32]

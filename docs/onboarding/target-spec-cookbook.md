@@ -266,7 +266,7 @@ Set `ARGUS_API_URL` as a repository variable and `ARGUS_API_TOKEN` as a secret. 
 
 `--fail-on critical` fails the job when a critical finding lands; use `high` to tighten it, or drop the flag to report without blocking. The SARIF is written before the exit, so it uploads either way.
 
-To gate pull requests on regressions only, add `--compare-to main` in a separate job triggered on `pull_request`: the run is compared with the latest run on `main` (same target and probe set), and `--fail-on` counts only failures that are new. Keep a job on `push` to `main` so baselines get recorded; without a completed run on `main` every failure counts as new. Do not add `--compare-to main` to the scheduled job above: a scheduled run on `main` would compare `main` with itself, and a still-failing critical finding would stop failing the job. Server mode only, because it needs run history.
+To gate pull requests on regressions only, add `--compare-to main` in a separate job triggered on `pull_request`: the run is compared with the latest run on `main` (same target), and `--fail-on` counts only failures that are new. Keep a job on `push` to `main` so baselines get recorded; without a completed run on `main` every failure counts as new. Do not add `--compare-to main` to the scheduled job above: a scheduled run on `main` would compare `main` with itself, and a still-failing critical finding would stop failing the job. Server mode only, because it needs run history.
 
 ```yaml
 on:

@@ -343,7 +343,7 @@ def test_run_sends_baseline_key(tmp_path, monkeypatch):
     result = CliRunner().invoke(cmd_run, _compare_args(tmp_path))
     assert result.exit_code == 0, result.output
     spec = json.loads((tmp_path / "t.json").read_text())
-    assert bodies[0]["baseline_key"] == baseline_key(spec, ["p"])
+    assert bodies[0]["baseline_key"] == baseline_key(spec)
 
 
 def test_compare_to_without_repo_exits_2_before_posting(tmp_path, monkeypatch):
@@ -370,3 +370,15 @@ def test_compare_to_diff_http_error_exits_1_with_message(tmp_path, monkeypatch):
     assert "Error: could not compare with main: run has no repo recorded" in result.output
     assert "Traceback" not in result.output
     assert (tmp_path / "r.html").read_text() == "<html></html>"
+
+
+def test_baseline_key_same_for_different_probe_selection(tmp_path, monkeypatch):
+    _stub_remote(monkeypatch, [])
+    bodies = []
+    monkeypatch.setattr(api_client, "post_run", lambda *a, **k: bodies.append(k["body"]) or {"run_id": "r1"})
+    args = _compare_args(tmp_path)
+    CliRunner().invoke(cmd_run, args)
+    args[args.index("--probes") + 1] = "p,q"
+    CliRunner().invoke(cmd_run, args)
+    assert bodies[0]["probe_ids"] != bodies[1]["probe_ids"]
+    assert bodies[0]["baseline_key"] == bodies[1]["baseline_key"]
