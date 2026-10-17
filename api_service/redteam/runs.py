@@ -24,11 +24,12 @@ async def create_run(
     repo: str | None = None,
     branch: str | None = None,
     commit_sha: str | None = None,
+    baseline_key: str | None = None,
 ) -> UUID:
     row = await database.fetch_one(
         """
-        INSERT INTO redteam_runs (user_id, target_spec, probe_suite, status, repo, branch, commit_sha)
-        VALUES (:user_id, :target_spec, :probe_suite, 'queued', :repo, :branch, :commit_sha)
+        INSERT INTO redteam_runs (user_id, target_spec, probe_suite, status, repo, branch, commit_sha, baseline_key)
+        VALUES (:user_id, :target_spec, :probe_suite, 'queued', :repo, :branch, :commit_sha, :baseline_key)
         RETURNING id
         """,
         {
@@ -38,22 +39,24 @@ async def create_run(
             "repo": repo,
             "branch": branch,
             "commit_sha": commit_sha,
+            "baseline_key": baseline_key,
         },
     )
     return row["id"]
 
 
-async def find_baseline_run(user_id: UUID, repo: str, branch: str, exclude_run_id: UUID) -> dict | None:
-    """Latest completed run of this user on repo/branch, other than the head run."""
+async def find_baseline_run(user_id: UUID, repo: str, branch: str, exclude_run_id: UUID, baseline_key: str | None) -> dict | None:
+    """Latest completed run of this user on repo/branch with the same baseline key, other than the head run."""
     row = await database.fetch_one(
         """
         SELECT * FROM redteam_runs
         WHERE user_id = :user_id AND repo = :repo AND branch = :branch
+          AND baseline_key IS NOT DISTINCT FROM :baseline_key
           AND status = 'completed' AND id <> :exclude
         ORDER BY finished_at DESC
         LIMIT 1
         """,
-        {"user_id": user_id, "repo": repo, "branch": branch, "exclude": exclude_run_id},
+        {"user_id": user_id, "repo": repo, "branch": branch, "exclude": exclude_run_id, "baseline_key": baseline_key},
     )
     return decode_run_row(row) if row else None
 

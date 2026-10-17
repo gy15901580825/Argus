@@ -302,12 +302,17 @@ def test_run_sends_git_context(tmp_path, monkeypatch):
     assert (bodies[0]["repo"], bodies[0]["branch"], bodies[0]["commit"]) == ("o/r", "feat", "abc")
 
 
+def _with_repo(monkeypatch):
+    monkeypatch.setattr("argus_probe.cmd_run.git_context.detect", lambda: {"repo": "o/r", "branch": "feat", "commit": "abc"})
+
+
 def _diff(new):
     return {"base_run_id": "b1", "new": new, "fixed": [],
             "still_failing": [{"probe_id": "p", "severity": "critical"}], "not_run": []}
 
 
 def test_compare_to_gates_only_new_failures(tmp_path, monkeypatch):
+    _with_repo(monkeypatch)
     _stub_remote(monkeypatch, [{"probe_id": "p", "verdict": "fail", "severity": "critical"}])
     monkeypatch.setattr(api_client, "get_diff", lambda *a, **k: _diff([]))
     result = CliRunner().invoke(cmd_run, _compare_args(tmp_path, "--fail-on", "high", "--compare-to", "main"))
@@ -316,6 +321,7 @@ def test_compare_to_gates_only_new_failures(tmp_path, monkeypatch):
 
 
 def test_compare_to_fails_on_new_failure(tmp_path, monkeypatch):
+    _with_repo(monkeypatch)
     _stub_remote(monkeypatch, [{"probe_id": "p", "verdict": "fail", "severity": "critical"}])
     monkeypatch.setattr(api_client, "get_diff", lambda *a, **k: _diff([{"probe_id": "p", "severity": "critical"}]))
     result = CliRunner().invoke(cmd_run, _compare_args(tmp_path, "--fail-on", "high", "--compare-to", "main"))
@@ -327,3 +333,40 @@ def test_compare_to_fails_on_new_failure(tmp_path, monkeypatch):
 def test_compare_to_with_local_is_usage_error(tmp_path):
     result = CliRunner().invoke(cmd_run, _compare_args(tmp_path, "--local", "--compare-to", "main")[:-5] + ["--local", "--compare-to", "main"])
     assert result.exit_code == 2, result.output
+
+
+def test_run_sends_baseline_key(tmp_path, monkeypatch):
+    from argus_probe.baseline_key import baseline_key
+    _stub_remote(monkeypatch, [])
+    bodies = []
+    monkeypatch.setattr(api_client, "post_run", lambda *a, **k: bodies.append(k["body"]) or {"run_id": "r1"})
+    result = CliRunner().invoke(cmd_run, _compare_args(tmp_path))
+    assert result.exit_code == 0, result.output
+    spec = json.loads((tmp_path / "t.json").read_text())
+    assert bodies[0]["baseline_key"] == baseline_key(spec, ["p"])
+
+
+def test_compare_to_without_repo_exits_2_before_posting(tmp_path, monkeypatch):
+    monkeypatch.setattr("argus_probe.cmd_run.git_context.detect", lambda: {})
+    posted = []
+    monkeypatch.setattr(api_client, "post_run", lambda *a, **k: posted.append(1))
+    result = CliRunner().invoke(cmd_run, _compare_args(tmp_path, "--compare-to", "main"))
+    assert result.exit_code == 2, result.output
+    assert "--compare-to needs the repository name" in result.output
+    assert posted == []
+
+
+def test_compare_to_diff_http_error_exits_1_with_message(tmp_path, monkeypatch):
+    _with_repo(monkeypatch)
+    _stub_remote(monkeypatch, [])
+    req = httpx.Request("GET", "https://argus.example/diff")
+
+    def boom(*a, **k):
+        raise httpx.HTTPStatusError("409", request=req, response=httpx.Response(409, json={"detail": "run has no repo recorded"}, request=req))
+
+    monkeypatch.setattr(api_client, "get_diff", boom)
+    result = CliRunner().invoke(cmd_run, _compare_args(tmp_path, "--compare-to", "main"))
+    assert result.exit_code == 1, result.output
+    assert "Error: could not compare with main: run has no repo recorded" in result.output
+    assert "Traceback" not in result.output
+    assert (tmp_path / "r.html").read_text() == "<html></html>"

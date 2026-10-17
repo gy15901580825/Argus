@@ -34,6 +34,7 @@ class RunCreate(BaseModel):
     repo: Optional[str] = None
     branch: Optional[str] = None
     commit: Optional[str] = None
+    baseline_key: Optional[str] = None
 
 
 class RunResponse(BaseModel):
@@ -68,9 +69,10 @@ async def create_run(
         user_id=user.id,
         target_spec=req.target.model_dump(),
         probe_suite=req.suite_name,
-        repo=req.repo,
+        repo=req.repo.lower() if req.repo else None,
         branch=req.branch,
         commit_sha=req.commit,
+        baseline_key=req.baseline_key,
     )
     bg.add_task(_consume_orchestrator_stream, run_id, req.target.model_dump(), req.probe_ids, req.per_run_cap_usd, req.suite)
     return RunResponse(run_id=str(run_id))
@@ -96,7 +98,7 @@ async def get_run_diff(
         raise HTTPException(status_code=404, detail="run not found")
     if not head.get("repo"):
         raise HTTPException(status_code=409, detail="run has no repo recorded; resubmit with repo/branch/commit")
-    baseline = await runs.find_baseline_run(user.id, head["repo"], base, run_id)
+    baseline = await runs.find_baseline_run(user.id, head["repo"], base, run_id, head.get("baseline_key"))
     head_findings = await runs.list_findings(run_id)
     base_findings = await runs.list_findings(baseline["id"]) if baseline else None
     return {

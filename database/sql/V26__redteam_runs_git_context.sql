@@ -3,7 +3,9 @@
 ALTER TABLE redteam_runs ADD COLUMN repo TEXT;
 ALTER TABLE redteam_runs ADD COLUMN branch TEXT;
 ALTER TABLE redteam_runs ADD COLUMN commit_sha TEXT;
+-- Hash of the target spec (secrets removed) and probe selection; a baseline only matches runs with the same key.
+ALTER TABLE redteam_runs ADD COLUMN baseline_key TEXT;
 
 CREATE INDEX idx_redteam_runs_baseline
-    ON redteam_runs (user_id, repo, branch, finished_at DESC)
+    ON redteam_runs (user_id, repo, branch, baseline_key, finished_at DESC)
     WHERE status = 'completed';

@@ -70,7 +70,7 @@ def test_diff_route_returns_categories(authenticated_client, fake_user_id):
         head_id: [f("a", "fail"), f("b", "pass"), f("n", "fail", "low")],
     }
     find = AsyncMock(return_value={"id": base_id})
-    with patch("redteam.runs.get_run", AsyncMock(return_value={"id": head_id, "status": "completed", "repo": "o/r", "branch": "feat"})), \
+    with patch("redteam.runs.get_run", AsyncMock(return_value={"id": head_id, "status": "completed", "repo": "o/r", "branch": "feat", "baseline_key": "k1"})), \
          patch("redteam.runs.find_baseline_run", find), \
          patch("redteam.runs.list_findings", AsyncMock(side_effect=lambda rid: by_run[rid])):
         resp = authenticated_client.get(f"/api/v1/redteam/runs/{head_id}/diff?base=main")
@@ -84,7 +84,17 @@ def test_diff_route_returns_categories(authenticated_client, fake_user_id):
     assert body["fixed"] == [{"probe_id": "b", "severity": "high"}]
     assert body["still_failing"] == [{"probe_id": "a", "severity": "high"}]
     assert body["not_run"] == []
-    find.assert_awaited_once_with(fake_user_id, "o/r", "main", head_id)
+    find.assert_awaited_once_with(fake_user_id, "o/r", "main", head_id, "k1")
+
+
+def test_diff_route_passes_head_baseline_key(authenticated_client, fake_user_id):
+    head_id = uuid4()
+    find = AsyncMock(return_value=None)
+    with patch("redteam.runs.get_run", AsyncMock(return_value={"id": head_id, "repo": "o/r", "baseline_key": "abc"})), \
+         patch("redteam.runs.find_baseline_run", find), \
+         patch("redteam.runs.list_findings", AsyncMock(return_value=[])):
+        assert authenticated_client.get(f"/api/v1/redteam/runs/{head_id}/diff?base=main").status_code == 200
+    assert find.await_args.args[-1] == "abc"
 
 
 def test_diff_route_without_baseline(authenticated_client):
@@ -116,12 +126,12 @@ def test_diff_route_409_when_run_has_no_repo(authenticated_client):
 async def test_find_baseline_run_filters_by_user_repo_branch_status(mock_db):
     uid, hid = uuid4(), uuid4()
     mock_db.fetch_one.return_value = None
-    assert await runs.find_baseline_run(uid, "o/r", "main", hid) is None
+    assert await runs.find_baseline_run(uid, "o/r", "main", hid, "k") is None
     sql, params = mock_db.fetch_one.await_args.args
     for frag in ("user_id = :user_id", "repo = :repo", "branch = :branch",
-                 "status = 'completed'", "id <> :exclude", "ORDER BY finished_at DESC"):
+                 "status = 'completed'", "id <> :exclude", "baseline_key IS NOT DISTINCT FROM :baseline_key", "ORDER BY finished_at DESC"):
         assert frag in sql
-    assert params == {"user_id": uid, "repo": "o/r", "branch": "main", "exclude": hid}
+    assert params == {"user_id": uid, "repo": "o/r", "branch": "main", "exclude": hid, "baseline_key": "k"}
 
 
 @pytest.mark.parametrize("verdict", ["error", "skipped", "aborted_cost"])

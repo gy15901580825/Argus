@@ -62,6 +62,21 @@ def test_post_redteam_run_creates_run_row(authenticated_client, mock_db):
     assert "run_id" in data
 
 
+def test_post_redteam_run_stores_lowercase_repo_and_baseline_key(authenticated_client, mock_db):
+    body = {
+        "target": {"kind": "openai_compat", "endpoint_url": "https://x", "model": "m"},
+        "probe_ids": [],
+        "repo": "Acme/Agent", "branch": "feat", "commit": "abc", "baseline_key": "k1",
+    }
+    mock_db.fetch_one.return_value = {"id": uuid4()}
+    with patch("redteam.orchestrator_client.create_run", _noop_create_run), \
+         patch("redteam.orchestrator_client.stream_findings", _empty_async_stream):
+        assert authenticated_client.post("/api/v1/redteam/runs", json=body).status_code in (200, 202)
+    params = mock_db.fetch_one.await_args.args[1]
+    assert params["repo"] == "acme/agent"
+    assert params["baseline_key"] == "k1"
+
+
 def test_get_redteam_run_returns_status(authenticated_client, mock_db, fake_user_id):
     body = {
         "target": {"kind": "openai_compat", "endpoint_url": "https://x", "model": "gpt-4", "api_key": "k"},

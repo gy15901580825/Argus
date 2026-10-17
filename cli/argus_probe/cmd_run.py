@@ -10,6 +10,7 @@ import httpx
 from click.core import ParameterSource
 
 from argus_probe import api_client, git_context
+from argus_probe.baseline_key import baseline_key
 from argus_probe.local_run import LocalUnavailable, run_local_and_render
 from argus_probe.severity import SEVERITY_ORDER, findings_at_or_above
 from argus_probe.target_loader import load_target_spec, TargetLoadError
@@ -77,6 +78,9 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
     if per_run_cap is not None:
         body["per_run_cap_usd"] = per_run_cap
     body.update(git_context.detect())
+    if compare_to and "repo" not in body:
+        raise click.UsageError("--compare-to needs the repository name; run inside a git checkout with an origin remote, or set GITHUB_REPOSITORY")
+    body["baseline_key"] = baseline_key(spec, tokens)
 
     click.echo(f"Submitting run to {api_url}/api/v1/redteam/runs ...")
     try:
@@ -105,7 +109,15 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
         click.echo(f"Error: run {run_id} ended with status {run['status']}", file=sys.stderr)
         sys.exit(1)
     if compare_to:
-        d = api_client.get_diff(api_url, token, run_id, compare_to)
+        try:
+            d = api_client.get_diff(api_url, token, run_id, compare_to)
+        except httpx.HTTPStatusError as e:
+            try:
+                detail = e.response.json().get("detail", e.response.status_code)
+            except Exception:
+                detail = e.response.status_code
+            click.echo(f"Error: could not compare with {compare_to}: {detail}", file=sys.stderr)
+            sys.exit(1)
         base = d.get("base_run_id") or "none (first run on this branch)"
         click.echo(f"Compared with {compare_to} (baseline run {base}): "
                    f"new: {len(d['new'])}, fixed: {len(d['fixed'])}, still failing: {len(d['still_failing'])}, "

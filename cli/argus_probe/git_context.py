@@ -21,7 +21,7 @@ def detect(env: Mapping[str, str] | None = None, cwd: str | None = None) -> dict
     env = os.environ if env is None else env
     ctx: dict[str, str] = {}
     if env.get("GITHUB_REPOSITORY"):
-        ctx["repo"] = env["GITHUB_REPOSITORY"]
+        ctx["repo"] = env["GITHUB_REPOSITORY"].lower()
         branch = env.get("GITHUB_HEAD_REF") or env.get("GITHUB_REF_NAME")
         if branch:
             ctx["branch"] = branch
@@ -30,7 +30,7 @@ def detect(env: Mapping[str, str] | None = None, cwd: str | None = None) -> dict
         return ctx
     remote = _git(cwd, "remote", "get-url", "origin")
     if remote and (m := _REMOTE.search(remote)):
-        ctx["repo"] = m.group(1)
+        ctx["repo"] = m.group(1).lower()
     branch = _git(cwd, "rev-parse", "--abbrev-ref", "HEAD")
     if branch and branch != "HEAD":
         ctx["branch"] = branch
