@@ -264,3 +264,93 @@ async def test_iterative_run_emits_aborted_cost_on_mid_run_cap_exceeded():
     assert len(findings) == 1
     assert findings[0].verdict == VERDICT_ABORTED
     assert "cost" in findings[0].reasoning.lower()
+
+
+@pytest.mark.asyncio
+async def test_unusable_judge_reply_errors_that_prompt_not_the_run():
+    target = AsyncMock()
+    target.send_prompt = AsyncMock(return_value=("some reply", 42.0))
+
+    ok = MagicMock(
+        verdict="pass", severity="info", confidence=0.9,
+        reasoning="refused", judge_model="m", escalated_model=None,
+    )
+    judge = MagicMock()
+    judge.judge = AsyncMock(side_effect=[ValueError("malformed verdict"), ValueError("malformed verdict"), ok])
+
+    runner = Runner(target=target, judge=judge, rubrics_dir=Path("orchestrator/redteam/rubrics"))
+    first = [f async for f in runner.run_probe(_make_probe(prompts=["a", "b"]))]
+    second_probe = _make_probe()
+    second_probe = second_probe.__class__(**{**second_probe.__dict__, "id": "test_probe_2"})
+    second = [f async for f in runner.run_probe(second_probe)]
+
+    assert [f.verdict for f in first] == ["error", "error"]
+    assert [f.attack_prompt for f in first] == ["a", "b"]
+    for f in first:
+        assert f.severity == "info" and f.confidence == 1.0
+        assert f.reasoning == "judge reply could not be used: malformed verdict"
+        assert f.target_response == "some reply" and f.target_latency_ms == 42.0
+        assert f.atlas_id == ["AML.T0051"]
+    assert [f.verdict for f in second] == ["pass"]
+    assert second[0].probe_id == "test_probe_2"
+
+
+@pytest.mark.asyncio
+async def test_iterative_judge_error_ends_the_attack_with_an_error_finding():
+    from orchestrator.redteam.probe import ProbeMappings
+
+    target = MagicMock()
+    target.compatible_classes = frozenset({"llm_chat"})
+    target.send_prompt = AsyncMock(return_value=("reply", 10.0))
+
+    ok = MagicMock(
+        verdict="warn", severity="low", confidence=0.5,
+        reasoning="meh", judge_model="m", escalated_model=None,
+    )
+    judge = MagicMock()
+    judge.judge = AsyncMock(side_effect=[ok, ValueError("malformed verdict"), ok])
+
+    probe = MagicMock()
+    probe.id = "iter_1"
+    probe.name = "iter"
+    probe.target_class = ("llm_chat",)
+    probe.iterative = True
+    probe.judge_rubric_path = "rubrics/iterative.md"
+    probe.mappings = ProbeMappings(atlas=(), owasp_llm=(), nist_ai_rmf=(), eu_ai_act=())
+    probe.should_halt = MagicMock(return_value=False)
+    probe.next_prompt = AsyncMock(return_value="next prompt")
+
+    runner = Runner(target=target, judge=judge, rubrics_dir=Path("/tmp"))
+    findings = [f async for f in runner.run_probe(probe)]
+
+    assert [f.verdict for f in findings] == ["warn", "error"]
+    assert findings[1].reasoning == "judge reply could not be used: malformed verdict"
+    assert target.send_prompt.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_strong_judge_error_during_escalation_errors_the_finding():
+    # Documents current behaviour; the owner may later choose to keep the fast verdict instead.
+    from unittest.mock import patch
+    from orchestrator.redteam.cost_meter import CostMeter
+    from orchestrator.redteam.judge import Judge
+
+    fast = MagicMock(
+        text='{"verdict":"fail","severity":"high","confidence":0.9,"reasoning":"bad"}',
+        model="fast-m", input_tokens=1, output_tokens=1,
+    )
+    strong = MagicMock(
+        text='{"verdict":"fail","reasoning":"no severity"}',
+        model="strong-m", input_tokens=1, output_tokens=1,
+    )
+    target = AsyncMock()
+    target.send_prompt = AsyncMock(return_value=("reply", 10.0))
+
+    judge = Judge(api_key="sk-ant-test", cost_meter=CostMeter(daily_cap_usd=10.0))
+    judge._cfg = MagicMock(escalation_is_meaningful=True)
+    with patch("orchestrator.redteam.llm.complete", new=AsyncMock(side_effect=[fast, strong])):
+        runner = Runner(target=target, judge=judge, rubrics_dir=Path("orchestrator/redteam/rubrics"))
+        findings = [f async for f in runner.run_probe(_make_probe())]
+
+    assert [f.verdict for f in findings] == ["error"]
+    assert "strong-m" in findings[0].reasoning
