@@ -12,6 +12,7 @@ from orchestrator.redteam.targets.http_upload import HTTPUploadSpec, HTTPUploadT
 from orchestrator.redteam.targets.mcp_agent import MCPAgentSpec, MCPAgentTarget
 from orchestrator.redteam.targets.openai_compat import OpenAICompatSpec, OpenAICompatTarget
 from orchestrator.redteam.targets.payment_agent import PaymentAgentSpec, PaymentAgentTarget
+from orchestrator.redteam.targets.testbed_agent import GenericTestbedAgentTarget, TestbedAgentSpec
 
 _BUILDERS = {
     "anthropic_native": (AnthropicNativeSpec, AnthropicNativeTarget),
@@ -22,6 +23,7 @@ _BUILDERS = {
     "mcp_agent": (MCPAgentSpec, MCPAgentTarget),
     "openai_compat": (OpenAICompatSpec, OpenAICompatTarget),
     "payment_agent": (PaymentAgentSpec, PaymentAgentTarget),
+    "testbed_agent": (TestbedAgentSpec, GenericTestbedAgentTarget),
 }
 
 
