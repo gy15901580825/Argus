@@ -2,7 +2,7 @@
 
 Argus needs to know how to reach your AI agent. The "target spec" is a small JSON file (`argus-target.json`) that describes the agent endpoint and how to authenticate against it.
 
-The fastest way to generate it is interactively, for any of the 8 kinds `init` knows how to ask questions about (`openai_compat`, `anthropic_native`, `custom_http`, `grpc`, `browser_use`, `payment_agent`, `mcp_agent`, `http_upload`):
+The fastest way to generate it is interactively, for any of the 9 kinds `init` knows how to ask questions about (`openai_compat`, `anthropic_native`, `custom_http`, `grpc`, `browser_use`, `payment_agent`, `mcp_agent`, `testbed_agent`, `http_upload`):
 
 ```bash
 argus-probe init --kind <one of those 8>
@@ -180,6 +180,28 @@ We provide a thin reference adapter you can drop into your agent harness; ask in
 **Notes:**
 - `mcp_agent` only runs probes whose `target_class` includes `mcp_agent` (the ones under `orchestrator/orchestrator/redteam/probes/mcp/`). Point an ordinary chat probe at an `mcp_agent` target and it's skipped, not run; point an MCP probe at a `custom_http`/`openai_compat` target and it's skipped too — the two families only match each other.
 - `script` is an optional fallback scenario (`{"scenario": "tool_poisoning"}` etc.) used only when a probe declares no `scenario.payload` of its own — each probe's own payload takes precedence.
+
+---
+
+## testbed_agent
+
+**Use this for**: the generic form of `mcp_agent` and `payment_agent`. The `environment` field (`mcp` or `payment`) selects which testbed it drives, and the rest of the spec is the same shape.
+
+```json
+{
+  "kind": "testbed_agent",
+  "environment": "mcp",
+  "testbed_url": "http://127.0.0.1:8092",
+  "inner": {
+    "kind": "openai_compat",
+    "endpoint_url": "http://127.0.0.1:8093/v1/chat/completions",
+    "model": "argus-demo-mcp-agent"
+  },
+  "sandbox": true
+}
+```
+
+`sandbox: true` is required here too, and both the API and the CLI refuse the spec without it.
 
 ---
 

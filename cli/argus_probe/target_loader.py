@@ -14,7 +14,7 @@ from typing import Any
 
 _KNOWN_KINDS = frozenset({
     "openai_compat", "anthropic_native", "custom_http", "grpc", "browser_use",
-    "payment_agent", "mcp_agent", "http_upload",
+    "payment_agent", "mcp_agent", "testbed_agent", "http_upload",
 })
 
 _REQUIRED_FIELDS = {
@@ -25,6 +25,7 @@ _REQUIRED_FIELDS = {
     "browser_use": {"agent_url", "scenario_kind"},
     "payment_agent": {"testbed_url", "inner", "sandbox"},
     "mcp_agent": {"testbed_url", "inner", "sandbox"},
+    "testbed_agent": {"environment", "testbed_url", "inner", "sandbox"},
     "http_upload": {"upload_url"},
 }
 
@@ -35,6 +36,7 @@ _REQUIRED_FIELDS = {
 _SANDBOX_REQUIRED_KINDS = {
     "payment_agent": "drives an agent that spends money",
     "mcp_agent": "drives an agent against a live MCP server",
+    "testbed_agent": "drives an agent inside a simulated environment",
 }
 
 

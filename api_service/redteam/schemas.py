@@ -85,6 +85,17 @@ class MCPAgentTarget(BaseModel):
     timeout_s: float = 60.0
 
 
+class TestbedAgentTarget(BaseModel):
+    kind: Literal["testbed_agent"] = "testbed_agent"
+    environment: str
+    testbed_url: str
+    inner: dict[str, Any]
+    script: dict[str, Any] = Field(default_factory=dict)
+    # Same interlock as payment_agent / mcp_agent: sandbox must be present and true.
+    sandbox: Literal[True]
+    timeout_s: float = 60.0
+
+
 class HTTPUploadTarget(BaseModel):
     kind: Literal["http_upload"] = "http_upload"
     upload_url: str
@@ -114,6 +125,7 @@ TargetSpec = Annotated[
         BrowserUseTarget,
         PaymentAgentTarget,
         MCPAgentTarget,
+        TestbedAgentTarget,
         HTTPUploadTarget,
     ],
     Field(discriminator="kind"),

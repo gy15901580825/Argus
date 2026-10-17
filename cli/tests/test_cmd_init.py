@@ -134,6 +134,29 @@ def test_init_mcp_agent_writes_target_json(tmp_path, monkeypatch):
     load_target_spec(str(tmp_path / "argus-target.json"))
 
 
+def test_init_testbed_agent_writes_target_json(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner = CliRunner()
+    inner = (
+        '{"kind": "openai_compat", '
+        '"endpoint_url": "http://127.0.0.1:8093/v1/chat/completions", '
+        '"model": "argus-demo-mcp-agent"}'
+    )
+    result = runner.invoke(
+        init_command,
+        ["--kind", "testbed_agent", "--no-workflow"],
+        input=f"mcp\nhttp://127.0.0.1:8092\n{inner}\n",
+    )
+    assert result.exit_code == 0, result.output
+    spec = json.loads((tmp_path / "argus-target.json").read_text())
+    assert spec["kind"] == "testbed_agent"
+    assert spec["environment"] == "mcp"
+    assert spec["testbed_url"] == "http://127.0.0.1:8092"
+    assert spec["inner"] == json.loads(inner)
+    assert spec["sandbox"] is True
+    load_target_spec(str(tmp_path / "argus-target.json"))
+
+
 def test_init_http_upload_writes_target_json(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     runner = CliRunner()

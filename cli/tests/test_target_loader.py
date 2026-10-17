@@ -49,6 +49,7 @@ def test_rejects_nonexistent_file_or_invalid_arg():
     ("browser_use", {"agent_url": "x", "scenario_kind": "dom_injection"}),
     ("payment_agent", {"testbed_url": "x", "inner": {"kind": "openai_compat"}, "sandbox": True}),
     ("mcp_agent", {"testbed_url": "x", "inner": {"kind": "openai_compat"}, "sandbox": True}),
+    ("testbed_agent", {"environment": "mcp", "testbed_url": "x", "inner": {"kind": "openai_compat"}, "sandbox": True}),
     ("http_upload", {"upload_url": "https://x/upload", "render_url_jsonpath": "$.url"}),
 ])
 def test_each_kind_passes_minimal_validation(kind, minimum):
@@ -95,6 +96,15 @@ def test_mcp_agent_requires_sandbox_true(mcp_spec):
     real MCP server is not a configuration mistake we recover from, so the
     orchestrator-side refusal must not be the only one."""
     blob = json.dumps({"kind": "mcp_agent", **mcp_spec})
+    with pytest.raises(TargetLoadError, match="sandbox"):
+        load_target_spec(blob)
+
+
+def test_testbed_agent_requires_sandbox_true():
+    blob = json.dumps({
+        "kind": "testbed_agent", "environment": "mcp", "testbed_url": "x",
+        "inner": {"kind": "openai_compat"}, "sandbox": False,
+    })
     with pytest.raises(TargetLoadError, match="sandbox"):
         load_target_spec(blob)
 
