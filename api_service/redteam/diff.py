@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 SEVERITY_ORDER: tuple[str, ...] = ("info", "low", "medium", "high", "critical")
+# A probe that did not complete (error/skipped/aborted_cost) must not read as a fix.
+COMPLETED_VERDICTS = frozenset({"pass", "fail", "warn", "blocked_by_target"})
 
 
 def _rank(severity) -> int:
@@ -27,7 +29,7 @@ def failing_probes(findings: list[dict]) -> dict[str, str]:
 def compare(base: list[dict] | None, head: list[dict]) -> dict:
     head_fail = failing_probes(head)
     base_fail = failing_probes(base or [])
-    head_ran = {f.get("probe_id") for f in head}
+    head_ran = {f.get("probe_id") for f in head if f.get("verdict") in COMPLETED_VERDICTS}
 
     def items(ids, sev_from):
         return [{"probe_id": p, "severity": sev_from[p]} for p in sorted(ids)]

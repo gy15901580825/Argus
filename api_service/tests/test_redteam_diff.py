@@ -122,3 +122,16 @@ async def test_find_baseline_run_filters_by_user_repo_branch_status(mock_db):
                  "status = 'completed'", "id <> :exclude", "ORDER BY finished_at DESC"):
         assert frag in sql
     assert params == {"user_id": uid, "repo": "o/r", "branch": "main", "exclude": hid}
+
+
+@pytest.mark.parametrize("verdict", ["error", "skipped", "aborted_cost"])
+def test_errored_head_probe_is_not_run_not_fixed(verdict):
+    out = compare([f("a", "fail")], [f("a", verdict)])
+    assert out["not_run"] == [{"probe_id": "a", "severity": "high"}]
+    assert out["fixed"] == []
+
+
+def test_blocked_by_target_counts_as_ran():
+    out = compare([f("a", "fail")], [f("a", "blocked_by_target")])
+    assert out["fixed"] == [{"probe_id": "a", "severity": "high"}]
+    assert out["not_run"] == []
