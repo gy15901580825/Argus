@@ -56,3 +56,15 @@ def get_coverage(api_url: str, token: str, timeout: float = 30.0) -> dict:
         resp = client.get(f"{api_url}/api/v1/redteam/coverage", headers={"x-api-token": token})
         resp.raise_for_status()
         return resp.json()["coverage"]
+
+
+def get_diff(api_url: str, token: str, run_id: str, base: str, timeout: float = 30.0) -> dict:
+    """GET /api/v1/redteam/runs/{run_id}/diff — failures new, fixed or unchanged versus the latest run on `base`."""
+    with httpx.Client(timeout=timeout) as client:
+        resp = client.get(
+            f"{api_url}/api/v1/redteam/runs/{run_id}/diff",
+            params={"base": base},
+            headers={"x-api-token": token},
+        )
+        resp.raise_for_status()
+        return resp.json()

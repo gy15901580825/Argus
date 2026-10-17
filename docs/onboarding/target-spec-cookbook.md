@@ -266,6 +266,38 @@ Set `ARGUS_API_URL` as a repository variable and `ARGUS_API_TOKEN` as a secret. 
 
 `--fail-on critical` fails the job when a critical finding lands; use `high` to tighten it, or drop the flag to report without blocking. The SARIF is written before the exit, so it uploads either way.
 
+To gate pull requests on regressions only, add `--compare-to main` in a separate job triggered on `pull_request`: the run is compared with the latest run on `main` (same target), and `--fail-on` counts only failures that are new. Keep a job on `push` to `main` so baselines get recorded; without a completed run on `main` every failure counts as new. Do not add `--compare-to main` to the scheduled job above: a scheduled run on `main` would compare `main` with itself, and a still-failing critical finding would stop failing the job. Server mode only, because it needs run history.
+
+```yaml
+on:
+  pull_request:
+
+jobs:
+  argus-diff:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install "git+https://github.com/gy15901580825/Argus.git#subdirectory=cli"
+      - run: >
+          argus-probe run --target argus-target.json
+          --probes owasp_01_prompt_injection_basic,syscard_crescendo
+          --format sarif --out argus.sarif --fail-on high --compare-to main
+        env:
+          ARGUS_API_URL: ${{ vars.ARGUS_API_URL }}
+          ARGUS_API_TOKEN: ${{ secrets.ARGUS_API_TOKEN }}
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: argus.sarif
+```
+
+Two limits: a severity increase on a probe that was already failing does not count as new. Branch detection reads GitHub Actions variables or git, so on other CI systems with a detached HEAD no branch is recorded and every failure counts as new.
+
 The SARIF output is automatically uploaded to GitHub's code-scanning, so findings appear in your repo's **Security** tab alongside CodeQL / Dependabot / Snyk.
 
 ---

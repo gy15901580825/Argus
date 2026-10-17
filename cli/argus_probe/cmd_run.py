@@ -9,7 +9,8 @@ import click
 import httpx
 from click.core import ParameterSource
 
-from argus_probe import api_client
+from argus_probe import api_client, git_context
+from argus_probe.baseline_key import baseline_key
 from argus_probe.local_run import LocalUnavailable, run_local_and_render
 from argus_probe.severity import SEVERITY_ORDER, findings_at_or_above
 from argus_probe.target_loader import load_target_spec, TargetLoadError
@@ -28,7 +29,9 @@ from argus_probe.target_loader import load_target_spec, TargetLoadError
               help="Exit 3 when any finding has verdict=fail and severity at or above this level.")
 @click.option("--local", "local", is_flag=True, default=False,
               help="Run probes in this process instead of submitting to an Argus API server. Needs the argus-orchestrator package and a judge API key in the environment.")
-def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, token: str | None, api_url: str | None, max_wait: float, per_run_cap: float | None, fail_on: str | None, local: bool):
+@click.option("--compare-to", "compare_to", default=None,
+              help="Base branch: report and gate only on failures that are new relative to the latest run on it. Server mode only.")
+def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, token: str | None, api_url: str | None, max_wait: float, per_run_cap: float | None, fail_on: str | None, local: bool, compare_to: str | None):
     """Submit a red-team run and write the report to disk."""
     try:
         spec = load_target_spec(target)
@@ -52,6 +55,8 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
         tokens = []
 
     if local:
+        if compare_to:
+            raise click.UsageError("--compare-to needs run history on an Argus server; it does not work with --local")
         ctx = click.get_current_context()
         typed = [
             name for name, param in (("--api-url", "api_url"), ("--token", "token"))
@@ -72,6 +77,10 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
     }
     if per_run_cap is not None:
         body["per_run_cap_usd"] = per_run_cap
+    body.update(git_context.detect())
+    if compare_to and "repo" not in body:
+        raise click.UsageError("--compare-to needs the repository name; run inside a git checkout with an origin remote, or set GITHUB_REPOSITORY")
+    body["baseline_key"] = baseline_key(spec)
 
     click.echo(f"Submitting run to {api_url}/api/v1/redteam/runs ...")
     try:
@@ -99,7 +108,25 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
     if run["status"] != "completed":
         click.echo(f"Error: run {run_id} ended with status {run['status']}", file=sys.stderr)
         sys.exit(1)
-    _apply_fail_on(run.get("findings", []), fail_on)
+    if compare_to:
+        try:
+            d = api_client.get_diff(api_url, token, run_id, compare_to)
+        except httpx.HTTPStatusError as e:
+            try:
+                detail = e.response.json().get("detail", e.response.status_code)
+            except Exception:
+                detail = e.response.status_code
+            click.echo(f"Error: could not compare with {compare_to}: {detail}", file=sys.stderr)
+            sys.exit(1)
+        base = d.get("base_run_id") or "none (first run on this branch)"
+        click.echo(f"Compared with {compare_to} (baseline run {base}): "
+                   f"new: {len(d['new'])}, fixed: {len(d['fixed'])}, still failing: {len(d['still_failing'])}, "
+                   f"not run: {len(d['not_run'])}")
+        for item in d["new"]:
+            click.echo(f"  new  {item['severity']:<9} {item['probe_id']}")
+        _apply_fail_on([{"verdict": "fail", **i} for i in d["new"]], fail_on)
+    else:
+        _apply_fail_on(run.get("findings", []), fail_on)
 
 
 def _apply_fail_on(findings: list[dict], fail_on: str | None) -> None:
