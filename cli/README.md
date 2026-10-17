@@ -96,9 +96,9 @@ There is no published GitHub Action. Run the CLI in a workflow step and upload t
     sarif_file: argus.sarif
 ```
 
-The job needs `permissions: security-events: write` for the SARIF upload. `argus-probe init --workflow` writes a complete workflow file with that set.
+The job needs `permissions: security-events: write` for the SARIF upload. `argus-probe init --workflow` writes a complete workflow file with that set. Pull requests from forks and Dependabot do not receive repository secrets, so `ARGUS_API_TOKEN` is empty and the job fails on them.
 
-`--fail-on <severity>` exits 3 when a failing finding is at or above that level; the SARIF is written first, so it still uploads. In a separate job on `pull_request` (keep a `push` to `main` job so baselines get recorded), add `--compare-to main` to compare with the latest run on `main` and have `--fail-on` count only new failures; it does not count severity increases on probes that already failed, needs GitHub Actions variables or git to detect the branch, and is server mode only, because it needs run history. Exit codes: 0 success, 1 run or configuration error, 2 usage error or `--local` without the engine installed, 3 threshold hit, 402 cost cap.
+`--fail-on <severity>` exits 3 when a failing finding is at or above that level; the SARIF is written first, so it still uploads. The workflow from `init --workflow` already passes `--compare-to <base branch>` on pull requests and records the baseline on pushes to `main`; if you write your own, keep both triggers and pass `--compare-to` only on pull requests, so `--fail-on` counts only new failures. `--compare-to` does not count severity increases on probes that already failed, needs GitHub Actions variables or git to detect the branch, and is server mode only, because it needs run history. Exit codes: 0 success, 1 run or configuration error, 2 usage error or `--local` without the engine installed, 3 threshold hit, 402 cost cap.
 
 ## Cost controls
 
