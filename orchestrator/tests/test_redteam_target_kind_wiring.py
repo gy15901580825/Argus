@@ -88,7 +88,7 @@ def test_the_two_client_side_lists_do_not_invent_kinds_of_their_own():
     assert not sorted(_cli_kinds() - builders)
 
 
-@pytest.mark.parametrize("kind", ["payment_agent", "mcp_agent"])
+@pytest.mark.parametrize("kind", ["payment_agent", "mcp_agent", "testbed_agent"])
 def test_world_acting_adapters_demand_sandbox_true_on_both_client_paths(kind):
     """`sandbox` is a safety interlock, not a convenience default: these two
     adapters move real money / reach a real MCP server if it is wrong. The
@@ -102,6 +102,8 @@ def test_world_acting_adapters_demand_sandbox_true_on_both_client_paths(kind):
 
     base = {"kind": kind, "testbed_url": "https://tb.example.com",
             "inner": {"kind": "openai_compat", "endpoint_url": "https://x", "model": "y"}}
+    if kind == "testbed_agent":
+        base["environment"] = "mcp"
     for bad in ({**base}, {**base, "sandbox": False}):
         with pytest.raises(pydantic.ValidationError):
             adapter.validate_python(bad)

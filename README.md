@@ -42,12 +42,13 @@ What Argus does:
   (see RESULTS.md), and 99 [garak](https://github.com/NVIDIA/garak)
   wrappers for NVIDIA's existing catalog. Exact per-standard counts are
   generated, not hand-maintained — see [`docs/probe-mapping.md`](docs/probe-mapping.md).
-- **8 target adapters**: `openai_compat`, `anthropic_native`, `custom_http`
+- **9 target adapters**: `openai_compat`, `anthropic_native`, `custom_http`
   (Jinja2 + JSONPath), `grpc` (with reflection auto-discovery), `http_upload`
   (file-upload-and-render sinks), `browser_use` (Playwright-driven
   full-browser flows), `payment_agent` (x402 wallet-carrying agents, runs
-  against `payment_testbed/`), and `mcp_agent` (MCP tool-server abuse, runs
-  against `mcp_testbed/`).
+  against `payment_testbed/`), `mcp_agent` (MCP tool-server abuse, runs
+  against `mcp_testbed/`), and `testbed_agent` (generic form of the two
+  testbed adapters; `environment` picks the testbed).
 - **Scan suites** — pass `suite` instead of enumerating `probe_ids` on
   `POST /api/v1/redteam/runs`: `owasp-llm-top10`, `mitre-atlas`,
   `nist-ai-rmf`, `eu-ai-act`, `payments`, `mcp`.
@@ -132,7 +133,7 @@ writes a starter one. `${VAR}` references are expanded from the environment:
 
 Other `kind` values: `anthropic_native`, `custom_http` (with Jinja2 body
 templates and JSONPath response extractors), `grpc`, `http_upload`,
-`browser_use`, `payment_agent`, `mcp_agent`. Full target-spec cookbook in
+`browser_use`, `payment_agent`, `mcp_agent`, `testbed_agent`. Full target-spec cookbook in
 [`docs/onboarding/target-spec-cookbook.md`](docs/onboarding/target-spec-cookbook.md).
 
 The `argus-probe` CLI is a client of an Argus API server; it does not run
@@ -210,6 +211,7 @@ workflow that installs the CLI, runs it, uploads the SARIF with
 │                  │  http_upload     │                                   │
 │                  │  payment_agent   │                                   │
 │                  │  mcp_agent       │                                   │
+│                  │  testbed_agent   │                                   │
 │                  │  browser_use ────┼──▶ client_agent (WebSocket)       │
 │                  └──────┬───────────┘                                   │
 └─────────────────────────┼───────────────────────────────────────────────┘
@@ -225,7 +227,7 @@ workflow that installs the CLI, runs it, uploads the SARIF with
 | Sub-project | Role |
 |---|---|
 | [`api_service/`](api_service/) | Central REST API (FastAPI + asyncpg + PostgreSQL). Owns the `redteam_runs`, `redteam_findings`, `redteam_design_partners` tables. |
-| [`orchestrator/`](orchestrator/) | Probe dispatcher + judge harness + 8 target adapters + guardrail wrappers (used by the local demo runner). |
+| [`orchestrator/`](orchestrator/) | Probe dispatcher + judge harness + 9 target adapters + guardrail wrappers (used by the local demo runner). |
 | [`client_agent/`](client_agent/) | Edge agent (browser-use + Playwright) for browser-driven probes. |
 | [`frontend/`](frontend/) | Next.js 16 web UI: dashboard, chat, marketing pages. |
 | [`cli/`](cli/) | `argus-probe` Python CLI, installed from this repo with pip. |

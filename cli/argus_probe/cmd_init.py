@@ -51,6 +51,15 @@ _KIND_QUESTIONS: dict[str, list[tuple[str, str, str | None]]] = {
             '{"kind": "openai_compat", "endpoint_url": "http://127.0.0.1:8093/v1/chat/completions", "model": "argus-demo-mcp-agent"}',
         ),
     ],
+    "testbed_agent": [
+        ("environment", "Environment (mcp/payment)", "mcp"),
+        ("testbed_url", "Testbed URL", "http://127.0.0.1:8092"),
+        (
+            "inner_json",
+            "Inner target spec (JSON) for the transport that talks to your agent",
+            '{"kind": "openai_compat", "endpoint_url": "http://127.0.0.1:8093/v1/chat/completions", "model": "argus-demo-mcp-agent"}',
+        ),
+    ],
     "http_upload": [
         ("upload_url", "Upload URL", None),
         ("upload_field_name", "Upload form field name", "file"),
@@ -132,7 +141,7 @@ def init_command(kind: str, output: str, workflow: bool | None) -> None:
         env_var = spec.pop("api_key_env")
         spec["api_key"] = "${" + str(env_var) + "}"
 
-    # inner_json → inner (payment_agent / mcp_agent nest another target spec
+    # inner_json → inner (payment_agent / mcp_agent / testbed_agent nest another target spec
     # for the transport that actually talks to the agent)
     if "inner_json" in spec:
         raw_inner = spec.pop("inner_json")
@@ -141,12 +150,12 @@ def init_command(kind: str, output: str, workflow: bool | None) -> None:
         except json.JSONDecodeError as exc:
             raise click.UsageError(f"inner target spec is not valid JSON: {exc}") from exc
 
-    # sandbox is a safety interlock, not a question: payment_agent and
-    # mcp_agent drive an agent that spends money / reaches a live MCP server,
+    # sandbox is a safety interlock, not a question: payment_agent,
+    # mcp_agent and testbed_agent drive an agent that spends money / reaches a live MCP server,
     # and both api_service and the CLI loader refuse a spec without
     # sandbox: true — there is no way to turn it off, so it must never be
     # presented as something a user could answer "no" to.
-    if kind in ("payment_agent", "mcp_agent"):
+    if kind in ("payment_agent", "mcp_agent", "testbed_agent"):
         spec["sandbox"] = True
 
     # Confirm-overwrite if target file exists

@@ -57,6 +57,7 @@ There is no hosted Argus instance. `ARGUS_API_URL` is your own `api_service` dep
 | `browser_use` | Browser-using agents driving Playwright / computer-use / browser-use |
 | `payment_agent` | Agents that spend money on a user's behalf (e.g. x402), run against a payment testbed |
 | `mcp_agent` | Agents that connect to MCP tool servers, run against a hostile MCP testbed |
+| `testbed_agent` | Generic form of `mcp_agent` / `payment_agent`; `environment` picks the testbed |
 | `http_upload` | File-upload-and-render sinks (upload then inline-render an active payload) |
 
 Full configuration reference: [target spec cookbook](../docs/onboarding/target-spec-cookbook.md).
