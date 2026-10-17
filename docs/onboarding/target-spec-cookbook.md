@@ -5,7 +5,7 @@ Argus needs to know how to reach your AI agent. The "target spec" is a small JSO
 The fastest way to generate it is interactively, for any of the 9 kinds `init` knows how to ask questions about (`openai_compat`, `anthropic_native`, `custom_http`, `grpc`, `browser_use`, `payment_agent`, `mcp_agent`, `testbed_agent`, `http_upload`):
 
 ```bash
-argus-probe init --kind <one of those 8>
+argus-probe init --kind <one of those 9>
 ```
 
 Below are copy-paste templates for each supported agent shape, plus the gotchas we've run into in real deployments.
