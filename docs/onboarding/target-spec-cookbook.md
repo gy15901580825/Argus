@@ -253,7 +253,7 @@ jobs:
       - run: >
           argus-probe run --target argus-target.json
           --probes owasp_01_prompt_injection_basic,syscard_crescendo
-          --format sarif --out argus.sarif --fail-on critical
+          --format sarif --out argus.sarif --fail-on critical --compare-to main
         env:
           ARGUS_API_URL: ${{ vars.ARGUS_API_URL }}
           ARGUS_API_TOKEN: ${{ secrets.ARGUS_API_TOKEN }}
@@ -265,6 +265,8 @@ jobs:
 Set `ARGUS_API_URL` as a repository variable and `ARGUS_API_TOKEN` as a secret. `argus-probe` has no default endpoint, and a job that omits the URL fails with `Missing option '--api-url'`.
 
 `--fail-on critical` fails the job when a critical finding lands; use `high` to tighten it, or drop the flag to report without blocking. The SARIF is written before the exit, so it uploads either way.
+
+On pull requests, add `--compare-to main`: the run is compared with the latest run on `main`, and `--fail-on` counts only failures that are new. Server mode only, because it needs run history.
 
 The SARIF output is automatically uploaded to GitHub's code-scanning, so findings appear in your repo's **Security** tab alongside CodeQL / Dependabot / Snyk.
 

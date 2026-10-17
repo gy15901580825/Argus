@@ -280,3 +280,50 @@ def test_run_fail_on_exits_0_below_threshold(tmp_path, monkeypatch):
          "--api-url", "https://argus.example", "--fail-on", "high"],
     )
     assert result.exit_code == 0, result.output
+
+
+def _compare_args(tmp_path, *extra):
+    target = tmp_path / "t.json"
+    target.write_text('{"kind":"openai_compat","endpoint_url":"https://x","model":"m"}')
+    return ["--target", str(target), "--probes", "p", "--out", str(tmp_path / "r.html"), "--token", "t",
+            "--api-url", "https://argus.example", *extra]
+
+
+def test_run_sends_git_context(tmp_path, monkeypatch):
+    _stub_remote(monkeypatch, [])
+    bodies = []
+    monkeypatch.setattr(api_client, "post_run", lambda *a, **k: bodies.append(k["body"]) or {"run_id": "r1"})
+    monkeypatch.setattr(
+        "argus_probe.cmd_run.git_context.detect",
+        lambda: {"repo": "o/r", "branch": "feat", "commit": "abc"},
+    )
+    result = CliRunner().invoke(cmd_run, _compare_args(tmp_path))
+    assert result.exit_code == 0, result.output
+    assert (bodies[0]["repo"], bodies[0]["branch"], bodies[0]["commit"]) == ("o/r", "feat", "abc")
+
+
+def _diff(new):
+    return {"base_run_id": "b1", "new": new, "fixed": [],
+            "still_failing": [{"probe_id": "p", "severity": "critical"}], "not_run": []}
+
+
+def test_compare_to_gates_only_new_failures(tmp_path, monkeypatch):
+    _stub_remote(monkeypatch, [{"probe_id": "p", "verdict": "fail", "severity": "critical"}])
+    monkeypatch.setattr(api_client, "get_diff", lambda *a, **k: _diff([]))
+    result = CliRunner().invoke(cmd_run, _compare_args(tmp_path, "--fail-on", "high", "--compare-to", "main"))
+    assert result.exit_code == 0, result.output
+    assert "still failing: 1" in result.output
+
+
+def test_compare_to_fails_on_new_failure(tmp_path, monkeypatch):
+    _stub_remote(monkeypatch, [{"probe_id": "p", "verdict": "fail", "severity": "critical"}])
+    monkeypatch.setattr(api_client, "get_diff", lambda *a, **k: _diff([{"probe_id": "p", "severity": "critical"}]))
+    result = CliRunner().invoke(cmd_run, _compare_args(tmp_path, "--fail-on", "high", "--compare-to", "main"))
+    assert result.exit_code == 3, result.output
+    assert "p" in result.output
+    assert (tmp_path / "r.html").read_text() == "<html></html>"
+
+
+def test_compare_to_with_local_is_usage_error(tmp_path):
+    result = CliRunner().invoke(cmd_run, _compare_args(tmp_path, "--local", "--compare-to", "main")[:-5] + ["--local", "--compare-to", "main"])
+    assert result.exit_code == 2, result.output

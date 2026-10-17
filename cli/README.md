@@ -98,7 +98,7 @@ There is no published GitHub Action. Run the CLI in a workflow step and upload t
 
 The job needs `permissions: security-events: write` for the SARIF upload. `argus-probe init --workflow` writes a complete workflow file with that set.
 
-`--fail-on <severity>` exits 3 when a failing finding is at or above that level; the SARIF is written first, so it still uploads. Exit codes: 0 success, 1 run or configuration error, 2 usage error or `--local` without the engine installed, 3 threshold hit, 402 cost cap.
+`--fail-on <severity>` exits 3 when a failing finding is at or above that level; the SARIF is written first, so it still uploads. On pull requests, add `--compare-to main` to compare with the latest run on `main` and have `--fail-on` count only new failures; server mode only, because it needs run history. Exit codes: 0 success, 1 run or configuration error, 2 usage error or `--local` without the engine installed, 3 threshold hit, 402 cost cap.
 
 ## Cost controls
 
