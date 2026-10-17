@@ -271,7 +271,7 @@ jobs:
           sarif_file: argus.sarif
 ```
 
-Set `ARGUS_API_URL` as a repository variable and `ARGUS_API_TOKEN` as a secret. `argus-probe` has no default endpoint, and a job that omits the URL fails with `Missing option '--api-url'`.
+Set `ARGUS_API_URL` as a repository variable and `ARGUS_API_TOKEN` as a secret. `argus-probe` has no default endpoint, and a job that omits the URL fails with `Missing option '--api-url'`. Pull requests from forks and Dependabot do not receive repository secrets, so `ARGUS_API_TOKEN` is empty and the job fails on them.
 
 `--fail-on critical` fails the job when a critical finding lands; use `high` to tighten it, or drop the flag to report without blocking. The SARIF is written before the exit, so it uploads either way.
 
