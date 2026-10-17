@@ -264,3 +264,32 @@ async def test_iterative_run_emits_aborted_cost_on_mid_run_cap_exceeded():
     assert len(findings) == 1
     assert findings[0].verdict == VERDICT_ABORTED
     assert "cost" in findings[0].reasoning.lower()
+
+
+@pytest.mark.asyncio
+async def test_unusable_judge_reply_errors_that_prompt_not_the_run():
+    target = AsyncMock()
+    target.send_prompt = AsyncMock(return_value=("some reply", 42.0))
+
+    ok = MagicMock(
+        verdict="pass", severity="info", confidence=0.9,
+        reasoning="refused", judge_model="m", escalated_model=None,
+    )
+    judge = MagicMock()
+    judge.judge = AsyncMock(side_effect=[ValueError("malformed verdict"), ValueError("malformed verdict"), ok])
+
+    runner = Runner(target=target, judge=judge, rubrics_dir=Path("orchestrator/redteam/rubrics"))
+    first = [f async for f in runner.run_probe(_make_probe(prompts=["a", "b"]))]
+    second_probe = _make_probe()
+    second_probe = second_probe.__class__(**{**second_probe.__dict__, "id": "test_probe_2"})
+    second = [f async for f in runner.run_probe(second_probe)]
+
+    assert [f.verdict for f in first] == ["error", "error"]
+    assert [f.attack_prompt for f in first] == ["a", "b"]
+    for f in first:
+        assert f.severity == "info" and f.confidence == 1.0
+        assert f.reasoning == "judge reply could not be used: malformed verdict"
+        assert f.target_response == "some reply" and f.target_latency_ms == 42.0
+        assert f.atlas_id == ["AML.T0051"]
+    assert [f.verdict for f in second] == ["pass"]
+    assert second[0].probe_id == "test_probe_2"

@@ -318,12 +318,25 @@ class Runner:
                 yield await self._assertion_finding(probe, prompt, response_text, latency_ms, probed_at)
                 continue
 
-            verdict = await self._judge.judge(
-                probe_name=probe.name,
-                attack_prompt=prompt,
-                target_response=response_text,
-                rubric_text=rubric_text,
-            )
+            try:
+                verdict = await self._judge.judge(
+                    probe_name=probe.name,
+                    attack_prompt=prompt,
+                    target_response=response_text,
+                    rubric_text=rubric_text,
+                )
+            except ValueError as e:
+                # A judge reply missing a key or not JSON is one unusable
+                # verdict, not a broken scan: it must not turn the run into
+                # "the scanner failed". Still fail-closed: it never reports a
+                # pass. ValueError only (JSONDecodeError subclasses it).
+                yield self._finding(
+                    probe, prompt, response_text, latency_ms, probed_at,
+                    verdict=VERDICT_ERROR, severity="info", confidence=1.0,
+                    reasoning=f"judge reply could not be used: {e}",
+                    evidence=None,
+                )
+                continue
             yield Finding(
                 id=uuid4(), probe_id=probe.id,
                 attack_prompt=prompt, target_response=response_text,
@@ -405,12 +418,23 @@ class Runner:
                             )
                             return  # iterative attacks abort on 4xx — target won't engage
                     raise
-                verdict = await self._judge.judge(
-                    probe_name=probe.name,
-                    attack_prompt=prompt,
-                    target_response=response_text,
-                    rubric_text=rubric_text,
-                )
+                try:
+                    verdict = await self._judge.judge(
+                        probe_name=probe.name,
+                        attack_prompt=prompt,
+                        target_response=response_text,
+                        rubric_text=rubric_text,
+                    )
+                except ValueError as e:
+                    # Same reasoning as the static path. The next round needs
+                    # this round's verdict, so the attack ends here.
+                    yield self._finding(
+                        probe, prompt, response_text, latency_ms, probed_at,
+                        verdict=VERDICT_ERROR, severity="info", confidence=1.0,
+                        reasoning=f"judge reply could not be used: {e}",
+                        evidence=None,
+                    )
+                    return
                 yield Finding(
                     id=uuid4(), probe_id=probe.id,
                     attack_prompt=prompt, target_response=response_text,

@@ -157,3 +157,21 @@ async def test_judge_normalizes_n_a_severity():
             probe_name="t", attack_prompt="x", target_response="y", rubric_text="z",
         )
     assert verdict.severity == "info"
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_carries_output_contract_even_if_rubric_lacks_it():
+    out = MagicMock(
+        text='{"verdict":"pass","severity":"info","confidence":0.9,"reasoning":"ok"}',
+        model="m", input_tokens=10, output_tokens=5,
+    )
+    with patch("orchestrator.redteam.llm.complete", new=AsyncMock(return_value=out)) as complete:
+        judge = Judge(api_key="sk-ant-test", cost_meter=CostMeter(daily_cap_usd=10.0))
+        await judge.judge(
+            probe_name="p", attack_prompt="a", target_response="r",
+            rubric_text="A rubric that says nothing about output format.",
+        )
+    system = complete.call_args.kwargs["system"]
+    assert "A rubric that says nothing about output format." in system
+    assert '"severity"' in system
+    assert '"confidence"' in system
