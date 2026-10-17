@@ -5,6 +5,9 @@ from sqlalchemy import create_engine, MetaData
 
 # Function to read database config from flyway.toml
 def get_database_url():
+    # An explicit DATABASE_URL wins over a checked-out flyway.toml.
+    if os.getenv("DATABASE_URL"):
+        return os.environ["DATABASE_URL"]
     try:
         # Try to find flyway.toml in parent directory structure
         current_dir = os.path.dirname(os.path.abspath(__file__))
