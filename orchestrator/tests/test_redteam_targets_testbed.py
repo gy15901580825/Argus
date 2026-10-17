@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from orchestrator.redteam.probe import VALID_TARGET_CLASSES
 from orchestrator.redteam.targets import build_target
 from orchestrator.redteam.targets import testbed_agent as testbed_mod
 from orchestrator.redteam.targets.mcp_agent import MCPAgentTarget
@@ -31,6 +32,11 @@ def test_registry_has_exactly_mcp_and_payment():
     assert set(ENVIRONMENTS) == {"mcp", "payment"}
     assert ENVIRONMENTS["mcp"]["url_key"] == "mcp_url"
     assert ENVIRONMENTS["payment"]["url_key"] == "merchant_url"
+
+
+def test_every_environment_class_is_a_valid_probe_target_class():
+    for env in ENVIRONMENTS:
+        assert f"{env}_agent" in VALID_TARGET_CLASSES
 
 
 def test_existing_targets_are_subclasses_of_the_base():
@@ -98,7 +104,9 @@ def _fake_client_factory(session):
 )
 def test_send_prompt_renders_the_environment_placeholder(monkeypatch, env, key, url):
     monkeypatch.setattr(
-        testbed_mod.httpx, "AsyncClient", _fake_client_factory({"session_id": "s1", key: url})
+        testbed_mod,
+        "httpx",
+        SimpleNamespace(AsyncClient=_fake_client_factory({"session_id": "s1", key: url})),
     )
     seen = {}
 

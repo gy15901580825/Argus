@@ -185,7 +185,7 @@ We provide a thin reference adapter you can drop into your agent harness; ask in
 
 ## testbed_agent
 
-**Use this for**: the generic form of `mcp_agent` and `payment_agent`. The `environment` field (`mcp` or `payment`) selects which testbed it drives, and the rest of the spec is the same shape.
+**Use this for**: the generic form of `mcp_agent` and `payment_agent`. The `environment` field (`mcp` or `payment`) selects which testbed it drives, and the rest of the spec is the same shape. `environment` also decides which probes apply (the `mcp/` or `payment/` probe families).
 
 ```json
 {

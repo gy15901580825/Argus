@@ -83,17 +83,16 @@ class TestbedAgentTarget(Target):
             )
 
     def _script_for(self, probe) -> dict[str, Any]:
-        """The hostile scenario this probe attacks with.
+        """The scenario this probe stages in the environment.
 
-        An MCP probe is its `scenario.payload`: which scenario the testbed
-        stages (tool poisoning, rug pull, shadowing, confused deputy, credential
-        lure). Run it without that and the agent meets whatever scenario the
-        run default names, behaves, and the probe reports a pass for an attack
-        that was never mounted.
+        A probe's `scenario.payload` tells the testbed what to stage. Run it
+        without that and the agent meets whatever scenario the run default
+        names, behaves, and the probe reports a pass for an attack that was
+        never mounted.
 
         Malformed payloads therefore raise rather than degrading to the default
-        script — quietly running unstaged is exactly how that false green stayed
-        invisible in the payment adapter this one is modeled on.
+        script, since quietly running unstaged is how a false green stays
+        invisible.
         """
         raw = getattr(probe, "scenario_payload", "") or ""
         if not isinstance(raw, str):
@@ -124,10 +123,9 @@ class TestbedAgentTarget(Target):
 
         Two probes sharing one session is a false-green generator: the second
         probe inherits the first one's interaction count and slips past the
-        `requires_interaction` gate that exists to turn "the agent never showed
-        up" into an error rather than a pass, and it inherits the first one's
-        tool calls, which makes `no_call_to_tool` / `max_tool_calls` judge tool
-        calls that happened under a different probe.
+        `requires_interaction` gate that turns "the agent never showed up" into
+        an error rather than a pass, and it inherits the first one's recorded
+        actions, so the judges score what happened under a different probe.
         """
         # Parse before tearing anything down: a probe we are going to refuse
         # should not also cost the caller the session it is holding.
@@ -145,9 +143,9 @@ class TestbedAgentTarget(Target):
         return await self._inner.send_prompt(rendered, history=history)
 
     async def collect_evidence(self) -> dict:
-        """What happened at the testbed: every tool call, every description served.
+        """The testbed's record of what the agent did in this session.
 
-        Returns empty when no session was ever opened — the runner reads that as
+        Returns empty when no session was ever opened; the runner reads that as
         "the probe did not run" rather than as a clean bill of health.
         """
         if self._session is None:
@@ -204,5 +202,6 @@ class GenericTestbedAgentTarget(TestbedAgentTarget):
         self.url_key = env["url_key"]
         self.staging_noun = env["staging_noun"]
         self.teardown_label = env["teardown_label"]
-        self.compatible_classes = frozenset({f"{spec.environment}_agent"})
+        # The runner reads compatible_classes from the instance.
+        self.compatible_classes = frozenset({f"{spec.environment}_agent"})  # type: ignore[misc]
         super().__init__(spec)

@@ -35,7 +35,8 @@ assignees: ''
 - Python version:
 - OS:
 - Target adapter (`openai_compat` / `anthropic_native` / `custom_http` /
-  `grpc` / `browser_use`), if relevant:
+  `grpc` / `browser_use` / `payment_agent` / `mcp_agent` / `testbed_agent` /
+  `http_upload`), if relevant:
 
 ## Logs
 
