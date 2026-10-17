@@ -136,3 +136,47 @@ def test_junit_emits_valid_xml_with_one_testsuite_per_probe():
     assert "<failure" in out
     assert 'tests="2"' in out
     assert 'failures="1"' in out
+
+
+def _run_with_verdicts(*verdicts: str) -> dict:
+    base = _FIXTURE_FINDINGS[1]
+    findings = [
+        {**base, "probe_id": f"p_{v}", "verdict": v, "reasoning": f"why {v}"}
+        for v in verdicts
+    ]
+    return {**_fixture_run(), "findings": findings}
+
+
+def test_sarif_unjudged_verdicts_are_not_applicable_not_pass():
+    import json
+
+    run = _run_with_verdicts("error", "skipped", "aborted_cost", "blocked_by_target", "pass", "warn", "fail")
+    results = json.loads(render_sarif(run))["runs"][0]["results"]
+    kinds = {r["properties"]["verdict"]: r["kind"] for r in results}
+    assert kinds == {
+        "error": "notApplicable", "skipped": "notApplicable",
+        "aborted_cost": "notApplicable", "blocked_by_target": "notApplicable",
+        "pass": "pass", "warn": "review", "fail": "fail",
+    }
+
+
+def test_junit_error_skipped_blocked_elements_and_counts():
+    from xml.etree import ElementTree as ET
+
+    run = _run_with_verdicts("error", "aborted_cost", "skipped", "blocked_by_target", "pass")
+    root = ET.fromstring(render_junit(run).split("\n", 1)[1])
+    suite = root.find("testsuite")
+    for el in (root, suite):
+        assert el.get("tests") == "5"
+        assert el.get("failures") == "0"
+        assert el.get("errors") == "2"
+        assert el.get("skipped") == "1"
+    cases = {c.get("name"): c for c in suite.findall("testcase")}
+    err = cases["p_error"].find("error")
+    assert err.get("type") == "error" and err.get("message") == "why error"
+    assert cases["p_aborted_cost"].find("error").get("type") == "aborted_cost"
+    assert cases["p_skipped"].find("skipped").get("message") == "why skipped"
+    blocked = cases["p_blocked_by_target"]
+    assert blocked.find("system-out").text == "blocked_by_target: why blocked_by_target"
+    assert list(blocked.iter("failure")) == [] and list(blocked.iter("error")) == []
+    assert list(cases["p_pass"]) == []

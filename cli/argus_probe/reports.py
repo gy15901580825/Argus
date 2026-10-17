@@ -44,6 +44,9 @@ def render_sarif(run: dict) -> str:
         "low": "note",
         "info": "note",
     }
+    # Only judged verdicts map to a SARIF kind. error / skipped /
+    # blocked_by_target / aborted_cost were not judged and must not read as a
+    # pass; the real verdict stays in properties.verdict.
     verdict_to_kind = {"fail": "fail", "warn": "review", "pass": "pass"}
 
     rules = {}
@@ -67,7 +70,7 @@ def render_sarif(run: dict) -> str:
         results.append({
             "ruleId": rid,
             "level": sev_to_level.get(f.get("severity", "info"), "note"),
-            "kind": verdict_to_kind.get(f.get("verdict", "pass"), "pass"),
+            "kind": verdict_to_kind.get(f.get("verdict"), "notApplicable"),
             "message": {"text": f.get("reasoning", "")},
             # SARIF 2.1.0 requires every result to carry at least one location
             # so GitHub code-scanning can dedupe and place alerts. Red-team
@@ -133,20 +136,29 @@ def render_sarif(run: dict) -> str:
     return json.dumps(sarif, indent=2)
 
 
+_JUNIT_ERROR_VERDICTS = ("error", "aborted_cost")
+
+
 def render_junit(run: dict) -> str:
     """JUnit XML. One <testsuite> per run, one <testcase> per finding.
     Failures (verdict=fail) emit <failure>; warns are passes with extra system-out info."""
     findings = run.get("findings", [])
     fail_count = sum(1 for f in findings if f.get("verdict") == "fail")
+    error_count = sum(1 for f in findings if f.get("verdict") in _JUNIT_ERROR_VERDICTS)
+    skipped_count = sum(1 for f in findings if f.get("verdict") == "skipped")
     suites = ET.Element("testsuites", attrib={
         "name": "Argus",
         "tests": str(len(findings)),
         "failures": str(fail_count),
+        "errors": str(error_count),
+        "skipped": str(skipped_count),
     })
     suite = ET.SubElement(suites, "testsuite", attrib={
         "name": f"redteam-run-{run.get('id', 'unknown')[:8]}",
         "tests": str(len(findings)),
         "failures": str(fail_count),
+        "errors": str(error_count),
+        "skipped": str(skipped_count),
     })
     for f in findings:
         case = ET.SubElement(suite, "testcase", attrib={
@@ -167,4 +179,18 @@ def render_junit(run: dict) -> str:
         elif f.get("verdict") == "warn":
             sysout = ET.SubElement(case, "system-out")
             sysout.text = f"warn ({f.get('severity')}): {f.get('reasoning','')}"
+        elif f.get("verdict") in _JUNIT_ERROR_VERDICTS:
+            ET.SubElement(case, "error", attrib={
+                "type": f["verdict"],
+                "message": f.get("reasoning", "")[:200],
+            })
+        elif f.get("verdict") == "skipped":
+            ET.SubElement(case, "skipped", attrib={
+                "message": f.get("reasoning", "")[:200],
+            })
+        elif f.get("verdict") == "blocked_by_target":
+            # A partial defense: the target refused at its gateway. Passing,
+            # but say why so it is not mistaken for a judged pass.
+            sysout = ET.SubElement(case, "system-out")
+            sysout.text = f"blocked_by_target: {f.get('reasoning','')}"
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(suites, encoding="unicode")

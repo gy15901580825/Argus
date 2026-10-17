@@ -333,7 +333,7 @@ class Runner:
                 yield self._finding(
                     probe, prompt, response_text, latency_ms, probed_at,
                     verdict=VERDICT_ERROR, severity="info", confidence=1.0,
-                    reasoning=f"judge reply could not be used: {e}",
+                    reasoning=f"judge reply could not be used: {str(e)[:200]}",
                     evidence=None,
                 )
                 continue
@@ -431,7 +431,7 @@ class Runner:
                     yield self._finding(
                         probe, prompt, response_text, latency_ms, probed_at,
                         verdict=VERDICT_ERROR, severity="info", confidence=1.0,
-                        reasoning=f"judge reply could not be used: {e}",
+                        reasoning=f"judge reply could not be used: {str(e)[:200]}",
                         evidence=None,
                     )
                     return
