@@ -39,6 +39,8 @@ argus-probe run --local --target argus-target.json --probes owasp_07_system_prom
 
 `--local` does not support `browser_use` targets; submit those to a server.
 
+Optional: `REDTEAM_DECIDER=jev` plus `TYPESAFE_API_KEY` lets a third-party model settle conflicting judge verdicts. It sends probe text to TypeSafe; see `docs/operations/judge-decider.md`.
+
 `--per-run-cap` and `--fail-on` work the same way as in server mode. If this is all you need, skip steps 3 to 5 and continue at step 6 to read the report.
 
 ## 3. Get an Argus API token (server mode)

@@ -13,6 +13,7 @@ import logging
 from dataclasses import dataclass, replace
 from typing import Optional
 
+from orchestrator.redteam import decider as decider_mod
 from orchestrator.redteam import llm
 from orchestrator.redteam.cost_meter import CostMeter
 
@@ -60,6 +61,8 @@ class Judge:
         if api_key and not self._cfg.anthropic_api_key:
             self._cfg = replace(self._cfg, anthropic_api_key=api_key)
         self._cost_meter = cost_meter
+        # None unless REDTEAM_DECIDER=jev and TYPESAFE_API_KEY are set.
+        self._decider = decider_mod.from_env()
 
     async def judge(
         self,
@@ -84,7 +87,29 @@ class Judge:
             should_escalate = False
 
         if should_escalate:
-            strong_v = await self._call("strong", probe_name, attack_prompt, target_response, rubric_text)
+            strong_v: Optional[Verdict] = None
+            strong_error: Optional[str] = None
+            try:
+                strong_v = await self._call("strong", probe_name, attack_prompt, target_response, rubric_text)
+            except ValueError as e:
+                # Without a decider this is today's path: the error propagates.
+                if self._decider is None:
+                    raise
+                strong_error = str(e)[:200]
+            if self._decider is not None and (strong_v is None or strong_v.verdict != fast_v.verdict):
+                decision = await self._decider.decide(
+                    probe_name=probe_name,
+                    rubric_text=rubric_text,
+                    attack_prompt=attack_prompt,
+                    target_response=target_response,
+                    fast=fast_v,
+                    strong=strong_v,
+                    strong_error=strong_error,
+                )
+                if decision is not None:
+                    return _with_decision(fast_v, strong_v, decision)
+            if strong_v is None:
+                raise ValueError(strong_error)
             return Verdict(
                 verdict=strong_v.verdict,
                 severity=strong_v.severity,
@@ -140,6 +165,33 @@ class Judge:
             raise ValueError(
                 f"judge {model} on probe {probe_name!r}: malformed verdict {text[:200]!r}"
             ) from e
+
+
+def _with_decision(fast_v: Verdict, strong_v: Optional[Verdict], d: "decider_mod.Decision") -> Verdict:
+    """Fold a Jev decision into a verdict. Below the gate it is `warn` (human review), never `pass`."""
+    sev_source = strong_v or fast_v  # a parse failure leaves only the fast judge's severity
+    if d.acted:
+        verdict = d.choice
+        severity = "info" if d.choice == "pass" else sev_source.severity
+    else:
+        verdict, severity = "warn", sev_source.severity
+    reasoning = f"{fast_v.judge_model}: {fast_v.reasoning}"
+    if strong_v is not None:
+        reasoning += f" | {strong_v.judge_model}: {strong_v.reasoning}"
+    else:
+        reasoning += " | strong judge reply could not be parsed"
+    reasoning += (
+        f" | jev({d.model}): {d.choice} p={d.probability:.2f} conf={d.confidence:.2f} "
+        f"gate={d.gate:.2f} -> {'acted' if d.acted else 'review'}"
+    )
+    return Verdict(
+        verdict=verdict,
+        severity=severity,
+        confidence=d.confidence,
+        reasoning=reasoning,
+        judge_model=fast_v.judge_model,
+        escalated_model=d.model,
+    )
 
 
 # Haiku sometimes returns confidence as a textual qualifier ("high" / "medium" /
