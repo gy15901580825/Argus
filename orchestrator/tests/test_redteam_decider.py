@@ -1,5 +1,6 @@
 """Tests for the optional Jev decider and its wiring into the judge."""
 
+import asyncio
 import json
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -302,3 +303,54 @@ async def test_text_fields_truncated_at_8000(httpx_mock, jev_on):
     assert "[truncated]" in st["rubric"]
     assert st["attack_prompt"] == "A" * 8000  # at the limit: untouched
     assert "[truncated]" in st["target_response"]
+
+
+@pytest.mark.asyncio
+async def test_total_deadline_returns_none(jev_on, monkeypatch, caplog):
+    """A response that never finishes (slow drip) is cut off by the total deadline."""
+    monkeypatch.setenv("REDTEAM_DECIDER_TIMEOUT_S", "0.05")
+
+    async def never(self, *a, **kw):
+        await asyncio.sleep(30)
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", never)
+    d = decider.from_env()
+    v = Verdict(verdict="fail", severity="high", confidence=0.9, reasoning="r", judge_model="m")
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    out = await d.decide(
+        probe_name="p", rubric_text="r", attack_prompt="a", target_response="t",
+        fast=v, strong=None, strong_error="e",
+    )
+    assert out is None
+    assert loop.time() - start < 5
+    assert "TimeoutError" in caplog.text
+
+
+@pytest.mark.parametrize("raw", ["nan", "inf", "-inf"])
+@pytest.mark.parametrize("name,default", [
+    ("REDTEAM_DECIDER_GATE", 0.8), ("REDTEAM_DECIDER_TIMEOUT_S", 20.0),
+])
+def test_non_finite_env_falls_back(monkeypatch, caplog, name, default, raw):
+    monkeypatch.setenv(name, raw)
+    assert decider._float_env(name, default, max_value=1.0 if "GATE" in name else None) == default
+    assert "out of range" in caplog.text
+
+
+@pytest.mark.parametrize("raw", ["0", "-0.5", "1.5"])
+def test_gate_out_of_range_falls_back(monkeypatch, jev_on, caplog, raw):
+    monkeypatch.setenv("REDTEAM_DECIDER_GATE", raw)
+    assert decider.from_env()._gate == 0.8
+    assert "REDTEAM_DECIDER_GATE" in caplog.text
+
+
+def test_gate_upper_bound_inclusive(monkeypatch, jev_on):
+    monkeypatch.setenv("REDTEAM_DECIDER_GATE", "1")
+    assert decider.from_env()._gate == 1.0
+
+
+@pytest.mark.parametrize("raw", ["0", "-3"])
+def test_timeout_non_positive_falls_back(monkeypatch, jev_on, caplog, raw):
+    monkeypatch.setenv("REDTEAM_DECIDER_TIMEOUT_S", raw)
+    assert decider.from_env()._timeout_s == 20.0
+    assert "REDTEAM_DECIDER_TIMEOUT_S" in caplog.text
