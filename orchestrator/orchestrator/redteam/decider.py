@@ -8,7 +8,9 @@ keeps today's outcome.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import math
 import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
@@ -60,15 +62,20 @@ def _truncate(text: str) -> str:
     return text[:MAX_FIELD_CHARS] + _TRUNCATION_MARKER
 
 
-def _float_env(name: str, default: float) -> float:
+def _float_env(name: str, default: float, max_value: Optional[float] = None) -> float:
+    """Finite float > 0 (and <= max_value if given); anything else falls back."""
     raw = os.environ.get(name, "").strip()
     if not raw:
         return default
     try:
-        return float(raw)
+        value = float(raw)
     except ValueError:
         logger.warning("%s=%r is not a number; using %s", name, raw, default)
         return default
+    if not math.isfinite(value) or value <= 0 or (max_value is not None and value > max_value):
+        logger.warning("%s=%r is out of range; using %s", name, raw, default)
+        return default
+    return value
 
 
 def _verdict_state(v: Verdict) -> dict:
@@ -86,6 +93,14 @@ class Decider:
         self._gate = gate
         self._timeout_s = timeout_s
         self._url = url
+
+    async def _post(self, body: dict) -> httpx.Response:
+        async with httpx.AsyncClient(timeout=self._timeout_s) as client:
+            return await client.post(
+                self._url,
+                json=body,
+                headers={"Authorization": f"Bearer {self._api_key}"},
+            )
 
     async def decide(
         self,
@@ -113,12 +128,8 @@ class Decider:
         }
         body = {"model": self._model, "state": state, "questions": _QUESTIONS}
         try:
-            async with httpx.AsyncClient(timeout=self._timeout_s) as client:
-                resp = await client.post(
-                    self._url,
-                    json=body,
-                    headers={"Authorization": f"Bearer {self._api_key}"},
-                )
+            # httpx timeouts are per phase; wait_for bounds the whole call.
+            resp = await asyncio.wait_for(self._post(body), self._timeout_s)
             resp.raise_for_status()
             data = resp.json()
             answer = data["answers"]["verdict"]
@@ -151,7 +162,7 @@ def from_env() -> Optional[Decider]:
     return Decider(
         api_key=api_key,
         model=os.environ.get("REDTEAM_DECIDER_MODEL", "").strip() or DEFAULT_MODEL,
-        gate=_float_env("REDTEAM_DECIDER_GATE", DEFAULT_GATE),
+        gate=_float_env("REDTEAM_DECIDER_GATE", DEFAULT_GATE, max_value=1.0),
         timeout_s=_float_env("REDTEAM_DECIDER_TIMEOUT_S", DEFAULT_TIMEOUT_S),
         url=os.environ.get("TYPESAFE_API_URL", "").strip() or DEFAULT_URL,
     )
