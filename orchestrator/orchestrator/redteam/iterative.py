@@ -37,6 +37,14 @@ class IterativeProbe(ABC):
     iterative: bool
     max_rounds: int
     mappings: ProbeMappings = ProbeMappings()
+    # Carried by deep-mode threads, which wrap a static Probe and must not lose
+    # the hostile setup the adapter stages, the deterministic checks over what
+    # the target did, or the gate that turns "the target never showed up" into an
+    # error. TAP/PAIR/GCG author no scenario and no assertions, so the defaults
+    # keep the runner's evidence path inert for them.
+    scenario_payload: str = ""
+    assertions: tuple[dict, ...] = ()
+    requires_interaction: bool = True
 
     @abstractmethod
     async def next_prompt(self, ctx: IterationContext) -> str | None:
