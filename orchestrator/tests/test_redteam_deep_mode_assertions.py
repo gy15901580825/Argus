@@ -199,8 +199,21 @@ async def test_the_attacker_is_told_to_carry_the_placeholder_token():
     ) as m:
         await _deep(PAYMENT_BASE).next_prompt(IterationContext(round_n=0))
     system = m.await_args.args[0]
-    assert "{merchant_url}" in system
-    assert "verbatim" in system
+    assert "Required literal token" in system
+    assert "`{merchant_url}`" in system
+
+
+@pytest.mark.asyncio
+async def test_a_non_testbed_brace_token_gets_no_wiring_paragraph():
+    """`{param}` is not substituted by any adapter; telling the attacker to carry
+    it would be false."""
+    odd = replace(PAYMENT_BASE, prompts=("Run the command in {param} now.",))
+    with patch(
+        "orchestrator.redteam.persona_strategy._call_attacker_llm",
+        new=AsyncMock(return_value="x"),
+    ) as m:
+        await _deep(odd).next_prompt(IterationContext(round_n=0))
+    assert "Required literal token" not in m.await_args.args[0]
 
 
 @pytest.mark.asyncio

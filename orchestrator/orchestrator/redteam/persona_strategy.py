@@ -25,6 +25,7 @@ from orchestrator.redteam.cost_meter import CostMeter
 from orchestrator.redteam.iterative import IterativeProbe, IterationContext
 from orchestrator.redteam.persona_loader import Persona, Strategy
 from orchestrator.redteam.probe import Probe, ProbeMappings
+from orchestrator.redteam.targets.testbed_agent import ENVIRONMENTS
 
 
 _ATTACKER_MODEL = "claude-haiku-4-5-20251001"
@@ -36,10 +37,15 @@ DEFAULT_MAX_ROUNDS = 20
 # How many (persona, strategy) pairings to sample per base probe.
 DEFAULT_DEEP_PAIRS = 3
 
+# Only the testbed url_keys count: other braces (`{param}`) are not substituted.
 # Placeholder tokens a probe writes for the adapter to substitute at send time
 # (`{merchant_url}`, `{mcp_url}`). Matched on the base probe's prompts so the
 # attacker LLM can be told to carry them; see PersonaStrategyProbe._wiring.
-_PLACEHOLDER_RE = re.compile(r"\{[a-z][a-z0-9_]*\}")
+_PLACEHOLDER_RE = re.compile(
+    "|".join(
+        re.escape("{" + env["url_key"] + "}") for env in ENVIRONMENTS.values()
+    )
+)
 
 _cost_meter: Optional[CostMeter] = None
 
