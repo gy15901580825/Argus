@@ -1,6 +1,9 @@
 """Factory: dict-spec → Target instance."""
 from __future__ import annotations
 
+import functools
+import logging
+from importlib.metadata import entry_points
 from typing import Any
 
 from orchestrator.redteam.targets._base import Target
@@ -30,12 +33,36 @@ _BUILDERS = {
     "vllm_server": (VLLMServerSpec, VLLMServerTarget),
 }
 
+logger = logging.getLogger(__name__)
+
+# Third-party adapters: `[project.entry-points."argus.targets"]`, name = kind,
+# value loads to a (SpecClass, TargetClass) tuple. Kept out of _BUILDERS, which
+# test_redteam_target_kind_wiring treats as the list of built-in kinds.
+ENTRY_POINT_GROUP = "argus.targets"
+
+
+@functools.cache
+def _plugin_builders() -> dict[str, tuple[type, type]]:
+    builders: dict[str, tuple[type, type]] = {}
+    for ep in entry_points(group=ENTRY_POINT_GROUP):
+        if ep.name in _BUILDERS:
+            logger.warning("target plugin %r ignored: %r is a built-in kind", ep.value, ep.name)
+            continue
+        try:
+            SpecClass, TargetClass = ep.load()
+        except Exception:
+            logger.warning("target plugin %r (%s) failed to load; skipped", ep.name, ep.value, exc_info=True)
+            continue
+        builders[ep.name] = (SpecClass, TargetClass)
+    return builders
+
 
 def build_target(spec: dict[str, Any]) -> Target:
     kind = spec.get("kind")
-    if kind not in _BUILDERS:
+    builder = _BUILDERS.get(kind) or _plugin_builders().get(kind)
+    if builder is None:
         raise ValueError(f"unknown target kind: {kind!r}")
-    SpecClass, TargetClass = _BUILDERS[kind]
+    SpecClass, TargetClass = builder
     spec_obj = SpecClass(**spec)
     return TargetClass(spec_obj)
 
