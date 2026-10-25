@@ -95,3 +95,19 @@ def test_unknown_kind_still_rejected_with_no_plugins(install_plugins):
     install_plugins()
     with pytest.raises(ValueError, match="unknown target kind"):
         build_target({"kind": "telepathy"})
+
+
+class OtherTarget(EchoTarget):
+    pass
+
+
+def test_two_plugins_same_kind_first_by_value_wins(install_plugins, caplog):
+    second = SimpleNamespace(name="echo", value="zz_plugin:echo", load=lambda: (EchoSpec, OtherTarget))
+    first = SimpleNamespace(name="echo", value="aa_plugin:echo", load=lambda: (EchoSpec, EchoTarget))
+    install_plugins(second, first)
+
+    with caplog.at_level(logging.WARNING, logger=targets_mod.__name__):
+        target = build_target({"kind": "echo"})
+
+    assert type(target) is EchoTarget
+    assert any("zz_plugin:echo" in r.getMessage() and "already registered" in r.getMessage() for r in caplog.records)

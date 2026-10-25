@@ -44,9 +44,13 @@ ENTRY_POINT_GROUP = "argus.targets"
 @functools.cache
 def _plugin_builders() -> dict[str, tuple[type, type]]:
     builders: dict[str, tuple[type, type]] = {}
-    for ep in entry_points(group=ENTRY_POINT_GROUP):
+    # Sorted so that, when two plugins claim one kind, the winner doesn't depend on install order.
+    for ep in sorted(entry_points(group=ENTRY_POINT_GROUP), key=lambda e: (e.name, e.value)):
         if ep.name in _BUILDERS:
             logger.warning("target plugin %r ignored: %r is a built-in kind", ep.value, ep.name)
+            continue
+        if ep.name in builders:
+            logger.warning("target plugin %r ignored: kind %r already registered", ep.value, ep.name)
             continue
         try:
             SpecClass, TargetClass = ep.load()
