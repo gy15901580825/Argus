@@ -229,7 +229,7 @@ We provide a thin reference adapter you can drop into your agent harness; ask in
 
 ## GitHub Actions integration
 
-There is no published GitHub Action. Once your `argus-target.json` is committed (or generated on the fly in CI), run the CLI in a workflow step. `argus-probe init --workflow` writes a workflow with the `pull_request`, `push` and `schedule` triggers and a conditional `--compare-to` (added only on pull requests):
+Use [`argus-probe-action`](https://github.com/marketplace/actions/argus-agent-red-team-scan). It installs `argus-probe[local]` from PyPI, runs the probes in local mode, uploads the SARIF to code scanning and applies the `fail-on` gate. `argus-probe init --workflow` writes this file (the `OPENAI_API_KEY` line appears because the target spec reads that key):
 
 ```yaml
 # .github/workflows/argus-probe.yml
@@ -249,14 +249,34 @@ jobs:
   redteam:
     runs-on: ubuntu-latest
     permissions:
-      security-events: write   # upload-sarif
+      security-events: write   # SARIF upload
       contents: read
     steps:
       - uses: actions/checkout@v4
+      - uses: gy15901580825/argus-probe-action@v1
+        env:
+          # The LLM judge.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        with:
+          target: argus-target.json
+          probes: owasp_01_prompt_injection_basic,syscard_crescendo
+          fail-on: critical
+```
+
+Add `ANTHROPIC_API_KEY` and any key your target spec references as repository secrets. Pull requests from forks and Dependabot do not receive repository secrets, so the keys are empty and the job fails on them.
+
+`fail-on: critical` fails the job when a critical finding lands; use `high` to tighten it, or set it to `""` to report without blocking. The SARIF uploads before the gate runs, so findings appear in the repo's **Security** tab either way. Other inputs: `per-run-cap` (USD, default `0.50`), `format`, `output`, `upload-sarif`, `argus-version`.
+
+### Server mode: gate only on new failures
+
+The action always runs in local mode, which keeps no run history. To fail a pull request only on failures that are new relative to the base branch, run the CLI against your own Argus API server with `--compare-to`:
+
+```yaml
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install "git+https://github.com/gy15901580825/Argus.git#subdirectory=cli"
+      - run: pip install argus-probe
       # PRs gate only on failures new relative to the base branch; pushes to main record the baseline.
       - run: >
           argus-probe run --target argus-target.json
@@ -266,20 +286,17 @@ jobs:
         env:
           ARGUS_API_URL: ${{ vars.ARGUS_API_URL }}
           ARGUS_API_TOKEN: ${{ secrets.ARGUS_API_TOKEN }}
-      - uses: github/codeql-action/upload-sarif@v3
+      - if: always()
+        uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: argus.sarif
 ```
 
-Set `ARGUS_API_URL` as a repository variable and `ARGUS_API_TOKEN` as a secret. `argus-probe` has no default endpoint, and a job that omits the URL fails with `Missing option '--api-url'`. Pull requests from forks and Dependabot do not receive repository secrets, so `ARGUS_API_TOKEN` is empty and the job fails on them.
+Set `ARGUS_API_URL` as a repository variable and `ARGUS_API_TOKEN` as a secret. `argus-probe` has no default endpoint, and a job that omits the URL fails with `Missing option '--api-url'`.
 
-`--fail-on critical` fails the job when a critical finding lands; use `high` to tighten it, or drop the flag to report without blocking. The SARIF is written before the exit, so it uploads either way.
-
-The generated workflow already gates pull requests with `--compare-to <base branch>` and records the baseline on pushes to `main`: on a PR, `--fail-on` counts only failures that are new relative to the latest run on the base branch. If you write your own workflow instead, keep both triggers and pass `--compare-to` only on pull requests; a scheduled or push run on `main` would compare `main` with itself, and without a completed run on `main` every failure counts as new. Server mode only, because it needs run history.
+Keep both the `pull_request` and `push` triggers and pass `--compare-to` only on pull requests. A scheduled or push run on `main` would compare `main` with itself, and without a completed run on `main` every failure counts as new.
 
 Two limits: a severity increase on a probe that was already failing does not count as new. Branch detection reads GitHub Actions variables or git, so on other CI systems with a detached HEAD no branch is recorded and every failure counts as new.
-
-The SARIF output is automatically uploaded to GitHub's code-scanning, so findings appear in your repo's **Security** tab alongside CodeQL / Dependabot / Snyk.
 
 ---
 

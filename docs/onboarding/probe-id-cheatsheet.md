@@ -52,7 +52,7 @@ Each finding carries one of:
 - **low** — the agent's behavior was subtly biased
 - **info** — the agent ignored the attack (verdict=pass) or the attack never reached the agent (verdict=blocked_by_target / skipped)
 
-There is no published GitHub Action. `argus-probe run --fail-on <severity>` exits 3 when a failing finding is at or above that level; the workflow in [target-spec-cookbook.md](./target-spec-cookbook.md) § "GitHub Actions integration" uses `--fail-on critical`.
+`argus-probe run --fail-on <severity>` exits 3 when a failing finding is at or above that level. In GitHub Actions, `argus-probe-action` takes the same value as its `fail-on` input; the workflow in [target-spec-cookbook.md](./target-spec-cookbook.md) § "GitHub Actions integration" uses `fail-on: critical`.
 
 ## Custom probes
 

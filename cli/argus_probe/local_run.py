@@ -11,7 +11,7 @@ from argus_probe import reports
 
 _INSTALL_HINT = (
     "local mode needs the argus-orchestrator package: "
-    'pip install "argus-probe[local] @ git+https://github.com/gy15901580825/Argus.git#subdirectory=cli"'
+    'pip install "argus-probe[local]", or with pipx: pipx install --force "argus-probe[local]"'
 )
 
 

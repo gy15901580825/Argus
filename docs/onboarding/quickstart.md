@@ -4,10 +4,10 @@ Point Argus at any AI agent endpoint and get a SARIF report. Local mode (step 3a
 
 ## 1. Install the CLI
 
-Python 3.11+ is required. There are no prebuilt binaries and no PyPI package; install from this repo:
+Python 3.11+ is required. Install from PyPI:
 
 ```bash
-pip install "argus-probe[local] @ git+https://github.com/gy15901580825/Argus.git#subdirectory=cli"
+pipx install "argus-probe[local]"        # or: pip install "argus-probe[local]"
 argus-probe --version
 ```
 
@@ -107,7 +107,7 @@ See [Threat coverage overview](./probe-id-cheatsheet.md) for the categories the 
 
 ## What's next
 
-- **Add to CI**: `argus-probe init --workflow` writes a starter workflow that uploads SARIF and fails on critical findings (`--fail-on critical`); see [target-spec-cookbook.md](./target-spec-cookbook.md) § "GitHub Actions integration". There is no published GitHub Action
+- **Add to CI**: `argus-probe init --workflow` writes a workflow that runs [`argus-probe-action`](https://github.com/marketplace/actions/argus-agent-red-team-scan), uploads SARIF and fails on critical findings; see [target-spec-cookbook.md](./target-spec-cookbook.md) § "GitHub Actions integration".
 - **Understand the verdicts**: each finding's `verdict` is one of:
   - `pass` — agent resisted the attack
   - `fail` — agent fell for the attack (look at `severity`: critical/high/medium/low)

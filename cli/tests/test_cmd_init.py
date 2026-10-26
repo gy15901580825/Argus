@@ -185,29 +185,40 @@ def test_init_with_workflow_writes_workflow_file(tmp_path, monkeypatch):
     wf_path = tmp_path / ".github" / "workflows" / "argus-probe.yml"
     assert wf_path.exists()
     content = wf_path.read_text()
-    # No published action exists; the workflow must install the CLI from the
-    # repo and run it directly.
-    assert "argus-probe-action" not in content
-    assert "<your-gh-user>" not in content
-    assert 'pip install "git+https://github.com/gy15901580825/Argus.git#subdirectory=cli"' in content
-    assert "--target argus-target.json" in content
-    assert "--fail-on critical" in content
-    assert "github/codeql-action/upload-sarif@v3" in content
     wf = yaml.safe_load(content)
     steps = wf["jobs"]["redteam"]["steps"]
-    run_step = next(s for s in steps if "argus-probe run" in s.get("run", ""))
-    assert run_step["env"]["ARGUS_API_URL"] == "${{ vars.ARGUS_API_URL }}"
-    assert run_step["env"]["ARGUS_API_TOKEN"] == "${{ secrets.ARGUS_API_TOKEN }}"
+    action = next(s for s in steps if "argus-probe-action" in s.get("uses", ""))
+    assert action["uses"] == "gy15901580825/argus-probe-action@v1"
+    assert action["with"]["target"] == "argus-target.json"
+    assert action["with"]["fail-on"] == "critical"
+    assert action["env"] == {
+        "ANTHROPIC_API_KEY": "${{ secrets.ANTHROPIC_API_KEY }}",
+        "OPENAI_API_KEY": "${{ secrets.OPENAI_API_KEY }}",
+    }
+    assert wf["jobs"]["redteam"]["permissions"]["security-events"] == "write"
+    assert "git+https" not in content
     # PyYAML parses the key `on` as boolean True.
     triggers = wf[True]
     assert triggers["pull_request"] == {"branches": ["main"]}
     assert triggers["push"] == {"branches": ["main"]}
     assert "schedule" in triggers
     assert "workflow_dispatch" in triggers
-    cmd = run_step["run"]
-    assert "github.event_name == 'pull_request'" in cmd
-    assert "--compare-to" in cmd
-    assert "--fail-on critical" in cmd
+    assert "ANTHROPIC_API_KEY as a repository secret" in result.output
+
+
+def test_init_workflow_does_not_repeat_anthropic_key(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(
+        init_command,
+        ["--kind", "anthropic_native", "--workflow"],
+        input="\n\n",
+    )
+    assert result.exit_code == 0, result.output
+    content = (tmp_path / ".github" / "workflows" / "argus-probe.yml").read_text()
+    assert content.count("ANTHROPIC_API_KEY:") == 1
+    steps = yaml.safe_load(content)["jobs"]["redteam"]["steps"]
+    action = next(s for s in steps if "argus-probe-action" in s.get("uses", ""))
+    assert action["env"] == {"ANTHROPIC_API_KEY": "${{ secrets.ANTHROPIC_API_KEY }}"}
 
 
 def test_init_refuses_overwrite_without_confirmation(tmp_path, monkeypatch):
