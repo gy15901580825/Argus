@@ -209,3 +209,26 @@ def test_local_missing_transitive_dependency_is_not_the_install_hint(tmp_path, m
     assert result.exit_code == 1, result.output
     assert "litellm" in result.output
     assert "argus-probe[local]" not in result.output
+
+
+def test_warning_event_goes_to_stderr_not_report(tmp_path, monkeypatch):
+    async def _warn(target, probe_ids, *, mode="static", per_run_cap_usd=None, env=None):
+        yield {"type": "warning", "message": "Judge model x is small."}
+        yield FAIL_FINDING
+        yield {"type": "coverage", "coverage": FAKE_COVERAGE}
+
+    _install_fake_orchestrator(monkeypatch, _warn)
+    out = tmp_path / "r.sarif"
+    try:
+        runner = CliRunner(mix_stderr=False)
+    except TypeError:  # click >= 8.2 always separates stderr and dropped the kwarg
+        runner = CliRunner()
+    result = runner.invoke(
+        cmd_run,
+        ["--local", "--target", _target(tmp_path), "--probes", "owasp_01_prompt_injection_basic",
+         "--format", "sarif", "--out", str(out)],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Warning: Judge model x is small." in result.stderr
+    assert "Judge model x" not in result.stdout
+    assert len(json.loads(out.read_text())["runs"][0]["results"]) == 1

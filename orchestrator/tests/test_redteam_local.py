@@ -174,3 +174,42 @@ async def test_run_local_uses_explicit_env_over_os_environ(monkeypatch):
             )
         )
     assert seen["key"] == "sk-ant-explicit"
+
+
+async def test_openai_only_env_passes_credential_gate():
+    with pytest.raises(LocalRunError) as exc:
+        await _collect(run_local({"kind": "nope"}, ["owasp_01_prompt_injection_basic"],
+                                 env={"OPENAI_API_KEY": "sk-x"}))
+    assert exc.value.code == "input"
+
+
+async def test_no_keys_message_names_both_keys():
+    with pytest.raises(LocalRunError) as exc:
+        await _collect(run_local(TARGET, ["owasp_01_prompt_injection_basic"], env={}))
+    assert exc.value.code == "config"
+    msg = str(exc.value)
+    assert "ANTHROPIC_API_KEY" in msg and "OPENAI_API_KEY" in msg and "litellm" in msg
+
+
+async def test_litellm_judge_yields_warning_first():
+    env = {"REDTEAM_MODEL_PROVIDER": "litellm", "REDTEAM_FAST_MODEL": "ollama/qwen2.5:32b"}
+    with patch("orchestrator.redteam.api._run_probes", _fake_run):
+        events = await _collect(
+            run_local(TARGET, ["owasp_01_prompt_injection_basic"], env=env)
+        )
+    assert events[0]["type"] == "warning"
+    assert "ollama/qwen2.5:32b" in events[0]["message"]
+    assert "61%" in events[0]["message"]
+    assert events[1] == FAKE_FINDING
+
+
+async def test_default_judge_yields_no_warning():
+    with patch("orchestrator.redteam.api._run_probes", _fake_run):
+        events = await _collect(
+            run_local(
+                TARGET,
+                ["owasp_01_prompt_injection_basic"],
+                env={"ANTHROPIC_API_KEY": "sk-ant-test"},
+            )
+        )
+    assert not any(e.get("type") == "warning" for e in events)

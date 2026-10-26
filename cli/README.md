@@ -49,6 +49,8 @@ argus-probe run --target argus-target.json \
 
 `--local` does not support `browser_use` targets; submit those to a server.
 
+The local judge uses `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY` when that is the only key set. For a local model, set `REDTEAM_MODEL_PROVIDER=litellm` and `REDTEAM_FAST_MODEL=ollama/qwen2.5:32b` (add `REDTEAM_LLM_API_BASE` for a non-default host); small models miss many jailbreaks, so the CLI prints a warning. `REDTEAM_MODEL_PROVIDER=azure` runs the judge on Azure OpenAI. Azure's default content filter blocks judge calls because the judge reads attack text, so use a custom filter policy with jailbreak detection turned off for that deployment (also when `OPENAI_API_KEY` is paired with `REDTEAM_LLM_API_BASE` pointing at Azure). If `OPENAI_API_KEY` is paired with `REDTEAM_LLM_API_BASE` pointing at Azure, set `REDTEAM_FAST_MODEL` and `REDTEAM_STRONG_MODEL` to your deployment names, because the default strong model `gpt-5.6-terra` is usually not deployed. Local models other than Ollama (vLLM or LM Studio via `openai/...` with `REDTEAM_LLM_API_BASE`) are billed at the most expensive known rate, so pass `--per-run-cap`.
+
 There is no hosted Argus instance. `ARGUS_API_URL` is your own `api_service` deployment, and the token is the `api_token` of a user on that server. An admin mints one with `POST /api/v1/admin/users` and `"api_token_only": true`; see the [quickstart](https://github.com/gy15901580825/Argus/blob/main/docs/onboarding/quickstart.md) for the first-admin step.
 
 ## Supported agent shapes

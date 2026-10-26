@@ -55,7 +55,14 @@ What Argus does:
   `orchestrator/orchestrator/redteam/rubrics/`. A fast model judges every
   response (Anthropic Haiku 4.5 by default); a strong model (Sonnet 4.6)
   re-judges when the first pass says high/critical with confidence ≥ 0.7.
-  Set `REDTEAM_MODEL_PROVIDER=azure` to run the judge on Azure OpenAI.
+  Set `OPENAI_API_KEY` to use OpenAI (picked automatically when it is the
+  only key set), `REDTEAM_MODEL_PROVIDER=azure` for Azure OpenAI, or
+  `REDTEAM_MODEL_PROVIDER=litellm` with `REDTEAM_FAST_MODEL=ollama/qwen2.5:32b`
+  for a local model (`REDTEAM_LLM_API_BASE` sets a non-default host). Small
+  local judges miss many jailbreaks, so the CLI warns when you use one. Azure
+  OpenAI's default content filter blocks judge calls because the judge reads
+  attack text; use a custom filter policy with jailbreak detection turned off
+  for that deployment.
   Probes that carry `assertions` (payment, MCP) are decided by deterministic
   checks on captured evidence and skip the judge.
 - **Report formats**: SARIF 2.1.0 (drops into GitHub Code Scanning), JUnit
@@ -151,7 +158,7 @@ need a judge key:
 
 ```bash
 pipx install "argus-probe[local]"        # or: pip install "argus-probe[local]"
-export ANTHROPIC_API_KEY=<your key>      # or REDTEAM_MODEL_PROVIDER=azure with the Azure variables
+export ANTHROPIC_API_KEY=<your key>      # or OPENAI_API_KEY; see "LLM-judge harness" above for Azure and local models
 argus-probe run --local --target argus-target.json \
                 --probes owasp_01_prompt_injection_basic,syscard_crescendo \
                 --format sarif --out argus.sarif

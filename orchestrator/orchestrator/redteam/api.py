@@ -240,13 +240,9 @@ async def run(req: RunRequest):
         cfg = llm.resolve_config()
     except ValueError as e:
         raise HTTPException(status_code=500, detail=str(e))
-    if cfg.provider == llm.PROVIDER_ANTHROPIC and not anthropic_api_key:
-        raise HTTPException(
-            status_code=500,
-            detail="ANTHROPIC_API_KEY not set in orchestrator env "
-                   "(REDTEAM_MODEL_PROVIDER=anthropic). Set the key, or set "
-                   "REDTEAM_MODEL_PROVIDER=azure to run the judge on Azure OpenAI.",
-        )
+    err = llm.credential_error(cfg)
+    if err:
+        raise HTTPException(status_code=500, detail=err)
 
     if not isinstance(req.target, dict):
         raise HTTPException(status_code=422, detail="target must be a JSON object")

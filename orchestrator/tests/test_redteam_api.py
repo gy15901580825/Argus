@@ -61,6 +61,25 @@ def test_redteam_run_returns_500_when_anthropic_key_missing(monkeypatch):
     assert "ANTHROPIC_API_KEY" in response.json()["detail"]
 
 
+def test_redteam_run_returns_500_when_openai_key_missing(monkeypatch):
+    monkeypatch.setenv("REDTEAM_MODEL_PROVIDER", "openai")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    client = TestClient(app)
+    response = client.post(
+        "/redteam/run",
+        json={
+            "target": {
+                "kind": "openai_compat",
+                "endpoint_url": "https://api.example.com/v1/chat/completions",
+                "model": "gpt-4",
+            },
+            "probe_ids": ["any"],
+        },
+    )
+    assert response.status_code == 500
+    assert response.json()["detail"].startswith("OPENAI_API_KEY is not set")
+
+
 def test_list_probes_returns_loaded_ids():
     client = TestClient(app)
     resp = client.get("/redteam/probes")
