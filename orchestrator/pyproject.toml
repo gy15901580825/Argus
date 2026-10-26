@@ -2,8 +2,10 @@
 name = "argus-orchestrator"
 version = "0.3.0"
 description = "Argus red-team engine: probe library, target adapters, judge harness"
+readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 dependencies = [
     "fastapi>=0.110",
     "pydantic>=2.5",
@@ -25,9 +27,15 @@ dev = ["import-linter>=2.0,<3.0"]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
+# Ship only the red-team engine. The rest of orchestrator/ is the legacy ADK
+# service, which needs google-adk and is not part of this package.
+[tool.setuptools]
+py-modules = ["orchestrator.email_alert"]  # lazily imported by redteam/cost_meter.py
+
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["orchestrator*"]
+include = ["orchestrator.redteam*"]
+namespaces = true
 
 [tool.setuptools.package-data]
 "orchestrator.redteam" = [

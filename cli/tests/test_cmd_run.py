@@ -86,8 +86,8 @@ def test_run_passes_per_run_cap_in_body(tmp_path):
         assert body["per_run_cap_usd"] == 0.25
 
 
-def test_run_returns_402_on_cost_rejection(tmp_path):
-    """When server returns 402, CLI exits with code 402 and prints detail to stderr."""
+def test_run_exits_4_on_cost_rejection(tmp_path):
+    """When server returns HTTP 402, CLI exits with code 4 and prints detail to stderr."""
     runner = CliRunner()
     target_spec = {
         "kind": "openai_compat",
@@ -115,7 +115,7 @@ def test_run_returns_402_on_cost_rejection(tmp_path):
             "--api-url", "https://dev.example.com",
             "--per-run-cap", "0.10",
         ])
-        assert result.exit_code == 402
+        assert result.exit_code == 4
         assert "cost" in result.output.lower() or "cost cap" in (result.output + "").lower()
 
 

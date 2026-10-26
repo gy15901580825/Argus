@@ -2,9 +2,10 @@
 name = "argus-probe"
 version = "0.1.0"
 description = "Argus red-team CLI — run, report, list-probes, validate-target"
+readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "NOTICE"]
 dependencies = [
     "click>=8.1",
     "httpx>=0.27",
@@ -17,10 +18,9 @@ dependencies = [
 argus-probe = "argus_probe.__main__:main"
 
 [project.optional-dependencies]
-# Direct URL dependencies are refused by PyPI. Before the first PyPI upload,
-# publish argus-orchestrator too and change this to a version specifier.
+# The engine behind `argus-probe run --local`.
 local = [
-    "argus-orchestrator @ git+https://github.com/gy15901580825/Argus.git#subdirectory=orchestrator",
+    "argus-orchestrator>=0.3,<0.4",
 ]
 
 [build-system]
