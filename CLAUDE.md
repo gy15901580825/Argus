@@ -89,6 +89,7 @@ Project docs live in `docs/`. The repo root keeps only `CLAUDE.md` and `README.m
 - `docs/CI_CD.md` — CI/CD pipeline (GitHub Actions build/push + ArgoCD GitOps to AKS)
 - `docs/runbooks/deploy.md` — Build images, Helm upgrade, frontend rebuild, domain-change checklist
 - `docs/runbooks/local-dev.md` — Run each service locally (Python services, frontend, Flyway migrations)
+- `docs/runbooks/release.md` — Publish argus-probe and argus-orchestrator to PyPI (trusted publishing, TestPyPI rehearsal)
 - `docs/reference/services.md` — Detailed request flows, API endpoint tables, frontend component tables
 - `docs/onboarding/` — Quickstart, probe ID cheatsheet, target-spec cookbook
 - `docs/operations/` — Operator-facing runbooks

@@ -1,0 +1,107 @@
+name: Release
+
+# Publishes argus-probe (cli/) and argus-orchestrator (orchestrator/) with PyPI
+# trusted publishing: the publish jobs get an OIDC token, so no API tokens or
+# secrets are stored. Setup and steps are in docs/runbooks/release.md.
+#
+# Manual run (default target testpypi) is the rehearsal; a v* tag publishes to PyPI.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Package index to publish to
+        type: choice
+        options: [testpypi, pypi]
+        default: testpypi
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build + check both packages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      - name: Tag must match argus-probe version
+        # The tag names the CLI release; argus-orchestrator keeps its own version.
+        if: github.ref_type == 'tag'
+        run: |
+          python - <<'PY'
+          import os, sys, tomllib
+          tag = os.environ["GITHUB_REF_NAME"]
+          version = tomllib.load(open("cli/pyproject.toml", "rb"))["project"]["version"]
+          if tag.removeprefix("v") != version:
+              sys.exit(f"tag {tag} does not match argus-probe version {version} in cli/pyproject.toml")
+          print(f"tag {tag} matches argus-probe {version}")
+          PY
+
+      - name: Build sdist + wheel
+        run: |
+          python -m build cli --outdir dist
+          python -m build orchestrator --outdir dist
+
+      - name: Check metadata
+        run: twine check --strict dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish-testpypi:
+    name: publish to TestPyPI
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
+    runs-on: ubuntu-latest
+    # Environment name must match the pending publisher registered on test.pypi.org.
+    environment: testpypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          # Lets the rehearsal be re-run without bumping versions.
+          skip-existing: true
+
+  publish-pypi:
+    name: publish to PyPI
+    needs: build
+    # Manual PyPI runs skip the tag check, so only allow them from main.
+    if: github.event_name == 'push' || (inputs.target == 'pypi' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    # Environment name must match the pending publisher registered on pypi.org.
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # A CLI-only release leaves argus-orchestrator's version unchanged;
+          # skip that file instead of failing on "file already exists".
+          skip-existing: true
