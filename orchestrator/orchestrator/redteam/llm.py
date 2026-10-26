@@ -14,6 +14,11 @@ The provider resolves the role to a concrete model and reports back which model
 actually served the request, so `CostMeter` bills the right rate even when a
 fallback fired.
 
+`openai` and `litellm` exist for users without an Anthropic key (`litellm` reaches
+anything litellm speaks, e.g. a local Ollama model). They never fall back to another
+vendor: a judge silently re-run on a different vendor would send the operator's
+target traffic somewhere they did not choose, so failure surfaces instead.
+
 Mirrors the naming of the planner's knobs (`PLANNER_MODEL_PROVIDER`,
 `PLANNER_MODEL`, `PLANNER_FALLBACK_MODEL`).
 """
@@ -29,7 +34,9 @@ logger = logging.getLogger(__name__)
 
 PROVIDER_ANTHROPIC = "anthropic"
 PROVIDER_AZURE = "azure"
-_VALID_PROVIDERS = (PROVIDER_ANTHROPIC, PROVIDER_AZURE)
+PROVIDER_OPENAI = "openai"
+PROVIDER_LITELLM = "litellm"
+_VALID_PROVIDERS = (PROVIDER_ANTHROPIC, PROVIDER_AZURE, PROVIDER_OPENAI, PROVIDER_LITELLM)
 
 # Defaults per provider. Anthropic's are the models the judge shipped with; the
 # defaults must not change behaviour for an operator who sets nothing.
@@ -39,6 +46,8 @@ _DEFAULTS = {
     # both roles land on it unless the operator configures a second one. See
     # `escalation_is_meaningful`.
     PROVIDER_AZURE: {"fast": "gpt-5.4-mini", "strong": "gpt-5.4-mini"},
+    PROVIDER_OPENAI: {"fast": "gpt-5.6-luna", "strong": "gpt-5.6-terra"},
+    # No litellm entry: the model string is user-supplied (REDTEAM_FAST_MODEL).
 }
 
 
@@ -53,10 +62,25 @@ class LLMConfig:
     strong_model: str
     fallback_enabled: bool
     anthropic_api_key: Optional[str]
+    openai_api_key: Optional[str] = None
+    api_base: Optional[str] = None
 
     @property
-    def fallback_provider(self) -> str:
-        return PROVIDER_AZURE if self.provider == PROVIDER_ANTHROPIC else PROVIDER_ANTHROPIC
+    def fallback_provider(self) -> Optional[str]:
+        # openai/litellm never fall back: see module docstring.
+        if self.provider == PROVIDER_ANTHROPIC:
+            return PROVIDER_AZURE
+        if self.provider == PROVIDER_AZURE:
+            return PROVIDER_ANTHROPIC
+        return None
+
+    def missing_credential(self) -> Optional[str]:
+        """Name of the env var the chosen provider needs but lacks, else None."""
+        if self.provider == PROVIDER_ANTHROPIC and not self.anthropic_api_key:
+            return "ANTHROPIC_API_KEY"
+        if self.provider == PROVIDER_OPENAI and not self.openai_api_key:
+            return "OPENAI_API_KEY"
+        return None
 
     @property
     def escalation_is_meaningful(self) -> bool:
@@ -86,19 +110,35 @@ class Completion:
 
 def resolve_config(env: Optional[Mapping[str, str]] = None) -> LLMConfig:
     env = os.environ if env is None else env
-    provider = env.get("REDTEAM_MODEL_PROVIDER", PROVIDER_ANTHROPIC).strip().lower()
+    provider = (env.get("REDTEAM_MODEL_PROVIDER") or "").strip().lower()
+    if not provider:
+        # Only an OpenAI key present: use it rather than demand an Anthropic one.
+        if not env.get("ANTHROPIC_API_KEY") and env.get("OPENAI_API_KEY"):
+            provider = PROVIDER_OPENAI
+        else:
+            provider = PROVIDER_ANTHROPIC
     if provider not in _VALID_PROVIDERS:
         raise ValueError(
             f"REDTEAM_MODEL_PROVIDER={provider!r} is not supported; "
             f"expected one of {list(_VALID_PROVIDERS)}"
         )
-    defaults = _DEFAULTS[provider]
+    if provider == PROVIDER_LITELLM:
+        fast = env.get("REDTEAM_FAST_MODEL")
+        if not fast:
+            raise ValueError("REDTEAM_MODEL_PROVIDER=litellm requires REDTEAM_FAST_MODEL")
+        strong = env.get("REDTEAM_STRONG_MODEL") or fast
+    else:
+        defaults = _DEFAULTS[provider]
+        fast = env.get("REDTEAM_FAST_MODEL") or defaults["fast"]
+        strong = env.get("REDTEAM_STRONG_MODEL") or defaults["strong"]
     return LLMConfig(
         provider=provider,
-        fast_model=env.get("REDTEAM_FAST_MODEL") or defaults["fast"],
-        strong_model=env.get("REDTEAM_STRONG_MODEL") or defaults["strong"],
+        fast_model=fast,
+        strong_model=strong,
         fallback_enabled=env.get("REDTEAM_LLM_FALLBACK", "on").strip().lower() != "off",
         anthropic_api_key=env.get("ANTHROPIC_API_KEY"),
+        openai_api_key=env.get("OPENAI_API_KEY"),
+        api_base=env.get("REDTEAM_LLM_API_BASE") or None,
     )
 
 
@@ -151,7 +191,41 @@ async def _call_azure(cfg: LLMConfig, model: str, system: str, user: str, max_to
     )
 
 
-_DISPATCH = {PROVIDER_ANTHROPIC: _call_anthropic, PROVIDER_AZURE: _call_azure}
+async def _call_litellm(cfg: LLMConfig, model: str, system: str, user: str, max_tokens: int) -> Completion:
+    # No `temperature`, same as azure: newer OpenAI models reject it.
+    kwargs = {}
+    if cfg.provider == PROVIDER_OPENAI:
+        litellm_model = f"openai/{model}"
+        kwargs["api_key"] = cfg.openai_api_key
+    else:
+        litellm_model = model
+    if cfg.api_base:
+        kwargs["api_base"] = cfg.api_base
+    resp = await _acompletion(
+        model=litellm_model,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        max_tokens=max_tokens,
+        stream=False,
+        **kwargs,
+    )
+    usage = getattr(resp, "usage", None)
+    return Completion(
+        text=(resp.choices[0].message.content or "").strip(),
+        input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+        output_tokens=getattr(usage, "completion_tokens", 0) or 0,
+        model=model,
+    )
+
+
+_DISPATCH = {
+    PROVIDER_ANTHROPIC: _call_anthropic,
+    PROVIDER_AZURE: _call_azure,
+    PROVIDER_OPENAI: _call_litellm,
+    PROVIDER_LITELLM: _call_litellm,
+}
 
 
 async def complete(cfg: LLMConfig, *, role: str, system: str, user: str, max_tokens: int) -> Completion:
@@ -162,8 +236,8 @@ async def complete(cfg: LLMConfig, *, role: str, system: str, user: str, max_tok
     """
     errors: list[str] = []
     attempts = [(cfg.provider, cfg.model_for(role))]
-    if cfg.fallback_enabled:
-        fb = cfg.fallback_provider
+    fb = cfg.fallback_provider
+    if cfg.fallback_enabled and fb is not None:
         attempts.append((fb, _DEFAULTS[fb][role]))
 
     for provider, model in attempts:

@@ -184,3 +184,138 @@ async def test_fallback_can_be_disabled():
         with pytest.raises(llm.AllProvidersFailed):
             await llm.complete(cfg, role="fast", system="s", user="u", max_tokens=50)
     m.assert_not_awaited()
+
+
+# --------------------------------------------------------------------------
+# openai / litellm providers: auto-detect, config, and no cross-vendor fallback
+# --------------------------------------------------------------------------
+
+def test_openai_key_alone_selects_openai():
+    cfg = llm.resolve_config(env={"OPENAI_API_KEY": "sk-x"})
+    assert (cfg.provider, cfg.fast_model, cfg.strong_model) == ("openai", "gpt-5.6-luna", "gpt-5.6-terra")
+
+
+def test_explicit_provider_beats_autodetect():
+    cfg = llm.resolve_config(env={"REDTEAM_MODEL_PROVIDER": "anthropic", "OPENAI_API_KEY": "sk-x"})
+    assert cfg.provider == "anthropic"
+    assert cfg.missing_credential() == "ANTHROPIC_API_KEY"
+
+
+def test_empty_provider_counts_as_unset():
+    cfg = llm.resolve_config(env={"REDTEAM_MODEL_PROVIDER": "", "OPENAI_API_KEY": "sk-x"})
+    assert cfg.provider == "openai"
+
+
+def test_both_keys_keep_anthropic():
+    assert llm.resolve_config(env={"ANTHROPIC_API_KEY": "a", "OPENAI_API_KEY": "o"}).provider == "anthropic"
+
+
+def test_empty_openai_key_does_not_autodetect():
+    assert llm.resolve_config(env={"OPENAI_API_KEY": ""}).provider == "anthropic"
+
+
+@pytest.mark.parametrize("env,expected", [
+    ({}, "ANTHROPIC_API_KEY"),
+    ({"ANTHROPIC_API_KEY": "a"}, None),
+    ({"REDTEAM_MODEL_PROVIDER": "openai", "OPENAI_API_KEY": ""}, "OPENAI_API_KEY"),
+    ({"REDTEAM_MODEL_PROVIDER": "openai", "OPENAI_API_KEY": "o"}, None),
+    ({"REDTEAM_MODEL_PROVIDER": "azure"}, None),
+    ({"REDTEAM_MODEL_PROVIDER": "litellm", "REDTEAM_FAST_MODEL": "ollama/qwen2.5:32b"}, None),
+])
+def test_missing_credential(env, expected):
+    assert llm.resolve_config(env=env).missing_credential() == expected
+
+
+def test_litellm_requires_fast_model():
+    with pytest.raises(ValueError, match="REDTEAM_FAST_MODEL"):
+        llm.resolve_config(env={"REDTEAM_MODEL_PROVIDER": "litellm"})
+
+
+def test_litellm_strong_defaults_to_fast():
+    cfg = llm.resolve_config(env={"REDTEAM_MODEL_PROVIDER": "litellm", "REDTEAM_FAST_MODEL": "ollama/qwen2.5:32b"})
+    assert cfg.strong_model == "ollama/qwen2.5:32b"
+    assert cfg.escalation_is_meaningful is False
+
+
+def test_api_base_read_from_env_and_empty_is_none():
+    assert llm.resolve_config(env={"REDTEAM_LLM_API_BASE": "http://h:1"}).api_base == "http://h:1"
+    assert llm.resolve_config(env={"REDTEAM_LLM_API_BASE": ""}).api_base is None
+
+
+@pytest.mark.parametrize("provider,fb", [
+    ("anthropic", "azure"), ("azure", "anthropic"), ("openai", None), ("litellm", None),
+])
+def test_fallback_provider(provider, fb):
+    env = {"REDTEAM_MODEL_PROVIDER": provider, "REDTEAM_FAST_MODEL": "ollama/x"}
+    assert llm.resolve_config(env=env).fallback_provider == fb
+
+
+@pytest.mark.asyncio
+async def test_openai_path_sends_prefixed_model_and_key():
+    cfg = llm.resolve_config(env={"OPENAI_API_KEY": "sk-x"})
+    with patch.object(llm, "_acompletion", new=AsyncMock(return_value=_litellm_response("hi", 3, 4))) as m:
+        out = await llm.complete(cfg, role="fast", system="SYS", user="USR", max_tokens=50)
+    kw = m.await_args.kwargs
+    assert kw["model"] == "openai/gpt-5.6-luna"
+    assert kw["api_key"] == "sk-x"
+    assert "temperature" not in kw
+    assert "api_base" not in kw
+    assert kw["stream"] is False
+    assert kw["max_tokens"] == 50
+    assert kw["messages"][0] == {"role": "system", "content": "SYS"}
+    assert (out.text, out.input_tokens, out.output_tokens, out.model) == ("hi", 3, 4, "gpt-5.6-luna")
+
+
+@pytest.mark.asyncio
+async def test_litellm_path_passes_model_and_api_base_raw():
+    cfg = llm.resolve_config(env={
+        "REDTEAM_MODEL_PROVIDER": "litellm",
+        "REDTEAM_FAST_MODEL": "ollama/qwen2.5:32b",
+        "REDTEAM_LLM_API_BASE": "http://gpu-box:11434",
+    })
+    with patch.object(llm, "_acompletion", new=AsyncMock(return_value=_litellm_response("hi"))) as m:
+        out = await llm.complete(cfg, role="fast", system="s", user="u", max_tokens=50)
+    kw = m.await_args.kwargs
+    assert kw["model"] == "ollama/qwen2.5:32b"
+    assert kw["api_base"] == "http://gpu-box:11434"
+    assert "temperature" not in kw
+    assert out.model == "ollama/qwen2.5:32b"
+
+
+@pytest.mark.asyncio
+async def test_api_base_is_not_sent_to_azure_or_anthropic():
+    cfg = llm.resolve_config(env={"REDTEAM_MODEL_PROVIDER": "azure", "REDTEAM_LLM_API_BASE": "http://h:1"})
+    with patch.object(llm, "_acompletion", new=AsyncMock(return_value=_litellm_response("x"))) as m:
+        await llm.complete(cfg, role="fast", system="s", user="u", max_tokens=50)
+    assert "api_base" not in m.await_args.kwargs
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("env", [
+    {"OPENAI_API_KEY": "sk-x"},
+    {"REDTEAM_MODEL_PROVIDER": "litellm", "REDTEAM_FAST_MODEL": "ollama/qwen2.5:32b"},
+])
+async def test_openai_and_litellm_failure_never_fall_back(env):
+    cfg = llm.resolve_config(env=env)
+    client = MagicMock()
+    client.messages.create = AsyncMock(return_value=_anthropic_response("nope"))
+    m = AsyncMock(side_effect=RuntimeError("boom"))
+    with patch.object(llm, "_anthropic_client", return_value=client) as ac, \
+         patch.object(llm, "_acompletion", new=m):
+        with pytest.raises(llm.AllProvidersFailed) as ei:
+            await llm.complete(cfg, role="fast", system="s", user="u", max_tokens=50)
+    assert m.await_count == 1
+    ac.assert_not_called()
+    msg = str(ei.value)
+    assert msg.count("boom") == 1
+    assert "anthropic" not in msg
+
+
+@pytest.mark.asyncio
+async def test_openai_empty_content_returns_empty_text():
+    cfg = llm.resolve_config(env={"OPENAI_API_KEY": "sk-x"})
+    resp = _litellm_response("x")
+    resp.choices[0].message.content = None
+    with patch.object(llm, "_acompletion", new=AsyncMock(return_value=resp)):
+        out = await llm.complete(cfg, role="fast", system="s", user="u", max_tokens=50)
+    assert out.text == ""
