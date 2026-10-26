@@ -15,6 +15,9 @@ from argus_probe.local_run import LocalUnavailable, run_local_and_render
 from argus_probe.severity import SEVERITY_ORDER, findings_at_or_above
 from argus_probe.target_loader import load_target_spec, TargetLoadError
 
+# Exit codes must fit 0-255; sys.exit(402) surfaced as 146 on Linux and macOS.
+EXIT_COST_CAP = 4
+
 
 @click.command()
 @click.option("--target", required=True, help="Target spec: JSON object (inline) or path to JSON file.")
@@ -92,7 +95,7 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
             except Exception:
                 detail = "cost cap exceeded"
             click.echo(f"Argus rejected run for cost: {detail}", file=sys.stderr)
-            sys.exit(402)
+            sys.exit(EXIT_COST_CAP)
         raise
     run_id = resp["run_id"]
     click.echo(f"  run_id: {run_id}")
@@ -161,7 +164,7 @@ def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on) ->
         code = getattr(e, "code", None)
         if code == "cost":
             click.echo(f"Run rejected for cost: {e}", file=sys.stderr)
-            sys.exit(402)
+            sys.exit(EXIT_COST_CAP)
         click.echo(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
     Path(out_file).write_text(report)

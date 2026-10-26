@@ -104,7 +104,7 @@ There is no published GitHub Action. Run the CLI in a workflow step and upload t
 
 The job needs `permissions: security-events: write` for the SARIF upload. `argus-probe init --workflow` writes a complete workflow file with that set; that workflow runs in server mode. Pull requests from forks and Dependabot do not receive repository secrets, so `ANTHROPIC_API_KEY` is empty and the job fails on them.
 
-`--fail-on <severity>` exits 3 when a failing finding is at or above that level; the SARIF is written first, so it still uploads. The workflow from `init --workflow` already passes `--compare-to <base branch>` on pull requests and records the baseline on pushes to `main`; if you write your own, keep both triggers and pass `--compare-to` only on pull requests, so `--fail-on` counts only new failures. `--compare-to` does not count severity increases on probes that already failed, needs GitHub Actions variables or git to detect the branch, and is server mode only, because it needs run history. Exit codes: 0 success, 1 run or configuration error, 2 usage error or `--local` without the engine installed, 3 threshold hit, 402 cost cap (outside 0-255, so Linux and macOS report 146).
+`--fail-on <severity>` exits 3 when a failing finding is at or above that level; the SARIF is written first, so it still uploads. The workflow from `init --workflow` already passes `--compare-to <base branch>` on pull requests and records the baseline on pushes to `main`; if you write your own, keep both triggers and pass `--compare-to` only on pull requests, so `--fail-on` counts only new failures. `--compare-to` does not count severity increases on probes that already failed, needs GitHub Actions variables or git to detect the branch, and is server mode only, because it needs run history. Exit codes: 0 success, 1 run or configuration error, 2 usage error or `--local` without the engine installed, 3 threshold hit, 4 cost cap.
 
 ## Cost controls
 
@@ -112,7 +112,7 @@ The job needs `permissions: security-events: write` for the SARIF upload. `argus
 argus-probe run --target ... --per-run-cap 0.50
 ```
 
-Runs that would exceed the cap are rejected before any LLM cost is incurred, in both server and local mode (exit code 402, reported as 146 on Linux and macOS).
+Runs that would exceed the cap are rejected before any LLM cost is incurred, in both server and local mode (exit code 4).
 
 ## Subcommands
 

@@ -103,7 +103,7 @@ def test_local_passes_probes_and_cap_through(tmp_path, monkeypatch):
     assert seen["target"]["kind"] == "openai_compat"
 
 
-def test_local_cost_cap_exits_402(tmp_path, monkeypatch):
+def test_local_cost_cap_exits_4(tmp_path, monkeypatch):
     async def _cost(target, probe_ids, **kw):
         raise _LocalRunError("estimated $9.00 exceeds per-run cap $0.50", "cost")
         yield  # pragma: no cover
@@ -112,7 +112,7 @@ def test_local_cost_cap_exits_402(tmp_path, monkeypatch):
     result = CliRunner().invoke(
         cmd_run, ["--local", "--target", _target(tmp_path), "--probes", "all", "--out", str(tmp_path / "r.html")],
     )
-    assert result.exit_code == 402, result.output
+    assert result.exit_code == 4, result.output
     assert "per-run cap" in result.output
     assert "Run rejected for cost" in result.output
 
