@@ -96,6 +96,13 @@ class TestbedAgentTarget(BaseModel):
     timeout_s: float = 60.0
 
 
+class MCPServerTarget(BaseModel):
+    kind: Literal["mcp_server"] = "mcp_server"
+    url: str
+    headers: list[tuple[str, str]] = Field(default_factory=list)
+    timeout_s: float = 30.0
+
+
 class HTTPUploadTarget(BaseModel):
     kind: Literal["http_upload"] = "http_upload"
     upload_url: str
@@ -127,6 +134,7 @@ TargetSpec = Annotated[
         MCPAgentTarget,
         TestbedAgentTarget,
         HTTPUploadTarget,
+        MCPServerTarget,
     ],
     Field(discriminator="kind"),
 ]

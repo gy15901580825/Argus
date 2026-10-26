@@ -28,6 +28,8 @@ VALID_TARGET_CLASSES = {
     # MCP probes only run against the instrumented hostile MCP server, for the
     # same reason payment probes only run against the payment testbed.
     "mcp_agent",
+    # MCP server exposure probes test the server itself, not an agent.
+    "mcp_server",
 }
 
 # The controlled axis. `attack_class` answers WHAT THE ATTACK ACHIEVES; the free
