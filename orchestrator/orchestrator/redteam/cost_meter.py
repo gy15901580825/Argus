@@ -249,8 +249,13 @@ class CostMeter:
         # Char-based heuristic with safety margin
         est_input_tokens = (_AVG_PROMPT_CHARS / _CHARS_PER_TOKEN) * _SAFETY_MARGIN
         est_output_tokens = (_AVG_RESPONSE_CHARS / _CHARS_PER_TOKEN) * _SAFETY_MARGIN
-        # Use Haiku rates as the dominant judge model
-        prices = _PRICES_PER_M_TOKENS["claude-haiku-4-5-20251001"]
+        # Price at the configured fast judge model; a bad provider setting falls back
+        # to Haiku here and is reported by the credential check.
+        from orchestrator.redteam import llm
+        try:
+            prices = _price_for(llm.resolve_config().fast_model)
+        except ValueError:
+            prices = _PRICES_PER_M_TOKENS["claude-haiku-4-5-20251001"]
         cost_per_call = (est_input_tokens / 1_000_000) * prices["input"] + (
             est_output_tokens / 1_000_000
         ) * prices["output"]

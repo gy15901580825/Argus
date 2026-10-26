@@ -124,3 +124,44 @@ def test_deep_preflight_respects_the_deep_daily_slice():
         m.check_or_abort_pre_run(
             probe_ids=["p1"], target_kind="openai_compat", total_exchanges=910, deep=True
         )
+
+
+def _big_run(m, **kw):
+    # owasp-llm-top10 shape: 552 judged exchanges.
+    return m.check_or_abort_pre_run(
+        probe_ids=["p"] * 205, target_kind="custom_http", total_exchanges=552,
+        per_run_cap_override=0.50, **kw
+    )
+
+
+def test_preflight_default_estimate_is_haiku_rated(monkeypatch):
+    m = CostMeter(daily_cap_usd=13.50, per_run_cap_usd=0.50)
+    # 1000/4*1.2=300 in, 2000/4*1.2=600 out tokens per call at $1/$5 per M, 2 calls per exchange.
+    expected = (300 / 1e6 * 1.0 + 600 / 1e6 * 5.0) * 10 * 2
+    assert m.check_or_abort_pre_run(
+        probe_ids=["p"], target_kind="custom_http", total_exchanges=10
+    ) == pytest.approx(expected)
+
+
+def test_preflight_ollama_fast_model_is_free(monkeypatch):
+    monkeypatch.setenv("REDTEAM_MODEL_PROVIDER", "litellm")
+    monkeypatch.setenv("REDTEAM_FAST_MODEL", "ollama/qwen2.5:32b")
+    m = CostMeter(daily_cap_usd=13.50, per_run_cap_usd=0.50)
+    assert _big_run(m) == 0.0
+
+
+def test_preflight_openai_default_uses_luna_rates(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-fake")
+    m = CostMeter(daily_cap_usd=13.50, per_run_cap_usd=0.50)
+    expected = (300 / 1e6 * 0.20 + 600 / 1e6 * 1.20) * 10 * 2
+    assert m.check_or_abort_pre_run(
+        probe_ids=["p"], target_kind="custom_http", total_exchanges=10
+    ) == pytest.approx(expected)
+
+
+def test_preflight_unknown_litellm_model_stays_pessimistic(monkeypatch):
+    monkeypatch.setenv("REDTEAM_MODEL_PROVIDER", "litellm")
+    monkeypatch.setenv("REDTEAM_FAST_MODEL", "openai/my-local-vllm")
+    m = CostMeter(daily_cap_usd=13.50, per_run_cap_usd=0.50)
+    with pytest.raises(CostExceededError, match="per_run_cap"):
+        _big_run(m)

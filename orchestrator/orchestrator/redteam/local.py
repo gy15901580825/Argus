@@ -80,7 +80,7 @@ async def run_local(
     except CostExceededError as e:
         raise LocalRunError(str(e), code="cost") from e
 
-    if cfg.provider == "litellm":
+    if cfg.provider == llm.PROVIDER_LITELLM:
         yield {
             "type": "warning",
             "message": (
