@@ -80,6 +80,16 @@ async def run_local(
     except CostExceededError as e:
         raise LocalRunError(str(e), code="cost") from e
 
+    if cfg.provider == "litellm":
+        yield {
+            "type": "warning",
+            "message": (
+                f"Judge model {cfg.fast_model} is not one Argus ships with. Small models miss "
+                "many jailbreaks (in JailbreakBench, a 7B judge missed 61%), so a clean report "
+                "from this judge is weak evidence."
+            ),
+        }
+
     emitted: list[dict] = []
     try:
         async for finding in api._run_probes(req, anthropic_api_key):

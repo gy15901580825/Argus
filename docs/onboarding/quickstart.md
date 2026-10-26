@@ -33,9 +33,11 @@ Output: `argus-target.json`, plus `.github/workflows/argus-probe.yml` if you say
 Set a judge key and add `--local`. The CLI loads the probe library, sends them to your agent and judges the replies in this process:
 
 ```bash
-export ANTHROPIC_API_KEY="<your key>"        # or REDTEAM_MODEL_PROVIDER=azure plus the Azure variables
+export ANTHROPIC_API_KEY="<your key>"
 argus-probe run --local --target argus-target.json --probes owasp_07_system_prompt_leakage --format html --out report.html
 ```
+
+The judge uses `ANTHROPIC_API_KEY` by default, or `OPENAI_API_KEY` when that is the only key set. For a local model, set `REDTEAM_MODEL_PROVIDER=litellm` and `REDTEAM_FAST_MODEL=ollama/qwen2.5:32b` (add `REDTEAM_LLM_API_BASE` for a non-default host). Small models miss many jailbreaks, so the CLI prints a warning and a clean report from one is weak evidence. `REDTEAM_MODEL_PROVIDER=azure` runs the judge on Azure OpenAI; its default content filter blocks judge calls because the judge reads attack text, so use a custom filter policy with jailbreak detection turned off for that deployment (the same applies to `OPENAI_API_KEY` with `REDTEAM_LLM_API_BASE` pointed at Azure).
 
 `--local` does not support `browser_use` targets; submit those to a server.
 

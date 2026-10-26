@@ -45,6 +45,9 @@ def run_local_and_render(
             if event.get("type") == "coverage":
                 coverage = event.get("coverage")
                 continue
+            if event.get("type") == "warning":
+                click.echo(f"Warning: {event['message']}", err=True)
+                continue
             findings.append(event)
             click.echo(f"  {event.get('verdict', '?'):<18} {event.get('severity', '?'):<9} {event.get('probe_id', '?')}")
 
