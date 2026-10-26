@@ -108,6 +108,18 @@ class Completion:
     model: str  # the model that actually served the request, post-fallback
 
 
+def credential_error(cfg: LLMConfig) -> Optional[str]:
+    """Message for the missing credential of cfg's provider, or None. Shared by /redteam/run and run_local."""
+    name = cfg.missing_credential()
+    if name is None:
+        return None
+    return (
+        f"{name} is not set (REDTEAM_MODEL_PROVIDER={cfg.provider}). "
+        "Set ANTHROPIC_API_KEY or OPENAI_API_KEY, or set REDTEAM_MODEL_PROVIDER "
+        "to azure or litellm (see the README)."
+    )
+
+
 def resolve_config(env: Optional[Mapping[str, str]] = None) -> LLMConfig:
     env = os.environ if env is None else env
     provider = (env.get("REDTEAM_MODEL_PROVIDER") or "").strip().lower()

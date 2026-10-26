@@ -26,6 +26,9 @@ _PRICES_PER_M_TOKENS = {
     "claude-opus-4-7": {"input": 15.0, "output": 75.0},
     # Azure OpenAI deployments (see redteam/llm.py).
     "gpt-5.4-mini": {"input": 1.0, "output": 5.0},
+    # OpenAI judge defaults.
+    "gpt-5.6-luna": {"input": 0.20, "output": 1.20},
+    "gpt-5.6-terra": {"input": 2.00, "output": 12.00},
 }
 
 
@@ -40,6 +43,8 @@ def _price_for(model: str) -> dict:
     known = _PRICES_PER_M_TOKENS.get(model)
     if known is not None:
         return known
+    if model.startswith(("ollama/", "ollama_chat/")):
+        return {"input": 0.0, "output": 0.0}  # local model, no per-token bill
     worst = {
         "input": max(p["input"] for p in _PRICES_PER_M_TOKENS.values()),
         "output": max(p["output"] for p in _PRICES_PER_M_TOKENS.values()),

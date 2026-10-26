@@ -46,12 +46,9 @@ async def run_local(
     except ValueError as e:
         raise LocalRunError(str(e), code="config") from e
     anthropic_api_key = env.get("ANTHROPIC_API_KEY")
-    if cfg.provider == llm.PROVIDER_ANTHROPIC and not anthropic_api_key:
-        raise LocalRunError(
-            "ANTHROPIC_API_KEY is not set (REDTEAM_MODEL_PROVIDER=anthropic). "
-            "Set the key, or set REDTEAM_MODEL_PROVIDER=azure to run the judge on Azure OpenAI.",
-            code="config",
-        )
+    err = llm.credential_error(cfg)
+    if err:
+        raise LocalRunError(err, code="config")
 
     if not isinstance(target, dict):
         raise LocalRunError("target must be a JSON object", code="input")

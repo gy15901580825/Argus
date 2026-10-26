@@ -155,3 +155,19 @@ def test_known_models_are_unaffected_by_the_pessimistic_fallback():
 
     for name, expected in _PRICES_PER_M_TOKENS.items():
         assert _price_for(name) == expected
+
+
+def test_openai_defaults_are_priced():
+    from orchestrator.redteam.cost_meter import _price_for
+
+    assert _price_for("gpt-5.6-luna") == {"input": 0.20, "output": 1.20}
+    assert _price_for("gpt-5.6-terra") == {"input": 2.00, "output": 12.00}
+
+
+def test_ollama_models_are_free(caplog):
+    from orchestrator.redteam.cost_meter import _price_for
+
+    with caplog.at_level("WARNING"):
+        assert _price_for("ollama/qwen2.5:32b") == {"input": 0.0, "output": 0.0}
+        assert _price_for("ollama_chat/llama3.1") == {"input": 0.0, "output": 0.0}
+    assert not caplog.records
