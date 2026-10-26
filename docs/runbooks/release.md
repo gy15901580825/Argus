@@ -20,15 +20,19 @@ A pending publisher does not reserve the project name. Someone else can still re
 ## Rehearsal on TestPyPI
 
 1. In the Actions tab, open the Release workflow, click "Run workflow", pick the branch and leave `target` as `testpypi`.
-2. When it finishes, install from TestPyPI in a clean venv. The extra index pulls dependencies from real PyPI, because most of them are not on TestPyPI.
+2. When it finishes, install from TestPyPI in a clean venv. Install the two packages from TestPyPI without dependencies first, then install the dependencies from PyPI. Pointing pip at both indexes at once fails, because TestPyPI hosts an unrelated `FASTAPI 1.0` sdist that pip picks over the real `fastapi` and that does not build.
 
 ```bash
 python3.11 -m venv /tmp/argus-rc && . /tmp/argus-rc/bin/activate
-pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ "argus-probe[local]"
+pip install --no-deps --index-url https://test.pypi.org/simple/ argus-probe==0.1.1 argus-orchestrator==0.3.1
+pip install "argus-probe[local]==0.1.1"
+pip check
 argus-probe --version
 ```
 
 The TestPyPI job skips files that already exist, so you can re-run it without bumping versions.
+
+Never upload to either index by hand with `twine`. A manual upload creates the project outside trusted publishing, so the pending publisher for that name can no longer be used, and you have to add the publisher on the existing project's Publishing page instead. It also uses up the version number, because an index never accepts the same version twice.
 
 ## Release
 
@@ -36,8 +40,8 @@ The TestPyPI job skips files that already exist, so you can re-run it without bu
 2. Merge to `main`, then tag that commit with `v` plus the argus-probe version and push the tag:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
 The build job fails if the tag does not match the version in `cli/pyproject.toml`. The PyPI job skips files that already exist, so an unchanged argus-orchestrator version is skipped, not an error.
