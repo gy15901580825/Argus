@@ -145,47 +145,46 @@ templates and JSONPath response extractors), `grpc`, `http_upload`,
 `browser_use`, `payment_agent`, `mcp_agent`, `testbed_agent`. Full target-spec cookbook in
 [`docs/onboarding/target-spec-cookbook.md`](docs/onboarding/target-spec-cookbook.md).
 
-The `argus-probe` CLI is a client of an Argus API server; it does not run
-probes on your machine. It submits the run, polls until it finishes, and
-writes the report:
+Install the `argus-probe` CLI from PyPI (Python 3.11+). The `[local]`
+extra pulls in the probe engine, so probes run on your machine and only
+need a judge key:
 
 ```bash
-pip install "git+https://github.com/gy15901580825/Argus.git#subdirectory=cli"
-export ARGUS_API_URL=https://<your-argus-api>
-export ARGUS_API_TOKEN=<your-api-token>
-argus-probe run --target argus-target.json \
+pipx install "argus-probe[local]"        # or: pip install "argus-probe[local]"
+export ANTHROPIC_API_KEY=<your key>      # or REDTEAM_MODEL_PROVIDER=azure with the Azure variables
+argus-probe run --local --target argus-target.json \
                 --probes owasp_01_prompt_injection_basic,syscard_crescendo \
                 --format sarif --out argus.sarif
 ```
 
-The CLI is not on PyPI; install it from this repo as above. There are two
-ways to run it:
-
-- **Local mode** (`--local`): probes run in this process. Install the
-  engine with the `[local]` extra and set a judge key:
-
-  ```bash
-  pip install "argus-probe[local] @ git+https://github.com/gy15901580825/Argus.git#subdirectory=cli"
-  export ANTHROPIC_API_KEY=<your key>      # or REDTEAM_MODEL_PROVIDER=azure with the Azure variables
-  argus-probe run --local --target argus-target.json \
-                  --probes owasp_01_prompt_injection_basic,syscard_crescendo \
-                  --format sarif --out argus.sarif
-  ```
-
-- **Server mode**: `ARGUS_API_URL` is your own `api_service` deployment
-  (see [`docs/runbooks/local-dev.md`](docs/runbooks/local-dev.md)) and the
-  token is a `users.api_token` row on that server, minted by an admin with
-  `POST /api/v1/admin/users` and `"api_token_only": true`. There is no
-  hosted instance.
+Without `--local`, the CLI is a client of an Argus API server: it submits
+the run, polls until it finishes, and writes the report. `ARGUS_API_URL` is
+your own `api_service` deployment (see
+[`docs/runbooks/local-dev.md`](docs/runbooks/local-dev.md)) and
+`ARGUS_API_TOKEN` is a `users.api_token` row on that server, minted by an
+admin with `POST /api/v1/admin/users` and `"api_token_only": true`. There is
+no hosted instance.
 
 `--probes all` runs the whole library. `--format` is `html` (default),
 `sarif` (SARIF 2.1.0, uploads to GitHub Code Scanning) or `junit`.
 `--per-run-cap` sets a USD ceiling for the run.
 
-There is no published GitHub Action. `argus-probe init --workflow` writes a
-workflow that installs the CLI, runs it, uploads the SARIF with
-`github/codeql-action/upload-sarif`, and fails the job with
-`--fail-on critical` (example in [`cli/README.md`](cli/README.md)).
+In GitHub Actions, use
+[`argus-probe-action`](https://github.com/marketplace/actions/argus-agent-red-team-scan).
+It installs the CLI, runs it in local mode, uploads the SARIF to code
+scanning, and fails the job when a finding reaches `fail-on`:
+
+```yaml
+- uses: actions/checkout@v4
+- uses: gy15901580825/argus-probe-action@v1
+  env:
+    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  with:
+    target: argus-target.json
+    fail-on: critical
+```
+
+`argus-probe init --workflow` writes a complete workflow file that uses it.
 
 ## Architecture
 

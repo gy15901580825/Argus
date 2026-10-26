@@ -83,28 +83,22 @@ Secret references in your target spec (`${OPENAI_API_KEY}`, etc.) are resolved f
 
 ## CI integration
 
-There is no published GitHub Action. Run the CLI in a workflow step and upload the SARIF:
+Use [`argus-probe-action`](https://github.com/marketplace/actions/argus-agent-red-team-scan). It installs `argus-probe[local]` from PyPI, runs the probes in local mode, uploads the SARIF to code scanning and fails the job at `fail-on`:
 
 ```yaml
 - uses: actions/checkout@v4
-- uses: actions/setup-python@v5
-  with:
-    python-version: "3.11"
-- run: pip install "argus-probe[local]"
-- run: >
-    argus-probe run --local --target argus-target.json
-    --probes owasp_01_prompt_injection_basic,syscard_crescendo
-    --format sarif --out argus.sarif --fail-on critical
+- uses: gy15901580825/argus-probe-action@v1
   env:
     ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-- uses: github/codeql-action/upload-sarif@v3
   with:
-    sarif_file: argus.sarif
+    target: argus-target.json
+    probes: owasp_01_prompt_injection_basic,syscard_crescendo
+    fail-on: critical
 ```
 
-The job needs `permissions: security-events: write` for the SARIF upload. `argus-probe init --workflow` writes a complete workflow file with that set; that workflow runs in server mode. Pull requests from forks and Dependabot do not receive repository secrets, so `ANTHROPIC_API_KEY` is empty and the job fails on them.
+The job needs `permissions: security-events: write` for the SARIF upload. `argus-probe init --workflow` writes a complete workflow file with that set. Pull requests from forks and Dependabot do not receive repository secrets, so `ANTHROPIC_API_KEY` is empty and the job fails on them.
 
-`--fail-on <severity>` exits 3 when a failing finding is at or above that level; the SARIF is written first, so it still uploads. The workflow from `init --workflow` already passes `--compare-to <base branch>` on pull requests and records the baseline on pushes to `main`; if you write your own, keep both triggers and pass `--compare-to` only on pull requests, so `--fail-on` counts only new failures. `--compare-to` does not count severity increases on probes that already failed, needs GitHub Actions variables or git to detect the branch, and is server mode only, because it needs run history. Exit codes: 0 success, 1 run or configuration error, 2 usage error or `--local` without the engine installed, 3 threshold hit, 4 cost cap.
+`--fail-on <severity>` exits 3 when a failing finding is at or above that level; the SARIF is written first. `--compare-to <base branch>` makes `--fail-on` count only failures that are new relative to the latest run on that branch. It is server mode only, because it needs run history, so the action does not offer it; see the target-spec cookbook for a server-mode workflow. Exit codes: 0 success, 1 run or configuration error, 2 usage error or `--local` without the engine installed, 3 threshold hit, 4 cost cap.
 
 ## Cost controls
 

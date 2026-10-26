@@ -17,7 +17,7 @@ We aim to acknowledge reports within 2 business days and to ship a fix or mitiga
 
 ## Scope
 
-In scope: the code under `cli/` in this repository. There are no prebuilt binaries and no PyPI package; the only distribution is `pip install` from this repository.
+In scope: the code under `cli/` in this repository. It is published to PyPI as `argus-probe`; the GitHub Action `gy15901580825/argus-probe-action` installs that package.
 
 Covered by the repo-level policy, not this file: the Argus API service, the orchestrator, probe content, and judge behavior.
 
