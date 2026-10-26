@@ -87,26 +87,18 @@ jobs:
   redteam:
     runs-on: ubuntu-latest
     permissions:
-      security-events: write   # upload-sarif
+      security-events: write   # SARIF upload
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - run: pip install "git+https://github.com/gy15901580825/Argus.git#subdirectory=cli"
-      # PRs gate only on failures new relative to the base branch; pushes to main record the baseline.
-      - run: >
-          argus-probe run --target {target_path}
-          --probes owasp_01_prompt_injection_basic,syscard_crescendo
-          --format sarif --out argus.sarif --fail-on critical
-          ${{{{ github.event_name == 'pull_request' && format('--compare-to {{0}}', github.base_ref) || '' }}}}
+      - uses: gy15901580825/argus-probe-action@v1
         env:
-          ARGUS_API_URL: ${{{{ vars.ARGUS_API_URL }}}}
-          ARGUS_API_TOKEN: ${{{{ secrets.ARGUS_API_TOKEN }}}}
-      - uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: argus.sarif
+          # The LLM judge.
+          ANTHROPIC_API_KEY: ${{{{ secrets.ANTHROPIC_API_KEY }}}}
+{target_env}        with:
+          target: {target_path}
+          probes: owasp_01_prompt_injection_basic,syscard_crescendo
+          fail-on: critical
 """
 
 
@@ -143,9 +135,10 @@ def init_command(kind: str, output: str, workflow: bool | None) -> None:
         spec[field] = value
 
     # api_key_env → api_key (CLI run command resolves $-vars at runtime)
+    env_var = None
     if "api_key_env" in spec:
-        env_var = spec.pop("api_key_env")
-        spec["api_key"] = "${" + str(env_var) + "}"
+        env_var = str(spec.pop("api_key_env"))
+        spec["api_key"] = "${" + env_var + "}"
 
     # inner_json → inner (payment_agent / mcp_agent / testbed_agent nest another target spec
     # for the transport that actually talks to the agent)
@@ -179,9 +172,14 @@ def init_command(kind: str, output: str, workflow: bool | None) -> None:
     if workflow:
         wf_path = Path(".github/workflows/argus-probe.yml")
         wf_path.parent.mkdir(parents=True, exist_ok=True)
-        wf_path.write_text(_WORKFLOW_TEMPLATE.format(target_path=target_path.name))
+        target_env = ""
+        if env_var and env_var != "ANTHROPIC_API_KEY":
+            # The target spec reads this key at run time.
+            target_env = f"          {env_var}: ${{{{ secrets.{env_var} }}}}\n"
+        wf_path.write_text(_WORKFLOW_TEMPLATE.format(target_path=target_path.name, target_env=target_env))
         click.echo(f"✅ Wrote {wf_path}")
 
     click.echo("")
-    click.echo(f"Next: argus-probe run --target {target_path.name}")
-    click.echo("Set ARGUS_API_URL (repository variable) and ARGUS_API_TOKEN (secret) in CI to enable scheduled runs.")
+    click.echo(f"Next: argus-probe run --local --target {target_path} --out argus-report.html")
+    if workflow:
+        click.echo("Add ANTHROPIC_API_KEY as a repository secret for the workflow's LLM judge.")
