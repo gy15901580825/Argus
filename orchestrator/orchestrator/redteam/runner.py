@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import AsyncIterator
 from uuid import UUID, uuid4
 
+import httpx
+
 from orchestrator.redteam.probe import Probe
 
 logger = logging.getLogger(__name__)
@@ -21,6 +23,10 @@ VERDICT_ERROR = "error"
 VERDICT_BLOCKED_BY_TARGET = "blocked_by_target"  # adapter HTTP 4xx (target gateway content filter)
 VERDICT_SKIPPED = "skipped"                       # probe.target_class disjoint from target.compatible_classes
 VERDICT_ABORTED = "aborted_cost"                  # mid-run CostExceededError (daily cap crossed)
+
+
+def _short(exc: Exception) -> str:
+    return (str(exc) or type(exc).__name__)[:200]
 
 
 @dataclass(frozen=True)
@@ -52,6 +58,8 @@ class Runner:
         self._target = target
         self._judge = judge
         self._rubrics_dir = Path(rubrics_dir)
+        # Set when this probe's evidence fetch failed; reset per probe in run_probe.
+        self._evidence_failed = False
         # Inject the meter into iterative modules so their planner LLM calls record cost.
         # The meter is extracted from judge, which was passed in from api.py.
         if hasattr(judge, "_cost_meter") and judge._cost_meter is not None:
@@ -169,6 +177,18 @@ class Runner:
                     evidence=None,
                 )
                 return
+            except httpx.HTTPError as e:
+                # Testbed unreachable while opening the session: same policy,
+                # one errored probe rather than an aborted scan.
+                yield self._finding(
+                    probe, "", "", 0.0, datetime.now(timezone.utc),
+                    verdict=VERDICT_ERROR, severity="info", confidence=1.0,
+                    reasoning=f"target could not set up this probe: {_short(e)}",
+                    evidence=None,
+                )
+                return
+
+        self._evidence_failed = False
 
         # Dispatch on iterative flag
         if getattr(probe, "iterative", False):
@@ -179,17 +199,24 @@ class Runner:
         # Attach whatever the target observed. Text-only adapters return {} and
         # their findings keep evidence=None, so nothing downstream changes for
         # them. A finding that already carries evidence built its own verdict
-        # from it and is left alone.
+        # from it and is left alone. After a failed fetch for this probe, a
+        # refetch would attach evidence its error verdict was never based on.
         async for f in inner:
-            if f.evidence is None:
+            if f.evidence is None and not self._evidence_failed:
                 # Duck-typed targets are everywhere in the test suite; only call
                 # a collector that is genuinely an async method, so a bare mock
                 # target keeps working.
                 collector = getattr(self._target, "collect_evidence", None)
                 if inspect.iscoroutinefunction(collector):
-                    observed = await collector()
-                    if observed:
-                        f = replace(f, evidence=observed)
+                    try:
+                        observed = await collector()
+                    except httpx.HTTPError as e:
+                        # The verdict was decided without evidence, so a testbed
+                        # blip only loses the attachment; say so and keep going.
+                        f = replace(f, reasoning=f"{f.reasoning} | evidence unavailable: {_short(e)}")
+                    else:
+                        if observed:
+                            f = replace(f, evidence=observed)
             yield f
 
     async def _assertion_finding(self, probe, prompt, response_text, latency_ms, probed_at) -> Finding:
@@ -199,7 +226,18 @@ class Runner:
         evidence = {}
         collector = getattr(self._target, "collect_evidence", None)
         if inspect.iscoroutinefunction(collector):
-            evidence = await collector() or {}
+            try:
+                evidence = await collector() or {}
+            except httpx.HTTPError as e:
+                # No evidence means no verdict. A testbed blip or an expired
+                # session errors this probe only; it must never read as a pass.
+                self._evidence_failed = True
+                return self._finding(
+                    probe, prompt, response_text, latency_ms, probed_at,
+                    verdict=VERDICT_ERROR, severity="info", confidence=1.0,
+                    reasoning=f"could not read evidence from the testbed: {_short(e)}",
+                    evidence=None,
+                )
 
         # An assertion-backed probe that never reached its target proves nothing.
         # Every "did not overpay" check is satisfied by doing nothing at all, so
