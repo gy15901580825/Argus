@@ -39,13 +39,15 @@ class BrowserProbe:
     async def run(self, msg: dict) -> dict:
         scenario_kind = msg["scenario_kind"]
         payload = msg["payload"]
+        # Older orchestrators send only payload and used it for both roles.
+        prompt = msg.get("prompt", payload)
         agent_url = msg["agent_url"]
         timeout_s = float(msg.get("timeout_s", 60.0))
 
         server = _make_scenario_server(scenario_kind, payload)
         scenario_url = await server.start()
         try:
-            agent = _make_target_agent_driver(agent_url, scenario_url, payload, timeout_s)
+            agent = _make_target_agent_driver(agent_url, scenario_url, prompt, timeout_s)
             start = time.monotonic()
             result = await agent.run()
             latency_ms = (time.monotonic() - start) * 1000.0
