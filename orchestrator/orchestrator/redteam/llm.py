@@ -162,6 +162,10 @@ def _anthropic_client(api_key: Optional[str]):
 
 
 async def _acompletion(**kwargs):
+    import litellm
+
+    # Stops litellm printing "Provider List" to stdout after every bare-model call.
+    litellm.suppress_debug_info = True
     from litellm import acompletion
 
     return await acompletion(**kwargs)

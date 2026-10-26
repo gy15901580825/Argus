@@ -319,3 +319,13 @@ async def test_openai_empty_content_returns_empty_text():
     with patch.object(llm, "_acompletion", new=AsyncMock(return_value=resp)):
         out = await llm.complete(cfg, role="fast", system="s", user="u", max_tokens=50)
     assert out.text == ""
+
+
+@pytest.mark.asyncio
+async def test_acompletion_suppresses_litellm_debug_info():
+    import litellm
+
+    litellm.suppress_debug_info = False
+    with patch("litellm.acompletion", new=AsyncMock(return_value=_litellm_response("x"))):
+        await llm._acompletion(model="openai/gpt-5.6-luna", messages=[])
+    assert litellm.suppress_debug_info is True
