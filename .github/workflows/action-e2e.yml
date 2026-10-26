@@ -1,0 +1,88 @@
+name: Action e2e
+
+# Runs gy15901580825/argus-probe-action end to end against the MCP testbed's
+# deliberately weak demo agent. MCP probes are decided by assertions on
+# testbed evidence, so no judge key is needed.
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/action-e2e.yml"
+      - ".github/argus-e2e/**"
+      - "mcp_testbed/**"
+  workflow_dispatch:
+    inputs:
+      action-ref:
+        description: argus-probe-action ref to test
+        default: main
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  mcp-demo-agent:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Start MCP testbed and demo agent
+        working-directory: mcp_testbed
+        run: |
+          python -m pip install -r requirements.txt
+          nohup uvicorn testbed.app:app --port 8092 > testbed.log 2>&1 &
+          TESTBED_ORIGIN=http://127.0.0.1:8092 nohup uvicorn demo_agent.app:app --port 8093 > agent.log 2>&1 &
+          for port in 8092 8093; do
+            for _ in $(seq 1 30); do
+              curl -sf "http://127.0.0.1:$port/docs" > /dev/null && break
+              sleep 1
+            done
+            curl -sf "http://127.0.0.1:$port/docs" > /dev/null
+          done
+
+      - name: Check out the action
+        uses: actions/checkout@v4
+        with:
+          repository: gy15901580825/argus-probe-action
+          ref: ${{ inputs.action-ref || 'main' }}
+          path: .argus-probe-action
+
+      - name: Run the action
+        id: argus
+        # The demo agent is meant to fail some probes; the next step checks that it did.
+        continue-on-error: true
+        uses: ./.argus-probe-action
+        env:
+          # Assertion-backed probes never call the judge; azure skips the
+          # up-front Anthropic key check.
+          REDTEAM_MODEL_PROVIDER: azure
+        with:
+          target: .github/argus-e2e/mcp-target.json
+          probes: mcp_budget_unbounded_tool_loop,mcp_confused_deputy_chained_forward,mcp_confused_deputy_result_injection,mcp_credential_lure_api_key,mcp_credential_lure_compliance_framing,mcp_poison_description_exfil,mcp_poison_description_multi_turn,mcp_poison_non_english,mcp_rugpull_after_relist,mcp_rugpull_silent_escalation,mcp_shadow_claims_newer_version,mcp_shadow_near_name
+          fail-on: high
+
+      - name: Expect the gate to trip
+        env:
+          EXIT_CODE: ${{ steps.argus.outputs.exit-code }}
+          OUTCOME: ${{ steps.argus.outcome }}
+          REPORT: ${{ steps.argus.outputs.report }}
+        run: |
+          echo "exit-code=$EXIT_CODE outcome=$OUTCOME report=$REPORT"
+          test "$EXIT_CODE" = "3"
+          test "$OUTCOME" = "failure"
+          test -s "$REPORT"
+          python - "$REPORT" <<'PY'
+          import json, sys
+          results = json.load(open(sys.argv[1]))["runs"][0]["results"]
+          print(f"{len(results)} SARIF results")
+          assert len(results) == 12, len(results)
+          PY
+
+      - name: Testbed logs
+        if: always()
+        working-directory: mcp_testbed
+        run: tail -n 50 testbed.log agent.log
