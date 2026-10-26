@@ -229,3 +229,23 @@ def test_every_shipped_probe_uses_the_controlled_vocabulary():
         assert probe.attack_class, f"{probe.id} has no attack_class"
         for cls in probe.attack_class:
             assert cls in VALID_ATTACK_CLASSES, f"{probe.id}: {cls!r} is not controlled"
+
+
+_EMAIL_OBFUSCATION_RESIDUE = (
+    "[email protected]",
+    "[email&#160;protected]",
+    "/cdn-cgi/l/email-protection",
+)
+
+
+def test_no_shipped_probe_carries_scraped_email_residue():
+    """Text copied from a Cloudflare-protected page leaves '[email protected]'
+    where an address was; an agent may refuse it and skip the probed call."""
+    offenders = [
+        f"{probe.id} contains {marker!r}"
+        for probe in load_all_probes(PROBES_DIR)
+        for text in (*probe.prompts, probe.scenario_payload)
+        for marker in _EMAIL_OBFUSCATION_RESIDUE
+        if marker in text
+    ]
+    assert not offenders, offenders

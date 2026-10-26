@@ -2,8 +2,7 @@
 
 **Black-box red-team testing for AI agents.** Point Argus at any HTTP, gRPC,
 MCP, payment-agent, or browser-using agent endpoint, run 205 adversarial
-probes (OWASP LLM Top 10, MITRE ATLAS, NIST AI RMF, garak wrappers, TAP / PAIR
-/ GCG), and get
+probes (OWASP LLM Top 10, MITRE ATLAS, NIST AI RMF, garak wrappers), and get
 LLM-judged findings as SARIF 2.1.0 / JUnit XML / HTML — upload straight to
 GitHub Code Scanning.
 
@@ -52,7 +51,6 @@ What Argus does:
 - **Scan suites** — pass `suite` instead of enumerating `probe_ids` on
   `POST /api/v1/redteam/runs`: `owasp-llm-top10`, `mitre-atlas`,
   `nist-ai-rmf`, `eu-ai-act`, `payments`, `mcp`.
-- **Algorithmic iterative attacks**: TAP, PAIR, GCG black-box.
 - **LLM-judge harness** with per-probe rubrics in
   `orchestrator/orchestrator/redteam/rubrics/`. A fast model judges every
   response (Anthropic Haiku 4.5 by default); a strong model (Sonnet 4.6)
@@ -80,6 +78,17 @@ What Argus does **not** do:
 - It does not protect production — it *attacks* it. Guardrails (incl. our
   `PromptGuard` integration) are for **defense control experiments**, not
   for putting Argus inline as a runtime gate.
+
+## In the engine, not yet exposed
+
+These exist in `orchestrator/` with tests, but no CLI flag or API field
+starts them yet:
+
+- **Iterative attackers**: TAP, PAIR and black-box GCG
+  (`iterative_tap.py`, `iterative_pair.py`, `iterative_gcg.py`).
+- **Deep mode**: each probe re-run as persona × strategy multi-turn
+  threads (`persona_strategy.py`). Reachable only by calling the
+  orchestrator's `/redteam/run` directly with `"mode": "deep"`.
 
 ## Quick start (no API keys required)
 

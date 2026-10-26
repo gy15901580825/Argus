@@ -11,6 +11,8 @@ from typing import ClassVar
 
 from orchestrator.redteam.targets._base import Target, Turn
 
+_SCENARIO_KINDS = frozenset({"dom_injection", "ui_phishing", "visual_injection", "os_cmd"})
+
 
 @dataclass(frozen=True)
 class BrowserUseSpec:
@@ -33,7 +35,7 @@ class BrowserUseSpec:
             raise ValueError(f"kind must be 'browser_use', got {self.kind!r}")
         if not self.agent_url:
             raise ValueError("agent_url is required")
-        if self.scenario_kind not in {"dom_injection", "ui_phishing", "visual_injection", "os_cmd"}:
+        if self.scenario_kind not in _SCENARIO_KINDS:
             raise ValueError(
                 "scenario_kind must be one of dom_injection/ui_phishing/visual_injection/os_cmd"
             )
@@ -54,10 +56,32 @@ class BrowserUseTarget(Target):
 
     def __init__(self, spec: BrowserUseSpec) -> None:
         self.spec = spec
+        # Set by begin_probe; None means a non-probe caller, which keeps the
+        # old prompt-as-payload behaviour.
+        self._scenario_kind: str | None = None
+        self._scenario_payload: str | None = None
 
     # Holding a live browser context across rounds requires a client_agent WS
     # protocol change; deliberately out of scope for v1.
     supports_history: ClassVar[bool] = False
+
+    async def begin_probe(self, probe) -> None:
+        payload = getattr(probe, "scenario_payload", None)
+        kind = getattr(probe, "scenario_kind", None)
+        # No scenario block: the attack is the prompt itself, so send it as the
+        # page payload as before. Reset so a previous probe's scenario never leaks.
+        if not kind and not payload:
+            self._scenario_kind = None
+            self._scenario_payload = None
+            return
+        # A declared scenario without a payload would put the benign prompt on
+        # the trap page and could only ever pass.
+        if not isinstance(payload, str) or not payload.strip():
+            raise ValueError(f"browser probe {probe.id!r} has no scenario.payload to plant")
+        if kind and kind not in _SCENARIO_KINDS:
+            raise ValueError(f"browser probe {probe.id!r} has unknown scenario.kind {kind!r}")
+        self._scenario_kind = kind or None
+        self._scenario_payload = payload
 
     async def send_prompt(
         self, prompt: str, history: tuple[Turn, ...] = ()
@@ -65,9 +89,11 @@ class BrowserUseTarget(Target):
         ws = _get_client_agent_ws()
         msg = {
             "type": "redteam_browser_probe",
-            "scenario_kind": self.spec.scenario_kind,
+            "scenario_kind": self._scenario_kind or self.spec.scenario_kind,
             "agent_url": self.spec.agent_url,
-            "payload": prompt,
+            # payload goes into the trap page; prompt is the user's instruction.
+            "payload": self._scenario_payload if self._scenario_payload is not None else prompt,
+            "prompt": prompt,
             "timeout_s": self.spec.timeout_s,
             "extra_context": dict(self.spec.extra_context),
         }
