@@ -1,7 +1,7 @@
 # Argus
 
 **Black-box red-team testing for AI agents.** Point Argus at any HTTP, gRPC,
-MCP, payment-agent, or browser-using agent endpoint, run 208 adversarial
+MCP, payment-agent, or browser-using agent endpoint, run 209 adversarial
 probes (OWASP LLM Top 10, MITRE ATLAS, NIST AI RMF, garak wrappers), and get
 LLM-judged findings as SARIF 2.1.0 / JUnit XML / HTML — upload straight to
 GitHub Code Scanning.
@@ -31,11 +31,11 @@ AI RMF** controls without translation.
 
 What Argus does:
 
-- **208 probes** in the bundled library — 15 OWASP LLM Top 10 hand-authored,
+- **209 probes** in the bundled library — 15 OWASP LLM Top 10 hand-authored,
   5 from public LLM system cards (best-of-N, crescendo, confused deputy,
   many-shot jailbreak, sleeper agent), 31 browser-agent specific, 26
-  payment-abuse probes (x402 wallet flows, against `payment_agent`), 15
-  MCP-abuse probes (12 poisoned tool servers, against `mcp_agent`; 3 exposure
+  payment-abuse probes (x402 wallet flows, against `payment_agent`), 16
+  MCP-abuse probes (12 poisoned tool servers, against `mcp_agent`; 4 exposure
   checks of an MCP server itself, against `mcp_server`), 16
   Semia-mapped agent-skill detectors (missing human gate, encoded payload,
   install-time exec, shadow credentials), 1 custom unicode-smuggling probe
@@ -48,7 +48,8 @@ What Argus does:
   full-browser flows), `payment_agent` (x402 wallet-carrying agents, runs
   against `payment_testbed/`), `mcp_agent` (MCP tool-server abuse, runs
   against `mcp_testbed/`), `mcp_server` (an MCP server's own HTTP exposure:
-  foreign Origin, missing auth, env/shell/file tools; it lists tools and never
+  foreign Origin, missing auth, env/shell/file tools, versions with a published
+  advisory; it lists tools and never
   calls one), and `testbed_agent` (generic form of the two
   testbed adapters; `environment` picks the testbed).
 - **Scan suites** — pass `suite` instead of enumerating `probe_ids` on
@@ -218,7 +219,7 @@ scanning, and fails the job when a finding reaches `fail-on`:
 │  orchestrator  /redteam  (FastAPI)                                      │
 │    probe loader  ──▶  target adapter  ──▶  judge harness                │
 │        │                  │                      │                      │
-│        └──── 208 YAML     │                      └──▶ fast model, then  │
+│        └──── 209 YAML     │                      └──▶ fast model, then  │
 │              probes       │                           strong model on   │
 │                           │                           high/critical,    │
 │                  ┌────────┴─────────┐                 confidence ≥ 0.7  │

@@ -18,7 +18,8 @@ PROBES = Path(__file__).resolve().parents[1] / "orchestrator" / "redteam" / "pro
 TOKEN = "Bearer good"
 
 
-def _server(*, check_origin: bool, need_auth: bool, tools: list[dict] | None, sse: bool = False, log=None):
+def _server(*, check_origin: bool, need_auth: bool, tools: list[dict] | None, sse: bool = False, log=None,
+            info=("s", "1")):
     """A Streamable HTTP MCP server. Vulnerable: no Origin check, CORS *, no auth (the advisory's shape)."""
     def handler(req: httpx.Request) -> httpx.Response:
         if log is not None:
@@ -35,7 +36,7 @@ def _server(*, check_origin: bool, need_auth: bool, tools: list[dict] | None, ss
         if "id" not in msg:
             return httpx.Response(202, headers=cors)
         if msg["method"] == "initialize":
-            result = {"protocolVersion": "2025-06-18", "capabilities": {}, "serverInfo": {"name": "s", "version": "1"}}
+            result = {"protocolVersion": "2025-06-18", "capabilities": {}, "serverInfo": {"name": info[0], "version": info[1]}}
         elif msg["method"] == "tools/list" and tools is not None:
             result = {"tools": tools}
         else:
@@ -170,10 +171,39 @@ class _NoJudge:
 @pytest.mark.parametrize("vulnerable,want", [(True, "fail"), (False, "pass")])
 async def test_shipped_probes_end_to_end(tmp_path, vulnerable, want):
     probes = [load_probe(p) for p in sorted(PROBES.glob("*.yaml"))]
-    assert {p.id for p in probes} == {"mcp_server_foreign_origin", "mcp_server_no_auth", "mcp_server_sensitive_tools"}
-    srv = _server(check_origin=not vulnerable, need_auth=not vulnerable, tools=[GET_ENV] if vulnerable else [ECHO])
+    assert {p.id for p in probes} == {"mcp_server_foreign_origin", "mcp_server_no_auth", "mcp_server_sensitive_tools",
+                                      "mcp_server_known_vulnerable_version"}
+    srv = _server(check_origin=not vulnerable, need_auth=not vulnerable, tools=[GET_ENV] if vulnerable else [ECHO],
+                  info=("mcp-servers/everything", "2.0.0" if vulnerable else "2.0.1"))
     target = _target(srv, headers=[("Authorization", TOKEN)])
     runner = Runner(target=target, judge=_NoJudge(), rubrics_dir=tmp_path)
     for probe in probes:
         findings = [f async for f in runner.run_probe(probe)]
         assert [f.verdict for f in findings] == [want], (probe.id, findings)
+
+
+@pytest.mark.parametrize("name,version,passed", [
+    ("mcp-servers/everything", "2.0.0", False),      # every date-versioned release reports 2.0.0
+    ("mcp-servers/everything", "2.0.1", True),
+    ("mcp-servers/everything", "2.1.0", True),
+    ("secure-filesystem-server", "0.2.0", False),    # every date-versioned release reports 0.2.0
+    ("secure-filesystem-server", "2.0.1", True),
+    ("secure-filesystem-server", "dev", False),      # unparseable: fail closed
+    ("someone-else", "0.0.1", True),
+])
+def test_known_vulnerable_server_versions(name, version, passed):
+    (r,) = evaluate_assertions(({"mcp_no_known_vulnerable_server": True},),
+                               {"server_info": {"name": name, "version": version}}, "")
+    assert r.passed is passed, r.reason
+
+
+def test_unidentified_server_fails_closed():
+    (r,) = evaluate_assertions(({"mcp_no_known_vulnerable_server": True},), {"server_info": None}, "")
+    assert not r.passed and "cannot be identified" in r.reason
+
+
+@pytest.mark.asyncio
+async def test_server_info_is_recorded_even_without_credentials():
+    ev = await _evidence(_server(check_origin=True, need_auth=False, tools=None,
+                                 info=("secure-filesystem-server", "0.2.0")))
+    assert ev["server_info"] == {"name": "secure-filesystem-server", "version": "0.2.0"}

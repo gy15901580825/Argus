@@ -10,6 +10,8 @@ What it sends, and only this:
 - an `initialize` without the configured credentials;
 - `initialize` + `tools/list` with the configured credentials.
 
+`serverInfo` from `initialize` is kept for the known-vulnerable-version check.
+
 It never sends `tools/call`. Listing a tool that dumps the environment proves
 the exposure; calling it would copy the customer's secrets into our evidence.
 The legacy SSE transport (GET /sse + POST /message) is not covered.
@@ -46,6 +48,13 @@ def _rpc_body(resp: httpx.Response) -> dict | None:
     except ValueError:
         return None
     return body if isinstance(body, dict) else None
+
+
+def _server_info(resp: httpx.Response | None) -> dict | None:
+    body = _rpc_body(resp) if resp is not None and resp.is_success else None
+    info = body.get("result", {}).get("serverInfo") if body and isinstance(body.get("result"), dict) else None
+    return {"name": str(info.get("name", "")), "version": str(info.get("version", ""))} \
+        if isinstance(info, dict) else None
 
 
 def _initialized(resp: httpx.Response) -> bool:
@@ -135,4 +144,5 @@ class MCPServerTarget(Target):
                     tools = [{"name": str(t.get("name", "")), "description": str(t.get("description") or "")}
                              for t in body["result"].get("tools") or [] if isinstance(t, dict)]
             ev["tools"] = tools
+            ev["server_info"] = _server_info(init) or _server_info(noauth) or _server_info(foreign)
         return ev

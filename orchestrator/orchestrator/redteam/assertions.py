@@ -223,6 +223,39 @@ SENSITIVE_TOOL_PATTERNS = {
 }
 
 
+# MCP servers with a published advisory, keyed by the `serverInfo.name` they
+# report. Releases before the fix hardcoded an older serverInfo version
+# (everything "2.0.0", filesystem "0.2.0"), so "below the fix" covers them.
+KNOWN_VULNERABLE_MCP_SERVERS = {
+    "mcp-servers/everything": ((2, 0, 1), "GHSA-mvf5-2qqv-rg3c: cross-origin env dump"),
+    "secure-filesystem-server": ((2, 0, 1), "GHSA-4gxg-m5jx-9j57: case-variant symlink escape"),
+}
+
+
+def _version_tuple(v: str) -> tuple[int, ...] | None:
+    parts = v.split("-", 1)[0].split(".")
+    return tuple(int(p) for p in parts) if parts and all(p.isdigit() for p in parts) else None
+
+
+def _check_mcp_no_known_vulnerable_server(value, evidence, response_text) -> tuple[bool, str]:
+    if not value:
+        return True, "check disabled"
+    info = evidence.get("server_info")
+    if not isinstance(info, dict):
+        return False, "no initialize answered with serverInfo, so the server cannot be identified"
+    name, version = info.get("name", ""), info.get("version", "")
+    if name not in KNOWN_VULNERABLE_MCP_SERVERS:
+        return True, f"{name!r} {version} has no advisory on record"
+    fixed, advisory = KNOWN_VULNERABLE_MCP_SERVERS[name]
+    have = _version_tuple(version)
+    fixed_s = ".".join(map(str, fixed))
+    if have is None:
+        return False, f"{name} reports version {version!r}, which does not parse; {advisory} is fixed in {fixed_s}"
+    if have < fixed:
+        return False, f"{name} reports {version}, below {fixed_s}: {advisory}"
+    return True, f"{name} {version} is at or above the fix {fixed_s}"
+
+
 def _check_mcp_rejects_foreign_origin(value, evidence, response_text) -> tuple[bool, str]:
     """The MCP spec says a server MUST validate Origin; one that answers a
     foreign page can be driven from any browser tab (and by DNS rebinding)."""
@@ -279,6 +312,7 @@ _CHECKS = {
     "mcp_rejects_foreign_origin": _check_mcp_rejects_foreign_origin,
     "mcp_requires_auth": _check_mcp_requires_auth,
     "mcp_no_sensitive_tools": _check_mcp_no_sensitive_tools,
+    "mcp_no_known_vulnerable_server": _check_mcp_no_known_vulnerable_server,
 }
 
 

@@ -204,6 +204,7 @@ We provide a thin reference adapter you can drop into your agent harness; ask in
 | `mcp_server_foreign_origin` | `initialize` from a foreign Origin succeeds. The reason says whether CORS also lets any page read the reply. Without CORS, the server is still open to DNS rebinding |
 | `mcp_server_no_auth` | `initialize` without credentials succeeds |
 | `mcp_server_sensitive_tools` | `tools/list` names a tool that dumps env vars, runs commands or reads files. It also fails when `tools/list` does not answer, because tools it cannot see are not proven absent. Give `headers` if the server needs them |
+| `mcp_server_known_vulnerable_version` | `serverInfo` names a server with a published advisory, at a version below the fix. That covers server-everything (GHSA-mvf5-2qqv-rg3c) and server-filesystem (GHSA-4gxg-m5jx-9j57), both fixed in 2.0.1. The date-versioned releases report a fixed old `serverInfo.version` ("2.0.0" and "0.2.0"), so they all count as below the fix. It also fails when no `initialize` returns `serverInfo` |
 
 **Notes:**
 - The legacy SSE transport (`GET /sse` + `POST /message`) is not covered.
