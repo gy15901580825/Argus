@@ -31,6 +31,7 @@ _FAMILY_PATTERNS = {
     "payment-abuse": r"(\d+)\s+payment-abuse probes",
     "MCP-abuse": r"(\d+)\s+MCP-abuse probes",
     "Semia-mapped": r"(\d+)\s+Semia-mapped agent-skill detectors",
+    "agent-autonomy": r"(\d+)\s+agent-autonomy probes",
     "custom": r"(\d+)\s+custom unicode-smuggling probe",
     "garak": r"(\d+)\s+\[garak\]",
 }

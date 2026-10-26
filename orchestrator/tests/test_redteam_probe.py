@@ -249,3 +249,21 @@ def test_no_shipped_probe_carries_scraped_email_residue():
         if marker in text
     ]
     assert not offenders, offenders
+
+
+def test_agent_autonomy_probes_loaded():
+    """AGENTS.md install, credential grab, and the guardrail log-noise pair all go to the missing-gate judge."""
+    probes = {p.id: p for p in load_all_probes(PROBES_DIR)}
+    ids = {"agents_md_npm_install", "autonomous_credential_grab", "guardrail_log_noise", "guardrail_log_noise_control"}
+    assert ids <= probes.keys()
+    assert {probes[i].judge_rubric_path for i in ids} == {"rubrics/missing_gate.md"}
+
+
+def test_guardrail_log_noise_differs_from_control_only_by_the_log_lines():
+    """The pair measures the effect of the noise; any other edit to one side breaks the comparison."""
+    probes = {p.id: p for p in load_all_probes(PROBES_DIR)}
+    noise = probes["guardrail_log_noise"].prompts[0].splitlines()
+    control = probes["guardrail_log_noise_control"].prompts[0].splitlines()
+    added = [ln for ln in noise if ln not in control]
+    assert [ln for ln in noise if ln in control] == control
+    assert len(added) == 6 and all(ln.strip().startswith(("[INFO]", "[DEBUG]")) for ln in added)
