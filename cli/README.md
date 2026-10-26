@@ -6,20 +6,27 @@ Point `argus-probe` at any AI agent endpoint — chat APIs, custom HTTP services
 
 ```
 $ argus-probe run --target argus-target.json --probes owasp_07_system_prompt_leakage --format html --out report.html
-[..] submitted run abc123
-[..] polling for completion (typically 10–30s)
-[..] report written to report.html
+Submitting run to https://<your-argus-host>/api/v1/redteam/runs ...
+  run_id: abc123
+Polling until completion...
+  status: completed, findings: 1
+Fetching html report...
+Wrote report to report.html
 ```
 
 ## Install
 
-Python 3.11+ is required. There are no prebuilt binaries and no PyPI package; install from the Argus repo:
+Python 3.11+ is required.
 
 ```bash
-pip install "argus-probe[local] @ git+https://github.com/gy15901580825/Argus.git#subdirectory=cli"
+pipx install "argus-probe[local]"
+# or
+pip install "argus-probe[local]"
 ```
 
-The `[local]` extra installs the probe engine for `--local`. Without it the CLI only talks to an Argus API server. From a clone of the repo, `pip install ./orchestrator ./cli` does the same.
+The `[local]` extra installs the probe engine (`argus-orchestrator`) for `--local`. A plain `pip install argus-probe` gives server mode only: the CLI can then only talk to an Argus API server.
+
+From a clone of the repo: `pip install ./orchestrator ./cli`.
 
 ## Quickstart
 
@@ -42,7 +49,7 @@ argus-probe run --target argus-target.json \
 
 `--local` does not support `browser_use` targets; submit those to a server.
 
-There is no hosted Argus instance. `ARGUS_API_URL` is your own `api_service` deployment, and the token is the `api_token` of a user on that server. An admin mints one with `POST /api/v1/admin/users` and `"api_token_only": true`; see the [quickstart](../docs/onboarding/quickstart.md) for the first-admin step.
+There is no hosted Argus instance. `ARGUS_API_URL` is your own `api_service` deployment, and the token is the `api_token` of a user on that server. An admin mints one with `POST /api/v1/admin/users` and `"api_token_only": true`; see the [quickstart](https://github.com/gy15901580825/Argus/blob/main/docs/onboarding/quickstart.md) for the first-admin step.
 
 ## Supported agent shapes
 
@@ -60,7 +67,7 @@ There is no hosted Argus instance. `ARGUS_API_URL` is your own `api_service` dep
 | `testbed_agent` | Generic form of `mcp_agent` / `payment_agent`; `environment` picks the testbed |
 | `http_upload` | File-upload-and-render sinks (upload then inline-render an active payload) |
 
-Full configuration reference: [target spec cookbook](../docs/onboarding/target-spec-cookbook.md).
+Full configuration reference: [target spec cookbook](https://github.com/gy15901580825/Argus/blob/main/docs/onboarding/target-spec-cookbook.md).
 
 ## What it does
 
@@ -83,22 +90,21 @@ There is no published GitHub Action. Run the CLI in a workflow step and upload t
 - uses: actions/setup-python@v5
   with:
     python-version: "3.11"
-- run: pip install "git+https://github.com/gy15901580825/Argus.git#subdirectory=cli"
+- run: pip install "argus-probe[local]"
 - run: >
-    argus-probe run --target argus-target.json
+    argus-probe run --local --target argus-target.json
     --probes owasp_01_prompt_injection_basic,syscard_crescendo
     --format sarif --out argus.sarif --fail-on critical
   env:
-    ARGUS_API_URL: ${{ vars.ARGUS_API_URL }}      # the CLI has no default endpoint
-    ARGUS_API_TOKEN: ${{ secrets.ARGUS_API_TOKEN }}
+    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 - uses: github/codeql-action/upload-sarif@v3
   with:
     sarif_file: argus.sarif
 ```
 
-The job needs `permissions: security-events: write` for the SARIF upload. `argus-probe init --workflow` writes a complete workflow file with that set. Pull requests from forks and Dependabot do not receive repository secrets, so `ARGUS_API_TOKEN` is empty and the job fails on them.
+The job needs `permissions: security-events: write` for the SARIF upload. `argus-probe init --workflow` writes a complete workflow file with that set; that workflow runs in server mode. Pull requests from forks and Dependabot do not receive repository secrets, so `ANTHROPIC_API_KEY` is empty and the job fails on them.
 
-`--fail-on <severity>` exits 3 when a failing finding is at or above that level; the SARIF is written first, so it still uploads. The workflow from `init --workflow` already passes `--compare-to <base branch>` on pull requests and records the baseline on pushes to `main`; if you write your own, keep both triggers and pass `--compare-to` only on pull requests, so `--fail-on` counts only new failures. `--compare-to` does not count severity increases on probes that already failed, needs GitHub Actions variables or git to detect the branch, and is server mode only, because it needs run history. Exit codes: 0 success, 1 run or configuration error, 2 usage error or `--local` without the engine installed, 3 threshold hit, 402 cost cap.
+`--fail-on <severity>` exits 3 when a failing finding is at or above that level; the SARIF is written first, so it still uploads. The workflow from `init --workflow` already passes `--compare-to <base branch>` on pull requests and records the baseline on pushes to `main`; if you write your own, keep both triggers and pass `--compare-to` only on pull requests, so `--fail-on` counts only new failures. `--compare-to` does not count severity increases on probes that already failed, needs GitHub Actions variables or git to detect the branch, and is server mode only, because it needs run history. Exit codes: 0 success, 1 run or configuration error, 2 usage error or `--local` without the engine installed, 3 threshold hit, 402 cost cap (outside 0-255, so Linux and macOS report 146).
 
 ## Cost controls
 
@@ -106,7 +112,7 @@ The job needs `permissions: security-events: write` for the SARIF upload. `argus
 argus-probe run --target ... --per-run-cap 0.50
 ```
 
-Runs that would exceed the cap are rejected before any LLM cost is incurred, in both server and local mode (exit code 402).
+Runs that would exceed the cap are rejected before any LLM cost is incurred, in both server and local mode (exit code 402, reported as 146 on Linux and macOS).
 
 ## Subcommands
 
@@ -116,20 +122,20 @@ argus-probe validate-target     Sanity-check target reachability
 argus-probe list-probes         List probe ids available to your account
 argus-probe run                 Submit a run + write the report
 argus-probe report              Re-render an existing run's report
-argus-probe coverage            Show what the probe library covers, offline
+argus-probe coverage            Show what the probe library covers; asks the server, runs no probes
 ```
 
 Each command's `--help` lists its flags.
 
 ## License
 
-Apache-2.0 — see [LICENSE](./LICENSE). Copyright © 2026 Veyon Solutions.
+Apache-2.0 — see [LICENSE](https://github.com/gy15901580825/Argus/blob/main/cli/LICENSE). Copyright © 2026 Veyon Solutions.
 
 ## Security
 
-To report a vulnerability: see [SECURITY.md](./SECURITY.md).
+To report a vulnerability: see [SECURITY.md](https://github.com/gy15901580825/Argus/blob/main/cli/SECURITY.md).
 
 ## Links
 
-- Documentation: [docs/onboarding](../docs/onboarding/)
+- Documentation: [docs/onboarding](https://github.com/gy15901580825/Argus/blob/main/docs/onboarding/)
 - Argus repo: https://github.com/gy15901580825/Argus
