@@ -297,3 +297,47 @@ def test_every_format_masks_env_and_literal_secrets(tmp_path, monkeypatch, fmt):
     text = out.read_text()
     assert FAIL_FINDING["probe_id"] in text
     assert "sk-FMT-ENV" not in text and "FMT-LIT" not in text
+
+
+def test_key_rule_matches_camel_and_compact_forms():
+    out = redact({"privateKey": "s1", "accessKey": "s2", "clientSecret": "s3", "auth_header": "s4",
+                  "authHeader": "s5", "api-key": "s6", "max_tokens": 512, "num_tokens": 3, "kind": "x"})
+    assert out == {"privateKey": "***", "accessKey": "***", "clientSecret": "***", "auth_header": "***",
+                   "authHeader": "***", "api-key": "***", "max_tokens": 512, "num_tokens": 3, "kind": "x"}
+
+
+def test_evidence_keys_that_mask_alike_are_both_kept():
+    ev = {"sk-AAA": "first", "sk-BBB": "second"}
+    out = json.loads(render_json(_run(findings=[_finding(evidence=ev)]), secret_values=["sk-AAA", "sk-BBB"]))
+    assert out["findings"][0]["evidence"] == {"***": "first", "***#2": "second"}
+
+
+@pytest.mark.parametrize("fmt", ["json", "sarif"])
+def test_compliance_ids_and_coverage_survive_digit_secrets(tmp_path, monkeypatch, fmt):
+    monkeypatch.setenv("ARGUS_T_ONE", "1")
+    monkeypatch.setenv("ARGUS_T_ZERO", "0")
+    cov = {"thin_threshold": 2, "standards": {"owasp_llm": {"LLM01": 1}, "atlas": {"AML.T0051": 1}}}
+
+    async def _run_ids(target, probe_ids, **kw):
+        yield {**FAIL_FINDING, "owasp_id": ["LLM01"], "atlas_id": ["AML.T0051"], "nist_id": ["MS-2.10"],
+               "eu_ai_act_id": ["Art.10"]}
+        yield {"type": "coverage", "coverage": cov}
+
+    _install_fake_orchestrator(monkeypatch, _run_ids)
+    target = _spec_file(tmp_path, {"kind": "openai_compat", "endpoint_url": "https://x:$ARGUS_T_ONE$ARGUS_T_ZERO",
+                                   "model": "m"})
+    out = tmp_path / f"r.{fmt}"
+    result = CliRunner().invoke(main, ["run", "--local", "--target", target, "--probes", "all",
+                                       "--format", fmt, "--out", str(out)])
+    assert result.exit_code == 0, result.output
+    data = json.loads(out.read_text())
+    if fmt == "json":
+        f = data["findings"][0]
+        assert (f["owasp_id"], f["atlas_id"], f["nist_id"], f["eu_ai_act_id"]) == (
+            ["LLM01"], ["AML.T0051"], ["MS-2.10"], ["Art.10"])
+        assert data["coverage"] == cov
+    else:
+        run = data["runs"][0]
+        props = run["tool"]["driver"]["rules"][0]["properties"]
+        assert props["owasp_llm"] == ["LLM01"] and props["atlas"] == ["AML.T0051"]
+        assert run["properties"]["coverage"] == cov

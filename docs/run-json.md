@@ -38,18 +38,18 @@ People commit reports to CI artifacts and upload SARIF to GitHub code scanning, 
 
 ### Rule 1: substituted environment values
 
-A target spec can reference environment variables as `$VAR` or `${VAR}` in any string (and `%VAR%` on Windows). Argus records every non-empty value it substitutes. Before writing, it replaces each of those values with `***` in every string in the report. That covers the target spec, `target_response`, `reasoning` and `evidence` at any depth, including dict keys inside `evidence`. Longer values are replaced first, so a value that contains another one is masked whole.
+A target spec can reference environment variables as `$VAR` or `${VAR}` in any string (and `%VAR%` on Windows). Argus records every non-empty value it substitutes. Before writing, it replaces each of those values with `***` in every string in the report. That covers the target spec, `target_response`, `reasoning` and `evidence` at any depth, including dict keys inside `evidence`. If two `evidence` keys mask to the same text, both are kept, the second as `***#2`. Longer values are replaced first, so a value that contains another one is masked whole.
 
 This rule does not know which variables are secret. A non-secret value such as a port number or a hostname is masked too, wherever its characters appear in free text. This over-redaction is deliberate. These fields are always written as the engine produced them, never masked:
 
-- run: `schema_version`, `argus_version`, `id`, `status`, `started_at`, `finished_at`, and `target_spec.kind`
-- each finding: `id`, `probe_id`, `verdict`, `severity`, `probed_at`, `created_at`, `confidence` and `target_latency_ms`
+- run: `schema_version`, `argus_version`, `id`, `status`, `started_at`, `finished_at`, `coverage` and `target_spec.kind`
+- each finding: `id`, `probe_id`, `verdict`, `severity`, `probed_at`, `created_at`, `confidence`, `target_latency_ms`, `atlas_id`, `owasp_id`, `nist_id` and `eu_ai_act_id`
 
 ### Rule 2: secret-looking key names
 
-A secret written directly in the target file, without a `${VAR}` reference, is caught by key name. In `target_spec`, at any depth, and ignoring case:
+A secret written directly in the target file, without a `${VAR}` reference, is caught by key name. In `target_spec`, at any depth, each key is compared after lowercasing it and removing `_` and `-`. So `api_key`, `apiKey` and `API-KEY` are treated the same.
 
-- A key named `api_key`, `apikey` or `token`, or ending in `_key`, `apikey` or `token`, or containing `secret`, `password`, `authorization`, `credential` or `cookie`, has its whole value replaced with `***`. Counters such as `max_tokens` do not match and are kept.
+- A key ending in `key`, `token` or `authheader`, or containing `secret`, `password`, `authorization`, `credential` or `cookie`, has its whole value replaced with `***`. This catches `privateKey`, `accessKey`, `access_token`, `clientSecret` and `authHeader`. Counters such as `max_tokens` end in `tokens`, do not match, and are kept.
 - A key named `headers`, or ending in `headers` (for example `extra_headers`), keeps every header name and masks every header value. This works for header lists such as `[["Authorization", "Bearer ..."]]` and for header objects such as `{"Authorization": "Bearer ..."}`.
 
 ### Rule 3: literal values found by rule 2

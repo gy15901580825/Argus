@@ -9,14 +9,14 @@ from uuid import UUID
 
 SCHEMA_VERSION = "argus.run/1"
 MASK = "***"
-# Matched against the lowercased key. Ending in "token" masks access_token but not max_tokens.
-_SECRET_KEY_EXACT = frozenset({"api_key", "apikey", "token"})
-_SECRET_KEY_SUFFIXES = ("_key", "apikey", "token")
+# Matched against the key lowercased with "_" and "-" removed, so apiKey, API_KEY and api-key
+# all match. Ending in "token" masks accessToken but not max_tokens.
+_SECRET_KEY_SUFFIXES = ("key", "token", "authheader")
 _SECRET_KEY_PARTS = ("secret", "password", "authorization", "credential", "cookie")
 # Engine-generated fields put back after the scrub, so a short env value cannot mangle them.
-_RUN_FIELDS = ("id", "status", "started_at", "finished_at")
+_RUN_FIELDS = ("id", "status", "started_at", "finished_at", "coverage")
 _FINDING_FIELDS = ("id", "probe_id", "verdict", "severity", "probed_at", "created_at",
-                   "confidence", "target_latency_ms")
+                   "confidence", "target_latency_ms", "atlas_id", "owasp_id", "nist_id", "eu_ai_act_id")
 
 
 def _default(obj: Any) -> Any:
@@ -30,8 +30,8 @@ def _default(obj: Any) -> Any:
 
 
 def _is_secret_key(key: str) -> bool:
-    k = key.lower()
-    return k in _SECRET_KEY_EXACT or k.endswith(_SECRET_KEY_SUFFIXES) or any(p in k for p in _SECRET_KEY_PARTS)
+    k = key.lower().replace("_", "").replace("-", "")
+    return k.endswith(_SECRET_KEY_SUFFIXES) or any(p in k for p in _SECRET_KEY_PARTS)
 
 
 def _is_header_key(key: str) -> bool:
@@ -104,7 +104,15 @@ def _scrub(value: Any, secrets: list[str], keys: bool = False) -> Any:
             value = value.replace(s, MASK)
         return value
     if isinstance(value, dict):
-        return {(_scrub(k, secrets) if keys else k): _scrub(v, secrets, keys) for k, v in value.items()}
+        out: dict = {}
+        for k, v in value.items():
+            new_k = _scrub(k, secrets) if keys and isinstance(k, str) else k
+            base, n = new_k, 1
+            while new_k in out:  # two keys that mask to the same text: keep both
+                n += 1
+                new_k = f"{base}#{n}"
+            out[new_k] = _scrub(v, secrets, keys)
+        return out
     if isinstance(value, list):
         return [_scrub(v, secrets, keys) for v in value]
     return value
