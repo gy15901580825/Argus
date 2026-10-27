@@ -18,6 +18,7 @@ import os
 import random
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional, Sequence
 
 from orchestrator.redteam import llm
@@ -94,6 +95,7 @@ class PersonaStrategyProbe(IterativeProbe):
     severity: str = "medium"
     judge_model: str = _ATTACKER_MODEL
     judge_rubric_path: str = "rubrics/default.md"
+    rubrics_dir: Path | None = None
     mappings: ProbeMappings = field(default_factory=ProbeMappings)
     scenario_payload: str = ""
     assertions: tuple[dict, ...] = ()
@@ -118,6 +120,7 @@ class PersonaStrategyProbe(IterativeProbe):
         self.severity = self.base.severity
         self.judge_model = self.base.judge_model
         self.judge_rubric_path = self.base.judge_rubric_path
+        self.rubrics_dir = getattr(self.base, "rubrics_dir", None)
         self.mappings = self.base.mappings
         # ...and inherit the attack itself, not just how it is reported: the
         # hostile world the adapter must stage, the deterministic checks over what
