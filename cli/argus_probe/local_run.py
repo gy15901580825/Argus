@@ -4,10 +4,11 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import datetime, timezone
+from typing import Iterable
 
 import click
 
-from argus_probe import reports
+from argus_probe import reports, run_json
 
 _INSTALL_HINT = (
     "local mode needs the argus-orchestrator package: "
@@ -20,13 +21,14 @@ class LocalUnavailable(RuntimeError):
 
 
 def run_local_and_render(
-    spec: dict, probe_ids: list[str], per_run_cap: float | None, report_format: str
+    spec: dict, probe_ids: list[str], per_run_cap: float | None, report_format: str,
+    secret_values: Iterable[str] = (),
 ) -> tuple[str, list[dict]]:
     """Run the probes, print one line per finding, return (report_text, findings).
 
     Raises LocalUnavailable when the orchestrator package is missing, re-raises
     orchestrator.redteam.local.LocalRunError when the run cannot start, and
-    lets any mid-run exception propagate.
+    lets any mid-run exception propagate. `secret_values` are masked in json output.
     """
     try:
         from orchestrator.redteam.local import run_local
@@ -62,5 +64,10 @@ def run_local_and_render(
         "coverage": coverage,
         "findings": findings,
     }
-    render = {"html": reports.render_html, "sarif": reports.render_sarif, "junit": reports.render_junit}[report_format]
+    render = {
+        "html": reports.render_html,
+        "sarif": reports.render_sarif,
+        "junit": reports.render_junit,
+        "json": lambda run: run_json.render_json(run, secret_values),
+    }[report_format]
     return render(run), findings

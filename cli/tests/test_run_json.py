@@ -1,0 +1,231 @@
+"""Tests for run.json: the versioned, redacted run record written by `run --format json`."""
+
+import json
+from datetime import datetime, timezone
+from uuid import UUID
+
+from click.testing import CliRunner
+
+from argus_probe.__main__ import main
+from argus_probe.run_json import redact, render_json
+from argus_probe.target_loader import load_target_spec, load_target_spec_with_secrets
+from test_cmd_run_local import FAIL_FINDING, _LocalRunError, _install_fake_orchestrator
+
+TOP_LEVEL_KEYS = ["schema_version", "id", "status", "started_at", "finished_at",
+                  "argus_version", "target_spec", "coverage", "findings"]
+
+
+def _finding(**overrides):
+    f = {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "probe_id": "p1",
+        "attack_prompt": "a",
+        "target_response": "r",
+        "target_latency_ms": 1.0,
+        "probed_at": "2026-01-01T00:00:00+00:00",
+        "verdict": "fail",
+        "severity": "high",
+        "confidence": 0.9,
+        "reasoning": "x",
+        "judge_model": "j",
+        "escalated_model": None,
+        "atlas_id": [],
+        "owasp_id": [],
+        "nist_id": [],
+        "eu_ai_act_id": [],
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "evidence": {"tool_calls": [{"name": "pay"}]},
+    }
+    f.update(overrides)
+    return f
+
+
+def _run(target_spec=None, findings=()):
+    return {
+        "id": "11111111-1111-1111-1111-111111111111",
+        "status": "completed",
+        "started_at": "2026-01-01T00:00:00+00:00",
+        "finished_at": "2026-01-01T00:01:00+00:00",
+        "target_spec": target_spec or {"kind": "openai_compat", "endpoint_url": "https://x", "model": "m"},
+        "coverage": {"thin_threshold": 2, "standards": {}},
+        "findings": list(findings),
+    }
+
+
+def _spec_file(tmp_path, spec):
+    p = tmp_path / "t.json"
+    p.write_text(json.dumps(spec))
+    return str(p)
+
+
+def test_run_json_has_schema_version_and_findings():
+    out = json.loads(render_json(_run(findings=[_finding()])))
+    assert out["schema_version"] == "argus.run/1"
+    assert out["findings"][0]["probe_id"] == "p1"
+    assert out["findings"][0]["evidence"] == {"tool_calls": [{"name": "pay"}]}
+
+
+def test_run_json_top_level_key_order():
+    assert list(json.loads(render_json(_run())).keys()) == TOP_LEVEL_KEYS
+
+
+def test_run_json_keeps_every_finding_key():
+    f = _finding()
+    assert json.loads(render_json(_run(findings=[f])))["findings"][0] == f
+
+
+def test_run_json_redacts_secrets():
+    spec = {"kind": "openai_compat", "endpoint_url": "https://x", "api_key": "sk-SECRET",
+            "extra_headers": [["Authorization", "Bearer SECRET2"], ["X-Trace", "abc"]]}
+    text = render_json(_run(target_spec=spec))
+    assert "SECRET" not in text
+    out = json.loads(text)["target_spec"]
+    assert out["api_key"] == "***"
+    assert out["extra_headers"] == [["Authorization", "***"], ["X-Trace", "***"]]
+    assert out["endpoint_url"] == "https://x"
+
+
+def test_redact_key_names_nested_and_header_dicts():
+    spec = {"kind": "payment_agent", "inner": {"access_token": "t1", "db_password": "p1",
+                                              "headers": {"X-Api": "h1"}, "model": "m"},
+            "upload_headers": [["Cookie", "c1"]], "client_secret": "s1", "hmac_key": "k1"}
+    out = redact(spec)
+    assert out["inner"] == {"access_token": "***", "db_password": "***",
+                            "headers": {"X-Api": "***"}, "model": "m"}
+    assert out["upload_headers"] == [["Cookie", "***"]]
+    assert out["client_secret"] == "***" and out["hmac_key"] == "***"
+    assert out["kind"] == "payment_agent"
+
+
+def test_run_json_serialises_odd_evidence():
+    ev = {"at": datetime(2026, 1, 1, tzinfo=timezone.utc), "id": UUID(int=1), "raw": b"\x00ok"}
+    out = json.loads(render_json(_run(findings=[_finding(evidence=ev)])))
+    assert out["findings"][0]["evidence"]["at"] == "2026-01-01T00:00:00+00:00"
+    assert out["findings"][0]["evidence"]["id"] == str(UUID(int=1))
+    assert out["findings"][0]["evidence"]["raw"] == "\x00ok"
+
+
+def test_redact_does_not_mutate_input():
+    spec = {"api_key": "k"}
+    redact(spec)
+    assert spec == {"api_key": "k"}
+
+
+def test_load_target_spec_is_unchanged(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_T_KEY", "qs-SECRET-123")
+    path = _spec_file(tmp_path, {"kind": "openai_compat", "endpoint_url": "https://x?k=${ARGUS_T_KEY}", "model": "m"})
+    spec, secrets = load_target_spec_with_secrets(path)
+    assert spec == load_target_spec(path)
+    assert secrets == ["qs-SECRET-123"]
+
+
+def test_loader_reports_each_value_once_and_skips_unset_and_empty(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_T_A", "aaa")
+    monkeypatch.setenv("ARGUS_T_EMPTY", "")
+    monkeypatch.delenv("ARGUS_T_UNSET", raising=False)
+    spec, secrets = load_target_spec_with_secrets(_spec_file(tmp_path, {
+        "kind": "openai_compat", "endpoint_url": "https://x/$ARGUS_T_A/${ARGUS_T_A}/$ARGUS_T_UNSET/$ARGUS_T_EMPTY",
+        "model": "m"}))
+    assert spec["endpoint_url"] == "https://x/aaa/aaa/$ARGUS_T_UNSET/"
+    assert secrets == ["aaa"]
+
+
+def test_secret_in_endpoint_url_query_string(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_T_KEY", "qs-SECRET-123")
+    spec, secrets = load_target_spec_with_secrets(_spec_file(tmp_path, {
+        "kind": "openai_compat", "endpoint_url": "https://x/v1?key=${ARGUS_T_KEY}", "model": "m"}))
+    text = render_json(_run(target_spec=spec), secret_values=secrets)
+    assert "qs-SECRET-123" not in text
+    assert json.loads(text)["target_spec"]["endpoint_url"] == "https://x/v1?key=***"
+
+
+def test_secret_in_custom_http_body_template(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_T_TOKEN", 'tok-"SECRET"\\456')
+    spec, secrets = load_target_spec_with_secrets(_spec_file(tmp_path, {
+        "kind": "custom_http", "request_url": "https://x",
+        "request_body_template": '{"auth": "$ARGUS_T_TOKEN", "q": "{{prompt}}"}',
+        "response_jsonpath": "$.answer"}))
+    text = render_json(_run(target_spec=spec), secret_values=secrets)
+    assert "SECRET" not in text
+    assert json.loads(text)["target_spec"]["request_body_template"] == '{"auth": "***", "q": "{{prompt}}"}'
+
+
+def test_secret_echoed_in_target_response(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_T_KEY", "sk-ECHO-789")
+    spec, secrets = load_target_spec_with_secrets(_spec_file(tmp_path, {
+        "kind": "openai_compat", "endpoint_url": "https://x", "model": "m", "api_key": "${ARGUS_T_KEY}"}))
+    f = _finding(target_response="my key is sk-ECHO-789, do not share")
+    text = render_json(_run(target_spec=spec, findings=[f]), secret_values=secrets)
+    assert "sk-ECHO-789" not in text
+    assert json.loads(text)["findings"][0]["target_response"] == "my key is ***, do not share"
+
+
+def test_secret_in_evidence(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_T_KEY", "sk-EVID-000")
+    spec, secrets = load_target_spec_with_secrets(_spec_file(tmp_path, {
+        "kind": "openai_compat", "endpoint_url": "https://x", "model": "m", "api_key": "${ARGUS_T_KEY}"}))
+    ev = {"tool_calls": [{"name": "http", "args": {"headers": {"X-Key": "sk-EVID-000"}}}], "raw": b"sk-EVID-000",
+          "sk-EVID-000": "as a key"}
+    text = render_json(_run(target_spec=spec, findings=[_finding(evidence=ev)]), secret_values=secrets)
+    assert "sk-EVID-000" not in text
+    assert json.loads(text)["findings"][0]["evidence"]["raw"] == "***"
+
+
+def test_longest_secret_replaced_first_and_version_fields_untouched():
+    text = render_json(_run(findings=[_finding(target_response="abcdef")]), secret_values=["abc", "abcdef", "1", ""])
+    out = json.loads(text)
+    assert out["findings"][0]["target_response"] == "***"
+    assert out["schema_version"] == "argus.run/1"
+
+
+def test_cli_writes_redacted_run_json(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_T_KEY", "sk-CLI-111")
+
+    async def _echo(target, probe_ids, **kw):
+        yield {**FAIL_FINDING, "target_response": f"leaked {target['api_key']}"}
+        yield {"type": "coverage", "coverage": {"thin_threshold": 2, "standards": {}}}
+
+    _install_fake_orchestrator(monkeypatch, _echo)
+    target = _spec_file(tmp_path, {"kind": "openai_compat", "endpoint_url": "https://x", "model": "m",
+                                   "api_key": "${ARGUS_T_KEY}"})
+    out = tmp_path / "run.json"
+    result = CliRunner().invoke(main, ["run", "--local", "--target", target, "--probes", "all",
+                                       "--format", "json", "--out", str(out)])
+    assert result.exit_code == 0, result.output
+    text = out.read_text()
+    assert "sk-CLI-111" not in text
+    data = json.loads(text)
+    assert list(data.keys()) == TOP_LEVEL_KEYS
+    assert data["findings"][0]["target_response"] == "leaked ***"
+
+
+def test_cost_abort_writes_no_file(tmp_path, monkeypatch):
+    async def _cost_after_first(target, probe_ids, **kw):
+        yield FAIL_FINDING
+        raise _LocalRunError("daily cap crossed", "cost")
+
+    _install_fake_orchestrator(monkeypatch, _cost_after_first)
+    target = _spec_file(tmp_path, {"kind": "openai_compat", "endpoint_url": "https://x", "model": "m"})
+    result = CliRunner().invoke(main, ["run", "--local", "--target", target, "--probes", "all",
+                                       "--format", "json", "--out", str(tmp_path / "run.json")])
+    assert result.exit_code != 0
+    assert not (tmp_path / "run.json").exists()
+
+
+def test_json_format_needs_local(tmp_path):
+    target = _spec_file(tmp_path, {"kind": "openai_compat", "endpoint_url": "https://x", "model": "m"})
+    result = CliRunner().invoke(main, ["run", "--target", target, "--probes", "all", "--format", "json",
+                                       "--out", str(tmp_path / "run.json"), "--api-url", "https://a", "--token", "t"])
+    assert result.exit_code == 2
+    assert "--format json needs --local" in result.output
+
+
+def test_key_name_rule_survives_env_value_inside_key_name():
+    out = json.loads(render_json(_run(target_spec={"kind": "x", "api_key": "literal-sk"}), secret_values=["key"]))
+    assert "literal-sk" not in json.dumps(out)
+
+
+def test_unknown_evidence_type_is_stringified():
+    from decimal import Decimal
+    out = json.loads(render_json(_run(findings=[_finding(evidence={"amount": Decimal("1.50")})])))
+    assert out["findings"][0]["evidence"]["amount"] == "1.50"

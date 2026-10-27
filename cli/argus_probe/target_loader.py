@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -47,19 +48,34 @@ class TargetLoadError(ValueError):
     pass
 
 
-def _expand_env(value):
-    """Expand ${VAR} references in strings; recurse through dicts and lists."""
+# Same pattern os.path.expandvars uses on POSIX, so we see exactly what it replaces.
+_VAR_RE = re.compile(r"\$(\w+|\{[^}]*\})", re.ASCII)
+
+
+def _expand_env(value, substituted: list[str]):
+    """Expand ${VAR} references in strings; recurse through dicts and lists.
+
+    Appends every non-empty value it substitutes to `substituted`."""
     if isinstance(value, str):
+        for m in _VAR_RE.finditer(value):
+            name = m.group(1)[1:-1] if m.group(1).startswith("{") else m.group(1)
+            if os.environ.get(name):
+                substituted.append(os.environ[name])
         return os.path.expandvars(value)
     if isinstance(value, dict):
-        return {k: _expand_env(v) for k, v in value.items()}
+        return {k: _expand_env(v, substituted) for k, v in value.items()}
     if isinstance(value, list):
-        return [_expand_env(v) for v in value]
+        return [_expand_env(v, substituted) for v in value]
     return value
 
 
 def load_target_spec(target_arg: str) -> dict[str, Any]:
     """target_arg is either a path to JSON file or an inline JSON string."""
+    return load_target_spec_with_secrets(target_arg)[0]
+
+
+def load_target_spec_with_secrets(target_arg: str) -> tuple[dict[str, Any], list[str]]:
+    """Like load_target_spec, plus every non-empty value substituted for a $VAR reference."""
     text: str
     if target_arg.lstrip().startswith("{"):
         text = target_arg
@@ -95,5 +111,6 @@ def load_target_spec(target_arg: str) -> dict[str, Any]:
             f"{sandbox_reason} and may only be pointed at a "
             "simulated testbed"
         )
-    spec = _expand_env(spec)
-    return spec
+    substituted: list[str] = []
+    spec = _expand_env(spec, substituted)
+    return spec, list(dict.fromkeys(substituted))
