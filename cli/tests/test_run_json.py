@@ -243,14 +243,16 @@ def test_literal_secrets_echoed_by_target_are_masked():
 
 
 def test_one_char_secret_does_not_mangle_structural_fields():
-    f = _finding(id="a1a1", probe_id="owasp_01_a", verdict="fail", severity="high", target_response="a1")
+    f = _finding(id="a1a1", probe_id="owasp_01_a", verdict="fail", severity="high", target_response="a1",
+                 judge_model="gpt-5.4-mini", escalated_model="gpt-5.4")
     run = _run(target_spec={"kind": "openai_compat", "endpoint_url": "https://x", "model": "m"}, findings=[f])
-    out = json.loads(render_json(run, secret_values=["a", "1"]))
+    out = json.loads(render_json(run, secret_values=["a", "1", "4"]))
     assert out["id"] == run["id"] and out["status"] == "completed"
     assert out["started_at"] == run["started_at"] and out["finished_at"] == run["finished_at"]
     assert out["target_spec"]["kind"] == "openai_compat"
     got = out["findings"][0]
-    for k in ("id", "probe_id", "verdict", "severity", "probed_at", "created_at", "confidence"):
+    for k in ("id", "probe_id", "verdict", "severity", "probed_at", "created_at", "confidence",
+              "judge_model", "escalated_model"):
         assert got[k] == f[k], k
     assert got["target_response"] == "******"
 
