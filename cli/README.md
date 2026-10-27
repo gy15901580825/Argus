@@ -122,9 +122,9 @@ Runs that would exceed the cap are rejected before any LLM cost is incurred, in 
 argus-probe quickstart          Run the MCP probes against a built-in demo agent, no key
 argus-probe init                Interactive target.json generator
 argus-probe validate-target     Sanity-check target reachability
-argus-probe list-probes         List probe ids available to your account
+argus-probe list-probes         List probe ids (local library, or a server with --api-url)
 argus-probe run                 Submit a run + write the report
-argus-probe report              Re-render an existing run's report
+argus-probe report              Re-render a run stored on a server
 argus-probe coverage            Show what the probe library covers; asks the server, runs no probes
 ```
 

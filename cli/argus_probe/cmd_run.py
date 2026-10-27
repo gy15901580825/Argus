@@ -34,7 +34,7 @@ EXIT_COST_CAP = 4
 @click.option("--local", "local", is_flag=True, default=False,
               help="Run probes in this process instead of submitting to an Argus API server. Needs the argus-orchestrator package and a judge API key in the environment.")
 @click.option("--compare-to", "compare_to", default=None,
-              help="Base branch: report and gate only on failures that are new relative to the latest run on it. Server mode only.")
+              help="Base branch: report and gate only on failures that are new relative to the latest run on it. Needs run history on a server implementing the /api/v1/redteam API.")
 def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, token: str | None, api_url: str | None, max_wait: float, per_run_cap: float | None, fail_on: str | None, local: bool, compare_to: str | None):
     """Submit a red-team run and write the report to disk."""
     try:
@@ -60,7 +60,7 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
 
     if local:
         if compare_to:
-            raise click.UsageError("--compare-to needs run history on an Argus server; it does not work with --local")
+            raise click.UsageError("--compare-to needs run history on a server implementing the /api/v1/redteam API; it does not work with --local")
         ctx = click.get_current_context()
         typed = [
             name for name, param in (("--api-url", "api_url"), ("--token", "token"))
