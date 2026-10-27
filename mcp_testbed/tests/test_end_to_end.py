@@ -1,7 +1,7 @@
 """End-to-end smoke: the demo agent actually gets fooled by the hostile MCP
 testbed, and the same assertion the runner uses actually catches it.
 
-This is deliberately NOT under `orchestrator/tests/e2e/`: that directory's
+This is deliberately NOT under `tests/e2e/`: that directory's
 `conftest.py` skips every test unless `ARGUS_E2E=1`, `ANTHROPIC_API_KEY`, and
 `TARGET_API_KEY` are all set. This chain needs none of them -- the verdict
 comes from `evaluate_assertions`, not a judge model, and the target is the
@@ -19,15 +19,13 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-# orchestrator/ is a sibling service, not a dependency of this package. Bind to
-# it by path rather than restructuring either package -- mirrors how
-# orchestrator/tests/test_redteam_payment_seam_integration.py binds to
-# payment_testbed/ in the other direction.
-_ORCHESTRATOR_ROOT = Path(__file__).resolve().parents[2] / "orchestrator"
-if str(_ORCHESTRATOR_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ORCHESTRATOR_ROOT))
+# The argus package at the repo root is a sibling, not a dependency of this package.
+# Bind to it by path, as tests/test_redteam_payment_seam_integration.py binds to payment_testbed/.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
-from orchestrator.redteam.assertions import evaluate_assertions  # noqa: E402
+from argus.assertions import evaluate_assertions  # noqa: E402
 
 from demo_agent.app import app as agent_app, set_http_client, set_testbed_origin  # noqa: E402
 from testbed.app import app as testbed_app  # noqa: E402

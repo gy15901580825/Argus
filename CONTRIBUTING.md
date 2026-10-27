@@ -16,9 +16,9 @@ point it at anything — including while developing.
 
 | Path | What it is |
 |---|---|
-| `orchestrator/` | Probe library, probe loader, judge harness, 9 target adapters, iterative attacks. Most contributions land here. |
+| `argus/` | The `argus-probe` package: probe library, probe loader, judge harness, 9 target adapters, iterative attacks, and the `argus-probe` CLI in `argus/cli/`. Most contributions land here. |
+| `tests/` | Tests for the `argus` package. |
 | `client_agent/` | Edge agent (browser-use + Playwright) that executes browser-driven probes. |
-| `cli/` | The `argus-probe` command-line client. |
 | `demo_target/` | Deliberately-vulnerable FastAPI chatbot used as an offline test target. |
 | `demo/` | Offline demo runner (`run_local_demo.py`) plus its recorded results. |
 | `payment_testbed/`, `mcp_testbed/` | Sandboxed worlds and insecure demo agents for `payment_agent` and `mcp_agent` probes. |
@@ -27,11 +27,10 @@ point it at anything — including while developing.
 The REST API, web UI, database migrations and deployment charts were removed
 after tag `v0.3-full`. Check out that tag to work on them.
 
-Inside the orchestrator, the red-team code lives under
-`orchestrator/orchestrator/redteam/`:
+The red-team engine lives under `argus/`:
 
 ```
-orchestrator/orchestrator/redteam/
+argus/
 ├── probe.py            probe dataclass + YAML loader (the schema below)
 ├── runner.py           per-probe execution, rubric resolution, findings
 ├── judge.py            LLM-judge (Haiku default, Sonnet escalation)
@@ -55,28 +54,23 @@ Python 3.11+.
 
 ```bash
 git clone https://github.com/gy15901580825/Argus
-cd Argus/orchestrator
-pip install -r requirements-dev.txt
+cd Argus
+pip install -e ".[dev]"
 ```
 
-`requirements-dev.txt` pulls in the runtime requirements plus pytest,
-import-linter, and the HTTP test doubles.
+The `dev` extra adds pytest, import-linter, and the HTTP test doubles to the
+runtime dependencies.
 
-Do **not** add `garak` to the runtime requirements. It lives in
-`requirements-tools.txt` and is only needed to regenerate the garak
+Do **not** add `garak` to the runtime dependencies. It lives in
+`scripts/requirements-tools.txt` and is only needed to regenerate the garak
 wrapper probes; its transitive dependency graph conflicts with the
 runtime pins.
 
 ## Running the tests
 
-The orchestrator suite must be run **from the `orchestrator/` directory** —
-`tests/test_redteam_probe.py` resolves the probe library through the
-relative path `orchestrator/redteam/probes`, so running pytest from the
-repository root produces spurious failures.
+Run the suite from the repository root (running it from `tests/` works too):
 
 ```bash
-cd orchestrator
-
 # whole suite
 python3 -m pytest tests/ -q
 
@@ -84,7 +78,7 @@ python3 -m pytest tests/ -q
 python3 -m pytest tests/ -k redteam -q
 ```
 
-pytest is configured in `orchestrator/pyproject.toml` with
+pytest is configured in `pyproject.toml` with
 `asyncio_mode = "auto"` (async tests need no `@pytest.mark.asyncio`),
 `testpaths = ["tests"]`, and `--strict-markers`.
 
@@ -98,7 +92,7 @@ locally before opening a PR.
 ## Adding a new probe
 
 A probe is one YAML file. The loader is
-`orchestrator/orchestrator/redteam/probe.py` — read it if anything here is
+`argus/probe.py` — read it if anything here is
 ambiguous; it is 80 lines.
 
 ### Schema
@@ -158,7 +152,7 @@ flip side is that a **misspelled key is silently dropped** — for example
 
 ### A complete example
 
-This is `orchestrator/orchestrator/redteam/probes/owasp_01_prompt_injection_basic.yaml`,
+This is `argus/probes/owasp_01_prompt_injection_basic.yaml`,
 unmodified. Copy it as your starting point:
 
 ```yaml
@@ -188,13 +182,13 @@ Where to put the file:
   include `browser-using` and supply the `scenario` block
 - `probes/custom/` — research / one-off attacks
 - `probes/garak/` — **generated, do not hand-edit.** These come from
-  `orchestrator/scripts/wrap_garak_probes.py`. Regenerate deliberately
+  `scripts/wrap_garak_probes.py`. Regenerate deliberately
   (e.g. on a garak version bump) and review the diff.
 
 ### The rubric
 
 `judge.rubric_path` is resolved against
-`orchestrator/orchestrator/redteam/rubrics/`. A leading `rubrics/`
+`argus/rubrics/`. A leading `rubrics/`
 component is stripped, and a path that escapes the rubrics directory is
 rejected with `ValueError`.
 
@@ -215,13 +209,11 @@ which quietly degrades verdict quality. Confirm the file is really there.
 ### Verify your probe
 
 ```bash
-cd orchestrator
-
 # 1. it parses, and the fields land where you expect
 python3 -c "
 from pathlib import Path
-from orchestrator.redteam.probe import load_probe
-p = load_probe(Path('orchestrator/redteam/probes/YOUR_PROBE.yaml'))
+from argus.probe import load_probe
+p = load_probe(Path('argus/probes/YOUR_PROBE.yaml'))
 print(p.id, '|', p.severity, '|', p.mappings.owasp_llm, '|', p.judge_rubric_path)
 "
 
@@ -234,7 +226,6 @@ target — `demo_target/`, a chatbot with four fake secrets in its system
 prompt — and a runner that needs no API keys:
 
 ```bash
-cd ..                       # repository root
 pip install fastapi httpx openai pydantic uvicorn slowapi pyyaml
 PYTHONPATH=. python3 demo/run_local_demo.py
 ```
@@ -247,18 +238,16 @@ is intentional.
 
 ## Module boundary rule
 
-The legacy web-UI testing code has been removed. Two import-linter
-contracts in `orchestrator/.importlinter` stay as guards so that no
-`orchestrator.web_ui_*` module can come back as a dependency of the engine:
+Two import-linter contracts in `.importlinter` keep the engine usable on
+its own:
 
-- `orchestrator.redteam` must not import `orchestrator.web_ui_test`,
-  `orchestrator.web_ui_runner`, or `orchestrator.web_ui_phases`
-- `orchestrator.redteam.targets` must not import `orchestrator.web_ui_test`
+- engine modules (`argus.runner`, `argus.targets`, `argus.skillscan`, ...)
+  must not import `argus.cli` or `argus.server`
+- `argus.cli` must not import `argus.server`
 
-Check it before opening a PR:
+Check it from the repository root before opening a PR:
 
 ```bash
-cd orchestrator
 lint-imports
 ```
 

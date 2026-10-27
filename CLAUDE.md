@@ -10,9 +10,8 @@ Argus is a black-box red-team testing tool for AI agents. Customers point Argus 
 
 | Service | Port | Stack | Role |
 |---------|------|-------|------|
-| `orchestrator` | 8080 | FastAPI, litellm | Red-team engine: probe dispatch + judge harness in `orchestrator/redteam/`, served at `/redteam/*`, plus the WebSocket hub for client agents |
+| `argus` | 8080 | FastAPI, litellm, click | The `argus-probe` package (one `pyproject.toml` at the repo root, tests in `tests/`). Engine: probe dispatch + judge harness in `argus/`. CLI in `argus/cli/`: quickstart / run / report / list-probes / validate-target / coverage / scan-skill. `python -m argus.server` serves `/redteam/*` plus the WebSocket hub for client agents |
 | `client_agent` | — | websockets, browser-use, Playwright | Edge agent on client/cloud machines. Red-team probe runner in `redteam_runner/` |
-| `cli` | — | Python (click) | Published `argus-probe` CLI — quickstart / run / report / list-probes / validate-target / coverage |
 | `demo_target` | 8000 | FastAPI | Deliberately-vulnerable chatbot used as a public demo target for `argus-probe` |
 | `payment_testbed` | 8080 | FastAPI | Mock x402 payment world + insecure demo agent for `payment_agent` probes |
 | `mcp_testbed` | 8080 | FastAPI | Hostile MCP tool server + insecure demo agent for `mcp_agent` probes |
@@ -30,7 +29,7 @@ The orchestrator no longer calls them: the planner and web-UI testing code were 
 Project docs live in `docs/`. The repo root keeps only `CLAUDE.md` and `README.md` — all other text/markdown documents go under `docs/`.
 
 - `docs/runbooks/local-dev.md` — Run each service locally
-- `docs/runbooks/release.md` — Publish argus-probe and argus-orchestrator to PyPI (trusted publishing, TestPyPI rehearsal)
+- `docs/runbooks/release.md` — Publish argus-probe to PyPI (trusted publishing, TestPyPI rehearsal)
 - `docs/reference/services.md` — Orchestrator endpoints and request flows
 - `docs/onboarding/` — Quickstart, probe ID cheatsheet, target-spec cookbook
 - `docs/operations/judge-decider.md` — Optional third-party decider for conflicting judge verdicts
@@ -39,7 +38,7 @@ Project docs live in `docs/`. The repo root keeps only `CLAUDE.md` and `README.m
 
 ## Architecture
 
-`orchestrator` keeps an import-linter CI contract (`.importlinter`) that forbids `redteam/` from importing legacy web-UI modules.
+An import-linter CI contract (`.importlinter`) forbids the engine modules from importing `argus.cli` or `argus.server`, and the CLI from importing `argus.server`.
 
 ### Communication Protocols
 

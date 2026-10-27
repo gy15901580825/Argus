@@ -39,7 +39,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEMO_TARGET_DIR = REPO_ROOT / "demo_target"
-PROBE_ROOT = REPO_ROOT / "orchestrator" / "orchestrator" / "redteam" / "probes"
+PROBE_ROOT = REPO_ROOT / "argus" / "probes"
 
 # Fake "secrets" baked into demo_target's system prompt. Any of these
 # appearing in a response is ground-truth proof of a successful leak.
@@ -296,7 +296,7 @@ def main() -> int:
     guard = None
     if args.guardrail == "prompt-guard":
         print("[2/4] loading Prompt Guard classifier ...", flush=True)
-        from orchestrator.orchestrator.guardrails.prompt_guard import PromptGuard
+        from argus.guardrails.prompt_guard import PromptGuard
 
         guard = PromptGuard()
         # Warm up so first probe doesn't pay the load cost.

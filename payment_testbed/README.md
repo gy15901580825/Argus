@@ -51,7 +51,7 @@ turn a real finding into a pass.
 
 ### These shapes are a cross-service contract
 
-`orchestrator/tests/test_redteam_payment_seam_integration.py` mounts this app
+`tests/test_redteam_payment_seam_integration.py` mounts this app
 in-process and drives the real `payment_agent` adapter against it, so the
 session and evidence shapes above are pinned by a test in another service.
 Changing them is a cross-service change: run the orchestrator suite too, not

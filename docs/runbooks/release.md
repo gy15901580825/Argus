@@ -1,17 +1,15 @@
 # Releasing to PyPI
 
-`.github/workflows/release.yml` builds `argus-probe` (`cli/`) and `argus-orchestrator` (`orchestrator/`) and publishes both with PyPI trusted publishing. GitHub Actions gets a short-lived OIDC token, so the repo stores no PyPI API token.
+`.github/workflows/release.yml` builds `argus-probe` from the repo root `pyproject.toml` and publishes it with PyPI trusted publishing. GitHub Actions gets a short-lived OIDC token, so the repo stores no PyPI API token.
 
 ## One-time setup
 
-1. Add a pending publisher for each project on each index. On pypi.org and test.pypi.org, open Account settings, then Publishing, then "Add a new pending publisher" (GitHub tab). Create four entries:
+1. Add a pending publisher for the project on each index. On pypi.org and test.pypi.org, open Account settings, then Publishing, then "Add a new pending publisher" (GitHub tab). Create two entries:
 
    | Index | PyPI project name | Owner | Repository | Workflow | Environment |
    |---|---|---|---|---|---|
    | pypi.org | `argus-probe` | `gy15901580825` | `Argus` | `release.yml` | `pypi` |
-   | pypi.org | `argus-orchestrator` | `gy15901580825` | `Argus` | `release.yml` | `pypi` |
    | test.pypi.org | `argus-probe` | `gy15901580825` | `Argus` | `release.yml` | `testpypi` |
-   | test.pypi.org | `argus-orchestrator` | `gy15901580825` | `Argus` | `release.yml` | `testpypi` |
 
 2. In the GitHub repo, open Settings, then Environments, and create `pypi` and `testpypi`. You can add required reviewers to `pypi` so a tag push waits for approval before it uploads.
 
@@ -20,12 +18,12 @@ A pending publisher does not reserve the project name. Someone else can still re
 ## Rehearsal on TestPyPI
 
 1. In the Actions tab, open the Release workflow, click "Run workflow", pick the branch and leave `target` as `testpypi`.
-2. When it finishes, install from TestPyPI in a clean venv. Install the two packages from TestPyPI without dependencies first, then install the dependencies from PyPI. Pointing pip at both indexes at once fails, because TestPyPI hosts an unrelated `FASTAPI 1.0` sdist that pip picks over the real `fastapi` and that does not build.
+2. When it finishes, install from TestPyPI in a clean venv. Install the package from TestPyPI without dependencies first, then install the dependencies from PyPI. Pointing pip at both indexes at once fails, because TestPyPI hosts an unrelated `FASTAPI 1.0` sdist that pip picks over the real `fastapi` and that does not build.
 
 ```bash
 python3.11 -m venv /tmp/argus-rc && . /tmp/argus-rc/bin/activate
-pip install --no-deps --index-url https://test.pypi.org/simple/ argus-probe==0.1.3 argus-orchestrator==0.3.3
-pip install "argus-probe[local]==0.1.3"
+pip install --no-deps --index-url https://test.pypi.org/simple/ argus-probe==0.2.0
+pip install "argus-probe[local]==0.2.0"   # the empty extra must install without a warning
 pip check
 argus-probe --version
 ```
@@ -36,12 +34,14 @@ Never upload to either index by hand with `twine`. A manual upload creates the p
 
 ## Release
 
-1. Bump `version` in `cli/pyproject.toml`. Bump `orchestrator/pyproject.toml` too if the orchestrator changed, and keep the `argus-orchestrator` range in argus-probe's `local` extra in step with it.
+1. Bump `version` in `pyproject.toml` at the repo root.
 2. Merge to `main`, then tag that commit with `v` plus the argus-probe version and push the tag:
 
 ```bash
-git tag v0.1.3
-git push origin v0.1.3
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
-The build job fails if the tag does not match the version in `cli/pyproject.toml`. The PyPI job skips files that already exist, so an unchanged argus-orchestrator version is skipped, not an error.
+The build job fails if the tag does not match the version in `pyproject.toml`.
+
+`argus-orchestrator` (the engine as a separate package, import name `orchestrator.redteam`) stopped at 0.3.4 and gets no more releases. It stays installable from PyPI for code that still imports `orchestrator.redteam`.

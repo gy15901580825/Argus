@@ -7,7 +7,7 @@ LLM-judged findings as SARIF 2.1.0 / JUnit XML / HTML — upload straight to
 GitHub Code Scanning.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](cli/pyproject.toml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](pyproject.toml)
 
 ---
 
@@ -59,7 +59,7 @@ What Argus does:
   `POST /api/v1/redteam/runs`: `owasp-llm-top10`, `mitre-atlas`,
   `nist-ai-rmf`, `eu-ai-act`, `payments`, `mcp`.
 - **LLM-judge harness** with per-probe rubrics in
-  `orchestrator/orchestrator/redteam/rubrics/`. A fast model judges every
+  `argus/rubrics/`. A fast model judges every
   response (Anthropic Haiku 4.5 by default); a strong model (Sonnet 4.6)
   re-judges when the first pass says high/critical with confidence ≥ 0.7.
   Set `OPENAI_API_KEY` to use OpenAI (picked automatically when it is the
@@ -95,7 +95,7 @@ What Argus does **not** do:
 
 ## In the engine, not yet exposed
 
-These exist in `orchestrator/` with tests, but no CLI flag or API field
+These exist in `argus/` with tests, but no CLI flag or API field
 starts them yet:
 
 - **Iterative attackers**: TAP, PAIR and black-box GCG
@@ -159,12 +159,12 @@ templates and JSONPath response extractors), `grpc`, `http_upload`,
 `browser_use`, `payment_agent`, `mcp_agent`, `testbed_agent`, `vllm_server`. Full target-spec cookbook in
 [`docs/onboarding/target-spec-cookbook.md`](docs/onboarding/target-spec-cookbook.md).
 
-Install the `argus-probe` CLI from PyPI (Python 3.11+). The `[local]`
-extra pulls in the probe engine, so probes run on your machine and judged
+Install the `argus-probe` CLI from PyPI (Python 3.11+). The package
+includes the probe engine, so probes run on your machine and judged
 probes only need a judge key:
 
 ```bash
-pipx install "argus-probe[local]"        # or: pip install "argus-probe[local]"
+pipx install argus-probe                 # or: pip install argus-probe
 export ANTHROPIC_API_KEY=<your key>      # or OPENAI_API_KEY; see "LLM-judge harness" above for Azure and local models
 argus-probe run --local --target argus-target.json \
                 --probes owasp_01_prompt_injection_basic,syscard_crescendo \
@@ -273,9 +273,8 @@ argus-probe scan-skill --sample key-grab
 
 | Sub-project | Role |
 |---|---|
-| [`orchestrator/`](orchestrator/) | Probe dispatcher + judge harness + 11 target adapters + guardrail wrappers (used by the local demo runner). |
+| [`argus/`](argus/) | The `argus-probe` package: probe library, judge harness, 11 target adapters, guardrail wrappers (used by the local demo runner) and the CLI in `argus/cli/`. Install it from this repo with `pip install .`. |
 | [`client_agent/`](client_agent/) | Edge agent (browser-use + Playwright) for browser-driven probes. |
-| [`cli/`](cli/) | `argus-probe` Python CLI, installed from this repo with pip. |
 | [`demo_target/`](demo_target/) | Deliberately-vulnerable FastAPI chatbot for offline demos. |
 | [`payment_testbed/`](payment_testbed/) | Mock x402 payment world + insecure demo agent, for `payment_agent` probes. |
 | [`mcp_testbed/`](mcp_testbed/) | Hostile MCP tool server + insecure demo agent, for `mcp_agent` probes. |
@@ -298,7 +297,7 @@ the in-cluster services.
 ## Probe library structure
 
 ```
-orchestrator/orchestrator/redteam/probes/
+argus/probes/
 ├── owasp_01_prompt_injection_basic.yaml      ← 15 hand-authored OWASP probes
 ├── owasp_02_…                                   (LLM01–LLM10)
 ├── …
@@ -371,7 +370,7 @@ See [`docs/probe-mapping.md`](docs/probe-mapping.md) for the full
 
 Argus can prepend an input-side guardrail before every target call so you
 can measure how much your guardrail actually buys you. Wrappers live in
-`orchestrator/orchestrator/guardrails/`:
+`argus/guardrails/`:
 
 | Guardrail | Backend | Notes |
 |---|---|---|
