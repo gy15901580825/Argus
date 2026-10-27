@@ -53,9 +53,9 @@ Optional: `REDTEAM_DECIDER=jev` plus `TYPESAFE_API_KEY` lets a third-party model
 
 `--per-run-cap` and `--fail-on` work the same way as in server mode. If this is all you need, skip steps 3 to 5 and continue at step 6 to read the report.
 
-## 3. Get an Argus API token (server mode)
+## 3. Get an API token (server mode)
 
-There is no hosted Argus instance. Run your own `api_service` (see [local-dev.md](../runbooks/local-dev.md)); the token is the `api_token` column of a row in its `users` table. An admin mints one with `POST /api/v1/admin/users` and `"api_token_only": true`. There is no bootstrap step for the first admin, so insert that first row directly in the database with role `SUPER_ADMIN`. Then set the token and the server URL in your shell:
+Server mode needs a server implementing the `/api/v1/redteam` API. There is no hosted Argus instance, and this repo no longer ships a server; the self-hosted stack (REST API, web UI, migrations) is at tag [`v0.3-full`](https://github.com/gy15901580825/Argus/tree/v0.3-full). Get a token from the server you use, then set the token and the server URL in your shell:
 
 ```bash
 export ARGUS_API_TOKEN="<your token>"
@@ -131,7 +131,7 @@ See [Threat coverage overview](./probe-id-cheatsheet.md) for the categories the 
 argus-probe quickstart                Run the MCP probes against a built-in demo agent, no key
 argus-probe init --kind <X>           Interactive target.json generator
 argus-probe validate-target           Sanity-check target reachability
-argus-probe list-probes               List probe ids the server has loaded
+argus-probe list-probes               List probe ids (local library, or a server with --api-url)
 argus-probe run                       Submit a run + write the report
 argus-probe report                    Re-render an existing run's report
 argus-probe coverage                  Show what the probe library covers, offline

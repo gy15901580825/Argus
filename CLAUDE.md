@@ -10,15 +10,14 @@ Argus is a black-box red-team testing tool for AI agents. Customers point Argus 
 
 | Service | Port | Stack | Role |
 |---------|------|-------|------|
-| `api_service` | 8881 | FastAPI, asyncpg, PostgreSQL | Central REST API: users, R2 storage, `/redteam/*`. Module isolation via `redteam/` + import-linter |
 | `orchestrator` | 8080 | FastAPI, litellm | Red-team engine: probe dispatch + judge harness in `orchestrator/redteam/`, served at `/redteam/*`, plus the WebSocket hub for client agents |
 | `client_agent` | — | websockets, browser-use, Playwright | Edge agent on client/cloud machines. Red-team probe runner in `redteam_runner/` |
-| `frontend` | 3000 | Next.js 16, React 19, Zustand | Web UI: marketing site, chat, dashboard |
-| `database` | — | Flyway, PostgreSQL | Schema migrations |
-| `kubernets` | — | Helm, AKS/k3s | Deployment charts, scripts, YAML manifests |
-| `cli` | — | Python (click) | Published `argus-probe` CLI — run / report / list-probes / validate-target |
+| `cli` | — | Python (click) | Published `argus-probe` CLI — quickstart / run / report / list-probes / validate-target / coverage |
 | `demo_target` | 8000 | FastAPI | Deliberately-vulnerable chatbot used as a public demo target for `argus-probe` |
-| `terraform` | — | Terraform | Azure IaC reference (AKS, ACR, PG, Key Vault, B2C apps) |
+| `payment_testbed` | 8080 | FastAPI | Mock x402 payment world + insecure demo agent for `payment_agent` probes |
+| `mcp_testbed` | 8080 | FastAPI | Hostile MCP tool server + insecure demo agent for `mcp_agent` probes |
+
+Argus is the engine and CLI only. The CLI's server mode (`run` without `--local`, `report`, `list-probes --api-url`) talks to any server implementing the `/api/v1/redteam` API; this repo does not ship one. The self-hosted stack (`api_service`, `frontend`, `database`, `kubernets`, `terraform`) was removed after tag `v0.3-full`; check out that tag to get it back.
 
 The three legacy `testing_*` services moved to separate repositories on 2026-05-28:
 - `testing_api_service` + `testing_web_fetch_service` → https://github.com/gy15901580825/argus-api-testing
@@ -26,121 +25,35 @@ The three legacy `testing_*` services moved to separate repositories on 2026-05-
 
 The orchestrator no longer calls them: the planner and web-UI testing code were removed from this repo.
 
-## Domain & Environment
-
-### Shared infrastructure
-
-- **Cluster**: Azure AKS, context `<YOUR_AKS>`
-- **Container registry**: Azure ACR — `<YOUR_ACR>.azurecr.io/argus/<service>:<tag>`
-- **Database server**: Azure Database for PostgreSQL — `<YOUR_PG_SERVER>.postgres.database.azure.com` (`publicNetworkAccess=Disabled`; psql/Flyway must run from in-cluster pods)
-- **Ingress**: NGINX Ingress Controller, single LoadBalancer IP `<YOUR_INGRESS_IP>` shared by all hosts
-- **Azure Key Vault**: `<YOUR_KEY_VAULT>` is the runtime source-of-truth for `api_service` credentials. K8s Secret `argus-api-service-secret` is auto-synced from KV by External Secrets Operator (ESO) via `ClusterSecretStore: <YOUR_AZURE_KV_STORE>`. ESO authenticates with Workload Identity → UAMI `eso-kv-reader` (federated credential subject `system:serviceaccount:external-secrets:external-secrets`). Other services use literal Helm-rendered Secrets. Operator runbook: `kubernets/DEV_DEPLOYMENT_GUIDE.md` § Secrets management.
-- **TLS**: cert-manager + Let's Encrypt (ClusterIssuer: `letsencrypt-prod`), auto-renewed
-- **DNS**: Cloudflare proxy (orange cloud) in front of all hosts
-- **Auth**: Microsoft Entra External ID (CIAM), SPA app ID `<YOUR_CLIENT_ID>`, in separate tenant `<YOUR_TENANT_ID>`
-  - To manage app registrations: `az login --tenant <YOUR_TENANT_ID> --allow-no-subscriptions`
-  - SPA `redirectUris` include both prod and dev callbacks: `https://www.example.com/{callback,auth-redirect}`, `https://dev.example.com/{callback,auth-redirect}`, `http://localhost:3000/{callback,auth-redirect}`
-
-### Production
-
-| Dimension | Value |
-|---|---|
-| URL | `https://www.example.com` |
-| Namespace | `default` |
-| Database | `argus` |
-| Helm release | `argus-<svc>` |
-| Image tag | semver (e.g. `1.0.0`) |
-| Ingress | `kubernets/ingress-azure.yaml` |
-| TLS secret | `argus-tls` |
-| Values override | `values-azure.yaml` |
-| Secret | `argus-<svc>-secret` (per-service, created by chart from `values.secrets.*`) |
-
-### Dev
-
-| Dimension | Value |
-|---|---|
-| URL | `https://dev.example.com` |
-| Namespace | `dev` |
-| Database | `argus_dev` (same PG server, separate logical DB) |
-| Helm release | `argus-<svc>-dev` |
-| Image tag | `dev-latest` or `dev-<gitsha-short>` |
-| Ingress | `kubernets/ingress-azure-dev.yaml` |
-| TLS secret | `argus-dev-tls` |
-| Values override | `values-azure-dev.yaml` (in addition to `values.yaml` + `values-azure.yaml`) |
-| Secrets | `argus-dev-secrets` (shared, covering orchestrator + testing services with all naming-convention aliases) + `argus-api-service-dev-secret` (separate; api-service chart hardcodes `{fullname}-secret` for most keys) |
-| Operator manual | `kubernets/DEV_DEPLOYMENT_GUIDE.md` |
-
-**Dev secret-naming gotcha:** Three charts use three different key conventions for the same underlying credentials. `argus-dev-secrets` stores all three sets to satisfy each chart's references:
-- orchestrator: `AZURE_API_*` (litellm) + `R2_*`
-- testing-{api,web-ui}-service: `AZURE_OPENAI_*` + `CLOUDFLARE_R2_*`
-- api-service: `AZURE_OPENAI_*` + `R2_*` (in its own per-service secret because the chart doesn't honor `existingSecretName` for non-DATABASE keys)
-
-## Docker Registry Rules
-
-- **client_agent** → Docker Hub: `<your-gh-user>/client_agent:latest`
-- **All other services** → Azure ACR: `<YOUR_ACR>.azurecr.io/argus/<service>:<tag>`
-
-Build/push via `./build-and-push.sh <service> <tag>`. Full deploy procedures (AKS Helm, frontend rebuild, domain-change checklist) → `docs/runbooks/deploy.md`.
-
 ## Documentation
 
 Project docs live in `docs/`. The repo root keeps only `CLAUDE.md` and `README.md` — all other text/markdown documents go under `docs/`.
 
-- `docs/CI_CD.md` — CI/CD pipeline (GitHub Actions build/push + ArgoCD GitOps to AKS)
-- `docs/runbooks/deploy.md` — Build images, Helm upgrade, frontend rebuild, domain-change checklist
-- `docs/runbooks/local-dev.md` — Run each service locally (Python services, frontend, Flyway migrations)
+- `docs/runbooks/local-dev.md` — Run each service locally
 - `docs/runbooks/release.md` — Publish argus-probe and argus-orchestrator to PyPI (trusted publishing, TestPyPI rehearsal)
-- `docs/reference/services.md` — Detailed request flows, API endpoint tables, frontend component tables
+- `docs/reference/services.md` — Orchestrator endpoints and request flows
 - `docs/onboarding/` — Quickstart, probe ID cheatsheet, target-spec cookbook
 - `docs/operations/` — Operator-facing runbooks
+- `docs/run-json.md` — The `run.json` format
 - `docs/agent-evaluation-deep-dive.md` / `docs/llm-agent-testing-overview.md` — Background reading
 
 ## Architecture
 
-### Authentication
-
-Dual-auth via **Microsoft Entra External ID (CIAM)**:
-- **JWT tokens**: From CIAM OAuth flow (MSAL on frontend, ROPC for client_agent), sent as `Authorization: Bearer <token>`
-- **API tokens**: Long-lived per-user secrets, sent as `x-api-token` header
-- **Service-to-service**: `x-user-id` header + `ORCHESTRATOR_SECRET`
-- **Screenshot proxy**: `?token=` query param (because `<img src>` can't send headers)
-
-### Database
-
-Azure Database for PostgreSQL (production) with async driver (asyncpg). Migrations in `database/sql/` (Flyway).
-
-Key tables: `users`, `redteam_runs`, `redteam_findings`, `redteam_design_partners`, `client_agent`, `chat_sessions`, `chat_messages`, `blogs`, `documents`, `trial_tokens`.
-
-`orchestrator` and `api_service` keep import-linter CI contracts (`.importlinter`) that forbid `redteam/` from importing legacy web-UI modules.
-
-### Storage
-
-Cloudflare R2 (S3-compatible) for file artifacts, accessed from `api_service` (`r2_storage.py`).
+`orchestrator` keeps an import-linter CI contract (`.importlinter`) that forbids `redteam/` from importing legacy web-UI modules.
 
 ### Communication Protocols
 
-- **REST/SSE**: Frontend ↔ API Service ↔ Orchestrator
+- **In-process**: `argus-probe run --local` and `quickstart` import the engine directly
+- **REST/SSE**: `POST /redteam/run` streams one `data:` line per finding, then a `coverage` event, then `event: end` (or `event: error`)
 - **WebSocket**: Orchestrator ↔ Client Agents (JSON-RPC; the orchestrator sends `redteam_browser_probe`)
 
-Detailed request-flow diagrams → `docs/reference/services.md`.
+Detailed request flows → `docs/reference/services.md`.
 
 ### LLM Configuration
 
-- **Azure OpenAI**: `gpt-5.4-mini` — the orchestrator's red-team judge/attacker model when `REDTEAM_MODEL_PROVIDER=azure` (via litellm). `api_service`'s LLM proxy (`routers/llm.py`) also serves `gpt-5.3-codex` (Responses API only). The `testing_*` services live in the external repos listed above.
+- **Azure OpenAI**: `gpt-5.4-mini` — the orchestrator's red-team judge/attacker model when `REDTEAM_MODEL_PROVIDER=azure` (via litellm). The `testing_*` services live in the external repos listed above.
 - **Temperature constraint**: `gpt-5.4-mini` does NOT support custom temperature parameter (Azure limitation) — never set `temperature` when calling this model
-
-### Key SSE Event Types
-
-| Event Type | Source | Frontend Display |
-|------------|--------|-----------------|
-| `log` / `discovery_progress` | Orchestrator agents | Collapsible "Thinking" block (LogMessage) |
-| `progress` | Agent pipeline steps | Collapsible log lines |
-| `result` | Final agent output | Markdown-rendered ResultMessage |
-| `error` | Any service | Red error banner, stops stream |
 
 ## Common Pitfalls & Gotchas
 
 1. **Temperature on gpt-5.4-mini**: Azure's `gpt-5.4-mini` rejects requests with `temperature` parameter. Never pass it.
-2. **Frontend env vars baked at build time**: `NEXT_PUBLIC_*` vars are compiled into the JS bundle. Domain/URL changes require `./build-and-push.sh frontend <tag>`, not just a restart.
-3. **ACR auth expires**: Run `az acr login --name <YOUR_ACR>` before any image push. Tokens expire after ~3 hours.
-4. **Removed strategy stream**: the frontend's `streamStrategy()` and `api_service`'s `/api/v1/orchestrator/strategy/stream` proxy still exist, but the orchestrator endpoint behind them was removed, so that chat path no longer works.

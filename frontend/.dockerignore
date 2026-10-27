@@ -1,8 +1,0 @@
-node_modules
-.next
-.git
-*.md
-.env*
-playwright-report
-test-results
-tests

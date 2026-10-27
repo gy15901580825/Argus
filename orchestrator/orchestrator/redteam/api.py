@@ -1,7 +1,8 @@
-"""FastAPI sub-router for redteam runs (called by api_service).
+"""FastAPI sub-router for redteam runs (called by a server implementing the
+/api/v1/redteam API).
 
-Auth: this endpoint has no authentication. api_service is the only v0 caller
-and lives on the same cluster network; per-tenant isolation arrives in M3+.
+Auth: this endpoint has no authentication. Expose it only to that server on a
+private network.
 """
 
 from __future__ import annotations
@@ -198,8 +199,8 @@ async def _run_probes(req: RunRequest, anthropic_api_key: str) -> AsyncIterator[
 async def preflight(req: RunRequest):
     """Lightweight cost-cap check — no probe execution.
 
-    api_service calls this synchronously before creating the DB row so it can
-    surface a 402 to the caller.  Returns 200 {} on pass, 402 on cost exceeded.
+    The calling server runs this before it records the run, so it can
+    surface a 402 to its caller.  Returns 200 {} on pass, 402 on cost exceeded.
     """
     if not isinstance(req.target, dict):
         raise HTTPException(status_code=422, detail="target must be a JSON object")

@@ -18,8 +18,8 @@ Please include:
 
 - A description of the issue
 - Steps to reproduce
-- Affected component (`orchestrator`, `api_service`, `client_agent`, `cli`,
-  `frontend`) and the commit you tested
+- Affected component (`orchestrator`, `client_agent`, `cli`, a testbed or
+  `demo_target`) and the commit you tested
 - Your assessment of impact
 
 We aim to acknowledge reports within 2 business days and to ship a fix or

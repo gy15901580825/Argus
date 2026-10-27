@@ -1,7 +1,7 @@
 name: CI
 
-# The per-service .github/workflows/ directories under orchestrator/, api_service/
-# etc. are leftovers from the polyrepo split — GitHub only runs workflows from the
+# The per-service .github/workflows/ directories under orchestrator/ and
+# client_agent/ are leftovers from the polyrepo split — GitHub only runs workflows from the
 # repository root, so none of them execute here. They also carry <YOUR_ACR>-style
 # placeholders and registry-push steps that cannot work on a fork.
 #
@@ -36,33 +36,6 @@ jobs:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: orchestrator/requirements-dev.txt
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt -r requirements-dev.txt
-
-      - name: Run test suite
-        run: python -m pytest tests/ -q
-
-      - name: Check redteam import boundary
-        # redteam/ must never import web_ui_* — see .importlinter
-        run: lint-imports --config .importlinter
-
-  api_service:
-    name: api_service — tests + import boundary
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: api_service
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-          cache-dependency-path: api_service/requirements-dev.txt
 
       - name: Install dependencies
         run: |

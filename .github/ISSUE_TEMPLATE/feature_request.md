@@ -19,8 +19,7 @@ for the things a probe needs.
 
 ## Scope
 
-<!-- Which component: orchestrator / api_service / client_agent / cli /
-     frontend / reports / docs. -->
+<!-- Which component: orchestrator / client_agent / cli / reports / docs. -->
 
 ## Alternatives considered
 

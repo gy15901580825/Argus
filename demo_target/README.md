@@ -31,5 +31,4 @@ docker run -p 8000:8000 \
 
 ## Production
 
-Deployed via Helm chart at `kubernets/charts/demo_target/`,
-served from `https://demo.example.com/chat`. Rate-limited to 30 req/min/IP.
+Served from `https://demo.example.com/chat`. Rate-limited to 30 req/min/IP.

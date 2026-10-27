@@ -1,6 +1,6 @@
 """Loader + minimal client-side validator for target specs.
 
-Server is the source of truth (Pydantic union in api_service); CLI only checks
+The engine is the source of truth for target specs; the CLI only checks
 that `kind` is one of the known kinds (`_KNOWN_KINDS`) and that the file is valid JSON with
 the per-kind required fields. This catches most operator mistakes before
 round-tripping to the server.
