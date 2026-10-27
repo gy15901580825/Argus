@@ -1,14 +1,12 @@
 websockets
 httpx
-beautifulsoup4
 python-dotenv
 argparse
-# Web UI testing support (browser-use + playwright)
-# Optional — the agent works without them but web_ui_runner will be disabled.
-browser-use
-playwright
+# redteam_runner/scenarios/visual_injection.py renders the payload image with Pillow.
+pillow
+# Matches the mcr.microsoft.com/playwright/python:v1.51.0 base image so `playwright install chromium` reuses its browsers.
+playwright==1.51.0
 # redteam_runner/server.py uses aiohttp's TCPSite + reads a private attribute
 # to resolve ephemeral port (no public API in aiohttp 3.x). Pin <4 so a major
-# bump doesn't silently break ScenarioServer.start(). aiohttp arrives transitively
-# via browser-use / litellm.
+# bump doesn't silently break ScenarioServer.start().
 aiohttp<4

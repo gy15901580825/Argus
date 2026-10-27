@@ -19,7 +19,7 @@ We aim to acknowledge reports within 2 business days and to ship a fix or mitiga
 
 In scope: the code under `cli/` in this repository. It is published to PyPI as `argus-probe`; the GitHub Action `gy15901580825/argus-probe-action` installs that package.
 
-Covered by the repo-level policy, not this file: the Argus API service, the orchestrator, probe content, and judge behavior.
+Covered by the repo-level policy, not this file: the orchestrator, probe content, and judge behavior.
 
 Not a vulnerability: findings the tool reports about your own agent. Those are its intended output.
 
@@ -29,6 +29,6 @@ Argus is pre-1.0. Security fixes land on the default branch; there is no backpor
 
 ## Handling secrets
 
-`argus-probe` is designed so that API keys and other credentials referenced in `argus-target.json` (e.g. `${OPENAI_API_KEY}`) are read from the local environment at run time and used only as outbound headers to your own agent endpoint. They are not written to the target file, transmitted to the Argus service, or logged.
+`argus-probe` is designed so that API keys and other credentials referenced in `argus-target.json` (e.g. `${OPENAI_API_KEY}`) are read from the local environment at run time and are not written to the target file or logged. With `--local` they are used only for calls to your own agent endpoint. In server mode the CLI sends the resolved target spec, secrets included, over HTTPS to the server implementing the `/api/v1/redteam` API you point it at, because that server calls your agent.
 
 If you observe behavior that contradicts this, for example secrets appearing in logs, transcripts, or transmitted payloads, that is a security issue. Report it to the address above.

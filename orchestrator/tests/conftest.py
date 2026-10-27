@@ -43,7 +43,6 @@ def _isolate_env(monkeypatch, request):
         "CIAM_CLIENT_ID": "test-client",
         "AZURE_OPENAI_API_KEY": "test",
         "AZURE_OPENAI_ENDPOINT": "https://azure.invalid",
-        "GOOGLE_API_KEY": "test",
     }
     for k, v in safe_defaults.items():
         monkeypatch.setenv(k, v)

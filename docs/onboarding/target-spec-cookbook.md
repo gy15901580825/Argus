@@ -125,6 +125,16 @@ How the response is parsed: `response_jsonpath` is a [JSONPath](https://goessner
 - The `agent_url` must accept `POST {"url": "<scenario URL>", "prompt": "<user instruction>"}`.
 - It must return JSON: `{"final_text": "...", "screenshots": [...], "latency_ms": <number>}`.
 
+**Running it.** `argus-probe run --local` runs `browser_use` targets on your machine; see [Running browser probes locally](#running-browser-probes-locally) below. In server mode, a `browser_use` run needs a server implementing the `/api/v1/redteam` API, backed by the orchestrator, with a [`client_agent`](../../client_agent/README.md) connected to that orchestrator's WebSocket hub. The client agent serves the scenario page and calls your `agent_url`. This repo does not ship such a server; the self-hosted stack is at tag `v0.3-full`. The client agent can connect directly to the orchestrator:
+
+```bash
+cd client_agent && pip install -r requirements.txt && playwright install chromium
+export AGENT_CONNECT_SECRET=<shared secret>      # same value as on the orchestrator
+python client_agent.py --orchestrator-url ws://<orchestrator-host>:8080 --agent-name my-browser-agent
+```
+
+Anyone who can reach the orchestrator's `/agent/connect` can pose as an agent and receive probe payloads. Set `AGENT_CONNECT_SECRET` on both sides and keep the orchestrator on localhost or a trusted network.
+
 We provide a thin reference adapter you can drop into your agent harness; ask in the design-partner channel for the latest version.
 
 ### Running browser probes locally
@@ -155,7 +165,7 @@ Your agent must be able to open the trap page URL. By default the page listens o
 - `trap_port` is the port it listens on. The default `0` picks a free port for each probe. Set a fixed port when you set `trap_public_url`.
 - `trap_public_url` is the base URL your agent opens. Argus adds `/scenario` to it. Use your LAN address, `http://host.docker.internal:8765` for an agent in Docker, or a tunnel URL that forwards to `trap_port`.
 
-With `0.0.0.0`, anyone on your network can open the trap page while the run lasts. Use your machine's LAN address as `trap_host` when you can. These three options only apply to `--local`. Without `--local` the CLI refuses a spec that sets them, and the Argus API returns 422 for one.
+With `0.0.0.0`, anyone on your network can open the trap page while the run lasts. Use your machine's LAN address as `trap_host` when you can. These three options only apply to `--local`. Without `--local` the CLI refuses a spec that sets them.
 
 If your agent can't reach your machine at all, submit the run with `--api-url` and `--token` to a compatible hosted service instead.
 
@@ -178,7 +188,7 @@ If your agent can't reach your machine at all, submit the run with `--api-url` a
 }
 ```
 
-**`sandbox: true` is not a formality — it's a safety interlock.** This adapter drives an agent that spends real money if you point it at a real payment endpoint. Construction is refused outright without `sandbox: true` (both the API and the CLI check it independently); there is no way to turn it off. If you think you don't need it, you're pointing this adapter at the wrong thing.
+**`sandbox: true` is not a formality — it's a safety interlock.** This adapter drives an agent that spends real money if you point it at a real payment endpoint. Construction is refused outright without `sandbox: true` (both the engine and the CLI check it independently); there is no way to turn it off. If you think you don't need it, you're pointing this adapter at the wrong thing.
 
 **What's on the other end:** `inner` is a nested target spec (any kind above — here, `openai_compat`) for the transport that actually talks to your agent; the payment adapter wraps it. The `testbed_url` must point at a running `payment_testbed/` instance from this repo — see `payment_testbed/README.md` for `testbed/` (mock merchant + facilitator) and `demo_agent/` (the vulnerable reference agent the example above points at). Nothing in `payment_testbed/` touches a blockchain or real funds.
 
@@ -205,7 +215,7 @@ If your agent can't reach your machine at all, submit the run with `--api-url` a
 }
 ```
 
-**`sandbox: true` is not a formality — it's a safety interlock.** This adapter drives an agent against a live MCP server. Construction is refused outright without `sandbox: true` (both the API and the CLI check it independently); there is no way to turn it off. It exists because a red-team run that can reach a real MCP server is not a configuration mistake you want to recover from after the fact.
+**`sandbox: true` is not a formality — it's a safety interlock.** This adapter drives an agent against a live MCP server. Construction is refused outright without `sandbox: true` (both the engine and the CLI check it independently); there is no way to turn it off. It exists because a red-team run that can reach a real MCP server is not a configuration mistake you want to recover from after the fact.
 
 **What's on the other end:** `inner` is a nested target spec (any kind above — here, `openai_compat`) for the transport that actually talks to your agent. The `testbed_url` must point at a running `mcp_testbed/` instance from this repo — see `mcp_testbed/README.md` for `testbed/` (the hostile MCP server, staging tool poisoning / rug-pull / shadowing / confused-deputy / credential-lure scenarios) and `demo_agent/` (the vulnerable reference MCP client the example above points at).
 
@@ -281,7 +291,7 @@ If your agent can't reach your machine at all, submit the run with `--api-url` a
 }
 ```
 
-`sandbox: true` is required here too, and both the API and the CLI refuse the spec without it.
+`sandbox: true` is required here too, and both the engine and the CLI refuse the spec without it.
 
 ---
 
@@ -350,7 +360,7 @@ Add `ANTHROPIC_API_KEY` and any key your target spec references as repository se
 
 ### Server mode: gate only on new failures
 
-The action always runs in local mode, which keeps no run history. To fail a pull request only on failures that are new relative to the base branch, run the CLI against your own Argus API server with `--compare-to`:
+The action always runs in local mode, which keeps no run history. To fail a pull request only on failures that are new relative to the base branch, run the CLI against a server implementing the `/api/v1/redteam` API with `--compare-to`:
 
 ```yaml
       - uses: actions/setup-python@v5

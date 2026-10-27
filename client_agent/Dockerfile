@@ -3,7 +3,6 @@
 # docker build --network=host -t <your-gh-user>/client_agent:latest .
 # -----------------------------
 # Use official Playwright image — includes Chromium + all system deps for browser automation.
-# Falls back gracefully: if the user only needs fetch_url, the extra browser layer is unused.
 FROM mcr.microsoft.com/playwright/python:v1.51.0-noble
 
 WORKDIR /app
@@ -25,19 +24,13 @@ RUN chmod +x /entrypoint.sh
 # 4. Set environment variables
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
-# CDP_URL: connect to a Chrome instance on the host machine.
-# Default: http://localhost:9222 (works with --network=host on Linux).
-# Override for Docker bridge: CDP_URL=http://172.17.0.1:9222
-# Override for Mac/Win:       CDP_URL=http://host.docker.internal:9222
-ENV CDP_URL="http://localhost:9222"
 
 # 5. Run the service
 # docker run \
 #   --network=host \
-#   -e API_TOKEN=your_api_token \
+#   -e ORCHESTRATOR_URL=ws://<orchestrator-host>:8080 \
 #   -e AGENT_NAME=my-agent \
 #   <your-gh-user>/client_agent:latest
 #
-# Defaults: ORCHESTRATOR_URL=wss://www.example.com, API_SERVICE_URL=https://www.example.com
-# OPENAI_API_KEY is fetched automatically from the API Service after registration.
+# ORCHESTRATOR_URL is required. Set API_SERVICE_URL plus credentials only to register first.
 ENTRYPOINT ["/entrypoint.sh"]

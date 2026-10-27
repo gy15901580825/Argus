@@ -17,7 +17,7 @@ STANDARDS = ["owasp-llm-top10", "mitre-atlas", "nist-ai-rmf", "eu-ai-act"]
 
 @click.command()
 @click.option("--token", envvar="ARGUS_API_TOKEN", required=True)
-@click.option("--api-url", envvar="ARGUS_API_URL", required=True, help="Argus API base URL (or env ARGUS_API_URL).")
+@click.option("--api-url", envvar="ARGUS_API_URL", required=True, help="Base URL of a server implementing the /api/v1/redteam API (or env ARGUS_API_URL).")
 @click.option("--standard", "standard", type=click.Choice(STANDARDS), default=None,
               help="Show only this standard (default: all).")
 @click.option("--json", "as_json", is_flag=True, help="Emit the raw coverage manifest as JSON.")

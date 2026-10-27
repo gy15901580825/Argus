@@ -1,12 +1,10 @@
-"""L3 tests for ClientAgent — init, register, tool dispatch, and tool listing.
+"""L3 tests for ClientAgent — init and register.
 
-We mock httpx.AsyncClient for register and patch web_ui_runner functions for
-tool dispatch so no real browser/HTTP ever runs.
+We mock httpx.AsyncClient for register so no real HTTP ever runs.
 """
 from __future__ import annotations
 
 import asyncio
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -163,162 +161,176 @@ def test_register_raises_descriptive_error_on_http_401():
             asyncio.run(agent.register())
 
 
+
 # ---------------------------------------------------------------------------
-# handle_tool_call — dispatch table
+# Connection modes: direct (no API server) and register-first
 # ---------------------------------------------------------------------------
 
-def _agent():
+def _run_with_stubbed_connect(agent):
+    seen = {}
+
+    async def fake_connect():
+        seen["agent_id"] = agent.agent_id
+
+    agent.connect_orchestrator = fake_connect
+    asyncio.run(agent.run())
+    return seen
+
+
+def test_direct_mode_skips_register_and_uses_agent_name_as_id():
     import client_agent
-    return client_agent.ClientAgent(
-        orchestrator_url="wss://o.invalid",
-        api_service_url="http://api.invalid",
-        agent_name="agent-x",
-        api_token="tok",
+
+    agent = client_agent.ClientAgent(orchestrator_url="ws://o.invalid", agent_name="browser-1")
+    agent.register = AsyncMock(side_effect=AssertionError("register must not run in direct mode"))
+    seen = _run_with_stubbed_connect(agent)
+    assert seen["agent_id"] == "browser-1"
+    assert agent.oauth_client is None
+
+
+def test_register_mode_registers_before_connecting():
+    import client_agent
+
+    agent = client_agent.ClientAgent(
+        orchestrator_url="ws://o.invalid", api_service_url="http://api.invalid",
+        agent_name="browser-2", api_token="tk",
     )
 
+    async def fake_register():
+        agent.agent_id = "server-issued-7"
 
-def test_handle_tool_call_fetch_url_missing_argument_returns_error():
-    agent = _agent()
-    result = asyncio.run(agent.handle_tool_call("fetch_url", {}))
-    assert result == {"error": "Missing url argument"}
-
-
-def test_handle_tool_call_fetch_url_delegates_to_fetch_url_impl():
-    agent = _agent()
-
-    async def _fake_fetch(url, cookie=None, token=None):
-        return json.dumps({"got_url": url, "got_cookie": cookie, "got_token": token})
-
-    with patch("client_agent.fetch_url_impl", _fake_fetch):
-        out = asyncio.run(agent.handle_tool_call(
-            "fetch_url",
-            {"url": "http://x.invalid/", "cookies": "c=1", "token": "t"},
-        ))
-
-    parsed = json.loads(out)
-    assert parsed["got_url"] == "http://x.invalid/"
-    # fetch_url accepts either "cookie" or "cookies"
-    assert parsed["got_cookie"] == "c=1"
-    assert parsed["got_token"] == "t"
+    agent.register = fake_register
+    seen = _run_with_stubbed_connect(agent)
+    assert seen["agent_id"] == "server-issued-7"
 
 
-def test_handle_tool_call_unknown_tool_returns_error():
-    agent = _agent()
-    result = asyncio.run(agent.handle_tool_call("no_such_tool", {}))
-    assert result == {"error": "Unknown tool: no_such_tool"}
-
-
-def test_handle_tool_call_start_web_ui_test_delegates_to_runner():
+def test_cli_direct_mode_needs_no_credentials():
     import client_agent
-    agent = _agent()
 
-    fake_start = MagicMock(return_value={"task_id": "T-1", "status": "pending"})
-    with patch.object(client_agent, "_WEB_UI_ENABLED", True), \
-         patch.object(client_agent.web_ui_runner, "start_web_ui_test", fake_start):
-        out = asyncio.run(agent.handle_tool_call("start_web_ui_test", {
-            "url": "http://t.invalid/",
-            "max_steps": "50",
-            "user_persona": "power_user",
-        }))
-
-    assert out == {"task_id": "T-1", "status": "pending"}
-    # max_steps must have been coerced to int
-    kwargs = fake_start.call_args.kwargs
-    assert kwargs["max_steps"] == 50
-    assert kwargs["url"] == "http://t.invalid/"
-    assert kwargs["user_persona"] == "power_user"
+    agent = client_agent.build_agent(["--orchestrator-url", "ws://o.invalid", "--agent-name", "a1"])
+    assert agent.api_service_url is None
+    assert agent.orchestrator_url == "ws://o.invalid"
+    assert agent.agent_name == "a1"
 
 
-def test_handle_tool_call_start_web_ui_test_missing_url_returns_error():
-    agent = _agent()
-    out = asyncio.run(agent.handle_tool_call("start_web_ui_test", {}))
-    assert out == {"error": "Missing 'url' argument"}
-
-
-def test_handle_tool_call_start_web_ui_test_errors_when_web_ui_disabled():
+def test_cli_requires_orchestrator_url():
     import client_agent
-    agent = _agent()
 
-    with patch.object(client_agent, "_WEB_UI_ENABLED", False):
-        out = asyncio.run(agent.handle_tool_call("start_web_ui_test", {"url": "http://t.invalid/"}))
-
-    assert "not available" in out["error"].lower()
+    with pytest.raises(SystemExit) as exc:
+        client_agent.build_agent(["--agent-name", "a1"])
+    assert exc.value.code == 2
 
 
-def test_handle_tool_call_status_missing_task_id_errors():
-    agent = _agent()
-    out = asyncio.run(agent.handle_tool_call("get_web_ui_test_status", {}))
-    assert out == {"error": "Missing 'task_id' argument"}
-
-
-def test_handle_tool_call_status_delegates_to_runner():
+def test_cli_register_mode_still_requires_credentials():
     import client_agent
-    agent = _agent()
 
-    fake_status = MagicMock(return_value={"task_id": "T-9", "status": "running"})
-    with patch.object(client_agent, "_WEB_UI_ENABLED", True), \
-         patch.object(client_agent.web_ui_runner, "get_web_ui_test_status", fake_status):
-        out = asyncio.run(agent.handle_tool_call(
-            "get_web_ui_test_status", {"task_id": "T-9"},
-        ))
-    assert out == {"task_id": "T-9", "status": "running"}
-    fake_status.assert_called_once_with("T-9")
+    with pytest.raises(SystemExit) as exc:
+        client_agent.build_agent(["--orchestrator-url", "ws://o.invalid", "--api-service-url", "http://api.invalid"])
+    assert exc.value.code == 2
+    agent = client_agent.build_agent(["--orchestrator-url", "ws://o.invalid",
+                                      "--api-service-url", "http://api.invalid", "--api-token", "tk"])
+    assert agent.api_service_url == "http://api.invalid"
+    assert agent.api_token == "tk"
 
 
-def test_handle_tool_call_result_delegates_to_runner():
+def test_agent_secret_is_sent_as_header():
     import client_agent
-    agent = _agent()
 
-    fake_result = MagicMock(return_value={"task_id": "T-9", "test_script": "def test_x():\n    pass\n"})
-    with patch.object(client_agent, "_WEB_UI_ENABLED", True), \
-         patch.object(client_agent.web_ui_runner, "get_web_ui_test_result", fake_result):
-        out = asyncio.run(agent.handle_tool_call("get_web_ui_test_result", {"task_id": "T-9"}))
-    assert out["test_script"].startswith("def test_x")
+    agent = client_agent.build_agent(["--orchestrator-url", "ws://o.invalid", "--agent-secret", "s3cret"])
+    assert agent.connect_headers() == {"x-agent-id": "unknown", "x-agent-secret": "s3cret"}
+    agent.agent_id = "a1"
+    assert agent.connect_headers()["x-agent-id"] == "a1"
 
 
-def test_handle_tool_call_cancel_delegates_to_runner():
+def test_agent_secret_read_from_env(monkeypatch):
     import client_agent
-    agent = _agent()
 
-    fake_cancel = MagicMock(return_value={"task_id": "T-9", "status": "cancelled"})
-    with patch.object(client_agent, "_WEB_UI_ENABLED", True), \
-         patch.object(client_agent.web_ui_runner, "cancel_web_ui_test", fake_cancel):
-        out = asyncio.run(agent.handle_tool_call("cancel_web_ui_test", {"task_id": "T-9"}))
-    assert out["status"] == "cancelled"
+    monkeypatch.setenv("AGENT_CONNECT_SECRET", "from-env")
+    agent = client_agent.build_agent(["--orchestrator-url", "ws://o.invalid"])
+    assert agent.connect_headers()["x-agent-secret"] == "from-env"
+
+
+def test_no_secret_sends_no_secret_header(monkeypatch):
+    import client_agent
+
+    monkeypatch.delenv("AGENT_CONNECT_SECRET", raising=False)
+    agent = client_agent.build_agent(["--orchestrator-url", "ws://o.invalid"])
+    assert "x-agent-secret" not in agent.connect_headers()
+
+
+def test_direct_mode_warns_about_ignored_credentials(capsys):
+    import client_agent
+
+    agent = client_agent.build_agent(["--orchestrator-url", "ws://o.invalid", "--api-token", "tk",
+                                      "--username", "u", "--password", "p"])
+    err = capsys.readouterr().err
+    assert "ignored" in err and "--api-service-url" in err
+    assert agent.api_token is None
+    assert agent.oauth_client is None
+
+
+def test_direct_mode_without_credentials_does_not_warn(capsys):
+    import client_agent
+
+    client_agent.build_agent(["--orchestrator-url", "ws://o.invalid"])
+    assert capsys.readouterr().err == ""
 
 
 # ---------------------------------------------------------------------------
-# handle_tools_list
+# Secrets stay out of argv; TLS is verified
 # ---------------------------------------------------------------------------
 
-def test_handle_tools_list_always_includes_fetch_url():
+def test_register_mode_reads_password_and_token_from_env(monkeypatch):
     import client_agent
-    agent = _agent()
 
-    with patch.object(client_agent, "_WEB_UI_ENABLED", False):
-        tools = asyncio.run(agent.handle_tools_list({}))
+    monkeypatch.setenv("AGENT_PASSWORD", "pw-from-env")
+    monkeypatch.setenv("AGENT_API_TOKEN", "tk-from-env")
+    agent = client_agent.build_agent(["--orchestrator-url", "ws://o.invalid",
+                                      "--api-service-url", "http://api.invalid", "--username", "u"])
+    assert agent.oauth_client.password == "pw-from-env"
+    assert agent.api_token == "tk-from-env"
 
-    names = [t["name"] for t in tools]
-    assert names == ["fetch_url"]
 
-
-def test_handle_tools_list_adds_web_ui_tools_when_enabled():
+def test_register_and_login_verify_tls(monkeypatch):
     import client_agent
-    agent = _agent()
 
-    with patch.object(client_agent, "_WEB_UI_ENABLED", True):
-        tools = asyncio.run(agent.handle_tools_list({}))
+    made = []
 
-    names = {t["name"] for t in tools}
-    # Original + 4 web UI tools
-    assert names == {
-        "fetch_url",
-        "start_web_ui_test",
-        "get_web_ui_test_status",
-        "get_web_ui_test_result",
-        "cancel_web_ui_test",
-    }
-    # Check schema shape of start_web_ui_test
-    start = next(t for t in tools if t["name"] == "start_web_ui_test")
-    assert start["parameters"]["url"]["required"] is True
-    assert "user_persona" in start["parameters"]
+    def factory(*args, **kwargs):
+        made.append(kwargs)
+        return _FakeAsyncClient(post_response=_ok_register_response())
+
+    agent = client_agent.ClientAgent(orchestrator_url="ws://o.invalid", api_service_url="https://api.invalid",
+                                     agent_name="a", api_token="tk")
+    with patch("client_agent.httpx.AsyncClient", side_effect=factory):
+        asyncio.run(agent.register())
+    oauth = client_agent.OAuthClient("https://api.invalid", "u", "p")
+    resp = MagicMock()
+    resp.raise_for_status = MagicMock()
+    resp.json = MagicMock(return_value={"access_token": "t", "expires_in": 60})
+
+    def login_factory(*args, **kwargs):
+        made.append(kwargs)
+        return _FakeAsyncClient(post_response=resp)
+
+    with patch("client_agent.httpx.AsyncClient", side_effect=login_factory):
+        asyncio.run(oauth.get_access_token())
+    assert len(made) == 2
+    assert all(kw.get("verify", True) is True for kw in made)
+
+
+def test_entrypoint_keeps_secrets_out_of_argv(tmp_path):
+    import os
+    import subprocess
+    from pathlib import Path
+
+    stub = tmp_path / "python"
+    stub.write_text('#!/bin/sh\necho "ARGV: $*"\necho "PW=$AGENT_PASSWORD TK=$AGENT_API_TOKEN"\n')
+    stub.chmod(0o755)
+    script = Path(__file__).resolve().parents[1] / "entrypoint.sh"
+    env = {"PATH": f"{tmp_path}:{os.environ['PATH']}", "ORCHESTRATOR_URL": "ws://o",
+           "API_SERVICE_URL": "https://api", "USERNAME": "u", "PASSWORD": "pw-secret", "API_TOKEN": "tk-secret"}
+    out = subprocess.run(["bash", str(script)], env=env, capture_output=True, text=True, check=True).stdout
+    argv = next(line for line in out.splitlines() if line.startswith("ARGV:"))
+    assert "pw-secret" not in argv and "tk-secret" not in argv
+    assert "--api-service-url https://api" in argv and "--username u" in argv
+    assert "PW=pw-secret" in out

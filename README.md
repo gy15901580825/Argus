@@ -116,7 +116,7 @@ git clone https://github.com/gy15901580825/Argus
 cd Argus
 
 # baseline: probes hit the target's keyword-blocklist guard directly
-pip install fastapi httpx pydantic uvicorn slowapi pyyaml
+pip install fastapi httpx openai pydantic uvicorn slowapi pyyaml
 PYTHONPATH=. python3 demo/run_local_demo.py
 
 # with input-side guardrail (defense-in-depth control experiment)
@@ -189,13 +189,17 @@ agent can't reach your machine at all, submit the run with `--api-url` and
 
 To see a report first with no key and no target, run `argus-probe quickstart`. It tests a built-in vulnerable MCP demo agent and writes `argus-quickstart.html`.
 
-Without `--local`, the CLI is a client of an Argus API server: it submits
-the run, polls until it finishes, and writes the report. `ARGUS_API_URL` is
-your own `api_service` deployment (see
-[`docs/runbooks/local-dev.md`](docs/runbooks/local-dev.md)) and
-`ARGUS_API_TOKEN` is a `users.api_token` row on that server, minted by an
-admin with `POST /api/v1/admin/users` and `"api_token_only": true`. There is
-no hosted instance.
+Without `--local`, the CLI is a client of a server implementing the
+`/api/v1/redteam` API: it submits the run, polls until it finishes, and
+writes the report. Set `ARGUS_API_URL` and `ARGUS_API_TOKEN` for that
+server. This repo no longer ships one. The self-hosted stack (REST API, web
+UI, database migrations, Helm charts) is at the
+[`v0.3-full`](https://github.com/gy15901580825/Argus/tree/v0.3-full) tag.
+In server mode, a `browser_use` run also needs a
+[`client_agent`](client_agent/README.md) connected to the server's
+orchestrator. It connects directly, with the same `AGENT_CONNECT_SECRET` set
+on both sides:
+`python client_agent/client_agent.py --orchestrator-url ws://<orchestrator-host>:8080 --agent-name my-browser-agent`.
 
 `--probes all` runs the whole library. `--format` is `html` (default),
 `sarif` (SARIF 2.1.0, uploads to GitHub Code Scanning) or `junit`.
@@ -222,22 +226,13 @@ scanning, and fails the job when a finding reaches `fail-on`:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  argus-probe CLI  /  CI pipeline         /  REST API                    │
-└──────────┬──────────────────────────────────────────────────────────────┘
-           │  HTTPS, x-api-token
-           ▼
+│  argus-probe CLI  /  CI pipeline                                        │
+└──────────┬──────────────────────────────┬───────────────────────────────┘
+           │  --local: in-process         │  server mode: HTTPS to a server
+           │                              │  implementing /api/v1/redteam
+           ▼                              ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  api_service  (FastAPI + PostgreSQL)                                    │
-│    POST /api/v1/redteam/runs       ← submit a run (cost preflight)      │
-│    GET  /api/v1/redteam/runs/{id}  ← status + findings so far           │
-│    GET  /api/v1/redteam/runs/{id}/report?format=sarif|junit|html        │
-│    a background task reads the orchestrator's SSE stream and            │
-│    writes each finding to redteam_findings                              │
-└──────────┬──────────────────────────────────────────────────────────────┘
-           │  POST /redteam/run/preflight, then POST /redteam/run (SSE)
-           ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│  orchestrator  /redteam  (FastAPI)                                      │
+│  orchestrator  /redteam  (engine; also a FastAPI app)                   │
 │    probe loader  ──▶  target adapter  ──▶  judge harness                │
 │        │                  │                      │                      │
 │        └──── 214 YAML     │                      └──▶ fast model, then  │
@@ -267,17 +262,17 @@ scanning, and fails the job when a finding reaches `fail-on`:
 
 | Sub-project | Role |
 |---|---|
-| [`api_service/`](api_service/) | Central REST API (FastAPI + asyncpg + PostgreSQL). Owns the `redteam_runs`, `redteam_findings`, `redteam_design_partners` tables. |
 | [`orchestrator/`](orchestrator/) | Probe dispatcher + judge harness + 11 target adapters + guardrail wrappers (used by the local demo runner). |
 | [`client_agent/`](client_agent/) | Edge agent (browser-use + Playwright) for browser-driven probes. |
-| [`frontend/`](frontend/) | Next.js 16 web UI: dashboard, chat, marketing pages. |
 | [`cli/`](cli/) | `argus-probe` Python CLI, installed from this repo with pip. |
 | [`demo_target/`](demo_target/) | Deliberately-vulnerable FastAPI chatbot for offline demos. |
 | [`payment_testbed/`](payment_testbed/) | Mock x402 payment world + insecure demo agent, for `payment_agent` probes. |
 | [`mcp_testbed/`](mcp_testbed/) | Hostile MCP tool server + insecure demo agent, for `mcp_agent` probes. |
-| [`kubernets/`](kubernets/) | Helm charts + ArgoCD ApplicationSets for AKS / k3s deploys. |
-| [`terraform/`](terraform/) | Azure IaC reference (AKS, ACR, PG, Key Vault, B2C apps). |
-| [`database/`](database/) | Flyway schema migrations. |
+
+The REST API, web UI, database migrations, Helm charts and Terraform
+were removed from this repo after the
+[`v0.3-full`](https://github.com/gy15901580825/Argus/tree/v0.3-full) tag;
+check out that tag to self-host the full stack.
 
 The three legacy `testing_*` services moved to separate repositories:
 - `testing_api_service` + `testing_web_fetch_service` →
@@ -372,8 +367,9 @@ can measure how much your guardrail actually buys you. Wrappers live in
 | `PromptGuard` (default) | `protectai/deberta-v3-base-prompt-injection-v2` | Open access (180M, DeBERTa-v3-base) |
 | `PromptGuard` (alt) | `meta-llama/Llama-Prompt-Guard-2-86M` | Gated — requires `huggingface-cli login` and Meta-approved access (86M) |
 
-Enable via `--guardrail prompt-guard` on the local demo runner. The API
-has no guardrail option; runs submitted through it never apply one.
+Enable via `--guardrail prompt-guard` on the local demo runner. The
+`/api/v1/redteam` API has no guardrail option; runs submitted through it
+never apply one.
 
 [`RESULTS.md`](RESULTS.md) walks through a real before/after experiment
 on this repo's demo target: Prompt Guard cuts the attack-success rate
@@ -387,17 +383,14 @@ document the one bypass + 12 false positives in detail.
 - [`docs/onboarding/quickstart.md`](docs/onboarding/quickstart.md) — first 30 minutes.
 - [`docs/onboarding/target-spec-cookbook.md`](docs/onboarding/target-spec-cookbook.md) — writing target adapters.
 - [`docs/onboarding/probe-id-cheatsheet.md`](docs/onboarding/probe-id-cheatsheet.md) — what each probe ID does.
-- [`docs/reference/services.md`](docs/reference/services.md) — REST API + SSE event flows.
-- [`docs/CI_CD.md`](docs/CI_CD.md) — GitHub Actions + ArgoCD pipeline.
+- [`docs/reference/services.md`](docs/reference/services.md) — orchestrator endpoints + SSE event flows.
 - [`docs/runbooks/local-dev.md`](docs/runbooks/local-dev.md) — run each service locally.
-- [`docs/runbooks/deploy.md`](docs/runbooks/deploy.md) — AKS / Helm deploy.
 
 ## Status
 
-Pre-1.0. The CLI, REST API, probe library, judge harness, and report
-formats are stable interfaces; the orchestrator's internal probe-dispatch
-contract may still change. The Web UI and the SaaS API surface are under
-active development.
+Pre-1.0. The CLI, probe library, judge harness, and report formats are
+stable interfaces; the orchestrator's internal probe-dispatch contract may
+still change.
 
 ## License
 

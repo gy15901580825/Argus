@@ -211,3 +211,54 @@ async def test_connect_tolerates_api_service_failure(fresh_manager, fake_ws):
     # Agent is still considered connected — we don't want a remote status call
     # failure to drop the WebSocket.
     assert "agent-6" in fresh_manager.active_connections
+
+
+async def test_no_status_post_when_api_service_url_unset(fresh_manager, fake_ws, quiet_status_notify, monkeypatch):
+    """Without API_SERVICE_URL (no server in front) connect/disconnect send no HTTP."""
+    monkeypatch.delenv("API_SERVICE_URL", raising=False)
+    await fresh_manager.connect(fake_ws, "agent-direct")
+    assert "agent-direct" in fresh_manager.active_connections
+    await fresh_manager.disconnect("agent-direct")
+    assert "agent-direct" not in fresh_manager.active_connections
+    assert quiet_status_notify.post.await_count == 0
+
+
+async def test_concurrent_connects_with_same_id_register_only_one(fresh_manager, quiet_status_notify):
+    """Two sockets racing on one id: the slot is reserved before accept, so only one wins."""
+    gate = asyncio.Event()
+
+    def _ws():
+        ws = AsyncMock()
+
+        async def slow_accept():
+            await gate.wait()
+
+        ws.accept = AsyncMock(side_effect=slow_accept)
+        ws.close = AsyncMock()
+        return ws
+
+    first, second = _ws(), _ws()
+    t1 = asyncio.create_task(fresh_manager.connect(first, "race"))
+    t2 = asyncio.create_task(fresh_manager.connect(second, "race"))
+    await asyncio.sleep(0)
+    gate.set()
+    results = await asyncio.gather(t1, t2)
+
+    assert sorted(results) == [False, True]
+    winner = first if results[0] else second
+    loser = second if results[0] else first
+    assert fresh_manager.active_connections == {"race": winner}
+    loser.close.assert_awaited_once()
+    loser.accept.assert_not_awaited()
+
+
+async def test_failed_accept_releases_the_reserved_id(fresh_manager, quiet_status_notify):
+    broken = AsyncMock()
+    broken.accept = AsyncMock(side_effect=RuntimeError("handshake failed"))
+    with pytest.raises(RuntimeError):
+        await fresh_manager.connect(broken, "retry")
+    assert "retry" not in fresh_manager.active_connections
+
+    ok = AsyncMock()
+    assert await fresh_manager.connect(ok, "retry") is True
+    assert fresh_manager.active_connections["retry"] is ok

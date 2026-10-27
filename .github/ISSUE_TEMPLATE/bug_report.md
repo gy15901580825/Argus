@@ -26,8 +26,7 @@ assignees: ''
 
 ## Component
 
-<!-- Which one: orchestrator / api_service / client_agent / cli / frontend /
-     demo. If it is a probe or judge issue, give the probe id. -->
+<!-- Which one: orchestrator / client_agent / cli / testbed / demo. If it is a probe or judge issue, give the probe id. -->
 
 ## Environment
 

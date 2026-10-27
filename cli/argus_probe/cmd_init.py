@@ -151,7 +151,7 @@ def init_command(kind: str, output: str, workflow: bool | None) -> None:
 
     # sandbox is a safety interlock, not a question: payment_agent,
     # mcp_agent and testbed_agent drive an agent that spends money / reaches a live MCP server,
-    # and both api_service and the CLI loader refuse a spec without
+    # and both the engine and the CLI loader refuse a spec without
     # sandbox: true — there is no way to turn it off, so it must never be
     # presented as something a user could answer "no" to.
     if kind in ("payment_agent", "mcp_agent", "testbed_agent"):

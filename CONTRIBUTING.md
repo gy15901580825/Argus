@@ -17,15 +17,15 @@ point it at anything — including while developing.
 | Path | What it is |
 |---|---|
 | `orchestrator/` | Probe library, probe loader, judge harness, 9 target adapters, iterative attacks. Most contributions land here. |
-| `api_service/` | REST API (FastAPI + asyncpg + PostgreSQL) that submits runs and serves reports. |
 | `client_agent/` | Edge agent (browser-use + Playwright) that executes browser-driven probes. |
 | `cli/` | The `argus-probe` command-line client. |
-| `frontend/` | Next.js web UI. |
 | `demo_target/` | Deliberately-vulnerable FastAPI chatbot used as an offline test target. |
 | `demo/` | Offline demo runner (`run_local_demo.py`) plus its recorded results. |
-| `database/` | Flyway schema migrations. |
-| `kubernets/`, `terraform/` | Deployment charts and IaC reference. |
+| `payment_testbed/`, `mcp_testbed/` | Sandboxed worlds and insecure demo agents for `payment_agent` and `mcp_agent` probes. |
 | `docs/` | Probe mapping table, onboarding guides, runbooks, service reference. |
+
+The REST API, web UI, database migrations and deployment charts were removed
+after tag `v0.3-full`. Check out that tag to work on them.
 
 Inside the orchestrator, the red-team code lives under
 `orchestrator/orchestrator/redteam/`:
@@ -92,11 +92,8 @@ The `tests/e2e/` tests skip unless `ARGUS_E2E=1` and the relevant API keys
 are set. They make real API calls and cost money — they are not part of the
 default expectation for a PR.
 
-Note that GitHub Actions only executes workflows from the repository-root
-`.github/workflows/`. The `ci.yml` / `import-linter.yml` files inside
-`orchestrator/`, `api_service/`, etc. are inherited from the polyrepo
-split and do not run in this repository. Run the checks locally before
-opening a PR.
+CI runs from the repository-root `.github/workflows/ci.yml`. Run the checks
+locally before opening a PR.
 
 ## Adding a new probe
 
@@ -238,7 +235,7 @@ prompt — and a runner that needs no API keys:
 
 ```bash
 cd ..                       # repository root
-pip install fastapi httpx pydantic uvicorn slowapi pyyaml
+pip install fastapi httpx openai pydantic uvicorn slowapi pyyaml
 PYTHONPATH=. python3 demo/run_local_demo.py
 ```
 
@@ -250,8 +247,9 @@ is intentional.
 
 ## Module boundary rule
 
-The red-team code must not depend on the legacy web-UI code. This is
-enforced by import-linter, configured in `orchestrator/.importlinter`:
+The legacy web-UI testing code has been removed. Two import-linter
+contracts in `orchestrator/.importlinter` stay as guards so that no
+`orchestrator.web_ui_*` module can come back as a dependency of the engine:
 
 - `orchestrator.redteam` must not import `orchestrator.web_ui_test`,
   `orchestrator.web_ui_runner`, or `orchestrator.web_ui_phases`
@@ -264,8 +262,7 @@ cd orchestrator
 lint-imports
 ```
 
-Expected output ends with `Contracts: 2 kept, 0 broken.` `api_service` has
-its own `.importlinter` with the equivalent rule.
+Expected output ends with `Contracts: 2 kept, 0 broken.`
 
 ## Commit messages
 

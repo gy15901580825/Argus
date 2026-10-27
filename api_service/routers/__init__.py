@@ -1,2 +1,0 @@
-# Routers package
-

@@ -34,7 +34,7 @@ Each finding has the same keys as the engine's `Finding` record: `id`, `probe_id
 
 ## Redaction
 
-People commit reports to CI artifacts and upload SARIF to GitHub code scanning, so in local mode (`--local`) Argus masks secrets before it writes any report. Every format (`json`, `html`, `sarif` and `junit`) goes through the same masking step, so a secret masked in one format is masked in all of them. Reports from an Argus server are rendered by the server and are not covered here. A masked value is the string `***`. Three rules apply.
+People commit reports to CI artifacts and upload SARIF to GitHub code scanning, so in local mode (`--local`) Argus masks secrets before it writes any report. Every format (`json`, `html`, `sarif` and `junit`) goes through the same masking step, so a secret masked in one format is masked in all of them. Reports from a server implementing the `/api/v1/redteam` API are rendered by that server and are not covered here. A masked value is the string `***`. Three rules apply.
 
 ### Rule 1: substituted environment values
 

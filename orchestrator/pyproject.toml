@@ -33,8 +33,8 @@ dev = ["import-linter>=2.0,<3.0"]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
-# Ship only the red-team engine. The rest of orchestrator/ is the legacy ADK
-# service, which needs google-adk and is not part of this package.
+# Ship only the red-team engine. server.py and connection_manager.py (the
+# service entrypoint) are not part of this package.
 [tool.setuptools]
 py-modules = ["orchestrator.email_alert"]  # lazily imported by redteam/cost_meter.py
 

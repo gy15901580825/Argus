@@ -6,7 +6,7 @@ env vars that would otherwise trigger live network/auth.
 
 The client agent is a run-side script (not a FastAPI server). Its top-level
 modules are `client_agent` (main entrypoint — same name as the service dir)
-and `web_ui_runner` (browser-use wrapper).
+and the `redteam_runner` package.
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 # ---------------------------------------------------------------------------
-# sys.path: put the service root first so `import client_agent / web_ui_runner`
+# sys.path: put the service root first so `import client_agent / redteam_runner`
 # resolves to this repo.
 # ---------------------------------------------------------------------------
 _SERVICE_DIR = Path(__file__).resolve().parents[1]
@@ -37,7 +37,6 @@ def _isolate_env(monkeypatch):
         "ORCHESTRATOR_SECRET": "test-secret",
         "AZURE_OPENAI_API_KEY": "test",
         "AZURE_OPENAI_ENDPOINT": "https://azure.invalid",
-        "GOOGLE_API_KEY": "test",
     }
     for k, v in safe_defaults.items():
         monkeypatch.setenv(k, v)

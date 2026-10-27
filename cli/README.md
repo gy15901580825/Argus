@@ -6,7 +6,7 @@ Point `argus-probe` at any AI agent endpoint — chat APIs, custom HTTP services
 
 ```
 $ argus-probe run --target argus-target.json --probes owasp_07_system_prompt_leakage --format html --out report.html
-Submitting run to https://<your-argus-host>/api/v1/redteam/runs ...
+Submitting run to https://<your-server>/api/v1/redteam/runs ...
   run_id: abc123
 Polling until completion...
   status: completed, findings: 1
@@ -24,7 +24,7 @@ pipx install "argus-probe[local]"
 pip install "argus-probe[local]"
 ```
 
-The `[local]` extra installs the probe engine (`argus-orchestrator`) for `--local`. A plain `pip install argus-probe` gives server mode only: the CLI can then only talk to an Argus API server.
+The `[local]` extra installs the probe engine (`argus-orchestrator`) for `--local`. A plain `pip install argus-probe` gives server mode only: the CLI can then only talk to a server implementing the `/api/v1/redteam` API.
 
 From a clone of the repo: `pip install ./orchestrator ./cli`.
 
@@ -45,9 +45,9 @@ export ANTHROPIC_API_KEY="<your key>"
 argus-probe run --local --target argus-target.json \
   --probes owasp_07_system_prompt_leakage --format html --out report.html
 
-# 2b. Or submit to your own Argus API server
+# 2b. Or submit to a server implementing the /api/v1/redteam API
 export ARGUS_API_TOKEN="<your token>"
-export ARGUS_API_URL="https://<your-argus-host>"
+export ARGUS_API_URL="https://<your-server>"
 argus-probe validate-target --target argus-target.json
 argus-probe run --target argus-target.json \
   --probes owasp_07_system_prompt_leakage --format html --out report.html
@@ -64,7 +64,7 @@ The trap page listens on `127.0.0.1` by default, which works when the agent runs
 
 The local judge uses `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY` when that is the only key set. For a local model, set `REDTEAM_MODEL_PROVIDER=litellm` and `REDTEAM_FAST_MODEL=ollama/qwen2.5:32b` (add `REDTEAM_LLM_API_BASE` for a non-default host); small models miss many jailbreaks, so the CLI prints a warning. `REDTEAM_MODEL_PROVIDER=azure` runs the judge on Azure OpenAI. Azure's default content filter blocks judge calls because the judge reads attack text, so use a custom filter policy with jailbreak detection turned off for that deployment (also when `OPENAI_API_KEY` is paired with `REDTEAM_LLM_API_BASE` pointing at Azure). If `OPENAI_API_KEY` is paired with `REDTEAM_LLM_API_BASE` pointing at Azure, set `REDTEAM_FAST_MODEL` and `REDTEAM_STRONG_MODEL` to your deployment names, because the default strong model `gpt-5.6-terra` is usually not deployed. Local models other than Ollama (vLLM or LM Studio via `openai/...` with `REDTEAM_LLM_API_BASE`) are billed at the most expensive known rate, so pass `--per-run-cap`.
 
-There is no hosted Argus instance. `ARGUS_API_URL` is your own `api_service` deployment, and the token is the `api_token` of a user on that server. An admin mints one with `POST /api/v1/admin/users` and `"api_token_only": true`; see the [quickstart](https://github.com/gy15901580825/Argus/blob/main/docs/onboarding/quickstart.md) for the first-admin step.
+Server mode talks to any server implementing the `/api/v1/redteam` API: set `ARGUS_API_URL` to it and `ARGUS_API_TOKEN` to a token that server issued. There is no hosted Argus instance, and the Argus repo no longer ships a server; the self-hosted stack is at tag [`v0.3-full`](https://github.com/gy15901580825/Argus/tree/v0.3-full). A `browser_use` run in server mode also needs a [`client_agent`](https://github.com/gy15901580825/Argus/blob/main/client_agent/README.md) connected to the server's orchestrator; it connects directly, with the same `AGENT_CONNECT_SECRET` set on both sides.
 
 ## Supported agent shapes
 
@@ -86,9 +86,9 @@ Full configuration reference: [target spec cookbook](https://github.com/gy159015
 
 ## What it does
 
-Without `--local`, `argus-probe` is a thin client: it submits the target spec and probe selection to an Argus service over HTTPS; the service runs the probes against your agent and returns the report. With `--local` the same engine runs in this process and calls the judge model directly with your key.
+Without `--local`, `argus-probe` is a thin client: it submits the target spec and probe selection over HTTPS to a server implementing the `/api/v1/redteam` API; that server runs the probes against your agent and returns the report. With `--local` the same engine runs in this process and calls the judge model directly with your key.
 
-Secret references in your target spec (`${OPENAI_API_KEY}`, etc.) are resolved from the local shell environment at run time and sent only as outbound headers to your agent — they never enter the target.json file or the Argus service.
+Secret references in your target spec (`${OPENAI_API_KEY}`, etc.) are resolved from the local shell environment at run time; they are never written back to target.json. With `--local` they stay in this process and go only to your agent. In server mode the resolved spec, secrets included, is sent to the server, because the server is what calls your agent; use a server you trust with those credentials.
 
 ## Output formats
 
@@ -129,9 +129,9 @@ Runs that would exceed the cap are rejected before any LLM cost is incurred, in 
 argus-probe quickstart          Run the MCP probes against a built-in demo agent, no key
 argus-probe init                Interactive target.json generator
 argus-probe validate-target     Sanity-check target reachability
-argus-probe list-probes         List probe ids available to your account
+argus-probe list-probes         List probe ids (local library, or a server with --api-url)
 argus-probe run                 Submit a run + write the report
-argus-probe report              Re-render an existing run's report
+argus-probe report              Re-render a run stored on a server
 argus-probe coverage            Show what the probe library covers; asks the server, runs no probes
 ```
 
