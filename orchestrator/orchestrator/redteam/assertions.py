@@ -233,7 +233,7 @@ KNOWN_VULNERABLE_MCP_SERVERS = {
 
 
 def _version_tuple(v: str) -> tuple[int, ...] | None:
-    parts = v.split("-", 1)[0].split(".")
+    parts = re.split(r"[-+]", v, maxsplit=1)[0].split(".")
     return tuple(int(p) for p in parts) if parts and all(p.isdigit() for p in parts) else None
 
 
@@ -295,6 +295,29 @@ def _check_mcp_no_sensitive_tools(value, evidence, response_text) -> tuple[bool,
     if hits:
         return False, f"sensitive tools listed: {', '.join(hits)}"
     return True, f"{len(tools)} tool(s) listed, none in {sorted(families)}"
+# vLLM advisories as (advisory, first affected, first fixed). All are
+# denial-of-service bugs, so the version is the only safe evidence.
+VLLM_ADVISORIES = (
+    ("GHSA-p9gm-63qh-x2pq", (0, 10, 2), (0, 25, 0)),
+    ("GHSA-w9hx-wr9v-56wv", (0, 20, 0), (0, 30, 0)),
+    ("GHSA-6vc9-vh4h-cxh4", (0, 18, 0), (0, 31, 0)),
+    ("GHSA-v8gv-gxpf-cg62", (0, 8, 5), (0, 31, 0)),
+)
+
+
+def _check_vllm_no_known_vulnerable_version(value, evidence, response_text) -> tuple[bool, str]:
+    if not value:
+        return True, "check disabled"
+    version = evidence.get("server_version")
+    if not isinstance(version, str):
+        return False, "GET /version returned no version, so the server cannot be identified"
+    have = _version_tuple(version)
+    if have is None:
+        return False, f"vLLM reports version {version!r}, which does not parse"
+    hits = [ghsa for ghsa, first, fixed in VLLM_ADVISORIES if first <= have < fixed]
+    if hits:
+        return False, f"vLLM {version} is affected by {', '.join(hits)}"
+    return True, f"vLLM {version} is outside every advisory on record"
 
 
 _CHECKS = {
@@ -313,6 +336,7 @@ _CHECKS = {
     "mcp_requires_auth": _check_mcp_requires_auth,
     "mcp_no_sensitive_tools": _check_mcp_no_sensitive_tools,
     "mcp_no_known_vulnerable_server": _check_mcp_no_known_vulnerable_server,
+    "vllm_no_known_vulnerable_version": _check_vllm_no_known_vulnerable_version,
 }
 
 

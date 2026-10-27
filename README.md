@@ -1,7 +1,7 @@
 # Argus
 
 **Black-box red-team testing for AI agents.** Point Argus at any HTTP, gRPC,
-MCP, payment-agent, or browser-using agent endpoint, run 213 adversarial
+MCP, payment-agent, or browser-using agent endpoint, run 214 adversarial
 probes (OWASP LLM Top 10, MITRE ATLAS, NIST AI RMF, garak wrappers), and get
 LLM-judged findings as SARIF 2.1.0 / JUnit XML / HTML — upload straight to
 GitHub Code Scanning.
@@ -31,7 +31,7 @@ AI RMF** controls without translation.
 
 What Argus does:
 
-- **213 probes** in the bundled library — 15 OWASP LLM Top 10 hand-authored,
+- **214 probes** in the bundled library — 15 OWASP LLM Top 10 hand-authored,
   5 from public LLM system cards (best-of-N, crescendo, confused deputy,
   many-shot jailbreak, sleeper agent), 31 browser-agent specific, 26
   payment-abuse probes (x402 wallet flows, against `payment_agent`), 16
@@ -40,11 +40,11 @@ What Argus does:
   Semia-mapped agent-skill detectors (missing human gate, encoded payload,
   install-time exec, shadow credentials), 4 agent-autonomy probes (AGENTS.md
   install, credential grab, guardrail log noise with its control),
-  1 custom unicode-smuggling probe
+  1 vLLM version check (against `vllm_server`), 1 custom unicode-smuggling probe
   (see RESULTS.md), and 99 [garak](https://github.com/NVIDIA/garak)
   wrappers for NVIDIA's existing catalog. Exact per-standard counts are
   generated, not hand-maintained — see [`docs/probe-mapping.md`](docs/probe-mapping.md).
-- **10 target adapters**: `openai_compat`, `anthropic_native`, `custom_http`
+- **11 target adapters**: `openai_compat`, `anthropic_native`, `custom_http`
   (Jinja2 + JSONPath), `grpc` (with reflection auto-discovery), `http_upload`
   (file-upload-and-render sinks), `browser_use` (Playwright-driven
   full-browser flows), `payment_agent` (x402 wallet-carrying agents, runs
@@ -52,7 +52,8 @@ What Argus does:
   against `mcp_testbed/`), `mcp_server` (an MCP server's own HTTP exposure:
   foreign Origin, missing auth, env/shell/file tools, versions with a published
   advisory; it lists tools and never
-  calls one), and `testbed_agent` (generic form of the two
+  calls one), `vllm_server` (reads a vLLM server's `/version` and matches it
+  against vLLM advisories), and `testbed_agent` (generic form of the two
   testbed adapters; `environment` picks the testbed).
 - **Scan suites** — pass `suite` instead of enumerating `probe_ids` on
   `POST /api/v1/redteam/runs`: `owasp-llm-top10`, `mitre-atlas`,
@@ -155,7 +156,7 @@ writes a starter one. `${VAR}` references are expanded from the environment:
 
 Other `kind` values: `anthropic_native`, `custom_http` (with Jinja2 body
 templates and JSONPath response extractors), `grpc`, `http_upload`,
-`browser_use`, `payment_agent`, `mcp_agent`, `testbed_agent`. Full target-spec cookbook in
+`browser_use`, `payment_agent`, `mcp_agent`, `testbed_agent`, `vllm_server`. Full target-spec cookbook in
 [`docs/onboarding/target-spec-cookbook.md`](docs/onboarding/target-spec-cookbook.md).
 
 Install the `argus-probe` CLI from PyPI (Python 3.11+). The `[local]`
@@ -223,7 +224,7 @@ scanning, and fails the job when a finding reaches `fail-on`:
 │  orchestrator  /redteam  (FastAPI)                                      │
 │    probe loader  ──▶  target adapter  ──▶  judge harness                │
 │        │                  │                      │                      │
-│        └──── 213 YAML     │                      └──▶ fast model, then  │
+│        └──── 214 YAML     │                      └──▶ fast model, then  │
 │              probes       │                           strong model on   │
 │                           │                           high/critical,    │
 │                  ┌────────┴─────────┐                 confidence ≥ 0.7  │
@@ -235,6 +236,7 @@ scanning, and fails the job when a finding reaches `fail-on`:
 │                  │  payment_agent   │                                   │
 │                  │  mcp_agent       │                                   │
 │                  │  testbed_agent   │                                   │
+│                  │  vllm_server     │                                   │
 │                  │  browser_use ────┼──▶ client_agent (WebSocket)       │
 │                  └──────┬───────────┘                                   │
 └─────────────────────────┼───────────────────────────────────────────────┘
@@ -250,7 +252,7 @@ scanning, and fails the job when a finding reaches `fail-on`:
 | Sub-project | Role |
 |---|---|
 | [`api_service/`](api_service/) | Central REST API (FastAPI + asyncpg + PostgreSQL). Owns the `redteam_runs`, `redteam_findings`, `redteam_design_partners` tables. |
-| [`orchestrator/`](orchestrator/) | Probe dispatcher + judge harness + 9 target adapters + guardrail wrappers (used by the local demo runner). |
+| [`orchestrator/`](orchestrator/) | Probe dispatcher + judge harness + 11 target adapters + guardrail wrappers (used by the local demo runner). |
 | [`client_agent/`](client_agent/) | Edge agent (browser-use + Playwright) for browser-driven probes. |
 | [`frontend/`](frontend/) | Next.js 16 web UI: dashboard, chat, marketing pages. |
 | [`cli/`](cli/) | `argus-probe` Python CLI, installed from this repo with pip. |
@@ -297,6 +299,8 @@ orchestrator/orchestrator/redteam/probes/
 │   └── mcp_*.yaml
 ├── mcp_server/                                ← an MCP server's own exposure, for mcp_server
 │   └── mcp_server_*.yaml
+├── vllm_server/                               ← vLLM version check, for vllm_server
+│   └── vllm_server_*.yaml
 ├── custom/
 │   └── unicode_invisible_smuggling.yaml       ← see RESULTS.md for analysis
 └── garak/                                     ← 99 NVIDIA garak wrappers

@@ -30,6 +30,8 @@ VALID_TARGET_CLASSES = {
     "mcp_agent",
     # MCP server exposure probes test the server itself, not an agent.
     "mcp_server",
+    # The vLLM version probe tests the model server itself, not an agent.
+    "vllm_server",
 }
 
 # The controlled axis. `attack_class` answers WHAT THE ATTACK ACHIEVES; the free

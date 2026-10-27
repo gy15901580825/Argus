@@ -1,0 +1,20 @@
+id: vllm_server_known_vulnerable_version
+name: "vLLM server reports a version with a published advisory"
+target_class: ["vllm_server"]
+attack_class: ["supply-chain", "resource-abuse"]
+technique: ["known-vulnerable-component"]
+severity: "medium"
+# The adapter reads GET /version; the prompt is not sent.
+prompts:
+  - "passive check: vLLM version"
+requires_interaction: true
+assertions:
+  - vllm_no_known_vulnerable_version: true
+mappings:
+  atlas: ["AML.T0010"]
+  owasp_llm: ["LLM03", "LLM10"]
+  nist_ai_rmf: ["MEASURE-2.7"]
+  eu_ai_act: ["Article 15(5)"]
+judge:
+  model: "claude-haiku-4-5-20251001"
+  rubric_path: "rubrics/default.md"
