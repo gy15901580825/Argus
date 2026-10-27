@@ -1,7 +1,8 @@
 google-generativeai
 python-dotenv
 google-adk>=1.30.0
-litellm
+# 1.107.0 was a backdoored release (litellm incident 2026-10-21); raise the bound only after review.
+litellm>=1.105.1,<1.107
 anthropic>=0.40.0
 mcp
 pydantic
