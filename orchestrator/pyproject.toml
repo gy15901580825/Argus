@@ -1,6 +1,6 @@
 [project]
 name = "argus-orchestrator"
-version = "0.3.4"
+version = "0.3.3"
 description = "Argus red-team engine: probe library, target adapters, judge harness"
 readme = "README.md"
 requires-python = ">=3.11"

@@ -40,13 +40,21 @@ class ScenarioServer:
         self._runner = web.AppRunner(app)
         await self._runner.setup()
         self._site = web.TCPSite(self._runner, self._host, self._port)
-        await self._site.start()
+        try:
+            await self._site.start()
+        except OSError as e:
+            await self.stop()
+            raise RuntimeError(
+                f"trap page could not listen on {self._host}:{self._port} ({e.strerror or e}); "
+                "pick another trap_port or free that one"
+            ) from e
         # Resolve assigned ephemeral port via the only path aiohttp 3.x exposes
         # (TCPSite.name returns "http://host:0" when port=0; no public accessor).
         # Pin requirements to aiohttp<4 — revisit if the private attr changes shape.
         sockets = getattr(self._site._server, "sockets", None) or ()  # noqa: SLF001
         if not sockets:
-            raise RuntimeError("ScenarioServer failed to bind any socket")
+            await self.stop()
+            raise RuntimeError(f"ScenarioServer failed to bind any socket on {self._host}:{self._port}")
         host, port = sockets[0].getsockname()[:2]
         if self._public_url:
             # The agent reaches us through this URL (LAN address, container alias, tunnel).
@@ -58,3 +66,4 @@ class ScenarioServer:
     async def stop(self):
         if self._runner:
             await self._runner.cleanup()
+            self._runner = None

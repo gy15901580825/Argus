@@ -176,7 +176,7 @@ serves each probe's trap page from your machine and asks your agent to open it:
 
 ```bash
 argus-probe run --local --target browser-target.json \
-                --probes browser_dom_inject_html_comment --out report.html
+                --probes browser_dom_inject_html_comment --format html --out report.html
 ```
 
 Your agent must be able to reach that page. It listens on `127.0.0.1` by

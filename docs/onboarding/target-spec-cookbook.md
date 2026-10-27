@@ -135,7 +135,7 @@ We provide a thin reference adapter you can drop into your agent harness; ask in
 pipx install "argus-probe[local]"
 export ANTHROPIC_API_KEY=<your key>
 argus-probe run --local --target argus-target.json \
-  --probes browser_dom_inject_html_comment,browser_os_cmd_install_tutorial --out report.html
+  --probes browser_dom_inject_html_comment,browser_os_cmd_install_tutorial --format html --out report.html
 ```
 
 Your agent must be able to open the trap page URL. By default the page listens on `127.0.0.1` on a free port, which works when the agent runs on the same machine. If the agent runs in a container or on another machine, set where the page listens and the URL the agent should open:
@@ -155,7 +155,7 @@ Your agent must be able to open the trap page URL. By default the page listens o
 - `trap_port` is the port it listens on. The default `0` picks a free port for each probe. Set a fixed port when you set `trap_public_url`.
 - `trap_public_url` is the base URL your agent opens. Argus adds `/scenario` to it. Use your LAN address, `http://host.docker.internal:8765` for an agent in Docker, or a tunnel URL that forwards to `trap_port`.
 
-With `0.0.0.0`, anyone on your network can open the trap page while the run lasts. Use your machine's LAN address as `trap_host` when you can. These three options only apply to `--local`, and a server run rejects them.
+With `0.0.0.0`, anyone on your network can open the trap page while the run lasts. Use your machine's LAN address as `trap_host` when you can. These three options only apply to `--local`. Without `--local` the CLI refuses a spec that sets them, and the Argus API returns 422 for one.
 
 If your agent can't reach your machine at all, submit the run with `--api-url` and `--token` to a compatible hosted service instead.
 

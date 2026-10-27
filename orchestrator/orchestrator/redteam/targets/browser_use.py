@@ -25,16 +25,14 @@ _LOCAL_RUN: contextvars.ContextVar[bool] = contextvars.ContextVar("browser_local
 
 @contextlib.contextmanager
 def local_browser_mode():
-    """Run browser probes in this process instead of through a client_agent."""
+    """Run browser probes in this process instead of through a client_agent.
+
+    Never hold it across a `yield`: set and reset must run in the same context."""
     token = _LOCAL_RUN.set(True)
     try:
         yield
     finally:
-        try:
-            _LOCAL_RUN.reset(token)
-        except ValueError:
-            # An async generator closed by the loop's finalizer runs in another context.
-            pass
+        _LOCAL_RUN.reset(token)
 
 
 @dataclass(frozen=True)
