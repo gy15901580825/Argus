@@ -11,7 +11,7 @@ Argus is a black-box red-team testing tool for AI agents. Customers point Argus 
 | Service | Port | Stack | Role |
 |---------|------|-------|------|
 | `api_service` | 8881 | FastAPI, asyncpg, PostgreSQL | Central REST API: users, R2 storage, `/redteam/*`. Module isolation via `redteam/` + import-linter |
-| `orchestrator` | 8081 | FastAPI, litellm | Red-team engine: probe dispatch + judge harness in `orchestrator/redteam/`, served at `/redteam/*`, plus the WebSocket hub for client agents |
+| `orchestrator` | 8080 | FastAPI, litellm | Red-team engine: probe dispatch + judge harness in `orchestrator/redteam/`, served at `/redteam/*`, plus the WebSocket hub for client agents |
 | `client_agent` | — | websockets, browser-use, Playwright | Edge agent on client/cloud machines. Red-team probe runner in `redteam_runner/` |
 | `frontend` | 3000 | Next.js 16, React 19, Zustand | Web UI: marketing site, chat, dashboard |
 | `database` | — | Flyway, PostgreSQL | Schema migrations |
@@ -126,7 +126,7 @@ Detailed request-flow diagrams → `docs/reference/services.md`.
 
 ### LLM Configuration
 
-- **Azure OpenAI**: `gpt-5.4-mini` (chat/main) + `gpt-5.3-codex` (codex, Responses API only) — used by orchestrator, testing services, and client_agent
+- **Azure OpenAI**: `gpt-5.4-mini` — the orchestrator's red-team judge/attacker model when `REDTEAM_MODEL_PROVIDER=azure` (via litellm). `api_service`'s LLM proxy (`routers/llm.py`) also serves `gpt-5.3-codex` (Responses API only). The `testing_*` services live in the external repos listed above.
 - **Temperature constraint**: `gpt-5.4-mini` does NOT support custom temperature parameter (Azure limitation) — never set `temperature` when calling this model
 
 ### Key SSE Event Types
@@ -143,4 +143,4 @@ Detailed request-flow diagrams → `docs/reference/services.md`.
 1. **Temperature on gpt-5.4-mini**: Azure's `gpt-5.4-mini` rejects requests with `temperature` parameter. Never pass it.
 2. **Frontend env vars baked at build time**: `NEXT_PUBLIC_*` vars are compiled into the JS bundle. Domain/URL changes require `./build-and-push.sh frontend <tag>`, not just a restart.
 3. **ACR auth expires**: Run `az acr login --name <YOUR_ACR>` before any image push. Tokens expire after ~3 hours.
-4. **SSE event parsing**: Frontend `streamStrategy()` handles both direct fields (`parsed.ssh_result`) and nested content (`parsed.content.parts[0].text` with inner JSON). Both paths must be maintained for backward compatibility.
+4. **Removed strategy stream**: the frontend's `streamStrategy()` and `api_service`'s `/api/v1/orchestrator/strategy/stream` proxy still exist, but the orchestrator endpoint behind them was removed, so that chat path no longer works.

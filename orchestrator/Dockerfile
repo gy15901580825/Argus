@@ -37,7 +37,7 @@ COPY connection_manager.py .
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
-# Informational only: server.py listens on $PORT (default 8080; the Helm chart sets it).
-EXPOSE 8081
+# server.py listens on $PORT, default 8080 (the Helm chart also uses 8080).
+EXPOSE 8080
 
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

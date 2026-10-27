@@ -4,7 +4,7 @@
 > - <https://github.com/gy15901580825/argus-api-testing>
 > - <https://github.com/gy15901580825/argus-web-ui-testing>
 >
-> The Argus orchestrator still talks to them over HTTP, but they are no longer built or deployed from this repository's pipeline.
+> The Argus orchestrator no longer calls them, and they are not built or deployed from this repository's pipeline.
 
 Argus uses a polyrepo layout (one independent GitHub repo per service). CI/CD has two halves:
 **GitHub Actions** (build, test, push image, bump values) + **ArgoCD** (GitOps that pulls the kubernets repo state and rolls it out to AKS).
@@ -169,8 +169,6 @@ git push origin main
 ## Known gaps
 
 - `charts/client_agent/` does not exist (edge service, not on AKS). The client_agent CI will attempt a bump, and **the first push to main will error out at the bump step** — either add a chart, or remove the bump stage from that service's CI.
-- `charts/testing_web_fetch_service/templates/deployment.yaml:45-51` drops the `GOOGLE_API_KEY` env when `existingSecretName` is set (the `if not` branch has no `else` referencing the existing secret); the dev environment will be missing this variable until the template is patched.
-- The `testing_web_fetch_service` chart does not support `extraEnv` (other charts do); if dev needs injections like `ENVIRONMENT=dev`, the chart must be extended first.
 
 ## Secret-naming landmine (must-read before integrating with ArgoCD)
 

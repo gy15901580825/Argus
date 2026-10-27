@@ -30,7 +30,7 @@ Orchestrator red-team run (target kind browser_use)
 
 `routers/orchestrator.py` still mounts `/api/v1/orchestrator/strategy/stream`, `/run_command` and `/cancel-web-ui-test`. The orchestrator endpoints behind them have been removed, so these proxies no longer work.
 
-### Orchestrator (`orchestrator`, port 8081)
+### Orchestrator (`orchestrator`, port 8080)
 
 | Method | Path | Role |
 |--------|------|------|
