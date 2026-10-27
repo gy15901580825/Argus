@@ -1,17 +1,40 @@
 """Browser-use target adapter — delegates to client_agent over the existing WS bridge.
 
 Plan 3 implemented the runtime; Plan 4 just exposes it via factory + REST API.
+Under `argus-probe run --local` the same probe runs in-process instead (see
+`local_browser_mode`).
 """
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import contextvars
+import ipaddress
 import time
 from dataclasses import dataclass
 from typing import ClassVar
+from urllib.parse import urlsplit
 
 from orchestrator.redteam.targets._base import Target, Turn
 
 _SCENARIO_KINDS = frozenset({"dom_injection", "ui_phishing", "visual_injection", "os_cmd"})
+
+# Set only by run_local. Server mode never runs the trap page in-process.
+_LOCAL_RUN: contextvars.ContextVar[bool] = contextvars.ContextVar("browser_local_run", default=False)
+
+
+@contextlib.contextmanager
+def local_browser_mode():
+    """Run browser probes in this process instead of through a client_agent."""
+    token = _LOCAL_RUN.set(True)
+    try:
+        yield
+    finally:
+        try:
+            _LOCAL_RUN.reset(token)
+        except ValueError:
+            # An async generator closed by the loop's finalizer runs in another context.
+            pass
 
 
 @dataclass(frozen=True)
@@ -21,6 +44,11 @@ class BrowserUseSpec:
     scenario_kind: str = ""
     timeout_s: float = 60.0
     extra_context: tuple[tuple[str, str], ...] = ()
+    # Where the local trap page listens and the URL the agent is told to open.
+    # Only used by --local; the agent must be able to reach that URL.
+    trap_host: str = "127.0.0.1"
+    trap_port: int = 0
+    trap_public_url: str = ""
 
     def __post_init__(self) -> None:
         # Coerce dict OR list-of-2-element-lists → tuple-of-tuples
@@ -39,6 +67,38 @@ class BrowserUseSpec:
             raise ValueError(
                 "scenario_kind must be one of dom_injection/ui_phishing/visual_injection/os_cmd"
             )
+        self._validate_trap()
+
+    def _validate_trap(self) -> None:
+        try:
+            host = ipaddress.IPv4Address(self.trap_host)
+        except ValueError:
+            raise ValueError(f"trap_host must be an IPv4 address, got {self.trap_host!r}") from None
+        if isinstance(self.trap_port, bool) or not isinstance(self.trap_port, int) \
+                or not 0 <= self.trap_port <= 65535:
+            raise ValueError(f"trap_port must be an integer from 0 to 65535, got {self.trap_port!r}")
+        if not self.trap_public_url:
+            if host.is_unspecified:
+                raise ValueError(
+                    f"trap_host {self.trap_host} listens on every interface; set trap_public_url "
+                    "to the address your agent should open"
+                )
+            return
+        parts = urlsplit(self.trap_public_url)
+        if parts.scheme not in ("http", "https") or not parts.hostname:
+            raise ValueError(
+                f"trap_public_url must be an http(s) URL such as http://192.168.1.20:8765, "
+                f"got {self.trap_public_url!r}"
+            )
+        if parts.query or parts.fragment:
+            raise ValueError("trap_public_url must not carry a query string or fragment")
+        if self.trap_port == 0:
+            # A random port can't appear in a URL written before the run.
+            raise ValueError("trap_public_url needs a fixed trap_port for the trap page to listen on")
+
+    @property
+    def sets_trap(self) -> bool:
+        return (self.trap_host, self.trap_port, self.trap_public_url) != ("127.0.0.1", 0, "")
 
 
 def _get_client_agent_ws():
@@ -86,7 +146,6 @@ class BrowserUseTarget(Target):
     async def send_prompt(
         self, prompt: str, history: tuple[Turn, ...] = ()
     ) -> tuple[str, float]:
-        ws = _get_client_agent_ws()
         msg = {
             "type": "redteam_browser_probe",
             "scenario_kind": self._scenario_kind or self.spec.scenario_kind,
@@ -98,11 +157,27 @@ class BrowserUseTarget(Target):
             "extra_context": dict(self.spec.extra_context),
         }
         start = time.monotonic()
-        reply = await asyncio.wait_for(
-            ws.send_and_wait(msg),
-            timeout=self.spec.timeout_s + 5.0,
-        )
+        if _LOCAL_RUN.get():
+            reply = await asyncio.wait_for(
+                self._run_in_process(msg), timeout=self.spec.timeout_s + 5.0
+            )
+        else:
+            if self.spec.sets_trap:
+                # An older client_agent would ignore these and serve on 127.0.0.1.
+                raise ValueError("trap_host, trap_port and trap_public_url only apply to --local runs")
+            ws = _get_client_agent_ws()
+            reply = await asyncio.wait_for(
+                ws.send_and_wait(msg),
+                timeout=self.spec.timeout_s + 5.0,
+            )
         wall_latency_ms = (time.monotonic() - start) * 1000.0
         reported = reply.get("latency_ms")
         latency_ms = float(reported) if isinstance(reported, (int, float)) else wall_latency_ms
         return reply.get("final_text", ""), latency_ms
+
+    async def _run_in_process(self, msg: dict) -> dict:
+        from orchestrator.redteam.browser_runner.browser_probe import BrowserProbe
+
+        local_msg = dict(msg, trap_host=self.spec.trap_host, trap_port=self.spec.trap_port,
+                         trap_public_url=self.spec.trap_public_url)
+        return await BrowserProbe().run(local_msg)

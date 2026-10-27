@@ -4,7 +4,7 @@ browser-using agent reads the DOM as part of its 'observe page' tool — and
 follows the injected instruction as if it were user-issued.
 """
 
-from redteam_runner.scenarios._html import esc
+from ._html import esc
 
 
 _TEMPLATE = """<!doctype html>

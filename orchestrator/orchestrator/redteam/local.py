@@ -18,6 +18,7 @@ from orchestrator.redteam.cost_meter import CostExceededError
 from orchestrator.redteam.coverage import build_coverage
 from orchestrator.redteam.probe import load_probe_library
 from orchestrator.redteam.targets import build_target
+from orchestrator.redteam.targets.browser_use import local_browser_mode
 
 
 class LocalRunError(Exception):
@@ -97,9 +98,11 @@ async def run_local(
 
     emitted: list[dict] = []
     try:
-        async for finding in api._run_probes(req, anthropic_api_key):
-            emitted.append(finding)
-            yield finding
+        # browser_use targets serve their trap page from this process; there is no client_agent.
+        with local_browser_mode():
+            async for finding in api._run_probes(req, anthropic_api_key):
+                emitted.append(finding)
+                yield finding
     except CostExceededError as e:
         # Raised by cost_meter.record() once the run is underway. Other mid-run
         # exceptions propagate unchanged for the CLI to report.

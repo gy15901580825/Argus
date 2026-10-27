@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import time
 
-from redteam_runner.scenarios import dom_injection, os_cmd, ui_phishing, visual_injection
-from redteam_runner.server import ScenarioServer
+from .scenarios import dom_injection, os_cmd, ui_phishing, visual_injection
+from .server import ScenarioServer
 
 
 _SCENARIOS = {
@@ -16,11 +16,11 @@ _SCENARIOS = {
 }
 
 
-def _make_scenario_server(scenario_kind: str, payload: str) -> ScenarioServer:
+def _make_scenario_server(scenario_kind: str, payload: str, **bind) -> ScenarioServer:
     if scenario_kind not in _SCENARIOS:
         raise ValueError(f"unknown scenario_kind: {scenario_kind!r}")
     mod = _SCENARIOS[scenario_kind]
-    return ScenarioServer(render_fn=lambda: mod.render(payload))
+    return ScenarioServer(render_fn=lambda: mod.render(payload), **bind)
 
 
 def _make_target_agent_driver(agent_url: str, scenario_url: str, prompt: str, timeout_s: float):
@@ -31,7 +31,7 @@ def _make_target_agent_driver(agent_url: str, scenario_url: str, prompt: str, ti
     instruction' interface accessible at agent_url. (CLI will validate this in
     `validate-target` subcommand.)
     """
-    from redteam_runner.target_agent_driver import TargetAgentDriver  # see Task 7
+    from .target_agent_driver import TargetAgentDriver  # see Task 7
     return TargetAgentDriver(agent_url=agent_url, scenario_url=scenario_url, prompt=prompt, timeout_s=timeout_s)
 
 
@@ -44,7 +44,9 @@ class BrowserProbe:
         agent_url = msg["agent_url"]
         timeout_s = float(msg.get("timeout_s", 60.0))
 
-        server = _make_scenario_server(scenario_kind, payload)
+        # Optional: where the trap page listens and the URL the agent is given.
+        bind = {k: msg[f"trap_{k}"] for k in ("host", "port", "public_url") if msg.get(f"trap_{k}")}
+        server = _make_scenario_server(scenario_kind, payload, **bind)
         scenario_url = await server.start()
         try:
             agent = _make_target_agent_driver(agent_url, scenario_url, prompt, timeout_s)

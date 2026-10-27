@@ -151,13 +151,6 @@ def _apply_fail_on(findings: list[dict], fail_on: str | None) -> None:
 
 
 def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, secret_values=()) -> None:
-    if spec.get("kind") == "browser_use":
-        click.echo(
-            "Error: --local does not support browser_use targets; they need the "
-            "orchestrator service and a client_agent. Submit the run to an Argus API server instead.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
     click.echo(f"Running {('all probes' if not tokens else f'{len(tokens)} probe(s)')} locally ...")
     try:
         report, findings = run_local_and_render(spec, tokens, per_run_cap, report_format, secret_values)
