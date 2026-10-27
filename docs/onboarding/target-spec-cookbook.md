@@ -212,6 +212,25 @@ We provide a thin reference adapter you can drop into your agent harness; ask in
 
 ---
 
+## vllm_server
+
+**Use this for**: a vLLM server you run, checked against published vLLM advisories. This target tests the model server, not an agent.
+
+```json
+{
+  "kind": "vllm_server",
+  "url": "http://10.0.0.5:8000"
+}
+```
+
+`url` is the server root, not the `/v1` path. `headers` is optional and only needed when a proxy in front of vLLM requires it; vLLM's own `--api-key` does not cover `/version`.
+
+**What it sends:** one `GET /version`. Nothing else. The advisories are denial-of-service bugs, so the version is the only evidence it collects.
+
+**Probe:** `vllm_server_known_vulnerable_version` fails when the version falls inside a known advisory range, and names each advisory. It also fails when `/version` gives no version or the version does not parse (for example a `.dev` build), because an unidentified server is not proven safe.
+
+---
+
 ## testbed_agent
 
 **Use this for**: the generic form of `mcp_agent` and `payment_agent`. The `environment` field (`mcp` or `payment`) selects which testbed it drives, and the rest of the spec is the same shape. `environment` also decides which probes apply (the `mcp/` or `payment/` probe families).

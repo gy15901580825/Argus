@@ -14,6 +14,7 @@ from orchestrator.redteam.targets.mcp_server import MCPServerSpec, MCPServerTarg
 from orchestrator.redteam.targets.openai_compat import OpenAICompatSpec, OpenAICompatTarget
 from orchestrator.redteam.targets.payment_agent import PaymentAgentSpec, PaymentAgentTarget
 from orchestrator.redteam.targets.testbed_agent import GenericTestbedAgentTarget, TestbedAgentSpec
+from orchestrator.redteam.targets.vllm_server import VLLMServerSpec, VLLMServerTarget
 
 _BUILDERS = {
     "anthropic_native": (AnthropicNativeSpec, AnthropicNativeTarget),
@@ -26,6 +27,7 @@ _BUILDERS = {
     "openai_compat": (OpenAICompatSpec, OpenAICompatTarget),
     "payment_agent": (PaymentAgentSpec, PaymentAgentTarget),
     "testbed_agent": (TestbedAgentSpec, GenericTestbedAgentTarget),
+    "vllm_server": (VLLMServerSpec, VLLMServerTarget),
 }
 
 

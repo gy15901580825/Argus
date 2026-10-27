@@ -98,6 +98,8 @@ class TestbedAgentTarget(BaseModel):
 
 class MCPServerTarget(BaseModel):
     kind: Literal["mcp_server"] = "mcp_server"
+class VLLMServerTarget(BaseModel):
+    kind: Literal["vllm_server"] = "vllm_server"
     url: str
     headers: list[tuple[str, str]] = Field(default_factory=list)
     timeout_s: float = 30.0
@@ -135,6 +137,7 @@ TargetSpec = Annotated[
         TestbedAgentTarget,
         HTTPUploadTarget,
         MCPServerTarget,
+        VLLMServerTarget,
     ],
     Field(discriminator="kind"),
 ]
