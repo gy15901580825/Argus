@@ -13,9 +13,9 @@ import os
 
 from fastapi import FastAPI, HTTPException, Request, Response
 
-from testbed.rpc import handle_request
-from testbed.scenarios import SCENARIOS
-from testbed.session import Script, SessionStore
+from .rpc import handle_request
+from .scenarios import SCENARIOS
+from .session import Script, SessionStore
 
 PUBLIC_BASE_URL = os.environ.get("TESTBED_PUBLIC_URL", "").rstrip("/")
 

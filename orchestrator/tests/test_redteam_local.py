@@ -213,3 +213,40 @@ async def test_default_judge_yields_no_warning():
             )
         )
     assert not any(e.get("type") == "warning" for e in events)
+
+
+MCP_TARGET = {
+    "kind": "mcp_agent",
+    "testbed_url": "http://127.0.0.1:1",
+    "sandbox": True,
+    "inner": {"kind": "openai_compat", "endpoint_url": "http://127.0.0.1:2/v1/chat/completions", "model": "demo"},
+}
+ASSERTION_PROBE = "mcp_poison_description_exfil"
+JUDGED_PROBE = "owasp_07_system_prompt_leakage"
+
+
+async def test_assertion_only_run_needs_no_key():
+    with patch("orchestrator.redteam.api._run_probes", _fake_run):
+        events = await _collect(run_local(MCP_TARGET, [ASSERTION_PROBE], env={}))
+    assert events[0] == FAKE_FINDING
+    assert events[-1]["type"] == "coverage"
+
+
+async def test_assertion_only_run_skips_litellm_warning():
+    env = {"REDTEAM_MODEL_PROVIDER": "litellm", "REDTEAM_FAST_MODEL": "ollama/x"}
+    with patch("orchestrator.redteam.api._run_probes", _fake_run):
+        events = await _collect(run_local(MCP_TARGET, [ASSERTION_PROBE], env=env))
+    assert not [e for e in events if e.get("type") == "warning"]
+
+
+async def test_mixed_selection_still_needs_key():
+    with pytest.raises(LocalRunError) as exc:
+        await _collect(run_local(MCP_TARGET, [ASSERTION_PROBE, JUDGED_PROBE], env={}))
+    assert exc.value.code == "config"
+    assert "ANTHROPIC_API_KEY" in str(exc.value)
+
+
+async def test_invalid_provider_still_rejected_for_assertion_only_run():
+    with pytest.raises(LocalRunError) as exc:
+        await _collect(run_local(MCP_TARGET, [ASSERTION_PROBE], env={"REDTEAM_MODEL_PROVIDER": "bogus"}))
+    assert exc.value.code == "config"

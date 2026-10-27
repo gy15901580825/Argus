@@ -19,6 +19,7 @@ dependencies = [
     "grpcio>=1.60",
     "grpcio-reflection>=1.60",
     "protobuf>=4.25",
+    "uvicorn>=0.30",
 ]
 
 [project.optional-dependencies]

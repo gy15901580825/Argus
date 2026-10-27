@@ -46,9 +46,6 @@ async def run_local(
     except ValueError as e:
         raise LocalRunError(str(e), code="config") from e
     anthropic_api_key = env.get("ANTHROPIC_API_KEY")
-    err = llm.credential_error(cfg)
-    if err:
-        raise LocalRunError(err, code="config")
 
     if not isinstance(target, dict):
         raise LocalRunError("target must be a JSON object", code="input")
@@ -69,6 +66,14 @@ async def run_local(
     except HTTPException as e:
         raise LocalRunError(str(e.detail), code="input") from e
 
+    # Assertion-backed probes are decided from evidence and never call the judge,
+    # so a static run of only those needs no judge credential.
+    needs_judge = mode == "deep" or api._judged_exchanges(req, requested) > 0
+    if needs_judge:
+        err = llm.credential_error(cfg)
+        if err:
+            raise LocalRunError(err, code="config")
+
     try:
         api._COST_METER.check_or_abort_pre_run(
             probe_ids=requested,
@@ -80,7 +85,7 @@ async def run_local(
     except CostExceededError as e:
         raise LocalRunError(str(e), code="cost") from e
 
-    if cfg.provider == llm.PROVIDER_LITELLM:
+    if needs_judge and cfg.provider == llm.PROVIDER_LITELLM:
         yield {
             "type": "warning",
             "message": (
