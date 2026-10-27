@@ -14,7 +14,7 @@ import secrets
 import time
 from dataclasses import dataclass, field
 
-from testbed.scenarios import SCENARIOS, Scenario
+from .scenarios import SCENARIOS, Scenario
 
 DEFAULT_TTL_S = 900.0
 DEFAULT_SCENARIO = "tool_poisoning"

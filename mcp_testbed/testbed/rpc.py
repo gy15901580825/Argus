@@ -9,7 +9,7 @@ from "the probe never actually ran".
 
 from __future__ import annotations
 
-from testbed.session import Session
+from .session import Session
 
 METHOD_NOT_FOUND = -32601
 
