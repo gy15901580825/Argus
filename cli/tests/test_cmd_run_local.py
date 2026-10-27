@@ -174,15 +174,28 @@ def test_remote_still_requires_api_url(tmp_path, monkeypatch):
     assert "Missing option '--api-url'" in result.output
 
 
-def test_local_rejects_browser_use_target(tmp_path, monkeypatch):
-    _install_fake_orchestrator(monkeypatch, _ok_run)
+def test_local_runs_browser_use_target(tmp_path, monkeypatch):
+    seen = {}
+
+    async def run(target, probe_ids, **kw):
+        seen["target"] = target
+        yield {**FAIL_FINDING, "probe_id": "browser_dom_inject_basic"}
+        yield {"type": "coverage", "coverage": FAKE_COVERAGE}
+
+    _install_fake_orchestrator(monkeypatch, run)
+    spec = {"kind": "browser_use", "agent_url": "http://127.0.0.1:9/agent",
+            "scenario_kind": "dom_injection", "trap_host": "0.0.0.0", "trap_port": 8765,
+            "trap_public_url": "http://192.168.1.20:8765"}
     p = tmp_path / "b.json"
-    p.write_text('{"kind":"browser_use","agent_url":"https://x","scenario_kind":"dom_injection"}')
+    p.write_text(json.dumps(spec))
+    out = tmp_path / "r.html"
     result = CliRunner().invoke(
-        cmd_run, ["--local", "--target", str(p), "--probes", "p", "--out", str(tmp_path / "r.html")],
+        cmd_run, ["--local", "--target", str(p), "--probes", "browser_dom_inject_basic", "--out", str(out)],
     )
-    assert result.exit_code == 1, result.output
-    assert "browser_use" in result.output
+    assert result.exit_code == 0, result.output
+    assert seen["target"] == spec
+    assert "browser_dom_inject_basic" in result.output
+    assert out.exists()
 
 
 def test_local_ignores_env_api_url_and_token(tmp_path, monkeypatch):

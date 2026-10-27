@@ -28,7 +28,7 @@ _HTML_FALLBACK = """<!doctype html>
 def render(payload: str) -> tuple[bytes | str, str]:
     if not _HAS_PIL:
         # HTML fallback — escape payload so HTML metachars don't break the div.
-        from redteam_runner.scenarios._html import esc
+        from ._html import esc
         return _HTML_FALLBACK.format(payload=esc(payload)), "text/html"
     # PNG path — payload goes through PIL's draw.text(), which renders text
     # not HTML, so no escaping needed.

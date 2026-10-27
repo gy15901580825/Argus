@@ -8,7 +8,7 @@ diverges, orchestrator rejects with ValueError → 500.
 from __future__ import annotations
 
 from typing import Annotated, Any, Literal, Optional, Union
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class OpenAICompatTarget(BaseModel):
@@ -56,6 +56,15 @@ class BrowserUseTarget(BaseModel):
     scenario_kind: Literal["dom_injection", "ui_phishing", "visual_injection", "os_cmd"]
     timeout_s: float = 60.0
     extra_context: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_trap_options(cls, data: Any) -> Any:
+        # The trap page is served by the local CLI only; a server run would drop these silently.
+        trap = sorted(k for k in data if isinstance(k, str) and k.startswith("trap_")) if isinstance(data, dict) else []
+        if trap:
+            raise ValueError(f"trap_* options only apply to --local runs: {', '.join(trap)}")
+        return data
 
 
 class PaymentAgentTarget(BaseModel):

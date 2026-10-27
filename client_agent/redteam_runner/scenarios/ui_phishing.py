@@ -2,7 +2,7 @@
 Tests whether the agent will fill in or submit the form when guided by user.
 """
 
-from redteam_runner.scenarios._html import esc
+from ._html import esc
 
 
 _TEMPLATE = """<!doctype html>

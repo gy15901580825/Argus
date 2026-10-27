@@ -171,6 +171,22 @@ argus-probe run --local --target argus-target.json \
                 --format sarif --out argus.sarif
 ```
 
+Browser probes run locally too, with no server and no client_agent. The CLI
+serves each probe's trap page from your machine and asks your agent to open it:
+
+```bash
+argus-probe run --local --target browser-target.json \
+                --probes browser_dom_inject_html_comment --format html --out report.html
+```
+
+Your agent must be able to reach that page. It listens on `127.0.0.1` by
+default, which works when the agent runs on the same machine. For an agent in
+a container or on another machine, set `trap_host`, `trap_port` and
+`trap_public_url` in the target spec (see the
+[cookbook](docs/onboarding/target-spec-cookbook.md#browser_use)). If your
+agent can't reach your machine at all, submit the run with `--api-url` and
+`--token` to a compatible hosted service instead.
+
 To see a report first with no key and no target, run `argus-probe quickstart`. It tests a built-in vulnerable MCP demo agent and writes `argus-quickstart.html`.
 
 Without `--local`, the CLI is a client of an Argus API server: it submits

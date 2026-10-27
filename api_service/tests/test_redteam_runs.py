@@ -346,6 +346,20 @@ def test_redteam_run_accepts_http_upload_target(authenticated_client, mock_db, f
     assert response.status_code == 200, response.text
 
 
+@pytest.mark.parametrize("field,value", [
+    ("trap_host", "0.0.0.0"), ("trap_port", 8765), ("trap_public_url", "http://10.0.0.5:8765"),
+])
+def test_redteam_run_rejects_browser_trap_options_with_422(authenticated_client, field, value):
+    target = {"kind": "browser_use", "agent_url": "https://x", "scenario_kind": "dom_injection", field: value}
+    with patch("redteam.orchestrator_client.create_run") as create_run:
+        response = authenticated_client.post(
+            "/api/v1/redteam/runs", json={"target": target, "probe_ids": ["p1"]}
+        )
+    assert response.status_code == 422, response.text
+    assert "only apply to --local" in response.text and field in response.text
+    create_run.assert_not_called()
+
+
 def test_redteam_run_rejects_unknown_kind_with_422(authenticated_client):
     body = {"target": {"kind": "telepathy", "endpoint_url": "x"}, "probe_ids": ["p1"]}
     response = authenticated_client.post("/api/v1/redteam/runs", json=body)
