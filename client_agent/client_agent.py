@@ -5,153 +5,13 @@ import argparse
 import sys
 import os
 import httpx
-from urllib.parse import urljoin, urlparse
-from bs4 import BeautifulSoup
 import websockets
-from typing import Dict, Any, Optional
+from typing import Optional
 from datetime import datetime, timedelta
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("ClientAgent")
-
-# ---------------------------------------------------------------------------
-# Optional Web UI testing support (requires browser-use + playwright)
-# ---------------------------------------------------------------------------
-_WEB_UI_ENABLED = False
-try:
-    import web_ui_runner  # local module
-    _WEB_UI_ENABLED = True
-    logger.info("Web UI testing support enabled (browser-use + playwright available)")
-except ImportError:
-    logger.info("Web UI testing support not available (install browser-use + playwright to enable)")
-
-# --- Web Fetch Logic (Copied/Adapted from testing_web_fetch_service) ---
-
-async def _probe_openapi(client: httpx.AsyncClient, base_url: str, extracted_links: list[str]) -> dict | None:
-    """
-    Attempt to discover and fetch OpenAPI/Swagger specification.
-    """
-    common_paths = [
-        "/v2/swagger.json",
-        "/v3/api-docs",
-        "/api/docs",
-        "/swagger/v1/swagger.json",
-        "/openapi.json",
-        "/api/v3/openapi.json",
-        "/swagger.json"
-    ]
-    
-    candidate_urls = []
-    
-    # Check extracted links for API spec patterns
-    for link in extracted_links:
-        path = urlparse(link).path
-        if path.endswith(('.json', '.yaml', '.yml')) and ('swagger' in path or 'api' in path or 'openapi' in path):
-            candidate_urls.append(link)
-            
-    # Add common paths
-    for path in common_paths:
-        candidate_urls.append(urljoin(base_url, path))
-        
-    candidate_urls = list(set(candidate_urls))
-    
-    # Try fetching each candidate URL
-    for url in candidate_urls:
-        try:
-            response = await client.get(url, timeout=5.0)
-            if response.status_code == 200:
-                try:
-                    data = response.json()
-                    if "openapi" in data or "swagger" in data:
-                        return {"url": url, "spec": data}
-                except json.JSONDecodeError:
-                    continue
-        except Exception:
-            continue
-            
-    return None
-
-async def fetch_url_impl(url: str, cookie: Optional[str] = None, token: Optional[str] = None) -> str:
-    """
-    Fetch and analyze web page structure.
-    """
-    headers = {
-        "User-Agent": "Argus-Client-Agent/1.0"
-    }
-    
-    # Add cookie if provided
-    if cookie:
-        headers["Cookie"] = cookie
-        logger.info("🍪 Using provided cookie for authentication")
-        
-    # Add token if provided
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-        logger.info("🔑 Using provided token for authentication")
-    
-    result = {
-        "text": "",
-        "links": [],
-        "scripts": [],
-        "api_spec": None,
-        "metadata": {}
-    }
-
-    async with httpx.AsyncClient(verify=False, follow_redirects=True) as client:
-        try:
-            response = await client.get(url, headers=headers, timeout=30.0)
-            result["metadata"]["status_code"] = response.status_code
-            result["metadata"]["url"] = str(response.url)
-            
-            if response.status_code >= 400:
-                return json.dumps(result, ensure_ascii=False)
-
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # Extract metadata
-            if soup.title:
-                result["metadata"]["title"] = soup.title.string
-            
-            # Extract links
-            links = set()
-            for a in soup.find_all('a', href=True):
-                full_url = urljoin(str(response.url), a['href'])
-                links.add(full_url)
-            result["links"] = list(links)
-            
-            # Extract scripts
-            scripts = set()
-            for script in soup.find_all('script', src=True):
-                full_url = urljoin(str(response.url), script['src'])
-                scripts.add(full_url)
-            result["scripts"] = list(scripts)
-            
-            # Clean text content
-            for tag in soup(["script", "style"]):
-                tag.decompose()
-            
-            text = soup.get_text()
-            lines = (line.strip() for line in text.splitlines())
-            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-            result["text"] = '\n'.join(chunk for chunk in chunks if chunk)
-            
-            # Probe for OpenAPI spec
-            try:
-                data = response.json()
-                if isinstance(data, dict) and ("openapi" in data or "swagger" in data):
-                    result["api_spec"] = {"url": str(response.url), "spec": data}
-                    result["text"] = "Fetched content is a JSON API Specification."
-            except json.JSONDecodeError:
-                # If not JSON, try to find linked spec
-                spec_found = await _probe_openapi(client, str(response.url), result["links"])
-                if spec_found:
-                    result["api_spec"] = spec_found
-
-        except Exception as e:
-            result["error"] = str(e)
-            
-    return json.dumps(result, ensure_ascii=False, indent=2)
 
 # --- OAuth Client Logic ---
 
@@ -301,8 +161,6 @@ class ClientAgent:
                 jwt_token = await self.oauth_client.get_access_token()
                 headers["Authorization"] = f"Bearer {jwt_token}"
                 logger.info(f"Using OAuth JWT token for registration (token starts with: {jwt_token[:20]}...)")
-                if _WEB_UI_ENABLED:
-                    web_ui_runner.set_api_credentials(self.api_service_url, jwt_token)
             except Exception as e:
                 logger.error(f"Failed to get OAuth token: {e}")
                 if not self.api_token:
@@ -312,8 +170,6 @@ class ClientAgent:
         elif self.api_token:
             headers["x-api-token"] = self.api_token
             logger.info("Using API token for registration")
-            if _WEB_UI_ENABLED:
-                web_ui_runner.set_api_credentials(self.api_service_url, self.api_token)
         
         # Ensure api_service_url ends with /api/v1 or /api/v1/
         base_url = self.api_service_url.rstrip('/')
@@ -355,166 +211,6 @@ class ClientAgent:
             except Exception as e:
                 logger.error(f"Registration failed: {e}")
                 raise
-
-    async def handle_tool_call(self, name: str, arguments: Dict[str, Any]) -> Any:
-        logger.info(f"⚙️  Executing tool: {name}")
-        logger.info(f"📥 Input arguments: {json.dumps(arguments, indent=2)}")
-
-        # ----------------------------------------------------------------
-        # fetch_url — existing web crawl tool
-        # ----------------------------------------------------------------
-        if name == "fetch_url":
-            url = arguments.get("url")
-            if not url:
-                error_result = {"error": "Missing url argument"}
-                logger.error(f"❌ Tool execution failed: {error_result}")
-                return error_result
-
-            cookie = arguments.get("cookie") or arguments.get("cookies")
-            token = arguments.get("token")
-
-            logger.info(f"🌐 Fetching URL: {url}")
-            result = await fetch_url_impl(url, cookie, token)
-            logger.info(f"✅ Tool execution completed, result size: {len(str(result))} chars")
-            return result
-
-        # ----------------------------------------------------------------
-        # Web UI testing tools (only available when browser-use is installed)
-        # ----------------------------------------------------------------
-        elif name == "start_web_ui_test":
-            if not _WEB_UI_ENABLED:
-                return {"error": "Web UI testing not available on this agent (browser-use not installed)"}
-
-            url = arguments.get("url")
-            if not url:
-                return {"error": "Missing 'url' argument"}
-
-            result = web_ui_runner.start_web_ui_test(
-                url=url,
-                cdp_url=arguments.get("cdp_url"),
-                max_steps=int(arguments.get("max_steps", 100)),
-                llm_model=arguments.get("llm_model"),
-                script_model=arguments.get("script_model"),
-                credentials=arguments.get("credentials"),
-                business_context=arguments.get("business_context"),
-                user_persona=arguments.get("user_persona", "new_user"),
-            )
-            logger.info(f"🚀 Web UI test started: task_id={result.get('task_id')}")
-            return result
-
-        elif name == "get_web_ui_test_status":
-            if not _WEB_UI_ENABLED:
-                return {"error": "Web UI testing not available on this agent"}
-            task_id = arguments.get("task_id")
-            if not task_id:
-                return {"error": "Missing 'task_id' argument"}
-            return web_ui_runner.get_web_ui_test_status(task_id)
-
-        elif name == "get_web_ui_test_result":
-            if not _WEB_UI_ENABLED:
-                return {"error": "Web UI testing not available on this agent"}
-            task_id = arguments.get("task_id")
-            if not task_id:
-                return {"error": "Missing 'task_id' argument"}
-            result = web_ui_runner.get_web_ui_test_result(task_id)
-            logger.info(
-                f"📦 Returning web UI result for task {task_id}, "
-                f"script size: {len(result.get('test_script') or '')} chars"
-            )
-            return result
-
-        elif name == "cancel_web_ui_test":
-            if not _WEB_UI_ENABLED:
-                return {"error": "Web UI testing not available on this agent"}
-            task_id = arguments.get("task_id")
-            if not task_id:
-                return {"error": "Missing 'task_id' argument"}
-            result = web_ui_runner.cancel_web_ui_test(task_id)
-            logger.info(f"🛑 Cancel requested for task {task_id}: {result}")
-            return result
-
-        else:
-            error_result = {"error": f"Unknown tool: {name}"}
-            logger.error(f"❌ Unknown tool requested: {name}")
-            return error_result
-
-    async def handle_tools_list(self, params: dict) -> list:
-        """Return list of available tools, including web UI tools when enabled."""
-        tools = [
-            {
-                "name": "fetch_url",
-                "description": (
-                    "Fetch and analyze content from ANY URL including private network addresses "
-                    "(192.168.x.x, 10.x.x.x, localhost). Runs in the user's local environment "
-                    "and can access private/internal URLs that cloud services cannot reach."
-                ),
-                "parameters": {
-                    "url": {"type": "string", "description": "The URL to fetch", "required": True},
-                    "cookie": {"type": "string", "description": "Optional cookie string", "required": False},
-                    "token": {"type": "string", "description": "Optional Bearer token", "required": False},
-                },
-            }
-        ]
-
-        if _WEB_UI_ENABLED:
-            tools += [
-                {
-                    "name": "start_web_ui_test",
-                    "description": (
-                        "Start a browser-based web UI exploration and test generation task on the "
-                        "user's local machine. Connects to a Chrome instance via CDP for intranet "
-                        "access. Returns immediately with a task_id — poll status with "
-                        "get_web_ui_test_status."
-                    ),
-                    "parameters": {
-                        "url": {"type": "string", "description": "Target URL to explore", "required": True},
-                        "cdp_url": {
-                            "type": "string",
-                            "description": (
-                                "Chrome DevTools Protocol URL, e.g. 'http://host.docker.internal:9222'. "
-                                "Defaults to CDP_URL env var. If omitted, launches a new headless browser."
-                            ),
-                            "required": False,
-                        },
-                        "max_steps": {"type": "integer", "description": "Max exploration steps (default 100)", "required": False},
-                        "llm_model": {"type": "string", "description": "LLM model for exploration (default gpt-5.4-mini)", "required": False},
-                        "credentials": {
-                            "type": "object",
-                            "description": "Optional login credentials: {username, password}",
-                            "required": False,
-                        },
-                        "business_context": {"type": "string", "description": "Optional business context hint", "required": False},
-                        "user_persona": {
-                            "type": "string",
-                            "description": "Exploration persona: new_user | returning_user | power_user | admin",
-                            "required": False,
-                        },
-                    },
-                },
-                {
-                    "name": "get_web_ui_test_status",
-                    "description": "Poll the status of a web UI test task (no test script in response, use get_web_ui_test_result when completed).",
-                    "parameters": {
-                        "task_id": {"type": "string", "description": "Task ID from start_web_ui_test", "required": True},
-                    },
-                },
-                {
-                    "name": "get_web_ui_test_result",
-                    "description": "Get the full result of a completed web UI test, including the generated pytest script and bug report.",
-                    "parameters": {
-                        "task_id": {"type": "string", "description": "Task ID from start_web_ui_test", "required": True},
-                    },
-                },
-                {
-                    "name": "cancel_web_ui_test",
-                    "description": "Cancel a running web UI test task.",
-                    "parameters": {
-                        "task_id": {"type": "string", "description": "Task ID from start_web_ui_test", "required": True},
-                    },
-                },
-            ]
-
-        return tools
 
     async def connect_orchestrator(self):
         """Connect to Orchestrator WebSocket and handle messages"""
@@ -577,18 +273,7 @@ class ClientAgent:
                                     logger.info(f"🔧 Processing method: {method}")
                                     logger.info(f"📦 Parameters: {json.dumps(params, indent=2)}")
 
-                                    if method == "tools/call":
-                                        tool_name = params.get("name")
-                                        arguments = params.get("arguments", {})
-                                        logger.info(f"🛠️  Calling tool: {tool_name}")
-                                        logger.info(f"📋 Tool arguments: {json.dumps(arguments, indent=2)}")
-                                        result = await self.handle_tool_call(tool_name, arguments)
-                                        logger.info(f"✅ Tool result: {json.dumps(result, indent=2)}")
-                                    elif method == "tools/list":
-                                        logger.info("📝 Listing available tools")
-                                        result = await self.handle_tools_list(params)
-                                        logger.info(f"✅ Available tools: {json.dumps(result, indent=2)}")
-                                    elif method == "redteam_browser_probe":
+                                    if method == "redteam_browser_probe":
                                         from redteam_runner.browser_probe import BrowserProbe
                                         result = await BrowserProbe().run(params)
                                     elif method == "ping":
@@ -639,10 +324,6 @@ class ClientAgent:
             try:
                 # Get current token (this will refresh if needed)
                 await self.oauth_client.get_access_token()
-                if _WEB_UI_ENABLED and self.oauth_client.access_token:
-                    web_ui_runner.set_api_credentials(
-                        self.api_service_url, self.oauth_client.access_token
-                    )
 
                 # Calculate when to refresh next
                 # Refresh at 80% of token lifetime or at least every 5 minutes

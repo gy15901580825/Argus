@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from database import database
-from routers import blogs, categories, tags, media, blog_authors, documents, orchestrator, scripts, agents, chat, trial, web_ui_tasks, llm, subscription, profile, admin, legacy_export, organizations
+from routers import blogs, categories, tags, media, blog_authors, documents, orchestrator, agents, chat, trial, llm, subscription, profile, admin, organizations
 from redteam import routes as redteam_routes
 from auth import get_current_user_dual_auth, get_current_user
 from models import UserResponse
@@ -51,17 +51,14 @@ app.include_router(media.router, prefix="/api/v1", tags=["Blog Media"])
 app.include_router(blog_authors.router, prefix="/api/v1", tags=["Blog Authors"])
 app.include_router(documents.router, prefix="/api/v1", tags=["Documents"])
 app.include_router(orchestrator.router, prefix="/api/v1", tags=["Orchestrator"])
-app.include_router(scripts.router, prefix="/api/v1", tags=["Scripts"])
 app.include_router(agents.router, prefix="/api/v1", tags=["Agents"])
 app.include_router(chat.router, prefix="/api/v1", tags=["Chat"])
 app.include_router(trial.router, prefix="/api/v1", tags=["Trial"])
-app.include_router(web_ui_tasks.router, prefix="/api/v1", tags=["WebUITasks"])
 app.include_router(llm.router, prefix="/api/v1", tags=["LLM"])
 app.include_router(subscription.router, prefix="/api/v1", tags=["Subscription"])
 app.include_router(profile.router, prefix="/api/v1", tags=["Profile"])
 app.include_router(admin.router, prefix="/api/v1", tags=["Admin"])
 app.include_router(organizations.router, prefix="/api/v1", tags=["Organizations"])
-app.include_router(legacy_export.router, tags=["Legacy Export"])
 
 @app.on_event("startup")
 async def startup():

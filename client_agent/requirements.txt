@@ -1,10 +1,8 @@
 websockets
 httpx
-beautifulsoup4
 python-dotenv
 argparse
-# Web UI testing support (browser-use + playwright)
-# Optional — the agent works without them but web_ui_runner will be disabled.
+# browser-use brings Pillow (redteam_runner visual_injection renders images with it).
 browser-use
 playwright
 # redteam_runner/server.py uses aiohttp's TCPSite + reads a private attribute
