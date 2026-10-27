@@ -16,7 +16,7 @@ from fastapi import HTTPException
 from orchestrator.redteam import api, llm
 from orchestrator.redteam.cost_meter import CostExceededError
 from orchestrator.redteam.coverage import build_coverage
-from orchestrator.redteam.probe import load_all_probes
+from orchestrator.redteam.probe import load_probe_library
 from orchestrator.redteam.targets import build_target
 
 
@@ -106,5 +106,5 @@ async def run_local(
         raise LocalRunError(str(e), code="cost") from e
     yield {
         "type": "coverage",
-        "coverage": build_coverage(load_all_probes(api.PROBES_DIR), emitted),
+        "coverage": build_coverage(load_probe_library(api.PROBES_DIR), emitted),
     }

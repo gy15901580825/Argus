@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import logging
+from dataclasses import dataclass, field, replace
+from importlib.metadata import entry_points
 from pathlib import Path
 from typing import Iterator
 
 import yaml
 
+
+logger = logging.getLogger(__name__)
+
+PROBE_PACK_GROUP = "argus.probe_packs"
 
 VALID_SEVERITIES = {"info", "low", "medium", "high", "critical"}
 # Two vocabularies are live: the Plan 2 hyphenated names that the shipped probe
@@ -90,6 +96,9 @@ class Probe:
     # (qr-code-injection, aria-label-injection, ...) that would otherwise have to
     # be either discarded or smuggled into the controlled set.
     technique: tuple[str, ...] = ()
+    # Set for probes from a probe pack: the pack's own rubrics directory, which
+    # the runner tries before the built-in one. None for built-in probes.
+    rubrics_dir: Path | None = None
 
 
 def load_probe(path: Path) -> Probe:
@@ -137,3 +146,45 @@ def load_probe(path: Path) -> Probe:
 def load_all_probes(probes_dir: Path) -> Iterator[Probe]:
     for path in sorted(Path(probes_dir).rglob("*.yaml")):
         yield load_probe(path)
+
+
+def load_probe_library(builtin_dir: Path) -> list[Probe]:
+    """Built-in probes from `builtin_dir`, plus probes from installed probe packs.
+
+    A probe pack is a package that declares an entry point in the
+    `argus.probe_packs` group. The entry point must load to a zero-argument
+    callable that returns the pack's probe directory (str or Path), e.g.
+
+        [project.entry-points."argus.probe_packs"]
+        mypack = "mypack:probes_dir"
+
+    Packs load in entry-point name order, after the built-ins. A probe whose id
+    is already loaded is skipped with a warning, so a pack can never replace a
+    built-in probe. A pack that fails to load (bad entry point, missing
+    directory, invalid YAML) is skipped whole with a warning.
+
+    A pack may ship rubrics in `<pack dir>/rubrics/`. Its probes resolve
+    `judge.rubric_path` there first and fall back to the built-in rubrics, so a
+    pack rubric with a built-in name (e.g. default.md) applies to that pack's
+    probes only.
+    """
+    probes = list(load_all_probes(builtin_dir))
+    seen = {p.id for p in probes}
+    for ep in sorted(entry_points(group=PROBE_PACK_GROUP), key=lambda e: e.name):
+        try:
+            pack_dir = Path(ep.load()())
+            if not pack_dir.is_dir():
+                raise ValueError(f"{pack_dir} is not a directory")
+            pack = list(load_all_probes(pack_dir))
+        except Exception as exc:
+            logger.warning("skipping probe pack %r: %s", ep.name, exc)
+            continue
+        for probe in pack:
+            if probe.id in seen:
+                logger.warning(
+                    "probe pack %r: skipping probe %r, id already loaded", ep.name, probe.id
+                )
+                continue
+            seen.add(probe.id)
+            probes.append(replace(probe, rubrics_dir=pack_dir / "rubrics"))
+    return probes
