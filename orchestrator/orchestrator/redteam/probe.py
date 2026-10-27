@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from importlib.metadata import entry_points
 from pathlib import Path
 from typing import Iterator
@@ -96,6 +96,9 @@ class Probe:
     # (qr-code-injection, aria-label-injection, ...) that would otherwise have to
     # be either discarded or smuggled into the controlled set.
     technique: tuple[str, ...] = ()
+    # Set for probes from a probe pack: the pack's own rubrics directory, which
+    # the runner tries before the built-in one. None for built-in probes.
+    rubrics_dir: Path | None = None
 
 
 def load_probe(path: Path) -> Probe:
@@ -159,6 +162,11 @@ def load_probe_library(builtin_dir: Path) -> list[Probe]:
     is already loaded is skipped with a warning, so a pack can never replace a
     built-in probe. A pack that fails to load (bad entry point, missing
     directory, invalid YAML) is skipped whole with a warning.
+
+    A pack may ship rubrics in `<pack dir>/rubrics/`. Its probes resolve
+    `judge.rubric_path` there first and fall back to the built-in rubrics, so a
+    pack rubric with a built-in name (e.g. default.md) applies to that pack's
+    probes only.
     """
     probes = list(load_all_probes(builtin_dir))
     seen = {p.id for p in probes}
@@ -178,5 +186,5 @@ def load_probe_library(builtin_dir: Path) -> list[Probe]:
                 )
                 continue
             seen.add(probe.id)
-            probes.append(probe)
+            probes.append(replace(probe, rubrics_dir=pack_dir / "rubrics"))
     return probes
