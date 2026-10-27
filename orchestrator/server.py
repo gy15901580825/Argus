@@ -113,4 +113,6 @@ async def websocket_endpoint(websocket: WebSocket):
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8080))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    # Protocol pings drop a dead agent socket within ~40 s, which frees its id
+    # for reconnect (duplicate ids are refused while the old socket is live).
+    uvicorn.run(app, host="0.0.0.0", port=port, ws_ping_interval=20.0, ws_ping_timeout=20.0)

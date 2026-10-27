@@ -6,7 +6,7 @@ The client agent runs browser_use probes. It connects to the orchestrator's WebS
 
 ## Direct mode (no registration)
 
-Connect straight to the orchestrator. `--agent-name` is used as the agent id, and a second agent with the same id is refused while the first is connected.
+Connect straight to the orchestrator. `--agent-name` is used as the agent id, and a second agent with the same id is refused while the first is connected. If an agent drops without closing its socket, the orchestrator's WebSocket pings clear the old connection within about 40 seconds, after which the same id can reconnect.
 
 Whoever can reach `/agent/connect` can act as an agent and receive probe payloads. Set the same `AGENT_CONNECT_SECRET` on the orchestrator and the client agent so only agents that know it are accepted, and keep the orchestrator on localhost or a trusted network. Without the secret the orchestrator logs a warning at startup.
 
@@ -28,10 +28,13 @@ docker run -e ORCHESTRATOR_URL=ws://<orchestrator-host>:8080 \
 If your server registers agents first, also pass `--api-service-url` and credentials. The agent then uses the id the server returns.
 
 ```bash
+export AGENT_PASSWORD=<password>                     # or: export AGENT_API_TOKEN=<token>
 python client_agent.py --orchestrator-url wss://<orchestrator-host> \
     --api-service-url https://<your-server> --agent-name my-browser-agent \
-    --username <username> --password <password>      # or: --api-token <token>
+    --username <username>
 ```
+
+Pass the password, token and agent secret through these environment variables rather than flags: command-line arguments are visible to other users in `ps`. TLS certificates of the server are verified.
 
 ```bash
 docker run -e ORCHESTRATOR_URL=wss://<orchestrator-host> \

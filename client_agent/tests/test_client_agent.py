@@ -273,3 +273,64 @@ def test_direct_mode_without_credentials_does_not_warn(capsys):
 
     client_agent.build_agent(["--orchestrator-url", "ws://o.invalid"])
     assert capsys.readouterr().err == ""
+
+
+# ---------------------------------------------------------------------------
+# Secrets stay out of argv; TLS is verified
+# ---------------------------------------------------------------------------
+
+def test_register_mode_reads_password_and_token_from_env(monkeypatch):
+    import client_agent
+
+    monkeypatch.setenv("AGENT_PASSWORD", "pw-from-env")
+    monkeypatch.setenv("AGENT_API_TOKEN", "tk-from-env")
+    agent = client_agent.build_agent(["--orchestrator-url", "ws://o.invalid",
+                                      "--api-service-url", "http://api.invalid", "--username", "u"])
+    assert agent.oauth_client.password == "pw-from-env"
+    assert agent.api_token == "tk-from-env"
+
+
+def test_register_and_login_verify_tls(monkeypatch):
+    import client_agent
+
+    made = []
+
+    def factory(*args, **kwargs):
+        made.append(kwargs)
+        return _FakeAsyncClient(post_response=_ok_register_response())
+
+    agent = client_agent.ClientAgent(orchestrator_url="ws://o.invalid", api_service_url="https://api.invalid",
+                                     agent_name="a", api_token="tk")
+    with patch("client_agent.httpx.AsyncClient", side_effect=factory):
+        asyncio.run(agent.register())
+    oauth = client_agent.OAuthClient("https://api.invalid", "u", "p")
+    resp = MagicMock()
+    resp.raise_for_status = MagicMock()
+    resp.json = MagicMock(return_value={"access_token": "t", "expires_in": 60})
+
+    def login_factory(*args, **kwargs):
+        made.append(kwargs)
+        return _FakeAsyncClient(post_response=resp)
+
+    with patch("client_agent.httpx.AsyncClient", side_effect=login_factory):
+        asyncio.run(oauth.get_access_token())
+    assert len(made) == 2
+    assert all(kw.get("verify", True) is True for kw in made)
+
+
+def test_entrypoint_keeps_secrets_out_of_argv(tmp_path):
+    import os
+    import subprocess
+    from pathlib import Path
+
+    stub = tmp_path / "python"
+    stub.write_text('#!/bin/sh\necho "ARGV: $*"\necho "PW=$AGENT_PASSWORD TK=$AGENT_API_TOKEN"\n')
+    stub.chmod(0o755)
+    script = Path(__file__).resolve().parents[1] / "entrypoint.sh"
+    env = {"PATH": f"{tmp_path}:{os.environ['PATH']}", "ORCHESTRATOR_URL": "ws://o",
+           "API_SERVICE_URL": "https://api", "USERNAME": "u", "PASSWORD": "pw-secret", "API_TOKEN": "tk-secret"}
+    out = subprocess.run(["bash", str(script)], env=env, capture_output=True, text=True, check=True).stdout
+    argv = next(line for line in out.splitlines() if line.startswith("ARGV:"))
+    assert "pw-secret" not in argv and "tk-secret" not in argv
+    assert "--api-service-url https://api" in argv and "--username u" in argv
+    assert "PW=pw-secret" in out

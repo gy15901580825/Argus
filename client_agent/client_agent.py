@@ -64,7 +64,7 @@ class OAuthClient:
         
         logger.info(f"Requesting access token via API Service (username: {self.username})")
         
-        async with httpx.AsyncClient(verify=False, timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             try:
                 response = await client.post(
                     login_url,
@@ -188,7 +188,7 @@ class ClientAgent:
         logger.info(f"Registration URL: {register_url}")
         logger.info(f"Request headers: {list(headers.keys())}")
         
-        async with httpx.AsyncClient(verify=False) as client:
+        async with httpx.AsyncClient() as client:
             try:
                 response = await client.post(
                     register_url,
@@ -386,15 +386,18 @@ def build_agent(argv: Optional[list] = None) -> "ClientAgent":
                              "using --agent-name as the agent id.")
     parser.add_argument("--agent-name", default="default-client-agent", help="Unique name for this agent")
     parser.add_argument("--agent-secret", default=os.getenv("AGENT_CONNECT_SECRET"),
-                        help="Shared secret matching the orchestrator's AGENT_CONNECT_SECRET "
-                             "(or env AGENT_CONNECT_SECRET)")
+                        help="Shared secret matching the orchestrator's AGENT_CONNECT_SECRET. "
+                             "Prefer the AGENT_CONNECT_SECRET env var: argv is visible in ps.")
 
     # authentication (SECURE: only username/password, client_secret stays on server)
     parser.add_argument("--username", help="username (with --api-service-url)")
-    parser.add_argument("--password", help="password (with --api-service-url)")
+    parser.add_argument("--password", default=os.getenv("AGENT_PASSWORD"),
+                        help="password (with --api-service-url). Prefer env AGENT_PASSWORD: argv is visible in ps.")
 
     # API token authentication (fallback)
-    parser.add_argument("--api-token", help="API Token for authentication (with --api-service-url)")
+    parser.add_argument("--api-token", default=os.getenv("AGENT_API_TOKEN"),
+                        help="API Token for authentication (with --api-service-url). "
+                             "Prefer env AGENT_API_TOKEN: argv is visible in ps.")
 
     args = parser.parse_args(argv)
 

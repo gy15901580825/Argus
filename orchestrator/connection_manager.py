@@ -24,17 +24,24 @@ class ConnectionManager:
         self.active_connections: Dict[str, WebSocket] = {}
         # Store pending command futures: command_id -> Future
         self.pending_commands: Dict[str, asyncio.Future] = {}
+        # Ids whose handshake is in progress; reserved before accept() so two
+        # concurrent connects with one id cannot both register.
+        self._reserved: set = set()
         logger.info(f"ConnectionManager initialized, instance id: {id(self)}")
 
     async def connect(self, websocket: WebSocket, agent_id: str) -> bool:
         """Accept and register the agent. Returns False when the id is already connected."""
-        if agent_id in self.active_connections:
+        if agent_id in self.active_connections or agent_id in self._reserved:
             # Keep the live agent; a second socket must not take over its slot.
             logger.warning(f"Refused second connection for agent id {agent_id}")
             await websocket.close(code=1008, reason="Agent id already connected")
             return False
-        await websocket.accept()
-        self.active_connections[agent_id] = websocket
+        self._reserved.add(agent_id)
+        try:
+            await websocket.accept()
+            self.active_connections[agent_id] = websocket
+        finally:
+            self._reserved.discard(agent_id)
         logger.info(f"Agent connected: {agent_id}, ConnectionManager id: {id(self)}, total connections: {len(self.active_connections)}")
         
         await self._post_status(agent_id, "active")

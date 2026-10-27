@@ -22,12 +22,14 @@ if [ -n "$API_SERVICE_URL" ]; then
         exit 1
     fi
     CMD_ARGS="$CMD_ARGS --api-service-url $API_SERVICE_URL"
+    # Secrets go through the environment, not argv, so they do not show up in ps.
     if [ -n "$USERNAME" ] && [ -n "$PASSWORD" ]; then
         echo "Using username/password authentication (user: $USERNAME)"
-        CMD_ARGS="$CMD_ARGS --username $USERNAME --password $PASSWORD"
+        CMD_ARGS="$CMD_ARGS --username $USERNAME"
+        export AGENT_PASSWORD="$PASSWORD"
     else
         echo "Using API token authentication"
-        CMD_ARGS="$CMD_ARGS --api-token $API_TOKEN"
+        export AGENT_API_TOKEN="$API_TOKEN"
     fi
 fi
 
