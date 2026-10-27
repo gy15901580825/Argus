@@ -48,8 +48,10 @@ class TargetLoadError(ValueError):
     pass
 
 
-# Same pattern os.path.expandvars uses on POSIX, so we see exactly what it replaces.
-_VAR_RE = re.compile(r"\$(\w+|\{[^}]*\})", re.ASCII)
+# Each $VAR / ${VAR} (and %VAR% on Windows) reference, expanded on its own, gives the value
+# os.path.expandvars substitutes for it in context.
+_POSIX_VAR_RE = re.compile(r"\$(?:\w+|\{[^}]*\})", re.ASCII)
+_NT_VAR_RE = re.compile(r"%[^%]+%|\$(?:\w+|\{[^}]*\})", re.ASCII)
 
 
 def _expand_env(value, substituted: list[str]):
@@ -57,10 +59,11 @@ def _expand_env(value, substituted: list[str]):
 
     Appends every non-empty value it substitutes to `substituted`."""
     if isinstance(value, str):
-        for m in _VAR_RE.finditer(value):
-            name = m.group(1)[1:-1] if m.group(1).startswith("{") else m.group(1)
-            if os.environ.get(name):
-                substituted.append(os.environ[name])
+        pattern = _NT_VAR_RE if os.name == "nt" else _POSIX_VAR_RE
+        for m in pattern.finditer(value):
+            expanded = os.path.expandvars(m.group(0))
+            if expanded and expanded != m.group(0):
+                substituted.append(expanded)
         return os.path.expandvars(value)
     if isinstance(value, dict):
         return {k: _expand_env(v, substituted) for k, v in value.items()}

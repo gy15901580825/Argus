@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timezone
 from uuid import UUID
 
+import pytest
 from click.testing import CliRunner
 
 from argus_probe.__main__ import main
@@ -229,3 +230,70 @@ def test_unknown_evidence_type_is_stringified():
     from decimal import Decimal
     out = json.loads(render_json(_run(findings=[_finding(evidence={"amount": Decimal("1.50")})])))
     assert out["findings"][0]["evidence"]["amount"] == "1.50"
+
+
+def test_literal_secrets_echoed_by_target_are_masked():
+    spec = {"kind": "openai_compat", "endpoint_url": "https://x", "model": "m", "api_key": "sk-LIT-AAA",
+            "extra_headers": [["Authorization", "Bearer LIT-BBB"]]}
+    f = _finding(target_response="key sk-LIT-AAA and token LIT-BBB",
+                 evidence={"echo": ["Bearer LIT-BBB", {"k": "sk-LIT-AAA"}]})
+    text = render_json(_run(target_spec=spec, findings=[f]))
+    assert "LIT-AAA" not in text and "LIT-BBB" not in text
+    assert json.loads(text)["findings"][0]["target_response"] == "key *** and token ***"
+
+
+def test_one_char_secret_does_not_mangle_structural_fields():
+    f = _finding(id="a1a1", probe_id="owasp_01_a", verdict="fail", severity="high", target_response="a1")
+    run = _run(target_spec={"kind": "openai_compat", "endpoint_url": "https://x", "model": "m"}, findings=[f])
+    out = json.loads(render_json(run, secret_values=["a", "1"]))
+    assert out["id"] == run["id"] and out["status"] == "completed"
+    assert out["started_at"] == run["started_at"] and out["finished_at"] == run["finished_at"]
+    assert out["target_spec"]["kind"] == "openai_compat"
+    got = out["findings"][0]
+    for k in ("id", "probe_id", "verdict", "severity", "probed_at", "created_at", "confidence"):
+        assert got[k] == f[k], k
+    assert got["target_response"] == "******"
+
+
+def test_key_name_rule_is_case_insensitive_and_skips_token_counters():
+    out = redact({"apiKey": "s1", "API_KEY": "s2", "Authorization": "s3", "sessionCookie": "s4",
+                  "credentials": {"u": "s5"}, "accessToken": "s6", "max_tokens": 512, "num_tokens": 3,
+                  "Extra_Headers": [["X-A", "s7"]], "model": "m"})
+    assert out == {"apiKey": "***", "API_KEY": "***", "Authorization": "***", "sessionCookie": "***",
+                   "credentials": "***", "accessToken": "***", "max_tokens": 512, "num_tokens": 3,
+                   "Extra_Headers": [["X-A", "***"]], "model": "m"}
+
+
+def test_loader_records_windows_percent_vars(monkeypatch):
+    import ntpath
+    import os
+    import posixpath
+    monkeypatch.setenv("ARGUS_T_WIN", "win-SECRET-1")
+    monkeypatch.setattr(posixpath, "expandvars", ntpath.expandvars)
+    monkeypatch.setattr(os, "name", "nt")
+    spec, secrets = load_target_spec_with_secrets(
+        '{"kind": "openai_compat", "endpoint_url": "https://x?k=%ARGUS_T_WIN%", "model": "m"}')
+    monkeypatch.undo()
+    assert spec["endpoint_url"] == "https://x?k=win-SECRET-1"
+    assert secrets == ["win-SECRET-1"]
+
+
+@pytest.mark.parametrize("fmt", ["html", "sarif", "junit", "json"])
+def test_every_format_masks_env_and_literal_secrets(tmp_path, monkeypatch, fmt):
+    monkeypatch.setenv("ARGUS_T_KEY", "sk-FMT-ENV")
+
+    async def _echo(target, probe_ids, **kw):
+        yield {**FAIL_FINDING, "target_response": f"{target['api_key']} {target['extra_headers'][0][1]}",
+               "reasoning": "saw sk-FMT-ENV and FMT-LIT"}
+        yield {"type": "coverage", "coverage": {"thin_threshold": 2, "standards": {}}}
+
+    _install_fake_orchestrator(monkeypatch, _echo)
+    target = _spec_file(tmp_path, {"kind": "openai_compat", "endpoint_url": "https://x", "model": "m",
+                                   "api_key": "${ARGUS_T_KEY}", "extra_headers": [["X-Auth", "Bearer FMT-LIT"]]})
+    out = tmp_path / f"report.{fmt}"
+    result = CliRunner().invoke(main, ["run", "--local", "--target", target, "--probes", "all",
+                                       "--format", fmt, "--out", str(out)])
+    assert result.exit_code == 0, result.output
+    text = out.read_text()
+    assert FAIL_FINDING["probe_id"] in text
+    assert "sk-FMT-ENV" not in text and "FMT-LIT" not in text

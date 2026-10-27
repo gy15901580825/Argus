@@ -28,7 +28,7 @@ def run_local_and_render(
 
     Raises LocalUnavailable when the orchestrator package is missing, re-raises
     orchestrator.redteam.local.LocalRunError when the run cannot start, and
-    lets any mid-run exception propagate. `secret_values` are masked in json output.
+    lets any mid-run exception propagate. `secret_values` are masked in every format.
     """
     try:
         from orchestrator.redteam.local import run_local
@@ -64,10 +64,8 @@ def run_local_and_render(
         "coverage": coverage,
         "findings": findings,
     }
-    render = {
-        "html": reports.render_html,
-        "sarif": reports.render_sarif,
-        "junit": reports.render_junit,
-        "json": lambda run: run_json.render_json(run, secret_values),
-    }[report_format]
-    return render(run), findings
+    if report_format == "json":
+        return run_json.render_json(run, secret_values), findings
+    # Same scrub as run.json, so no format can leak what another one masks.
+    render = {"html": reports.render_html, "sarif": reports.render_sarif, "junit": reports.render_junit}[report_format]
+    return render(run_json.scrub_run(run, secret_values)), findings

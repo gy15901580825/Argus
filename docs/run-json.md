@@ -34,22 +34,31 @@ Each finding has the same keys as the engine's `Finding` record: `id`, `probe_id
 
 ## Redaction
 
-People commit `run.json` to CI artifacts, so Argus masks secrets before it writes the file. A masked value is the string `***`. Two rules apply.
+People commit reports to CI artifacts and upload SARIF to GitHub code scanning, so in local mode (`--local`) Argus masks secrets before it writes any report. Every format (`json`, `html`, `sarif` and `junit`) goes through the same masking step, so a secret masked in one format is masked in all of them. Reports from an Argus server are rendered by the server and are not covered here. A masked value is the string `***`. Three rules apply.
 
 ### Rule 1: substituted environment values
 
-A target spec can reference environment variables as `$VAR` or `${VAR}` in any string. Argus records every non-empty value it substitutes. Before writing, it replaces each of those values with `***` in every string in the file. That covers the target spec, `target_response`, `evidence` and dict keys at any depth. Longer values are replaced first, so a value that contains another one is masked whole.
+A target spec can reference environment variables as `$VAR` or `${VAR}` in any string (and `%VAR%` on Windows). Argus records every non-empty value it substitutes. Before writing, it replaces each of those values with `***` in every string in the report. That covers the target spec, `target_response`, `reasoning` and `evidence` at any depth, including dict keys inside `evidence`. Longer values are replaced first, so a value that contains another one is masked whole.
 
-This rule does not know which variables are secret. A non-secret value such as a port number or a hostname is masked too. A short value can also mask parts of `id`, the timestamps or other text where the same characters appear. This over-redaction is deliberate. `schema_version` and `argus_version` are never masked.
+This rule does not know which variables are secret. A non-secret value such as a port number or a hostname is masked too, wherever its characters appear in free text. This over-redaction is deliberate. These fields are always written as the engine produced them, never masked:
+
+- run: `schema_version`, `argus_version`, `id`, `status`, `started_at`, `finished_at`, and `target_spec.kind`
+- each finding: `id`, `probe_id`, `verdict`, `severity`, `probed_at`, `created_at`, `confidence` and `target_latency_ms`
 
 ### Rule 2: secret-looking key names
 
-A secret written directly in the target file, without a `${VAR}` reference, is not covered by rule 1. A second rule masks values in `target_spec` by key name, at any depth:
+A secret written directly in the target file, without a `${VAR}` reference, is caught by key name. In `target_spec`, at any depth, and ignoring case:
 
-- A key named `api_key`, or ending in `_key`, `token`, `secret` or `password`, has its whole value replaced with `***`.
-- A key named `headers`, or ending in `_headers` (for example `extra_headers`), keeps every header name and masks every header value. This works for header lists such as `[["Authorization", "Bearer ..."]]` and for header objects such as `{"Authorization": "Bearer ..."}`.
+- A key named `api_key`, `apikey` or `token`, or ending in `_key`, `apikey` or `token`, or containing `secret`, `password`, `authorization`, `credential` or `cookie`, has its whole value replaced with `***`. Counters such as `max_tokens` do not match and are kept.
+- A key named `headers`, or ending in `headers` (for example `extra_headers`), keeps every header name and masks every header value. This works for header lists such as `[["Authorization", "Bearer ..."]]` and for header objects such as `{"Authorization": "Bearer ..."}`.
 
-Rule 2 applies only to `target_spec`. A secret written literally in the target file and echoed back by the target in `target_response` or `evidence` is not masked. Pass secrets through environment variables so rule 1 catches them.
+### Rule 3: literal values found by rule 2
+
+Every value that rule 2 masks is also added to the list from rule 1. So if the target echoes a literal API key or header value back in `target_response` or `evidence`, it is masked there too. For a header value with a scheme, such as `Bearer abc123`, both the full value and the part after the scheme (`abc123`) are masked.
+
+### Limits
+
+Masking matches exact text. A secret that the target changes before echoing it, for example base64-encoded, URL-encoded, split across lines or reversed, is not caught. A secret written literally under a key name that rule 2 does not match, and with no `${VAR}` reference, is not caught either. Pass secrets through environment variables so rule 1 covers them.
 
 ## Compatibility
 
