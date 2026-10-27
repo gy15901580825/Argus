@@ -4,11 +4,9 @@ root_packages =
     routers
 
 [importlinter:contract:redteam-isolation]
-name = redteam must not import legacy web_ui or scripts modules
+name = redteam must not import the SaaS routers
 type = forbidden
 source_modules =
     redteam
 forbidden_modules =
-    routers.web_ui
-    routers.scripts
-    routers.web_ui_test
+    routers

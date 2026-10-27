@@ -11,7 +11,7 @@ Argus is a black-box red-team testing tool for AI agents. Customers point Argus 
 | Service | Port | Stack | Role |
 |---------|------|-------|------|
 | `api_service` | 8881 | FastAPI, asyncpg, PostgreSQL | Central REST API: users, R2 storage, `/redteam/*`. Module isolation via `redteam/` + import-linter |
-| `orchestrator` | 8081 | FastAPI, Google ADK, litellm | Agent orchestration, SSE streaming, WebSocket agent hub. Probe dispatch + judge harness in `orchestrator/redteam/` |
+| `orchestrator` | 8081 | FastAPI, litellm | Red-team engine: probe dispatch + judge harness in `orchestrator/redteam/`, served at `/redteam/*`, plus the WebSocket hub for client agents |
 | `client_agent` | — | websockets, browser-use, Playwright | Edge agent on client/cloud machines. Red-team probe runner in `redteam_runner/` |
 | `frontend` | 3000 | Next.js 16, React 19, Zustand | Web UI: marketing site, chat, dashboard |
 | `database` | — | Flyway, PostgreSQL | Schema migrations |
@@ -24,7 +24,7 @@ The three legacy `testing_*` services moved to separate repositories on 2026-05-
 - `testing_api_service` + `testing_web_fetch_service` → https://github.com/gy15901580825/argus-api-testing
 - `testing_web_ui_service` (+ vendored `browser_use`) → https://github.com/gy15901580825/argus-web-ui-testing
 
-The orchestrator still references them over HTTP via `run_api_test` and `run_web_ui_cloud` planner tools; the in-cluster services must be deployed from those repos (their Helm charts ship alongside the code).
+The orchestrator no longer calls them: the planner and web-UI testing code were removed from this repo.
 
 ## Domain & Environment
 
@@ -111,38 +111,22 @@ Azure Database for PostgreSQL (production) with async driver (asyncpg). Migratio
 
 Key tables: `users`, `redteam_runs`, `redteam_findings`, `redteam_design_partners`, `client_agent`, `chat_sessions`, `chat_messages`, `blogs`, `documents`, `trial_tokens`.
 
-All Python services have `redteam/` modules with import-linter CI rules forbidding cross-talk with legacy `web_ui_*` code.
+`orchestrator` and `api_service` keep import-linter CI contracts (`.importlinter`) that forbid `redteam/` from importing legacy web-UI modules.
 
 ### Storage
 
-Cloudflare R2 (S3-compatible) for file artifacts:
-- `scripts/{user_id}/...` — generated test scripts
-- `web-ui/{user_id}/{task_id}/bug_report.txt` — bug reports
-- `web-ui/{user_id}/{task_id}/test_script.py` — test scripts
-- `web-ui/{user_id}/{task_id}/screenshots/step_000.png` — screenshot sequence
-
-### Agent Framework
-
-The orchestrator uses Google ADK agent types:
-- **SequentialAgent**: Content analyzer, API testing, web UI testing
-- **ParallelAgent**: Slide generation
-- **LoopAgent**: Quality assessment
-- **Custom**: SmartPipeline, RemoteAgent, ClientWebUIAgent
+Cloudflare R2 (S3-compatible) for file artifacts, accessed from `api_service` (`r2_storage.py`).
 
 ### Communication Protocols
 
 - **REST/SSE**: Frontend ↔ API Service ↔ Orchestrator
-- **WebSocket**: Orchestrator ↔ Client Agents (bidirectional command/response)
-- **MCP**: Orchestrator ↔ testing_web_fetch_service (tool-based crawling)
+- **WebSocket**: Orchestrator ↔ Client Agents (JSON-RPC; the orchestrator sends `redteam_browser_probe`)
 
 Detailed request-flow diagrams → `docs/reference/services.md`.
 
 ### LLM Configuration
 
-- **Provider**: Configurable via `LLM_PROVIDER` env (default: `azure`)
 - **Azure OpenAI**: `gpt-5.4-mini` (chat/main) + `gpt-5.3-codex` (codex, Responses API only) — used by orchestrator, testing services, and client_agent
-- **Gemini**: `gemini-3-pro-preview` (main), `gemini-2.0-flash` (fast) — alternative provider
-- **Model Router** (`orchestrator/model_router.py`): Routes based on subscription plan (free/starter/pro) and task complexity
 - **Temperature constraint**: `gpt-5.4-mini` does NOT support custom temperature parameter (Azure limitation) — never set `temperature` when calling this model
 
 ### Key SSE Event Types
@@ -152,17 +136,11 @@ Detailed request-flow diagrams → `docs/reference/services.md`.
 | `log` / `discovery_progress` | Orchestrator agents | Collapsible "Thinking" block (LogMessage) |
 | `progress` | Agent pipeline steps | Collapsible log lines |
 | `result` | Final agent output | Markdown-rendered ResultMessage |
-| `ssh_result` | testing_api_service | APITestResultCard with pytest summary |
-| `web_ui_bug` | ClientWebUIAgent | BugReportCard with severity badges + screenshots |
-| `web_ui_artifact` | ClientWebUIAgent | TestScriptArtifact with syntax highlighting |
-| `artifact` | Script upload | Captured as scriptUrl (not displayed) |
 | `error` | Any service | Red error banner, stops stream |
 
 ## Common Pitfalls & Gotchas
 
-1. **Pydantic model sync**: Both `api_service` and `orchestrator` define `StrategyRequest`. Fields must match — api_service drops unknown fields silently when proxying to orchestrator.
-2. **Temperature on gpt-5.4-mini**: Azure's `gpt-5.4-mini` rejects requests with `temperature` parameter. Never pass it.
-3. **Frontend env vars baked at build time**: `NEXT_PUBLIC_*` vars are compiled into the JS bundle. Domain/URL changes require `./build-and-push.sh frontend <tag>`, not just a restart.
-4. **ACR auth expires**: Run `az acr login --name <YOUR_ACR>` before any image push. Tokens expire after ~3 hours.
-5. **SSH vs Test-Runner routing**: Only uses SSH when user provides **all three** fields: `remote_ip`, `username`, `pem_key_base64`. Missing any one → falls back to in-cluster test-runner service.
-6. **SSE event parsing**: Frontend `streamStrategy()` handles both direct fields (`parsed.ssh_result`) and nested content (`parsed.content.parts[0].text` with inner JSON). Both paths must be maintained for backward compatibility.
+1. **Temperature on gpt-5.4-mini**: Azure's `gpt-5.4-mini` rejects requests with `temperature` parameter. Never pass it.
+2. **Frontend env vars baked at build time**: `NEXT_PUBLIC_*` vars are compiled into the JS bundle. Domain/URL changes require `./build-and-push.sh frontend <tag>`, not just a restart.
+3. **ACR auth expires**: Run `az acr login --name <YOUR_ACR>` before any image push. Tokens expire after ~3 hours.
+4. **SSE event parsing**: Frontend `streamStrategy()` handles both direct fields (`parsed.ssh_result`) and nested content (`parsed.content.parts[0].text` with inner JSON). Both paths must be maintained for backward compatibility.

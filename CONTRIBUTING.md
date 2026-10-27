@@ -250,8 +250,9 @@ is intentional.
 
 ## Module boundary rule
 
-The red-team code must not depend on the legacy web-UI code. This is
-enforced by import-linter, configured in `orchestrator/.importlinter`:
+The legacy web-UI testing code has been removed. Two import-linter
+contracts in `orchestrator/.importlinter` stay as guards so that no
+`orchestrator.web_ui_*` module can come back as a dependency of the engine:
 
 - `orchestrator.redteam` must not import `orchestrator.web_ui_test`,
   `orchestrator.web_ui_runner`, or `orchestrator.web_ui_phases`
@@ -265,7 +266,7 @@ lint-imports
 ```
 
 Expected output ends with `Contracts: 2 kept, 0 broken.` `api_service` has
-its own `.importlinter` with the equivalent rule.
+its own `.importlinter`: its `redteam` package must not import `routers`.
 
 ## Commit messages
 

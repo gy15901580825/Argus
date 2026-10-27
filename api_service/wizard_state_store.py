@@ -129,8 +129,8 @@ def apply_wizard_input(
             "rounds": new_rounds, "round_n": target_idx + 1,
         })
 
-    # Literal must match the W3 option label in
-    # orchestrator/orchestrator/planner/prompts.py SYSTEM_PROMPT_WIZARD.
+    # Literal is the W3 option label the removed orchestrator planner emitted
+    # (SYSTEM_PROMPT_WIZARD).
     # "Switch to cloud mode" forward-overwrite (spec §6.3 W3):
     # When user clicks this option in a local_setup_check round, rewrite the
     # earlier run_where round's answer to "cloud" so the planner stops

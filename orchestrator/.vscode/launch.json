@@ -2,21 +2,12 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Run Orchestrator",
+            "name": "Run Orchestrator Server",
             "type": "debugpy",
             "request": "launch",
-            "module": "google.adk.cli",
-            "args": ["run", "orchestrator"],
-            "console": "integratedTerminal"
-        },
-        {
-            "name": "Run Web Orchestrator",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "google.adk.cli",
-            "args": ["web", "--port", "8080"],
+            "program": "${workspaceFolder}/server.py",
+            "cwd": "${workspaceFolder}",
             "console": "integratedTerminal"
         }
     ]
 }
-

@@ -239,7 +239,7 @@ class ClientAgent:
                     async def _keepalive():
                         """Send a JSON-RPC ping every 30 s to keep the connection
                         alive through load-balancers and NAT tables while
-                        browser-use is running in a background thread."""
+                        a red-team browser probe is running."""
                         ka_id = 0
                         while True:
                             await asyncio.sleep(30)

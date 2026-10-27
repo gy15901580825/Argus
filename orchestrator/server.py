@@ -1,17 +1,13 @@
 import logging
 import os
-from typing import Dict, Any
 from dotenv import load_dotenv
 
-# Load environment variables
-# Try current directory first, then parent directory
+# Load .env from this directory, then the parent; existing values are never overridden.
 load_dotenv()
-if not os.getenv("GOOGLE_API_KEY"):
-    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
+load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -27,7 +23,6 @@ app = FastAPI(
     
     * `/redteam/*` - Red-team runs, probes, suites and coverage
     * `/agent/connect` - WebSocket endpoint for agent connections
-    * `/orchestrator/run_command` - Execute commands on connected agents
     """,
     docs_url="/docs",  # Swagger UI at /docs
     redoc_url="/redoc",  # ReDoc at /redoc
@@ -93,71 +88,6 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception as e:
         logger.error(f"Error in websocket connection: {e}")
         await connection_manager.disconnect(agent_id)
-
-class CommandRequest(BaseModel):
-    """Request model for agent command execution"""
-    agent_id: str = Field(..., description="ID of the agent to execute the command on")
-    tool_name: str = Field(..., description="Name of the tool to execute")
-    arguments: Dict[str, Any] = Field(..., description="Arguments for the tool")
-
-@app.post(
-    "/orchestrator/run_command",
-    tags=["Agent"],
-    summary="Execute Command on Agent",
-    description="""
-    Execute a command (tool) on a connected agent via WebSocket.
-    
-    This endpoint sends a JSON-RPC 2.0 command to a connected agent and waits for the result.
-    The agent must be connected via the `/agent/connect` WebSocket endpoint.
-    
-    **Note**: This is an internal API endpoint for orchestrator-to-agent communication.
-    """,
-    responses={
-        200: {
-            "description": "Command executed successfully",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "status": "success",
-                        "result": {...}
-                    }
-                }
-            }
-        },
-        404: {
-            "description": "Agent not connected"
-        },
-        504: {
-            "description": "Command timed out"
-        },
-        500: {
-            "description": "Internal server error"
-        }
-    }
-)
-async def run_command(request: CommandRequest):
-    """
-    Execute a command on a connected agent.
-    
-    **Request Body:**
-    - `agent_id`: ID of the agent (required)
-    - `tool_name`: Name of the tool to execute (required)
-    - `arguments`: Arguments for the tool (required)
-    
-    **Response:**
-    - Returns the result from the agent
-    """
-    try:
-        result = await connection_manager.send_command(
-            request.agent_id, 
-            "tools/call", 
-            {"name": request.tool_name, "arguments": request.arguments}
-        )
-        return {"status": "success", "result": result}
-    except Exception as e:
-        logger.error(f"Error executing command on agent {request.agent_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
 
 if __name__ == "__main__":
     import uvicorn

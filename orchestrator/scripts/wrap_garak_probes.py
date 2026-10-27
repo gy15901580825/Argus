@@ -2,7 +2,7 @@
 into our YAML schema.
 
 Setup (dev machine only — garak is NOT in runtime requirements.txt because
-its transitive deps cause pip resolution-too-deep against google-adk):
+its transitive deps pull in PyTorch + CUDA):
     pip install -r requirements-tools.txt
 
 Usage:
