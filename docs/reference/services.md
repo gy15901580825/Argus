@@ -25,6 +25,6 @@ Orchestrator red-team run (target kind browser_use)
 | GET  | `/redteam/probes` | Probe library |
 | GET  | `/redteam/suites` | Probe suites |
 | GET  | `/redteam/coverage` | Standards coverage |
-| WS   | `/agent/connect` | Client-agent WebSocket hub (requires the `x-agent-id` header) |
+| WS   | `/agent/connect` | Client-agent WebSocket hub (requires the `x-agent-id` header, plus `x-agent-secret` when `AGENT_CONNECT_SECRET` is set; a second connection with a live agent id is refused) |
 
 The `/api/v1/redteam` API the CLI uses in server mode (runs, reports, diffs, stored history) is not part of this repo. It was served by `api_service`, which lives at tag `v0.3-full`.

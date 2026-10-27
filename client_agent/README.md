@@ -6,16 +6,20 @@ The client agent runs browser_use probes. It connects to the orchestrator's WebS
 
 ## Direct mode (no registration)
 
-Connect straight to the orchestrator. `--agent-name` is used as the agent id.
+Connect straight to the orchestrator. `--agent-name` is used as the agent id, and a second agent with the same id is refused while the first is connected.
+
+Whoever can reach `/agent/connect` can act as an agent and receive probe payloads. Set the same `AGENT_CONNECT_SECRET` on the orchestrator and the client agent so only agents that know it are accepted, and keep the orchestrator on localhost or a trusted network. Without the secret the orchestrator logs a warning at startup.
 
 ```bash
 pip install -r requirements.txt && playwright install chromium
+export AGENT_CONNECT_SECRET=<shared secret>      # same value as on the orchestrator
 python client_agent.py --orchestrator-url ws://<orchestrator-host>:8080 --agent-name my-browser-agent
 ```
 
 ```bash
 docker run -e ORCHESTRATOR_URL=ws://<orchestrator-host>:8080 \
            -e AGENT_NAME=my-browser-agent \
+           -e AGENT_CONNECT_SECRET=<shared secret> \
            <your-gh-user>/client_agent:latest
 ```
 

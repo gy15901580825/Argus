@@ -129,8 +129,11 @@ How the response is parsed: `response_jsonpath` is a [JSONPath](https://goessner
 
 ```bash
 cd client_agent && pip install -r requirements.txt && playwright install chromium
+export AGENT_CONNECT_SECRET=<shared secret>      # same value as on the orchestrator
 python client_agent.py --orchestrator-url ws://<orchestrator-host>:8080 --agent-name my-browser-agent
 ```
+
+Anyone who can reach the orchestrator's `/agent/connect` can pose as an agent and receive probe payloads. Set `AGENT_CONNECT_SECRET` on both sides and keep the orchestrator on localhost or a trusted network.
 
 We provide a thin reference adapter you can drop into your agent harness; ask in the design-partner channel for the latest version.
 

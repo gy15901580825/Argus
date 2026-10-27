@@ -230,3 +230,46 @@ def test_cli_register_mode_still_requires_credentials():
                                       "--api-service-url", "http://api.invalid", "--api-token", "tk"])
     assert agent.api_service_url == "http://api.invalid"
     assert agent.api_token == "tk"
+
+
+def test_agent_secret_is_sent_as_header():
+    import client_agent
+
+    agent = client_agent.build_agent(["--orchestrator-url", "ws://o.invalid", "--agent-secret", "s3cret"])
+    assert agent.connect_headers() == {"x-agent-id": "unknown", "x-agent-secret": "s3cret"}
+    agent.agent_id = "a1"
+    assert agent.connect_headers()["x-agent-id"] == "a1"
+
+
+def test_agent_secret_read_from_env(monkeypatch):
+    import client_agent
+
+    monkeypatch.setenv("AGENT_CONNECT_SECRET", "from-env")
+    agent = client_agent.build_agent(["--orchestrator-url", "ws://o.invalid"])
+    assert agent.connect_headers()["x-agent-secret"] == "from-env"
+
+
+def test_no_secret_sends_no_secret_header(monkeypatch):
+    import client_agent
+
+    monkeypatch.delenv("AGENT_CONNECT_SECRET", raising=False)
+    agent = client_agent.build_agent(["--orchestrator-url", "ws://o.invalid"])
+    assert "x-agent-secret" not in agent.connect_headers()
+
+
+def test_direct_mode_warns_about_ignored_credentials(capsys):
+    import client_agent
+
+    agent = client_agent.build_agent(["--orchestrator-url", "ws://o.invalid", "--api-token", "tk",
+                                      "--username", "u", "--password", "p"])
+    err = capsys.readouterr().err
+    assert "ignored" in err and "--api-service-url" in err
+    assert agent.api_token is None
+    assert agent.oauth_client is None
+
+
+def test_direct_mode_without_credentials_does_not_warn(capsys):
+    import client_agent
+
+    client_agent.build_agent(["--orchestrator-url", "ws://o.invalid"])
+    assert capsys.readouterr().err == ""

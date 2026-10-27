@@ -112,7 +112,8 @@ class ClientAgent:
                  agent_name: str = "default-client-agent",
                  username: Optional[str] = None,
                  password: Optional[str] = None,
-                 api_token: Optional[str] = None):
+                 api_token: Optional[str] = None,
+                 agent_secret: Optional[str] = None):
         """
         Initialize Client Agent with either username/password or API token.
         
@@ -127,19 +128,23 @@ class ClientAgent:
             username: username (user credential)
             password: password (user credential)
             api_token: Traditional API token (fallback if OAuth not configured)
+            agent_secret: Shared secret sent as x-agent-secret when the orchestrator
+                sets AGENT_CONNECT_SECRET
         """
         self.orchestrator_url = orchestrator_url
         self.api_service_url = api_service_url
         self.agent_name = agent_name
         self.agent_id: Optional[str] = None
+        self.agent_secret = agent_secret
         self.running = False
         
         # OAuth client (preferred) - authenticates via API Service proxy
         self.oauth_client: Optional[OAuthClient] = None
-        self.api_token = api_token
+        self.api_token: Optional[str] = None
         if api_service_url is None:
             # Direct mode: no server to register with, so no credentials are used.
             return
+        self.api_token = api_token
         if username and password:
             logger.info(f"Initializing with authentication via API Service (user: {username})")
             self.oauth_client = OAuthClient(
@@ -215,18 +220,19 @@ class ClientAgent:
                 logger.error(f"Registration failed: {e}")
                 raise
 
+    def connect_headers(self) -> dict:
+        """Headers for /agent/connect: the agent id, plus the shared secret when set."""
+        headers = {"x-agent-id": self.agent_id or "unknown"}
+        if self.agent_secret:
+            headers["x-agent-secret"] = self.agent_secret
+        return headers
+
     async def connect_orchestrator(self):
         """Connect to Orchestrator WebSocket and handle messages"""
         # Ensure orchestrator_url doesn't have trailing slash
         base_url = self.orchestrator_url.rstrip('/')
         uri = f"{base_url}/agent/connect"
-        headers = {
-            "x-agent-id": self.agent_id or "unknown" 
-            # Note: Orchestrator expects agent_id. 
-            # If orchestrator validates against DB, it should use the ID returned by register.
-            # If orchestrator just uses it as session key, it's fine.
-            # We use the ID returned by API service.
-        }
+        headers = self.connect_headers()
         
         while self.running:
             try:
@@ -379,6 +385,9 @@ def build_agent(argv: Optional[list] = None) -> "ClientAgent":
                         help="Server to register with before connecting. Omit to connect directly, "
                              "using --agent-name as the agent id.")
     parser.add_argument("--agent-name", default="default-client-agent", help="Unique name for this agent")
+    parser.add_argument("--agent-secret", default=os.getenv("AGENT_CONNECT_SECRET"),
+                        help="Shared secret matching the orchestrator's AGENT_CONNECT_SECRET "
+                             "(or env AGENT_CONNECT_SECRET)")
 
     # authentication (SECURE: only username/password, client_secret stays on server)
     parser.add_argument("--username", help="username (with --api-service-url)")
@@ -392,6 +401,10 @@ def build_agent(argv: Optional[list] = None) -> "ClientAgent":
     has_credentials = args.username and args.password
     if args.api_service_url and not has_credentials and not args.api_token:
         parser.error("--api-service-url needs credentials (--username/--password) or --api-token")
+    ignored = [f for f, v in (("--username", args.username), ("--password", args.password),
+                              ("--api-token", args.api_token)) if v]
+    if not args.api_service_url and ignored:
+        print(f"warning: {', '.join(ignored)} ignored without --api-service-url", file=sys.stderr)
 
     return ClientAgent(
         orchestrator_url=args.orchestrator_url,
@@ -399,7 +412,8 @@ def build_agent(argv: Optional[list] = None) -> "ClientAgent":
         agent_name=args.agent_name,
         username=args.username,
         password=args.password,
-        api_token=args.api_token
+        api_token=args.api_token,
+        agent_secret=args.agent_secret,
     )
 
 

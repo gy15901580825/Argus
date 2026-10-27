@@ -79,9 +79,9 @@ Full configuration reference: [target spec cookbook](https://github.com/gy159015
 
 ## What it does
 
-Without `--local`, `argus-probe` is a thin client: it submits the target spec and probe selection to an Argus service over HTTPS; the service runs the probes against your agent and returns the report. With `--local` the same engine runs in this process and calls the judge model directly with your key.
+Without `--local`, `argus-probe` is a thin client: it submits the target spec and probe selection over HTTPS to a server implementing the `/api/v1/redteam` API; that server runs the probes against your agent and returns the report. With `--local` the same engine runs in this process and calls the judge model directly with your key.
 
-Secret references in your target spec (`${OPENAI_API_KEY}`, etc.) are resolved from the local shell environment at run time and sent only as outbound headers to your agent — they never enter the target.json file or the Argus service.
+Secret references in your target spec (`${OPENAI_API_KEY}`, etc.) are resolved from the local shell environment at run time; they are never written back to target.json. With `--local` they stay in this process and go only to your agent. In server mode the resolved spec, secrets included, is sent to the server, because the server is what calls your agent; use a server you trust with those credentials.
 
 ## Output formats
 

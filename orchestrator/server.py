@@ -1,3 +1,4 @@
+import hmac
 import logging
 import os
 from dotenv import load_dotenv
@@ -29,14 +30,28 @@ app = FastAPI(
     openapi_url="/openapi.json",  # OpenAPI schema at /openapi.json
 )
 
-# Enable CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# No browser UI ships with the engine, so cross-origin access is off unless
+# CORS_ALLOW_ORIGINS (comma-separated) names the origins to allow.
+_cors_origins = [o.strip() for o in os.getenv("CORS_ALLOW_ORIGINS", "").split(",") if o.strip()]
+if _cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+
+def log_agent_auth_mode() -> None:
+    """Warn at startup when /agent/connect accepts agents without a secret."""
+    if not os.getenv("AGENT_CONNECT_SECRET"):
+        logger.warning(
+            "AGENT_CONNECT_SECRET is not set: /agent/connect accepts unauthenticated agents. "
+            "Run the orchestrator only on localhost or a trusted network."
+        )
+
+
+log_agent_auth_mode()
 
 # ============================================================================
 # WebSocket Agent Connection Management
@@ -56,11 +71,9 @@ async def websocket_endpoint(websocket: WebSocket):
     The agent must provide an 'x-agent-id' header for identification.
     
     **Protocol**: JSON-RPC 2.0
-    **Authentication**: Via 'x-agent-id' header (handled by API Gateway)
+    **Authentication**: when AGENT_CONNECT_SECRET is set, the 'x-agent-secret' header
+    must match it; otherwise any client that reaches this endpoint is accepted.
     """
-    # Agent authentication is handled by the API Gateway before reaching this service.
-    # We rely on the 'x-agent-id' header being present.
-    
     headers = websocket.headers
     agent_id = headers.get("x-agent-id")
     
@@ -68,7 +81,15 @@ async def websocket_endpoint(websocket: WebSocket):
         await websocket.close(code=1008, reason="Missing Agent ID")
         return
 
-    await connection_manager.connect(websocket, agent_id)
+    secret = os.getenv("AGENT_CONNECT_SECRET")
+    if secret and not hmac.compare_digest(
+        headers.get("x-agent-secret", "").encode(), secret.encode()
+    ):
+        await websocket.close(code=1008, reason="Invalid agent secret")
+        return
+
+    if not await connection_manager.connect(websocket, agent_id):
+        return
     
     try:
         while True:

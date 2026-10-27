@@ -26,12 +26,19 @@ class ConnectionManager:
         self.pending_commands: Dict[str, asyncio.Future] = {}
         logger.info(f"ConnectionManager initialized, instance id: {id(self)}")
 
-    async def connect(self, websocket: WebSocket, agent_id: str):
+    async def connect(self, websocket: WebSocket, agent_id: str) -> bool:
+        """Accept and register the agent. Returns False when the id is already connected."""
+        if agent_id in self.active_connections:
+            # Keep the live agent; a second socket must not take over its slot.
+            logger.warning(f"Refused second connection for agent id {agent_id}")
+            await websocket.close(code=1008, reason="Agent id already connected")
+            return False
         await websocket.accept()
         self.active_connections[agent_id] = websocket
         logger.info(f"Agent connected: {agent_id}, ConnectionManager id: {id(self)}, total connections: {len(self.active_connections)}")
         
         await self._post_status(agent_id, "active")
+        return True
 
     async def _post_status(self, agent_id: str, status: str) -> None:
         """Tell the API server about an agent's status, when one is configured."""

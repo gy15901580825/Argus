@@ -17,3 +17,13 @@ def test_only_engine_routes():
     assert "/agent/connect" in paths  # WS hub that browser_use needs
     assert "/orchestrator/run_command" not in paths
     assert not any("/strategy/" in p or "web-ui" in p for p in paths)
+
+
+def test_cors_is_off_by_default():
+    """No browser UI ships with the engine; cross-origin reads need CORS_ALLOW_ORIGINS."""
+    from fastapi.testclient import TestClient
+    from server import app
+
+    resp = TestClient(app).get("/redteam/probes", headers={"Origin": "https://evil.example"})
+    assert "access-control-allow-origin" not in resp.headers
+    assert "access-control-allow-credentials" not in resp.headers
