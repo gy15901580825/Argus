@@ -382,3 +382,18 @@ def test_baseline_key_same_for_different_probe_selection(tmp_path, monkeypatch):
     CliRunner().invoke(cmd_run, args)
     assert bodies[0]["probe_ids"] != bodies[1]["probe_ids"]
     assert bodies[0]["baseline_key"] == bodies[1]["baseline_key"]
+
+
+def test_run_rejects_trap_options_without_local(tmp_path):
+    p = tmp_path / "b.json"
+    p.write_text(json.dumps({"kind": "browser_use", "agent_url": "http://a", "scenario_kind": "dom_injection",
+                             "trap_port": 8765, "trap_public_url": "http://10.0.0.5:8765"}))
+    with patch("argus_probe.api_client.post_run") as post_run:
+        result = CliRunner().invoke(cmd_run, [
+            "--target", str(p), "--probes", "p", "--out", str(tmp_path / "r.html"),
+            "--api-url", "https://argus.example", "--token", "t",
+        ])
+    assert result.exit_code == 2, result.output
+    assert "trap_* options only apply to --local runs" in result.output
+    assert "trap_port, trap_public_url" in result.output
+    post_run.assert_not_called()

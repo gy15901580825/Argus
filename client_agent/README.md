@@ -2,7 +2,7 @@
 
 The client agent runs browser_use probes. It connects to the orchestrator's WebSocket hub (`/agent/connect`), serves each adversarial scenario page on localhost, and drives your browser agent at the target's `agent_url`.
 
-`argus-probe run --local` does not run `browser_use` targets. A browser_use run needs a server implementing the `/api/v1/redteam` API, backed by the orchestrator, with this client agent connected to that orchestrator. This repo does not ship such a server; the self-hosted stack is at tag `v0.3-full`.
+You only need it in server mode. `argus-probe run --local` runs `browser_use` targets on your machine with no server and no client agent. In server mode, a browser_use run needs a server implementing the `/api/v1/redteam` API, backed by the orchestrator, with this client agent connected to that orchestrator. This repo does not ship such a server; the self-hosted stack is at tag `v0.3-full`.
 
 ## Direct mode (no registration)
 

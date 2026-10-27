@@ -159,12 +159,6 @@ templates and JSONPath response extractors), `grpc`, `http_upload`,
 `browser_use`, `payment_agent`, `mcp_agent`, `testbed_agent`, `vllm_server`. Full target-spec cookbook in
 [`docs/onboarding/target-spec-cookbook.md`](docs/onboarding/target-spec-cookbook.md).
 
-`--local` does not run `browser_use` targets. A `browser_use` run needs a
-server implementing the `/api/v1/redteam` API, backed by the orchestrator,
-with a [`client_agent`](client_agent/README.md) connected to it. This repo
-does not ship that server. The agent side connects directly:
-`python client_agent/client_agent.py --orchestrator-url ws://<orchestrator-host>:8080 --agent-name my-browser-agent`.
-
 Install the `argus-probe` CLI from PyPI (Python 3.11+). The `[local]`
 extra pulls in the probe engine, so probes run on your machine and judged
 probes only need a judge key:
@@ -177,6 +171,22 @@ argus-probe run --local --target argus-target.json \
                 --format sarif --out argus.sarif
 ```
 
+Browser probes run locally too, with no server and no client_agent. The CLI
+serves each probe's trap page from your machine and asks your agent to open it:
+
+```bash
+argus-probe run --local --target browser-target.json \
+                --probes browser_dom_inject_html_comment --format html --out report.html
+```
+
+Your agent must be able to reach that page. It listens on `127.0.0.1` by
+default, which works when the agent runs on the same machine. For an agent in
+a container or on another machine, set `trap_host`, `trap_port` and
+`trap_public_url` in the target spec (see the
+[cookbook](docs/onboarding/target-spec-cookbook.md#browser_use)). If your
+agent can't reach your machine at all, submit the run with `--api-url` and
+`--token` to a compatible hosted service instead.
+
 To see a report first with no key and no target, run `argus-probe quickstart`. It tests a built-in vulnerable MCP demo agent and writes `argus-quickstart.html`.
 
 Without `--local`, the CLI is a client of a server implementing the
@@ -185,6 +195,11 @@ writes the report. Set `ARGUS_API_URL` and `ARGUS_API_TOKEN` for that
 server. This repo no longer ships one. The self-hosted stack (REST API, web
 UI, database migrations, Helm charts) is at the
 [`v0.3-full`](https://github.com/gy15901580825/Argus/tree/v0.3-full) tag.
+In server mode, a `browser_use` run also needs a
+[`client_agent`](client_agent/README.md) connected to the server's
+orchestrator. It connects directly, with the same `AGENT_CONNECT_SECRET` set
+on both sides:
+`python client_agent/client_agent.py --orchestrator-url ws://<orchestrator-host>:8080 --agent-name my-browser-agent`.
 
 `--probes all` runs the whole library. `--format` is `html` (default),
 `sarif` (SARIF 2.1.0, uploads to GitHub Code Scanning) or `junit`.

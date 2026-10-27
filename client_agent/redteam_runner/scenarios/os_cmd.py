@@ -3,7 +3,7 @@ command via its code-execution tool. Distinct from dom_injection because the
 'instruction' is in visible content (e.g. a 'tutorial' or 'install guide')
 rather than hidden in the DOM."""
 
-from redteam_runner.scenarios._html import esc
+from ._html import esc
 
 
 _TEMPLATE = """<!doctype html>

@@ -20,6 +20,10 @@ dependencies = [
     "grpcio-reflection>=1.60",
     "protobuf>=4.25",
     "uvicorn>=0.30",
+    # Local browser probes: the trap-page server reads a private aiohttp 3.x attribute.
+    "aiohttp>=3.9,<4",
+    # Renders the visual_injection trap image; without it the page falls back to HTML.
+    "Pillow>=10",
 ]
 
 [project.optional-dependencies]

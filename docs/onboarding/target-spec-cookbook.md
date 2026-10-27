@@ -125,7 +125,7 @@ How the response is parsed: `response_jsonpath` is a [JSONPath](https://goessner
 - The `agent_url` must accept `POST {"url": "<scenario URL>", "prompt": "<user instruction>"}`.
 - It must return JSON: `{"final_text": "...", "screenshots": [...], "latency_ms": <number>}`.
 
-**Running it.** `argus-probe run --local` does not run `browser_use` targets. A `browser_use` run needs a server implementing the `/api/v1/redteam` API, backed by the orchestrator, with a [`client_agent`](../../client_agent/README.md) connected to that orchestrator's WebSocket hub. The client agent serves the scenario page and calls your `agent_url`. This repo does not ship such a server; the self-hosted stack is at tag `v0.3-full`. On the agent side, connect the client agent directly to the orchestrator:
+**Running it.** `argus-probe run --local` runs `browser_use` targets on your machine; see [Running browser probes locally](#running-browser-probes-locally) below. In server mode, a `browser_use` run needs a server implementing the `/api/v1/redteam` API, backed by the orchestrator, with a [`client_agent`](../../client_agent/README.md) connected to that orchestrator's WebSocket hub. The client agent serves the scenario page and calls your `agent_url`. This repo does not ship such a server; the self-hosted stack is at tag `v0.3-full`. The client agent can connect directly to the orchestrator:
 
 ```bash
 cd client_agent && pip install -r requirements.txt && playwright install chromium
@@ -136,6 +136,38 @@ python client_agent.py --orchestrator-url ws://<orchestrator-host>:8080 --agent-
 Anyone who can reach the orchestrator's `/agent/connect` can pose as an agent and receive probe payloads. Set `AGENT_CONNECT_SECRET` on both sides and keep the orchestrator on localhost or a trusted network.
 
 We provide a thin reference adapter you can drop into your agent harness; ask in the design-partner channel for the latest version.
+
+### Running browser probes locally
+
+`argus-probe run --local` runs browser probes on your machine with no server and no client_agent. For each probe the CLI serves the trap page itself and sends your agent its URL. Browser probes are judged, so set a judge key:
+
+```bash
+pipx install "argus-probe[local]"
+export ANTHROPIC_API_KEY=<your key>
+argus-probe run --local --target argus-target.json \
+  --probes browser_dom_inject_html_comment,browser_os_cmd_install_tutorial --format html --out report.html
+```
+
+Your agent must be able to open the trap page URL. By default the page listens on `127.0.0.1` on a free port, which works when the agent runs on the same machine. If the agent runs in a container or on another machine, set where the page listens and the URL the agent should open:
+
+```json
+{
+  "kind": "browser_use",
+  "agent_url": "http://192.168.1.30:8000/run",
+  "scenario_kind": "dom_injection",
+  "trap_host": "0.0.0.0",
+  "trap_port": 8765,
+  "trap_public_url": "http://192.168.1.20:8765"
+}
+```
+
+- `trap_host` is the IPv4 address the trap page listens on. The default is `127.0.0.1`. `0.0.0.0` listens on every interface and needs `trap_public_url`.
+- `trap_port` is the port it listens on. The default `0` picks a free port for each probe. Set a fixed port when you set `trap_public_url`.
+- `trap_public_url` is the base URL your agent opens. Argus adds `/scenario` to it. Use your LAN address, `http://host.docker.internal:8765` for an agent in Docker, or a tunnel URL that forwards to `trap_port`.
+
+With `0.0.0.0`, anyone on your network can open the trap page while the run lasts. Use your machine's LAN address as `trap_host` when you can. These three options only apply to `--local`. Without `--local` the CLI refuses a spec that sets them.
+
+If your agent can't reach your machine at all, submit the run with `--api-url` and `--token` to a compatible hosted service instead.
 
 ---
 
