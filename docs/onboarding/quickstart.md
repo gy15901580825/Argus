@@ -1,6 +1,6 @@
 # Argus quickstart
 
-Point Argus at any AI agent endpoint and get a SARIF report. Local mode (step 3a) needs only a judge API key. Server mode (step 3) needs a running Argus API server.
+Point Argus at any AI agent endpoint and get a SARIF report. Local mode (step 3a) needs only a judge API key (`argus-probe quickstart` needs none). Server mode (step 3) needs a running Argus API server.
 
 ## 1. Install the CLI
 

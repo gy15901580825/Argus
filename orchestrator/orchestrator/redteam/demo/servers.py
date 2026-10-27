@@ -39,19 +39,23 @@ def _bind() -> socket.socket:
 @contextmanager
 def start_mcp_demo() -> Iterator[dict]:
     # Pre-bound sockets avoid a port race between picking and listening.
-    socks = [_bind(), _bind()]
-    ports = [s.getsockname()[1] for s in socks]
-    _agent_mod.set_testbed_origin(f"http://127.0.0.1:{ports[0]}")
-    _agent_mod.set_weaknesses(None)
-    servers = [
-        uvicorn.Server(uvicorn.Config(app, log_level="warning"))
-        for app in (_testbed_mod.app, _agent_mod.app)
-    ]
-    threads = [
-        threading.Thread(target=lambda s=srv, k=sk: asyncio.run(s.serve(sockets=[k])), daemon=True)
-        for srv, sk in zip(servers, socks)
-    ]
+    socks: list[socket.socket] = []
+    servers: list = []
+    threads: list = []
     try:
+        socks.append(_bind())
+        socks.append(_bind())
+        ports = [s.getsockname()[1] for s in socks]
+        _agent_mod.set_testbed_origin(f"http://127.0.0.1:{ports[0]}")
+        _agent_mod.set_weaknesses(None)
+        servers = [
+            uvicorn.Server(uvicorn.Config(app, log_level="warning"))
+            for app in (_testbed_mod.app, _agent_mod.app)
+        ]
+        threads = [
+            threading.Thread(target=lambda s=srv, k=sk: asyncio.run(s.serve(sockets=[k])), daemon=True)
+            for srv, sk in zip(servers, socks)
+        ]
         for t in threads:
             t.start()
         deadline = time.monotonic() + 10

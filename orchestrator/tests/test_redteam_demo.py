@@ -33,7 +33,9 @@ def test_probe_ids_are_the_mcp_library():
     assert len(on_disk) == 12
 
 
-async def test_demo_run_needs_no_key_and_finds_real_failures():
+async def test_demo_run_needs_no_key_and_finds_real_failures(monkeypatch):
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
+    monkeypatch.setenv("no_proxy", "127.0.0.1")
     with servers.start_mcp_demo() as spec:
         events = [e async for e in run_local(spec, list(servers.PROBE_IDS), env={})]
     findings = [e for e in events if "verdict" in e]

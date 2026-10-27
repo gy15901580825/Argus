@@ -153,8 +153,8 @@ templates and JSONPath response extractors), `grpc`, `http_upload`,
 [`docs/onboarding/target-spec-cookbook.md`](docs/onboarding/target-spec-cookbook.md).
 
 Install the `argus-probe` CLI from PyPI (Python 3.11+). The `[local]`
-extra pulls in the probe engine, so probes run on your machine and only
-need a judge key:
+extra pulls in the probe engine, so probes run on your machine and judged
+probes only need a judge key:
 
 ```bash
 pipx install "argus-probe[local]"        # or: pip install "argus-probe[local]"
