@@ -20,7 +20,7 @@ from orchestrator.redteam import llm
 from orchestrator.redteam.coverage import build_coverage
 from orchestrator.redteam.cost_meter import CostMeter
 from orchestrator.redteam.judge import Judge
-from orchestrator.redteam.probe import load_all_probes
+from orchestrator.redteam.probe import load_probe_library
 from orchestrator.redteam.persona_strategy import (
     DEFAULT_DEEP_PAIRS,
     DEFAULT_MAX_ROUNDS,
@@ -77,12 +77,12 @@ def _resolve_probe_ids(probe_ids: list[str]) -> list[str]:
     """
     if probe_ids:
         return probe_ids
-    return [p.id for p in load_all_probes(PROBES_DIR)]
+    return [p.id for p in load_probe_library(PROBES_DIR)]
 
 
 def _resolve_suite(suite: str) -> list[str]:
     """Suite id → its probe ids. Raises 422 on an unknown id, listing the valid ones."""
-    suites = derive_suites(load_all_probes(PROBES_DIR))
+    suites = derive_suites(load_probe_library(PROBES_DIR))
     if suite not in suites:
         raise HTTPException(
             status_code=422,
@@ -139,7 +139,7 @@ def _estimate_exchanges(req: RunRequest, probe_ids: list[str]) -> int:
     """
     if req.mode == "deep":
         return len(probe_ids) * max(1, req.deep_pairs) * DEFAULT_MAX_ROUNDS
-    by_id = {p.id: p for p in load_all_probes(PROBES_DIR)}
+    by_id = {p.id: p for p in load_probe_library(PROBES_DIR)}
     # An id the library doesn't know runs nothing, but counting it as one
     # exchange keeps the estimate conservative rather than optimistic.
     return sum(len(by_id[pid].prompts) if pid in by_id else 1 for pid in probe_ids)
@@ -154,7 +154,7 @@ def _judged_exchanges(req: RunRequest, probe_ids: list[str]) -> int:
     """
     if req.mode == "deep":
         return _estimate_exchanges(req, probe_ids)
-    by_id = {p.id: p for p in load_all_probes(PROBES_DIR)}
+    by_id = {p.id: p for p in load_probe_library(PROBES_DIR)}
     return sum(
         len(by_id[pid].prompts) if pid in by_id else 1
         for pid in probe_ids
@@ -169,7 +169,7 @@ async def _run_probes(req: RunRequest, anthropic_api_key: str) -> AsyncIterator[
     runner = Runner(target=target, judge=judge, rubrics_dir=RUBRICS_DIR)
 
     requested = set(_resolve_request_probe_ids(req))
-    selected = [p for p in load_all_probes(PROBES_DIR) if p.id in requested]
+    selected = [p for p in load_probe_library(PROBES_DIR) if p.id in requested]
 
     if req.mode == "deep":
         personas, strategies = default_personas(), default_strategies()
@@ -277,7 +277,7 @@ async def run(req: RunRequest):
                 yield f"data: {json.dumps(finding_dict)}\n\n".encode()
             coverage_event = {
                 "type": "coverage",
-                "coverage": build_coverage(load_all_probes(PROBES_DIR), emitted),
+                "coverage": build_coverage(load_probe_library(PROBES_DIR), emitted),
             }
             yield f"data: {json.dumps(coverage_event)}\n\n".encode()
             yield b"event: end\ndata: {}\n\n"
@@ -291,8 +291,7 @@ async def run(req: RunRequest):
 @router.get("/probes")
 async def list_probes() -> dict:
     """Returns list of probe ids the orchestrator currently has loaded."""
-    from orchestrator.redteam.probe import load_all_probes
-    probes = list(load_all_probes(PROBES_DIR))
+    probes = load_probe_library(PROBES_DIR)
     return {"probe_ids": [p.id for p in probes]}
 
 
@@ -303,7 +302,7 @@ async def list_suites() -> dict:
     Suites with no probes are omitted, so every key here is runnable via
     RunRequest.suite.
     """
-    return {"suites": derive_suites(load_all_probes(PROBES_DIR))}
+    return {"suites": derive_suites(load_probe_library(PROBES_DIR))}
 
 
 @router.get("/coverage")
@@ -313,4 +312,4 @@ async def coverage() -> dict:
     Deliberately findings-free and free of charge: a prospect must be able to
     ask what we cover before paying for a scan.
     """
-    return {"coverage": build_coverage(load_all_probes(PROBES_DIR))}
+    return {"coverage": build_coverage(load_probe_library(PROBES_DIR))}

@@ -16,6 +16,19 @@ from orchestrator.redteam.probe import Probe
 
 logger = logging.getLogger(__name__)
 
+
+def _rubric_candidate(rubrics_dir: Path, rubric_path: str) -> Path:
+    """Resolve `rubric_path` under `rubrics_dir`; raise if it escapes."""
+    rel = Path(rubric_path)
+    if rel.parts and rel.parts[0] == "rubrics":
+        rel = Path(*rel.parts[1:])
+    root = rubrics_dir.resolve()
+    candidate = (rubrics_dir / rel).resolve()
+    if not (candidate == root or root in candidate.parents):
+        raise ValueError(f"rubric path escapes rubrics_dir: {rubric_path!r}")
+    return candidate
+
+
 # Verdict constants (Plan 4 T7) — used in Finding.verdict and report renderers.
 VERDICT_PASS = "pass"
 VERDICT_FAIL = "fail"
@@ -91,14 +104,15 @@ class Runner:
         )
 
     async def run_probe(self, probe) -> AsyncIterator[Finding]:
-        # Existing rubric resolution unchanged
-        rel = Path(probe.judge_rubric_path)
-        if rel.parts and rel.parts[0] == "rubrics":
-            rel = Path(*rel.parts[1:])
-        rubrics_root = self._rubrics_dir.resolve()
-        candidate = (self._rubrics_dir / rel).resolve()
-        if not (candidate == rubrics_root or rubrics_root in candidate.parents):
-            raise ValueError(f"rubric path escapes rubrics_dir: {probe.judge_rubric_path!r}")
+        # A pack probe looks in its pack's rubrics first, then the built-in ones.
+        candidate = None
+        pack_rubrics = getattr(probe, "rubrics_dir", None)
+        if pack_rubrics is not None:
+            candidate = _rubric_candidate(Path(pack_rubrics), probe.judge_rubric_path)
+            if not candidate.is_file():
+                candidate = None
+        if candidate is None:
+            candidate = _rubric_candidate(self._rubrics_dir, probe.judge_rubric_path)
         if candidate.exists() and candidate.is_file():
             rubric_text = candidate.read_text()
         else:
