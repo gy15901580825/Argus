@@ -13,7 +13,7 @@ from argus_probe import api_client, git_context
 from argus_probe.baseline_key import baseline_key
 from argus_probe.local_run import LocalUnavailable, run_local_and_render
 from argus_probe.severity import SEVERITY_ORDER, findings_at_or_above
-from argus_probe.target_loader import load_target_spec, TargetLoadError
+from argus_probe.target_loader import load_target_spec_with_secrets, TargetLoadError
 
 # Exit codes must fit 0-255; sys.exit(402) surfaced as 146 on Linux and macOS.
 EXIT_COST_CAP = 4
@@ -22,7 +22,8 @@ EXIT_COST_CAP = 4
 @click.command()
 @click.option("--target", required=True, help="Target spec: JSON object (inline) or path to JSON file.")
 @click.option("--probes", "probe_ids", required=True, help="Comma-separated probe ids OR 'all'.")
-@click.option("--format", "report_format", type=click.Choice(["html", "sarif", "junit"]), default="html")
+@click.option("--format", "report_format", type=click.Choice(["html", "sarif", "junit", "json"]), default="html",
+              help="Report format. json writes run.json and needs --local.")
 @click.option("--out", "out_file", type=click.Path(), required=True, help="Output report file path.")
 @click.option("--token", envvar="ARGUS_API_TOKEN", default=None, help="Your Argus API token (or env ARGUS_API_TOKEN). Not used with --local.")
 @click.option("--api-url", envvar="ARGUS_API_URL", default=None, help="Argus API base URL (or env ARGUS_API_URL). Not used with --local.")
@@ -37,7 +38,7 @@ EXIT_COST_CAP = 4
 def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, token: str | None, api_url: str | None, max_wait: float, per_run_cap: float | None, fail_on: str | None, local: bool, compare_to: str | None):
     """Submit a red-team run and write the report to disk."""
     try:
-        spec = load_target_spec(target)
+        spec, secret_values = load_target_spec_with_secrets(target)
     except TargetLoadError as e:
         click.echo(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -67,8 +68,11 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
         ]
         if typed:
             raise click.UsageError(f"--local runs in this process; do not pass {' or '.join(typed)}")
-        _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on)
+        _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, secret_values)
         return
+    if report_format == "json":
+        # The server's report endpoint has no json format yet.
+        raise click.UsageError("--format json needs --local")
     if api_url is None:
         raise click.UsageError("Missing option '--api-url'")
     if token is None:
@@ -146,7 +150,7 @@ def _apply_fail_on(findings: list[dict], fail_on: str | None) -> None:
         sys.exit(3)
 
 
-def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on) -> None:
+def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, secret_values=()) -> None:
     if spec.get("kind") == "browser_use":
         click.echo(
             "Error: --local does not support browser_use targets; they need the "
@@ -156,7 +160,7 @@ def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on) ->
         sys.exit(1)
     click.echo(f"Running {('all probes' if not tokens else f'{len(tokens)} probe(s)')} locally ...")
     try:
-        report, findings = run_local_and_render(spec, tokens, per_run_cap, report_format)
+        report, findings = run_local_and_render(spec, tokens, per_run_cap, report_format, secret_values)
     except LocalUnavailable as e:
         click.echo(f"Error: {e}", file=sys.stderr)
         sys.exit(2)
