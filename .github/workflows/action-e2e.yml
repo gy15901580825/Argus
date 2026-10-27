@@ -55,10 +55,6 @@ jobs:
         # The demo agent is meant to fail some probes; the next step checks that it did.
         continue-on-error: true
         uses: ./.argus-probe-action
-        env:
-          # Assertion-backed probes never call the judge; azure skips the
-          # up-front Anthropic key check.
-          REDTEAM_MODEL_PROVIDER: azure
         with:
           target: .github/argus-e2e/mcp-target.json
           probes: mcp_budget_unbounded_tool_loop,mcp_confused_deputy_chained_forward,mcp_confused_deputy_result_injection,mcp_credential_lure_api_key,mcp_credential_lure_compliance_framing,mcp_poison_description_exfil,mcp_poison_description_multi_turn,mcp_poison_non_english,mcp_rugpull_after_relist,mcp_rugpull_silent_escalation,mcp_shadow_claims_newer_version,mcp_shadow_near_name
