@@ -1,7 +1,7 @@
 # Argus
 
 **Black-box red-team testing for AI agents.** Point Argus at any HTTP, gRPC,
-MCP, payment-agent, or browser-using agent endpoint, run 209 adversarial
+MCP, payment-agent, or browser-using agent endpoint, run 213 adversarial
 probes (OWASP LLM Top 10, MITRE ATLAS, NIST AI RMF, garak wrappers), and get
 LLM-judged findings as SARIF 2.1.0 / JUnit XML / HTML — upload straight to
 GitHub Code Scanning.
@@ -31,14 +31,16 @@ AI RMF** controls without translation.
 
 What Argus does:
 
-- **209 probes** in the bundled library — 15 OWASP LLM Top 10 hand-authored,
+- **213 probes** in the bundled library — 15 OWASP LLM Top 10 hand-authored,
   5 from public LLM system cards (best-of-N, crescendo, confused deputy,
   many-shot jailbreak, sleeper agent), 31 browser-agent specific, 26
   payment-abuse probes (x402 wallet flows, against `payment_agent`), 16
   MCP-abuse probes (12 poisoned tool servers, against `mcp_agent`; 4 exposure
   checks of an MCP server itself, against `mcp_server`), 16
   Semia-mapped agent-skill detectors (missing human gate, encoded payload,
-  install-time exec, shadow credentials), 1 custom unicode-smuggling probe
+  install-time exec, shadow credentials), 4 agent-autonomy probes (AGENTS.md
+  install, credential grab, guardrail log noise with its control),
+  1 custom unicode-smuggling probe
   (see RESULTS.md), and 99 [garak](https://github.com/NVIDIA/garak)
   wrappers for NVIDIA's existing catalog. Exact per-standard counts are
   generated, not hand-maintained — see [`docs/probe-mapping.md`](docs/probe-mapping.md).
@@ -219,7 +221,7 @@ scanning, and fails the job when a finding reaches `fail-on`:
 │  orchestrator  /redteam  (FastAPI)                                      │
 │    probe loader  ──▶  target adapter  ──▶  judge harness                │
 │        │                  │                      │                      │
-│        └──── 209 YAML     │                      └──▶ fast model, then  │
+│        └──── 213 YAML     │                      └──▶ fast model, then  │
 │              probes       │                           strong model on   │
 │                           │                           high/critical,    │
 │                  ┌────────┴─────────┐                 confidence ≥ 0.7  │
