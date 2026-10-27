@@ -1,1 +1,1 @@
-"""Red-team probe orchestration. Plan 2 will populate dispatcher / judge / report."""
+"""Argus: black-box red-team testing for AI agents. The CLI is in argus.cli."""
