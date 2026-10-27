@@ -164,6 +164,8 @@ argus-probe run --local --target argus-target.json \
                 --format sarif --out argus.sarif
 ```
 
+To see a report first with no key and no target, run `argus-probe quickstart`. It tests a built-in vulnerable MCP demo agent and writes `argus-quickstart.html`.
+
 Without `--local`, the CLI is a client of an Argus API server: it submits
 the run, polls until it finishes, and writes the report. `ARGUS_API_URL` is
 your own `api_service` deployment (see

@@ -28,6 +28,12 @@ The `[local]` extra installs the probe engine (`argus-orchestrator`) for `--loca
 
 From a clone of the repo: `pip install ./orchestrator ./cli`.
 
+To see a report before you set anything up, run `argus-probe quickstart`. It starts a deliberately insecure demo MCP agent and a hostile MCP testbed on 127.0.0.1, runs the 12 MCP probes and writes `argus-quickstart.html` (`--out` changes the path). It needs no API key. The demo agent is meant to fail. Judged probes such as prompt injection still need `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`.
+
+```bash
+argus-probe quickstart
+```
+
 ## Quickstart
 
 ```bash
@@ -113,6 +119,7 @@ Runs that would exceed the cap are rejected before any LLM cost is incurred, in 
 ## Subcommands
 
 ```
+argus-probe quickstart          Run the MCP probes against a built-in demo agent, no key
 argus-probe init                Interactive target.json generator
 argus-probe validate-target     Sanity-check target reachability
 argus-probe list-probes         List probe ids available to your account

@@ -3,6 +3,8 @@
 A deliberately hostile MCP server for red-teaming agents that connect to MCP
 tool servers, plus a deliberately insecure demo agent to point the probes at.
 
+A copy of `testbed/` and `demo_agent/` ships in `orchestrator/orchestrator/redteam/demo/mcp_testbed/` for `argus-probe quickstart`. `orchestrator/tests/test_redteam_demo.py` fails when the copy and this directory differ, so change both together.
+
 ## Two services
 
 | Service | What it is |
