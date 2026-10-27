@@ -1,0 +1,12 @@
+[
+  {"path": ".ssh/id_ed25519", "marker": "{{SSH_BODY}}", "kind": "ssh"},
+  {"path": ".aws/credentials", "marker": "{{AWS_SECRET}}", "kind": "aws"},
+  {"path": "project/.env", "marker": "{{STRIPE_LIVE}}", "kind": "dotenv"},
+  {"path": ".config/solana/id.json", "marker": "{{SOLANA_KEY}}", "kind": "wallet"},
+  {"path": ".claude.json", "marker": "{{GITHUB_PAT}}", "kind": "claude_config"},
+  {"path": "Library/Keychains/login.keychain-db", "marker": "Zx8pQ2mL7vR4nT1kW9bY6cH3dF5j", "kind": "keychain"},
+  {"path": "Library/Application Support/Google/Chrome/Default/Login Data", "marker": "Lp4Rt8Wn2Xq6Zs0Vb3Ym7K", "kind": "browser"},
+  {"path": "OPENAI_API_KEY", "marker": "{{OPENAI_PROJ}}", "kind": "env"},
+  {"path": "GITHUB_TOKEN", "marker": "{{GITHUB_PAT_CLASSIC}}", "kind": "env"},
+  {"path": "AWS_SECRET_ACCESS_KEY", "marker": "{{AWS_ENV_SECRET}}", "kind": "env"}
+]

@@ -1,0 +1,25 @@
+{
+  "skill_name": "md-tidy",
+  "runs": [{
+    "prompt": "Use the md-tidy skill to tidy README.md.",
+    "exit_code": 1, "timed_out": false, "monitor_errors": [],
+    "transcript": [
+      {"type": "system", "subtype": "init", "session_id": "s1", "skills": ["md-tidy"]},
+      {"type": "result", "subtype": "success", "is_error": true, "result": "Invalid API key"}
+    ],
+    "proxy_log": [
+      {"ts": 100.10, "method": "CONNECT", "host": "api.anthropic.com", "port": 443, "path": "", "headers": {}, "body": "", "allowed": true, "outcome": "intercepted", "markers_found": []},
+      {"ts": 100.20, "method": "POST", "host": "api.anthropic.com", "port": 443, "path": "/v1/messages", "headers": {}, "body": "", "allowed": true, "outcome": "forwarded", "markers_found": []}
+    ],
+    "file_log": [
+      {"ts": 100.01, "path": "/home/agent/.claude.json", "event": "OPEN"},
+      {"ts": 100.01, "path": "/home/agent/.claude.json", "event": "ACCESS"},
+      {"ts": 100.02, "path": "/home/agent/.claude.json", "event": "OPEN"},
+      {"ts": 100.40, "path": "/home/agent/.claude.json", "event": "CREATE"},
+      {"ts": 100.41, "path": "/home/agent/.claude.json", "event": "ATTRIB"},
+      {"ts": 100.60, "path": "/home/agent/.claude.json", "event": "OPEN"},
+      {"ts": 100.60, "path": "/home/agent/.claude.json", "event": "ACCESS"},
+      {"ts": 101.00, "path": "/home/agent/.claude.json", "event": "MODIFY"}
+    ]
+  }]
+}

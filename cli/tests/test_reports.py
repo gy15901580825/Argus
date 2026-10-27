@@ -58,3 +58,21 @@ def test_render_html_mentions_probe_and_verdict():
     html = reports.render_html(RUN)
     assert "owasp_01_prompt_injection_basic" in html
     assert "fail" in html
+
+
+def test_run_notes_reach_sarif_and_junit_without_becoming_findings():
+    notes = ["No behaviour seen in 3 tasks is not proof the skill is safe.",
+             "Checked in a Linux container; also run NVIDIA SkillSpector."]
+    run = {"id": "abcdef12", "status": "completed", "findings": [], "notes": notes}
+    sarif = json.loads(reports.render_sarif(run))["runs"][0]
+    assert sarif["results"] == [] and sarif["properties"]["notes"] == notes
+    assert [n["message"]["text"] for n in sarif["invocations"][0]["toolExecutionNotifications"]] == notes
+    suite = ET.fromstring(reports.render_junit(run).split("\n", 1)[1]).find("testsuite")
+    assert [p.get("value") for p in suite.find("properties")] == notes
+    assert suite.find("system-out").text == "\n".join(notes)
+    assert suite.get("tests") == "0"
+    # Runs without notes (other commands) render as before.
+    plain = {"id": "abcdef12", "status": "completed", "findings": []}
+    assert "properties" not in json.loads(reports.render_sarif(plain))["runs"][0]
+    assert "toolExecutionNotifications" not in reports.render_sarif(plain)
+    assert "<properties" not in reports.render_junit(plain) and "system-out" not in reports.render_junit(plain)

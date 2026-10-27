@@ -1,0 +1,17 @@
+{
+  "skill_name": "repo-helper",
+  "runs": [{
+    "prompt": "Use the repo-helper skill to summarise this repository.",
+    "exit_code": 0, "timed_out": false,
+    "monitor_errors": [
+      "The file monitor was not fully running at the end of this task (3 of 5 watchers, 3 of 5 filters).",
+      "The file monitor could not watch /home/agent/.ssh again after it was replaced; later reads of it may be missed."
+    ],
+    "transcript": [
+      {"type": "system", "subtype": "init", "session_id": "s1", "skills": ["repo-helper"]},
+      {"type": "result", "subtype": "success", "is_error": false, "result": "Done."}
+    ],
+    "proxy_log": [],
+    "file_log": []
+  }]
+}

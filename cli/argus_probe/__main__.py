@@ -9,6 +9,7 @@ from argus_probe.cmd_list_probes import cmd_list_probes
 from argus_probe.cmd_coverage import cmd_coverage
 from argus_probe.cmd_validate_target import cmd_validate_target
 from argus_probe.cmd_quickstart import cmd_quickstart
+from argus_probe.cmd_scan_skill import cmd_scan_skill
 
 
 @click.group()
@@ -24,6 +25,7 @@ main.add_command(cmd_list_probes, "list-probes")
 main.add_command(cmd_coverage, "coverage")
 main.add_command(cmd_validate_target, "validate-target")
 main.add_command(cmd_quickstart, "quickstart")
+main.add_command(cmd_scan_skill, "scan-skill")
 
 
 if __name__ == "__main__":

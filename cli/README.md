@@ -123,6 +123,17 @@ argus-probe run --target ... --per-run-cap 0.50
 
 Runs that would exceed the cap are rejected before any LLM cost is incurred, in both server and local mode (exit code 4).
 
+## Check a skill before you install it
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+argus-probe scan-skill ./path/to/skill
+argus-probe scan-skill https://github.com/someone/skills.git --path pdf-tools
+argus-probe scan-skill --sample key-grab
+```
+
+`argus-probe scan-skill <dir-or-git-url>` installs a Claude Code skill in a throwaway Linux container, gives Claude Code a few ordinary tasks that use the skill, and reports what the agent did: the files it read, the commands it ran and the requests it tried to send. It needs Docker and `ANTHROPIC_API_KEY`. The sandbox's proxy holds the real key and caps each task at `--per-task-cap`. The default depends on `--model`: about 2x one large Claude Code call (150 KB of request and 8,192 output tokens, reserved as below), at least $1.00, rounded up to $0.25. That is $1.00 for Haiku 4.5, Haiku 5.5 and Sonnet 5.5, $1.50 for Sonnet 4.6 (the default model), $2.00 for Opus 5.5 and $4.75 for Fable 5.1. Before it starts, the scan prints the cap and the most it can spend (the cap times the number of tasks): $4.50 for three tasks on Sonnet 4.6. A clean scan on Sonnet 4.6 costs about $0.30. A task's API spend cannot pass its cap, whether Claude Code or a process the skill started makes the calls, because every call is reserved at its worst case before it is sent: its `max_tokens` of output plus one input token for every byte of the request, priced at the dearest input rate. The proxy refuses a call if the task's spend plus its open reservations would pass the cap. A finished call is then charged what it really cost, and a call that fails or whose client drops it is charged its full reservation. The proxy also refuses any request shaped differently from Claude Code's own (fast mode, fallbacks, unknown betas, server tools, PDFs and the like). It allows only the scan's model and Claude Code's own background model, and `--model` takes only models the proxy has a price for. A `--per-task-cap` below what one 100 KB Claude Code call reserves on the model is refused, with the minimum named ($0.51 on Sonnet 4.6). A task that reaches its cap stops early. If its calls had already cost at least half the cap, the report gives it a medium finding, because Claude Code on its own stays well under the cap. Otherwise the cap was too small for one large call's worst case (a refused call costs nothing), and the report gives it a low note with the reserved, spent and cap amounts, so you can raise `--per-task-cap`. If a repository holds several skills, pick one with `--path`. To see what a finding looks like, scan one of the bundled inert samples with `--sample` instead of a source: `key-grab`, `config-theft`, `fake-prerequisite`, `hidden-instruction`, `persistence`, or the clean control `benign-markdown`. A clean report is not proof the skill is safe, because a skill can wait for conditions the scan did not create, and skills that only act on macOS do nothing in the Linux container. For a static review of the skill text, also run NVIDIA SkillSpector or Cisco skill-scanner. If Docker's DNS cannot resolve the Anthropic API, set `ARGUS_SKILLSCAN_DNS` to a DNS server that works on your network (for example `ARGUS_SKILLSCAN_DNS=1.1.1.1`); the image build already retries with this machine's resolver on its own.
+
 ## Subcommands
 
 ```
@@ -133,6 +144,7 @@ argus-probe list-probes         List probe ids (local library, or a server with 
 argus-probe run                 Submit a run + write the report
 argus-probe report              Re-render a run stored on a server
 argus-probe coverage            Show what the probe library covers; asks the server, runs no probes
+argus-probe scan-skill          Run a Claude Code skill in a sandbox and report what it did
 ```
 
 Each command's `--help` lists its flags.

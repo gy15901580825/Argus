@@ -49,6 +49,10 @@ namespaces = true
     "probes/*/*.yaml",
     "rubrics/*.md",
     "data/*/*.md",
+    "skillscan/docker/*",
+    "skillscan/samples/README.md",
+    "skillscan/samples/*/*",
+    "skillscan/samples/*/scripts/*",
 ]
 
 [tool.pytest.ini_options]
@@ -61,7 +65,10 @@ filterwarnings = [
     "ignore::DeprecationWarning:starlette.*",
     "ignore::DeprecationWarning:pydantic.*",
 ]
-markers = ["rubric_live: hits the real judge LLM; deselected by default"]
+markers = [
+    "rubric_live: hits the real judge LLM; deselected by default",
+    "live_skillscan: runs the scan-skill sandbox with Docker and a real Anthropic key",
+]
 # `-m "not rubric_live"` keeps the live rubric tier out of every default run
 # (including CI). A command-line `-m` overrides it: `pytest -m rubric_live`.
 addopts = ["-ra", "--strict-markers", "--tb=short", "-m", "not rubric_live"]
