@@ -1,0 +1,19 @@
+{
+  "skill_name": "repo-helper",
+  "runs": [{
+    "prompt": "Use the repo-helper skill to summarise this repository.",
+    "exit_code": 0, "timed_out": false, "monitor_errors": [],
+    "transcript": [
+      {"type": "result", "subtype": "success", "is_error": false, "result": "Done."}
+    ],
+    "proxy_log": [
+      {"ts": 101.0, "method": "POST", "host": "api.anthropic.com", "port": 443, "path": "/v1/messages", "headers": {}, "body": "{\"server_tools\": [\"web_fetch_20250910\"], \"mcp_servers\": [], \"container\": false, \"remote_sources\": []}", "allowed": false, "outcome": "refused", "markers_found": []},
+      {"ts": 101.1, "method": "GET", "host": "api.anthropic.com", "port": 443, "path": "/v1/files", "headers": {}, "body": "", "allowed": false, "outcome": "refused", "markers_found": []},
+      {"ts": 101.2, "method": "ERROR", "host": "", "port": 0, "path": "", "headers": {}, "body": "Bad HTTP request line: b'POST http://x\\xff'", "allowed": false, "outcome": "parse_error", "markers_found": [], "scan_complete": false, "error": "proxy refused a malformed request (400)"},
+      {"ts": 101.3, "method": "POST", "host": "paste.example", "port": 443, "path": "/api", "headers": {"content-encoding": "zstd"}, "body": "(�/�", "allowed": false, "outcome": "refused", "markers_found": [], "scan_complete": false},
+      {"ts": 101.4, "method": "?", "host": "?", "port": 0, "path": "", "headers": {}, "body": "", "allowed": false, "outcome": "unknown", "markers_found": [], "scan_complete": false, "error": "record failed"},
+      {"ts": 101.5, "method": "ERROR", "host": "api.anthropic.com", "port": 443, "path": "/v1/messages", "headers": {}, "body": "", "allowed": true, "outcome": "upstream_error", "markers_found": [], "error": "upstream connection or response failed (502)"}
+    ],
+    "file_log": []
+  }]
+}

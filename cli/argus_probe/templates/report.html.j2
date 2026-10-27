@@ -100,12 +100,20 @@ h1 { border-bottom: 2px solid #333; }
     {% else %}
     <p>No payment authorization was presented.</p>
     {% endif %}
+    {% elif 'items' in f.evidence %}
+    <ul>
+      {% for item in f.evidence['items'] %}
+      <li><code>{{ item if item is string else item | tojson }}</code></li>
+      {% endfor %}
+    </ul>
     {% endif %}
+    {% if 'items' not in f.evidence %}
     <p class="note">
       {{ f.evidence.interaction_count }} request(s) to the testbed{% if 'tools_list_count' in f.evidence %}, {{ f.evidence.tools_list_count }} tool listing(s) served{% endif %}.
       {% if f.evidence.expected_payee %}Session payee: <code>{{ f.evidence.expected_payee }}</code>.{% endif %}
       {% if 'authorizations' in f.evidence %}All payments are simulated against a mock facilitator; no real transfer occurred.{% endif %}
     </p>
+    {% endif %}
   </div>
   {% endif %}
   <div class="mappings">
@@ -117,6 +125,13 @@ h1 { border-bottom: 2px solid #333; }
   <p style="font-size:0.85em;color:#888">{% if f.judge_model %}judge: {{ f.judge_model }}{% if f.escalated_model %} → {{ f.escalated_model }}{% endif %}{% else %}verdict: deterministic, from captured evidence{% endif %} · target latency: {{ "%.0f"|format(f.target_latency_ms) }}ms · probed at {{ f.probed_at }}</p>
 </div>
 {% endfor %}
+{% if run.notes %}
+<h2>Notes</h2>
+<ul class="notes">
+  {% for n in run.notes %}<li>{{ n }}</li>
+  {% endfor %}
+</ul>
+{% endif %}
 {% if coverage %}
 <h2>Coverage</h2>
 <p>What this run did <strong>not</strong> test matters as much as what it found. Counts below are raw —

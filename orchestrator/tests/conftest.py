@@ -47,10 +47,10 @@ def _isolate_env(monkeypatch, request):
     for k, v in safe_defaults.items():
         monkeypatch.setenv(k, v)
     # Judge provider auto-detect reads these; a developer's shell must not change results.
-    # The live rubric tier needs the real ANTHROPIC_API_KEY.
+    # The live rubric and scan-skill tiers need the real ANTHROPIC_API_KEY.
     scrub = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "REDTEAM_MODEL_PROVIDER",
              "REDTEAM_FAST_MODEL", "REDTEAM_STRONG_MODEL", "REDTEAM_LLM_API_BASE"]
-    if request.node.get_closest_marker("rubric_live"):
+    if request.node.get_closest_marker("rubric_live") or request.node.get_closest_marker("live_skillscan"):
         scrub.remove("ANTHROPIC_API_KEY")
     for k in scrub:
         monkeypatch.delenv(k, raising=False)

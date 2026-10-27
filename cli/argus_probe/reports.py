@@ -128,6 +128,12 @@ def render_sarif(run: dict) -> str:
     coverage = run.get("coverage")
     if coverage:
         sarif_run["properties"] = {"coverage": coverage}
+    # Run-level caveats (e.g. scan-skill's "not proof the skill is safe") are not findings either.
+    notes = [str(n) for n in run.get("notes") or []]
+    if notes:
+        sarif_run.setdefault("properties", {})["notes"] = notes
+        sarif_run["invocations"][0]["toolExecutionNotifications"] = [
+            {"level": "note", "message": {"text": n}} for n in notes]
     sarif = {
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
         "version": "2.1.0",
@@ -160,6 +166,12 @@ def render_junit(run: dict) -> str:
         "errors": str(error_count),
         "skipped": str(skipped_count),
     })
+    notes = [str(n) for n in run.get("notes") or []]
+    if notes:
+        # <properties> must come before the testcases; the notes also go to the suite's system-out.
+        props = ET.SubElement(suite, "properties")
+        for i, n in enumerate(notes, 1):
+            ET.SubElement(props, "property", attrib={"name": f"note.{i}", "value": n})
     for f in findings:
         case = ET.SubElement(suite, "testcase", attrib={
             "classname": "argus.redteam",
@@ -193,4 +205,6 @@ def render_junit(run: dict) -> str:
             # but say why so it is not mistaken for a judged pass.
             sysout = ET.SubElement(case, "system-out")
             sysout.text = f"blocked_by_target: {f.get('reasoning','')}"
+    if notes:
+        ET.SubElement(suite, "system-out").text = "\n".join(notes)
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(suites, encoding="unicode")
