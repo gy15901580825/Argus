@@ -183,6 +183,35 @@ We provide a thin reference adapter you can drop into your agent harness; ask in
 
 ---
 
+## mcp_server
+
+**Use this for**: an MCP server you run over HTTP (Streamable HTTP), checked for the exposure in [GHSA-mvf5-2qqv-rg3c](https://github.com/modelcontextprotocol/servers/security/advisories/GHSA-mvf5-2qqv-rg3c). There, a server accepted requests from any web origin, had no authentication, and listed a tool that returned the whole environment, so any page open in the developer's browser could read every secret. This target tests the server, not an agent.
+
+```json
+{
+  "kind": "mcp_server",
+  "url": "http://127.0.0.1:3001/mcp",
+  "headers": [["Authorization", "Bearer <token a legitimate client uses>"]]
+}
+```
+
+**What it sends:** an OPTIONS preflight and an `initialize` with a foreign `Origin`, an `initialize` without `headers`, then `initialize` + `tools/list` with `headers`. **It never sends `tools/call`.** Listing an env-dump tool is enough to prove the exposure, and calling it would copy your secrets into the report.
+
+**Probes** (`orchestrator/orchestrator/redteam/probes/mcp_server/`, decided by assertions, no judge):
+
+| probe | fails when |
+|---|---|
+| `mcp_server_foreign_origin` | `initialize` from a foreign Origin succeeds. The reason says whether CORS also lets any page read the reply. Without CORS, the server is still open to DNS rebinding |
+| `mcp_server_no_auth` | `initialize` without credentials succeeds |
+| `mcp_server_sensitive_tools` | `tools/list` names a tool that dumps env vars, runs commands or reads files. It also fails when `tools/list` does not answer, because tools it cannot see are not proven absent. Give `headers` if the server needs them |
+| `mcp_server_known_vulnerable_version` | `serverInfo` names a server with a published advisory, at a version below the fix. That covers server-everything (GHSA-mvf5-2qqv-rg3c) and server-filesystem (GHSA-4gxg-m5jx-9j57), both fixed in 2.0.1. The date-versioned releases report a fixed old `serverInfo.version` ("2.0.0" and "0.2.0"), so they all count as below the fix. It also fails when no `initialize` returns `serverInfo` |
+
+**Notes:**
+- The legacy SSE transport (`GET /sse` + `POST /message`) is not covered.
+- No `sandbox` flag. The adapter only reads, so point it at your own server only.
+
+---
+
 ## testbed_agent
 
 **Use this for**: the generic form of `mcp_agent` and `payment_agent`. The `environment` field (`mcp` or `payment`) selects which testbed it drives, and the rest of the spec is the same shape. `environment` also decides which probes apply (the `mcp/` or `payment/` probe families).

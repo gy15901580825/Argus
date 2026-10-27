@@ -1,7 +1,7 @@
 """Loader + minimal client-side validator for target specs.
 
 Server is the source of truth (Pydantic union in api_service); CLI only checks
-that `kind` is one of the 8 known values and that the file is valid JSON with
+that `kind` is one of the known kinds (`_KNOWN_KINDS`) and that the file is valid JSON with
 the per-kind required fields. This catches most operator mistakes before
 round-tripping to the server.
 """
@@ -14,7 +14,7 @@ from typing import Any
 
 _KNOWN_KINDS = frozenset({
     "openai_compat", "anthropic_native", "custom_http", "grpc", "browser_use",
-    "payment_agent", "mcp_agent", "testbed_agent", "http_upload",
+    "payment_agent", "mcp_agent", "testbed_agent", "http_upload", "mcp_server",
 })
 
 _REQUIRED_FIELDS = {
@@ -27,6 +27,7 @@ _REQUIRED_FIELDS = {
     "mcp_agent": {"testbed_url", "inner", "sandbox"},
     "testbed_agent": {"environment", "testbed_url", "inner", "sandbox"},
     "http_upload": {"upload_url"},
+    "mcp_server": {"url"},
 }
 
 # Adapters that act on the world rather than only exchanging text. For these

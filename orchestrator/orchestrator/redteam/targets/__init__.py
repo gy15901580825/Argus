@@ -10,6 +10,7 @@ from orchestrator.redteam.targets.custom_http import CustomHTTPSpec, CustomHTTPT
 from orchestrator.redteam.targets.grpc import GRPCSpec, GRPCTarget
 from orchestrator.redteam.targets.http_upload import HTTPUploadSpec, HTTPUploadTarget
 from orchestrator.redteam.targets.mcp_agent import MCPAgentSpec, MCPAgentTarget
+from orchestrator.redteam.targets.mcp_server import MCPServerSpec, MCPServerTarget
 from orchestrator.redteam.targets.openai_compat import OpenAICompatSpec, OpenAICompatTarget
 from orchestrator.redteam.targets.payment_agent import PaymentAgentSpec, PaymentAgentTarget
 from orchestrator.redteam.targets.testbed_agent import GenericTestbedAgentTarget, TestbedAgentSpec
@@ -21,6 +22,7 @@ _BUILDERS = {
     "grpc": (GRPCSpec, GRPCTarget),
     "http_upload": (HTTPUploadSpec, HTTPUploadTarget),
     "mcp_agent": (MCPAgentSpec, MCPAgentTarget),
+    "mcp_server": (MCPServerSpec, MCPServerTarget),
     "openai_compat": (OpenAICompatSpec, OpenAICompatTarget),
     "payment_agent": (PaymentAgentSpec, PaymentAgentTarget),
     "testbed_agent": (TestbedAgentSpec, GenericTestbedAgentTarget),
