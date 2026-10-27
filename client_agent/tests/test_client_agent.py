@@ -160,3 +160,73 @@ def test_register_raises_descriptive_error_on_http_401():
         with pytest.raises(Exception, match="Registration failed"):
             asyncio.run(agent.register())
 
+
+
+# ---------------------------------------------------------------------------
+# Connection modes: direct (no API server) and register-first
+# ---------------------------------------------------------------------------
+
+def _run_with_stubbed_connect(agent):
+    seen = {}
+
+    async def fake_connect():
+        seen["agent_id"] = agent.agent_id
+
+    agent.connect_orchestrator = fake_connect
+    asyncio.run(agent.run())
+    return seen
+
+
+def test_direct_mode_skips_register_and_uses_agent_name_as_id():
+    import client_agent
+
+    agent = client_agent.ClientAgent(orchestrator_url="ws://o.invalid", agent_name="browser-1")
+    agent.register = AsyncMock(side_effect=AssertionError("register must not run in direct mode"))
+    seen = _run_with_stubbed_connect(agent)
+    assert seen["agent_id"] == "browser-1"
+    assert agent.oauth_client is None
+
+
+def test_register_mode_registers_before_connecting():
+    import client_agent
+
+    agent = client_agent.ClientAgent(
+        orchestrator_url="ws://o.invalid", api_service_url="http://api.invalid",
+        agent_name="browser-2", api_token="tk",
+    )
+
+    async def fake_register():
+        agent.agent_id = "server-issued-7"
+
+    agent.register = fake_register
+    seen = _run_with_stubbed_connect(agent)
+    assert seen["agent_id"] == "server-issued-7"
+
+
+def test_cli_direct_mode_needs_no_credentials():
+    import client_agent
+
+    agent = client_agent.build_agent(["--orchestrator-url", "ws://o.invalid", "--agent-name", "a1"])
+    assert agent.api_service_url is None
+    assert agent.orchestrator_url == "ws://o.invalid"
+    assert agent.agent_name == "a1"
+
+
+def test_cli_requires_orchestrator_url():
+    import client_agent
+
+    with pytest.raises(SystemExit) as exc:
+        client_agent.build_agent(["--agent-name", "a1"])
+    assert exc.value.code == 2
+
+
+def test_cli_register_mode_still_requires_credentials():
+    import client_agent
+
+    with pytest.raises(SystemExit) as exc:
+        client_agent.build_agent(["--orchestrator-url", "ws://o.invalid", "--api-service-url", "http://api.invalid"])
+    assert exc.value.code == 2
+    agent = client_agent.build_agent(["--orchestrator-url", "ws://o.invalid",
+                                      "--api-service-url", "http://api.invalid", "--api-token", "tk"])
+    assert agent.api_service_url == "http://api.invalid"
+    assert agent.api_token == "tk"

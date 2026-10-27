@@ -28,10 +28,9 @@ ENV PYTHONUNBUFFERED=1
 # 5. Run the service
 # docker run \
 #   --network=host \
-#   -e API_TOKEN=your_api_token \
+#   -e ORCHESTRATOR_URL=ws://<orchestrator-host>:8080 \
 #   -e AGENT_NAME=my-agent \
 #   <your-gh-user>/client_agent:latest
 #
-# Defaults: ORCHESTRATOR_URL=wss://www.example.com, API_SERVICE_URL=https://www.example.com
-# OPENAI_API_KEY is fetched automatically from the API Service after registration.
+# ORCHESTRATOR_URL is required. Set API_SERVICE_URL plus credentials only to register first.
 ENTRYPOINT ["/entrypoint.sh"]

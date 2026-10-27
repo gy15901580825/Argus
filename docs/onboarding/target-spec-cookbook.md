@@ -125,6 +125,13 @@ How the response is parsed: `response_jsonpath` is a [JSONPath](https://goessner
 - The `agent_url` must accept `POST {"url": "<scenario URL>", "prompt": "<user instruction>"}`.
 - It must return JSON: `{"final_text": "...", "screenshots": [...], "latency_ms": <number>}`.
 
+**Running it.** `argus-probe run --local` does not run `browser_use` targets. A `browser_use` run needs a server implementing the `/api/v1/redteam` API, backed by the orchestrator, with a [`client_agent`](../../client_agent/README.md) connected to that orchestrator's WebSocket hub. The client agent serves the scenario page and calls your `agent_url`. This repo does not ship such a server; the self-hosted stack is at tag `v0.3-full`. On the agent side, connect the client agent directly to the orchestrator:
+
+```bash
+cd client_agent && pip install -r requirements.txt && playwright install chromium
+python client_agent.py --orchestrator-url ws://<orchestrator-host>:8080 --agent-name my-browser-agent
+```
+
 We provide a thin reference adapter you can drop into your agent harness; ask in the design-partner channel for the latest version.
 
 ---
@@ -146,7 +153,7 @@ We provide a thin reference adapter you can drop into your agent harness; ask in
 }
 ```
 
-**`sandbox: true` is not a formality — it's a safety interlock.** This adapter drives an agent that spends real money if you point it at a real payment endpoint. Construction is refused outright without `sandbox: true` (both the API and the CLI check it independently); there is no way to turn it off. If you think you don't need it, you're pointing this adapter at the wrong thing.
+**`sandbox: true` is not a formality — it's a safety interlock.** This adapter drives an agent that spends real money if you point it at a real payment endpoint. Construction is refused outright without `sandbox: true` (both the engine and the CLI check it independently); there is no way to turn it off. If you think you don't need it, you're pointing this adapter at the wrong thing.
 
 **What's on the other end:** `inner` is a nested target spec (any kind above — here, `openai_compat`) for the transport that actually talks to your agent; the payment adapter wraps it. The `testbed_url` must point at a running `payment_testbed/` instance from this repo — see `payment_testbed/README.md` for `testbed/` (mock merchant + facilitator) and `demo_agent/` (the vulnerable reference agent the example above points at). Nothing in `payment_testbed/` touches a blockchain or real funds.
 
@@ -173,7 +180,7 @@ We provide a thin reference adapter you can drop into your agent harness; ask in
 }
 ```
 
-**`sandbox: true` is not a formality — it's a safety interlock.** This adapter drives an agent against a live MCP server. Construction is refused outright without `sandbox: true` (both the API and the CLI check it independently); there is no way to turn it off. It exists because a red-team run that can reach a real MCP server is not a configuration mistake you want to recover from after the fact.
+**`sandbox: true` is not a formality — it's a safety interlock.** This adapter drives an agent against a live MCP server. Construction is refused outright without `sandbox: true` (both the engine and the CLI check it independently); there is no way to turn it off. It exists because a red-team run that can reach a real MCP server is not a configuration mistake you want to recover from after the fact.
 
 **What's on the other end:** `inner` is a nested target spec (any kind above — here, `openai_compat`) for the transport that actually talks to your agent. The `testbed_url` must point at a running `mcp_testbed/` instance from this repo — see `mcp_testbed/README.md` for `testbed/` (the hostile MCP server, staging tool poisoning / rug-pull / shadowing / confused-deputy / credential-lure scenarios) and `demo_agent/` (the vulnerable reference MCP client the example above points at).
 
@@ -249,7 +256,7 @@ We provide a thin reference adapter you can drop into your agent harness; ask in
 }
 ```
 
-`sandbox: true` is required here too, and both the API and the CLI refuse the spec without it.
+`sandbox: true` is required here too, and both the engine and the CLI refuse the spec without it.
 
 ---
 
@@ -318,7 +325,7 @@ Add `ANTHROPIC_API_KEY` and any key your target spec references as repository se
 
 ### Server mode: gate only on new failures
 
-The action always runs in local mode, which keeps no run history. To fail a pull request only on failures that are new relative to the base branch, run the CLI against your own Argus API server with `--compare-to`:
+The action always runs in local mode, which keeps no run history. To fail a pull request only on failures that are new relative to the base branch, run the CLI against a server implementing the `/api/v1/redteam` API with `--compare-to`:
 
 ```yaml
       - uses: actions/setup-python@v5

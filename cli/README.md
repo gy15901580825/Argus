@@ -6,7 +6,7 @@ Point `argus-probe` at any AI agent endpoint — chat APIs, custom HTTP services
 
 ```
 $ argus-probe run --target argus-target.json --probes owasp_07_system_prompt_leakage --format html --out report.html
-Submitting run to https://<your-argus-host>/api/v1/redteam/runs ...
+Submitting run to https://<your-server>/api/v1/redteam/runs ...
   run_id: abc123
 Polling until completion...
   status: completed, findings: 1
@@ -24,7 +24,7 @@ pipx install "argus-probe[local]"
 pip install "argus-probe[local]"
 ```
 
-The `[local]` extra installs the probe engine (`argus-orchestrator`) for `--local`. A plain `pip install argus-probe` gives server mode only: the CLI can then only talk to an Argus API server.
+The `[local]` extra installs the probe engine (`argus-orchestrator`) for `--local`. A plain `pip install argus-probe` gives server mode only: the CLI can then only talk to a server implementing the `/api/v1/redteam` API.
 
 From a clone of the repo: `pip install ./orchestrator ./cli`.
 
@@ -45,15 +45,15 @@ export ANTHROPIC_API_KEY="<your key>"
 argus-probe run --local --target argus-target.json \
   --probes owasp_07_system_prompt_leakage --format html --out report.html
 
-# 2b. Or submit to your own Argus API server
+# 2b. Or submit to a server implementing the /api/v1/redteam API
 export ARGUS_API_TOKEN="<your token>"
-export ARGUS_API_URL="https://<your-argus-host>"
+export ARGUS_API_URL="https://<your-server>"
 argus-probe validate-target --target argus-target.json
 argus-probe run --target argus-target.json \
   --probes owasp_07_system_prompt_leakage --format html --out report.html
 ```
 
-`--local` does not support `browser_use` targets; submit those to a server.
+`--local` does not support `browser_use` targets. Those need a server implementing the `/api/v1/redteam` API with the orchestrator and a connected `client_agent`; see the `browser_use` section of the target-spec cookbook.
 
 The local judge uses `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY` when that is the only key set. For a local model, set `REDTEAM_MODEL_PROVIDER=litellm` and `REDTEAM_FAST_MODEL=ollama/qwen2.5:32b` (add `REDTEAM_LLM_API_BASE` for a non-default host); small models miss many jailbreaks, so the CLI prints a warning. `REDTEAM_MODEL_PROVIDER=azure` runs the judge on Azure OpenAI. Azure's default content filter blocks judge calls because the judge reads attack text, so use a custom filter policy with jailbreak detection turned off for that deployment (also when `OPENAI_API_KEY` is paired with `REDTEAM_LLM_API_BASE` pointing at Azure). If `OPENAI_API_KEY` is paired with `REDTEAM_LLM_API_BASE` pointing at Azure, set `REDTEAM_FAST_MODEL` and `REDTEAM_STRONG_MODEL` to your deployment names, because the default strong model `gpt-5.6-terra` is usually not deployed. Local models other than Ollama (vLLM or LM Studio via `openai/...` with `REDTEAM_LLM_API_BASE`) are billed at the most expensive known rate, so pass `--per-run-cap`.
 

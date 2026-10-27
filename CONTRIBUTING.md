@@ -92,11 +92,8 @@ The `tests/e2e/` tests skip unless `ARGUS_E2E=1` and the relevant API keys
 are set. They make real API calls and cost money — they are not part of the
 default expectation for a PR.
 
-Note that GitHub Actions only executes workflows from the repository-root
-`.github/workflows/`. The `ci.yml` / `import-linter.yml` files inside
-`orchestrator/` and `client_agent/` are inherited from the polyrepo
-split and do not run in this repository. Run the checks locally before
-opening a PR.
+CI runs from the repository-root `.github/workflows/ci.yml`. Run the checks
+locally before opening a PR.
 
 ## Adding a new probe
 

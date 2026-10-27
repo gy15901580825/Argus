@@ -108,7 +108,8 @@ class OAuthClient:
 # --- Agent Logic ---
 
 class ClientAgent:
-    def __init__(self, orchestrator_url: str, api_service_url: str, agent_name: str,
+    def __init__(self, orchestrator_url: str, api_service_url: Optional[str] = None,
+                 agent_name: str = "default-client-agent",
                  username: Optional[str] = None,
                  password: Optional[str] = None,
                  api_token: Optional[str] = None):
@@ -120,7 +121,8 @@ class ClientAgent:
         
         Args:
             orchestrator_url: WebSocket URL of the orchestrator
-            api_service_url: HTTP URL of the API service
+            api_service_url: HTTP URL of a server to register with first. None means
+                direct mode: connect to the orchestrator with agent_name as the agent id.
             agent_name: Unique name for this agent
             username: username (user credential)
             password: password (user credential)
@@ -134,6 +136,10 @@ class ClientAgent:
         
         # OAuth client (preferred) - authenticates via API Service proxy
         self.oauth_client: Optional[OAuthClient] = None
+        self.api_token = api_token
+        if api_service_url is None:
+            # Direct mode: no server to register with, so no credentials are used.
+            return
         if username and password:
             logger.info(f"Initializing with authentication via API Service (user: {username})")
             self.oauth_client = OAuthClient(
@@ -141,9 +147,6 @@ class ClientAgent:
                 username,
                 password
             )
-        
-        # Fallback API token
-        self.api_token = api_token
         
         if not self.oauth_client and not self.api_token:
             raise ValueError("Either credentials (username/password) or API token must be provided")
@@ -348,7 +351,10 @@ class ClientAgent:
     
     async def run(self):
         self.running = True
-        await self.register()
+        if self.api_service_url:
+            await self.register()
+        else:
+            self.agent_id = self.agent_name
 
         # Start token refresh task in background if using OAuth
         refresh_task = None
@@ -366,27 +372,28 @@ class ClientAgent:
                 except asyncio.CancelledError:
                     pass
 
-if __name__ == "__main__":
+def build_agent(argv: Optional[list] = None) -> "ClientAgent":
     parser = argparse.ArgumentParser(description="Argus Client Agent - Secure Public Client")
-    parser.add_argument("--orchestrator-url", default="wss://www.example.com", help="Orchestrator WebSocket URL")
-    parser.add_argument("--api-service-url", default="https://www.example.com", help="API Service URL")
+    parser.add_argument("--orchestrator-url", required=True, help="Orchestrator WebSocket URL, e.g. ws://localhost:8080")
+    parser.add_argument("--api-service-url", default=None,
+                        help="Server to register with before connecting. Omit to connect directly, "
+                             "using --agent-name as the agent id.")
     parser.add_argument("--agent-name", default="default-client-agent", help="Unique name for this agent")
-    
+
     # authentication (SECURE: only username/password, client_secret stays on server)
-    parser.add_argument("--username", help="username")
-    parser.add_argument("--password", help="password")
-    
+    parser.add_argument("--username", help="username (with --api-service-url)")
+    parser.add_argument("--password", help="password (with --api-service-url)")
+
     # API token authentication (fallback)
-    parser.add_argument("--api-token", help="API Token for authentication (fallback)")
-    
-    args = parser.parse_args()
-    
-    # Validate that we have either credentials or API token
+    parser.add_argument("--api-token", help="API Token for authentication (with --api-service-url)")
+
+    args = parser.parse_args(argv)
+
     has_credentials = args.username and args.password
-    if not has_credentials and not args.api_token:
-        parser.error("Either credentials (--username/password) or --api-token must be provided")
-    
-    agent = ClientAgent(
+    if args.api_service_url and not has_credentials and not args.api_token:
+        parser.error("--api-service-url needs credentials (--username/--password) or --api-token")
+
+    return ClientAgent(
         orchestrator_url=args.orchestrator_url,
         api_service_url=args.api_service_url,
         agent_name=args.agent_name,
@@ -394,7 +401,11 @@ if __name__ == "__main__":
         password=args.password,
         api_token=args.api_token
     )
-    
+
+
+if __name__ == "__main__":
+    agent = build_agent()
+
     try:
         asyncio.run(agent.run())
     except KeyboardInterrupt:

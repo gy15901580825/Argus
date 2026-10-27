@@ -14,7 +14,6 @@ from fastapi import WebSocket, HTTPException
 
 logger = logging.getLogger("ConnectionManager")
 
-API_SERVICE_URL = os.getenv("API_SERVICE_URL", "http://argus-api-service.default.svc.cluster.local:8881")
 ORCHESTRATOR_SECRET = os.getenv("ORCHESTRATOR_SECRET", "default_secret_change_me")
 
 class ConnectionManager:
@@ -32,36 +31,32 @@ class ConnectionManager:
         self.active_connections[agent_id] = websocket
         logger.info(f"Agent connected: {agent_id}, ConnectionManager id: {id(self)}, total connections: {len(self.active_connections)}")
         
-        # Notify API Service to update status to active
+        await self._post_status(agent_id, "active")
+
+    async def _post_status(self, agent_id: str, status: str) -> None:
+        """Tell the API server about an agent's status, when one is configured."""
+        # API_SERVICE_URL is optional; unset means no server tracks agent status.
+        api_service_url = os.getenv("API_SERVICE_URL")
+        if not api_service_url:
+            return
         try:
             async with httpx.AsyncClient() as client:
                 await client.post(
-                    f"{API_SERVICE_URL}/api/v1/internal/agent/status",
-                    json={"agent_id": agent_id, "status": "active"},
+                    f"{api_service_url}/api/v1/internal/agent/status",
+                    json={"agent_id": agent_id, "status": status},
                     headers={"x-orchestrator-secret": ORCHESTRATOR_SECRET},
                     timeout=5.0
                 )
-            logger.info(f"Updated agent {agent_id} status to active")
+            logger.info(f"Updated agent {agent_id} status to {status}")
         except Exception as e:
-            logger.error(f"Failed to update agent status to active: {e}")
+            logger.error(f"Failed to update agent status to {status}: {e}")
 
     async def disconnect(self, agent_id: str):
         if agent_id in self.active_connections:
             del self.active_connections[agent_id]
             logger.info(f"Agent disconnected: {agent_id}, total connections: {len(self.active_connections)}")
             
-            # Notify API Service to update status to offline
-            try:
-                async with httpx.AsyncClient() as client:
-                    await client.post(
-                        f"{API_SERVICE_URL}/api/v1/internal/agent/status",
-                        json={"agent_id": agent_id, "status": "offline"},
-                        headers={"x-orchestrator-secret": ORCHESTRATOR_SECRET},
-                        timeout=5.0
-                    )
-                logger.info(f"Updated agent {agent_id} status to offline")
-            except Exception as e:
-                logger.error(f"Failed to update agent status to offline: {e}")
+            await self._post_status(agent_id, "offline")
 
     async def send_command(self, agent_id: str, method: str, params: Dict[str, Any]) -> Any:
         if agent_id not in self.active_connections:

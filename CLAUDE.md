@@ -33,7 +33,7 @@ Project docs live in `docs/`. The repo root keeps only `CLAUDE.md` and `README.m
 - `docs/runbooks/release.md` — Publish argus-probe and argus-orchestrator to PyPI (trusted publishing, TestPyPI rehearsal)
 - `docs/reference/services.md` — Orchestrator endpoints and request flows
 - `docs/onboarding/` — Quickstart, probe ID cheatsheet, target-spec cookbook
-- `docs/operations/` — Operator-facing runbooks
+- `docs/operations/judge-decider.md` — Optional third-party decider for conflicting judge verdicts
 - `docs/run-json.md` — The `run.json` format
 - `docs/agent-evaluation-deep-dive.md` / `docs/llm-agent-testing-overview.md` — Background reading
 

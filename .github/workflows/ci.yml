@@ -1,10 +1,5 @@
 name: CI
 
-# The per-service .github/workflows/ directories under orchestrator/ and
-# client_agent/ are leftovers from the polyrepo split — GitHub only runs workflows from the
-# repository root, so none of them execute here. They also carry <YOUR_ACR>-style
-# placeholders and registry-push steps that cannot work on a fork.
-#
 # This workflow deliberately does test + lint only: no secrets, no registry, no
 # deploy. It runs on any fork out of the box.
 

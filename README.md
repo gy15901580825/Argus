@@ -159,6 +159,12 @@ templates and JSONPath response extractors), `grpc`, `http_upload`,
 `browser_use`, `payment_agent`, `mcp_agent`, `testbed_agent`, `vllm_server`. Full target-spec cookbook in
 [`docs/onboarding/target-spec-cookbook.md`](docs/onboarding/target-spec-cookbook.md).
 
+`--local` does not run `browser_use` targets. A `browser_use` run needs a
+server implementing the `/api/v1/redteam` API, backed by the orchestrator,
+with a [`client_agent`](client_agent/README.md) connected to it. This repo
+does not ship that server. The agent side connects directly:
+`python client_agent/client_agent.py --orchestrator-url ws://<orchestrator-host>:8080 --agent-name my-browser-agent`.
+
 Install the `argus-probe` CLI from PyPI (Python 3.11+). The `[local]`
 extra pulls in the probe engine, so probes run on your machine and judged
 probes only need a judge key:

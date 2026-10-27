@@ -211,3 +211,13 @@ async def test_connect_tolerates_api_service_failure(fresh_manager, fake_ws):
     # Agent is still considered connected — we don't want a remote status call
     # failure to drop the WebSocket.
     assert "agent-6" in fresh_manager.active_connections
+
+
+async def test_no_status_post_when_api_service_url_unset(fresh_manager, fake_ws, quiet_status_notify, monkeypatch):
+    """Without API_SERVICE_URL (no server in front) connect/disconnect send no HTTP."""
+    monkeypatch.delenv("API_SERVICE_URL", raising=False)
+    await fresh_manager.connect(fake_ws, "agent-direct")
+    assert "agent-direct" in fresh_manager.active_connections
+    await fresh_manager.disconnect("agent-direct")
+    assert "agent-direct" not in fresh_manager.active_connections
+    assert quiet_status_notify.post.await_count == 0

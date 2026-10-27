@@ -1,6 +1,6 @@
 # Argus quickstart
 
-Point Argus at any AI agent endpoint and get a SARIF report. Local mode (step 3a) needs only a judge API key (`argus-probe quickstart` needs none). Server mode (step 3) needs a running Argus API server.
+Point Argus at any AI agent endpoint and get a SARIF report. Local mode (step 3a) needs only a judge API key (`argus-probe quickstart` needs none). Server mode (steps 3 to 5) needs a server implementing the `/api/v1/redteam` API; this repo does not ship one (see step 3).
 
 ## 1. Install the CLI
 
@@ -47,7 +47,7 @@ argus-probe run --local --target argus-target.json --probes owasp_07_system_prom
 
 The judge uses `ANTHROPIC_API_KEY` by default, or `OPENAI_API_KEY` when that is the only key set. For a local model, set `REDTEAM_MODEL_PROVIDER=litellm` and `REDTEAM_FAST_MODEL=ollama/qwen2.5:32b` (add `REDTEAM_LLM_API_BASE` for a non-default host). Small models miss many jailbreaks, so the CLI prints a warning and a clean report from one is weak evidence. `REDTEAM_MODEL_PROVIDER=azure` runs the judge on Azure OpenAI; its default content filter blocks judge calls because the judge reads attack text, so use a custom filter policy with jailbreak detection turned off for that deployment (the same applies to `OPENAI_API_KEY` with `REDTEAM_LLM_API_BASE` pointed at Azure). If `OPENAI_API_KEY` is paired with `REDTEAM_LLM_API_BASE` pointing at Azure, set `REDTEAM_FAST_MODEL` and `REDTEAM_STRONG_MODEL` to your deployment names, because the default strong model `gpt-5.6-terra` is usually not deployed. Local models other than Ollama (vLLM or LM Studio via `openai/...` with `REDTEAM_LLM_API_BASE`) are billed at the most expensive known rate, so pass `--per-run-cap`.
 
-`--local` does not support `browser_use` targets; submit those to a server.
+`--local` does not support `browser_use` targets. Those need a server implementing the `/api/v1/redteam` API with the orchestrator and a connected `client_agent`; see the `browser_use` section of the target-spec cookbook.
 
 Optional: `REDTEAM_DECIDER=jev` plus `TYPESAFE_API_KEY` lets a third-party model settle conflicting judge verdicts. It sends probe text to TypeSafe; see `docs/operations/judge-decider.md`.
 
@@ -59,7 +59,7 @@ Server mode needs a server implementing the `/api/v1/redteam` API. There is no h
 
 ```bash
 export ARGUS_API_TOKEN="<your token>"
-export ARGUS_API_URL="https://<your-argus-host>"
+export ARGUS_API_URL="https://<your-server>"
 ```
 
 `ARGUS_API_URL` is required (or pass `--api-url` per command) — there is no default endpoint.
@@ -84,7 +84,7 @@ argus-probe run \
 
 In local mode, add `--local` to the same command and drop the server variables.
 
-The CLI submits the run to the Argus API, polls for completion (typically ~10–30 s), then writes the chosen format to disk.
+The CLI submits the run to that server, polls for completion (typically ~10–30 s), then writes the chosen format to disk.
 
 Add `--per-run-cap 0.50` to enforce a hard cost ceiling (checked before any LLM call in both modes; an over-cap run exits with code 4).
 

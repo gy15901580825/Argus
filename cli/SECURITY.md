@@ -19,7 +19,7 @@ We aim to acknowledge reports within 2 business days and to ship a fix or mitiga
 
 In scope: the code under `cli/` in this repository. It is published to PyPI as `argus-probe`; the GitHub Action `gy15901580825/argus-probe-action` installs that package.
 
-Covered by the repo-level policy, not this file: the Argus API service, the orchestrator, probe content, and judge behavior.
+Covered by the repo-level policy, not this file: the orchestrator, probe content, and judge behavior.
 
 Not a vulnerability: findings the tool reports about your own agent. Those are its intended output.
 
