@@ -586,3 +586,56 @@ def test_usage_and_on_host_are_checked_before_the_sdk(monkeypatch):
     on_host = _invoke("--", "python", "server.py")
     assert on_host.exit_code == 2 and ON_HOST_MESSAGE in on_host.stderr
     assert "MCP SDK" not in usage.output + on_host.output
+
+
+# --- fix round 1 ---
+
+def test_env_values_below_the_known_secrets_floor_are_not_masked(monkeypatch, tmp_path):
+    monkeypatch.setenv("ARGUS_T8_SHORT", "k3x")
+    monkeypatch.setenv("ARGUS_T8_LONG", "m8vp")
+    _fake(monkeypatch, _result(_leaky("k3x m8vp")))
+    result = _invoke("--format", "json", "--env", "ARGUS_T8_SHORT", "--env", "ARGUS_T8_LONG", *STDIO)
+    assert result.exit_code == 0, result.output
+    report = (tmp_path / OUT_FILE["json"]).read_text(encoding="utf-8")
+    assert "k3x ***" in report and "m8vp" not in report
+    assert "k3x ***" in result.stdout and "m8vp" not in result.output
+
+
+def test_out_in_a_missing_directory_is_a_usage_error(monkeypatch, tmp_path):
+    seen = _fake(monkeypatch)
+    result = _invoke("--out", str(tmp_path / "nodir" / "r.html"), URL)
+    assert result.exit_code == 2, result.output
+    assert "does not exist" in result.output and "nodir" in result.output
+    assert seen == []
+
+
+def _unwritable(monkeypatch, name):
+    real = Path.write_text
+
+    def write_text(self, *a, **k):
+        if self.name == name:
+            raise OSError(28, "No space left on device")
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(Path, "write_text", write_text)
+
+
+def test_report_write_failure_exits_1_without_traceback(monkeypatch, tmp_path):
+    _fake(monkeypatch)
+    _unwritable(monkeypatch, "r.html")
+    result = _invoke("--out", "r.html", URL)
+    assert result.exit_code == 1, result.output
+    assert "Error: cannot write r.html: [Errno 28] No space left on device" in result.stderr
+    assert "Traceback" not in result.output and "Wrote report" not in result.output
+
+
+def test_unknown_call_tools_shows_ten_names_and_a_count(monkeypatch):
+    names = [f"tool_{i:02d}" for i in range(25)]
+    _fake(monkeypatch, raises=UnknownTools(["nope"], names))
+    result = _invoke(URL, "--call-tools", "nope")
+    assert result.exit_code == 2, result.output
+    assert f"The server lists: {', '.join(names[:10])} and 15 more." in result.stderr
+    assert "tool_10" not in result.output
+    _fake(monkeypatch, raises=UnknownTools(["nope"], names[:10]))
+    exact = _invoke(URL, "--call-tools", "nope")
+    assert f"The server lists: {', '.join(names[:10])}." in exact.stderr and "more" not in exact.stderr

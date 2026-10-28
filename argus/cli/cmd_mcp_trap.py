@@ -7,12 +7,11 @@ import sys
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 
 import click
 
 from argus.cli import mcp_sdk, reports, run_json
-from argus.cli.cmd_run import _apply_fail_on
+from argus.cli.cmd_run import _apply_fail_on, _check_out_dir, _write_report
 from argus.cli.severity import SEVERITY_ORDER
 from argus.cli.target_loader import TargetLoadError, load_target_spec_with_secrets
 from argus.mcp_trap import wiring
@@ -129,6 +128,7 @@ def cmd_mcp_trap(target: str, rounds: int, scenarios: list[str], out_file: str |
     if print_config:
         click.echo(wiring.config_entry(address))
         return
+    _check_out_dir(out_file)
     problem = _sdk_problem()
     if problem:
         click.echo(problem, err=True)
@@ -216,7 +216,7 @@ def cmd_mcp_trap(target: str, rounds: int, scenarios: list[str], out_file: str |
         # Same scrub as run.json, so no format can leak what another one masks.
         report = render(run_json.scrub_run(run, secret_values))
     out_file = out_file or f"argus-mcp-trap-report.{_EXTENSIONS[report_format]}"
-    Path(out_file).write_text(report, encoding="utf-8")
+    _write_report(out_file, report, encoding="utf-8", echo=say)
     say(f"Wrote report to {out_file}")
 
     refused = trap_run.refused_only_requests

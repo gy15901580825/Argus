@@ -18,9 +18,9 @@ from pathlib import Path
 import click
 
 from argus.cli import reports, run_json
-from argus.cli.cmd_run import _apply_fail_on
+from argus.cli.cmd_run import _apply_fail_on, _check_out_dir, _count_fail_on, _write_report
 from argus.cli.mcp_sdk import CONTROL_RE, STOP_MESSAGES, cancel_on_stop_signals, sdk_problem
-from argus.cli.severity import SEVERITY_ORDER, findings_at_or_above
+from argus.cli.severity import SEVERITY_ORDER
 
 # Phase A: stdio runs only on the host, and only when asked; the sandbox task replaces this switch.
 STDIO_REQUIRES_ON_HOST = True
@@ -34,6 +34,7 @@ _HOST_NOTE = "Running the server on this machine (--on-host); child processes it
 _HEADER_RE = re.compile(r"\s*([!#$%&'*+.^_`|~0-9A-Za-z-]+)\s*:\s*(\S.*?)\s*")
 _EXCERPT_MAX = 100
 _SDK_LOGGERS = ("mcp", "client")
+_NAMES_SHOWN = 10
 
 
 @dataclass(frozen=True)
@@ -145,13 +146,6 @@ def _console_line(f: dict, clean) -> str:
     return f"  {f.get('severity', '?'):<9} {f.get('probe_id', '?'):<36} {ev.get('tool') or '-'}  {judged}{text}"
 
 
-def _say_fail_on_count(findings: list[dict], fail_on: str | None, say) -> None:
-    hits = findings_at_or_above(findings, fail_on) if fail_on else []
-    if hits:
-        ids = ", ".join(sorted({h.get("probe_id", "?") for h in hits}))
-        say(f"{len(hits)} finding(s) at or above {fail_on}: {ids}", err=True)
-
-
 @click.command("scan-mcp")
 @click.argument("argv", nargs=-1, metavar="URL | -- COMMAND [ARGS]...")
 @click.option("--call-tools", "call_tools", default=None, callback=_parse_call_tools, metavar="NAMES|all",
@@ -180,6 +174,7 @@ def cmd_scan_mcp(argv: tuple[str, ...], call_tools, tool_args: dict, headers: tu
     from argus.mcp_scan import known_secrets
     from argus.mcp_scan.client import ConnectError, HttpServer, StdioServer, host_env
 
+    _check_out_dir(out_file)
     if not argv or (_is_http_url(argv[0]) and len(argv) > 1):
         raise click.UsageError(_USAGE)
     url = argv[0] if _is_http_url(argv[0]) else None
@@ -218,7 +213,8 @@ def cmd_scan_mcp(argv: tuple[str, ...], call_tools, tool_args: dict, headers: tu
             judge_off = llm.credential_error(resolved) or ""
             judge_config = None if judge_off else resolved
 
-    found = [v for _, v in headers] + [env[n] for n in env_names]
+    # Header values are masked at any length; --env values share known_secrets' floor, so DEBUG=1 masks no "1".
+    found = [v for _, v in headers] + [env[n] for n in env_names if len(env[n]) >= known_secrets.VALUE_MIN]
     found += known_secrets.url_secrets(url) if url is not None else known_secrets.command_secrets(argv)
     # Printed text has control bytes stripped, so a secret holding one must match in stripped form too.
     found += [CONTROL_RE.sub("", v) for v in found if CONTROL_RE.search(v)]
@@ -263,7 +259,10 @@ def cmd_scan_mcp(argv: tuple[str, ...], call_tools, tool_args: dict, headers: tu
             say(f"The server's stderr ended with:\n{e.stderr_tail}", err=True)
         sys.exit(1)
     except scan.UnknownTools as e:
-        say(f"Error: {e}. The server lists: {', '.join(e.valid) or 'no tools'}.", err=True)
+        shown = ", ".join(e.valid[:_NAMES_SHOWN]) or "no tools"
+        if len(e.valid) > _NAMES_SHOWN:
+            shown += f" and {len(e.valid) - _NAMES_SHOWN} more"
+        say(f"Error: {e}. The server lists: {shown}.", err=True)
         sys.exit(2)
     except Exception as e:  # no traceback for the operator
         say(f"Error: {e}", err=True)
@@ -300,18 +299,18 @@ def cmd_scan_mcp(argv: tuple[str, ...], call_tools, tool_args: dict, headers: tu
         # Same scrub as run.json, so no format can leak what another one masks.
         report = render(run_json.scrub_run(run, secret_values))
     out_file = out_file or f"argus-mcp-scan-report.{_EXTENSIONS[report_format]}"
-    Path(out_file).write_text(report, encoding="utf-8")
+    _write_report(out_file, report, encoding="utf-8", echo=say)
     say(f"Wrote report to {out_file}")
     for note in result.notes:
         say(note)
 
     if result.all_selected_unexercised:
-        _say_fail_on_count(result.findings, fail_on, say)
+        _count_fail_on(result.findings, fail_on)
         say("No tool selected for calling could be exercised, so the call checks did not run; the notes above say "
             "why.", err=True)
         sys.exit(1)
     if result.unjudged:
-        _say_fail_on_count(result.findings, fail_on, say)
+        _count_fail_on(result.findings, fail_on)
         say(f"{result.unjudged} probe result(s) were left unjudged (cost cap or an unusable judge reply), so the "
             "scan is inconclusive; raise --per-run-cap to judge them.", err=True)
         sys.exit(1)
