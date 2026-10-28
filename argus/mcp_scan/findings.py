@@ -11,7 +11,7 @@ from argus.mcp_scan import rules
 from argus.mcp_scan.calls import CallRun, ToolOutcome, good_result, show_text
 from argus.mcp_scan.checks import (COMMAND, CROSS_SESSION, DESCRIPTION, HIDDEN, INJECTION, LIST_CHANGED, REFLECTION,
                                    SCHEMA, SECRET, TRAVERSAL)
-from argus.mcp_scan.judging import CAP_REASON, ERROR_REASON, JudgeOutcome
+from argus.mcp_scan.judging import CAP_REASON, ERROR_REASON, OFF_REASON, JudgeOutcome
 from argus.mcp_scan.models import RESULT_KEEP, CallRecord, Hit, ToolInfo
 from argus.mcp_scan.payloads import PATH_LIKE
 from argus.probe import Probe
@@ -34,7 +34,8 @@ NO_RELIST = "the second tools/list did not complete, so the tool list was not co
 
 _STATIC = frozenset({DESCRIPTION, SCHEMA})
 _PAYLOAD_FAMILIES = frozenset({"cmd", "path", "relay"})
-_UNJUDGED = frozenset({"cap", "error"})
+# A text the judge did not decide is never a pass; only cap and error make the run inconclusive.
+_UNJUDGED = frozenset({"cap", "error", "off"})
 
 
 def finding(probe: Probe, *, verdict: str, severity: str, reasoning: str, evidence: dict, attack_prompt: str = "",
@@ -99,7 +100,9 @@ def build_findings(*, probes: Mapping[str, Probe], hits: list[Hit], outcomes: li
 
 
 def unjudged_count(findings: list[dict]) -> int:
-    """(probe, tool) pairs the judge left undecided (cost cap or unusable reply); each makes the run inconclusive."""
+    """(probe, tool) pairs the judge left undecided (cost cap or unusable reply); each makes the run inconclusive.
+
+    A judge that is off is not counted: the spec keeps that case out of the exit code."""
     return sum(f["verdict"] == VERDICT_ERROR and f["reasoning"] in (CAP_REASON, ERROR_REASON) for f in findings)
 
 
@@ -287,10 +290,13 @@ def _fail(ctx: _Ctx, probe: Probe, name: str | None) -> dict:
 
 def _unjudged(ctx: _Ctx, probe: Probe, name: str | None) -> dict:
     left = [o for o in ctx.judged[(probe.id, name)] if o.status in _UNJUDGED]
+    # Cap or error outranks off, so a run that is inconclusive is counted as one.
+    left.sort(key=lambda o: o.status == "off")
     shown_name = show_text(name) if name is not None else None
     items = [{"tool": shown_name, "call_seq": o.candidate.call_seq, "source": o.candidate.source,
               "excerpt": show_text(rules.redact(o.candidate.text, ctx.decoys))} for o in left[:ITEMS_MAX]]
-    return finding(probe, verdict=VERDICT_ERROR, severity="info", reasoning=left[0].reasoning,
+    reasoning = OFF_REASON if left[0].status == "off" else left[0].reasoning
+    return finding(probe, verdict=VERDICT_ERROR, severity="info", reasoning=reasoning,
                     evidence=ctx.evidence(tool=shown_name, tools=[shown_name] if shown_name else [], items=items))
 
 

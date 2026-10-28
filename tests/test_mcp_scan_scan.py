@@ -8,7 +8,7 @@ import pytest
 import argus
 from argus.mcp_scan import checks
 from argus.mcp_scan.findings import READONLY, SNYK_LINE
-from argus.mcp_scan.judging import CAP_REASON
+from argus.mcp_scan.judging import CAP_REASON, OFF_REASON
 from argus.probe import load_all_probes
 
 pytest.importorskip("mcp")
@@ -111,11 +111,12 @@ async def test_notes_end_with_snyk_line():
     result, _ = await scan(stdio_cfg(call_tools=frozenset({"echo"}), args=AIMED_ARGS))
     assert result.notes[-1] == SNYK_LINE
     assert sum(n == SNYK_LINE for n in result.notes) == 1
-    # Judge off: the note names the reason, then one line per text; the exit is unaffected.
+    # Judge off: the note names the reason, then one line per text; the text is an error, the exit is unaffected.
     i = result.notes.index("Judge skipped: no judge credentials; 1 text(s) that looked aimed at a model "
                            "were not judged:")
     assert result.notes[i + 1] == f"not judged: {checks.INJECTION} echo: {AIMED}"
-    assert result.unjudged == 0 and [f["verdict"] for f in by(result, checks.INJECTION)] == ["pass"]
+    assert result.unjudged == 0
+    assert [(f["verdict"], f["reasoning"]) for f in by(result, checks.INJECTION)] == [("error", OFF_REASON)]
 
 
 def test_host_note_does_not_point_at_an_unshipped_sandbox():

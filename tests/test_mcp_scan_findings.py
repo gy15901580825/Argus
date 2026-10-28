@@ -12,7 +12,7 @@ from argus.mcp_scan import checks, findings
 from argus.mcp_scan.calls import CallRun, ToolOutcome
 from argus.mcp_scan.findings import (READONLY, SNYK_LINE, all_selected_unexercised, build_findings,
                                      inventory_notes, unjudged_count)
-from argus.mcp_scan.judging import CAP_REASON, ERROR_REASON, JudgeOutcome
+from argus.mcp_scan.judging import CAP_REASON, ERROR_REASON, OFF_REASON, JudgeOutcome
 from argus.mcp_scan.models import CallRecord, CallResult, Candidate, Hit, PlannedCall, ToolInfo
 from argus.probe import load_all_probes
 from test_contract_freeze import FINDING_KEYS
@@ -186,12 +186,18 @@ def test_cap_unjudged_tool_is_error_and_not_in_pass_tools(status, reason):
     assert unjudged_count(fs) == 2
 
 
-def test_judge_off_text_is_a_note_not_an_inconclusive():
+def test_judge_off_text_is_an_error_but_not_inconclusive():
     listed, run = two_tools_called()
-    outs = [outcome(checks.INJECTION, "a", "off", seq=2)]
+    outs = [outcome(checks.INJECTION, "a", "off", seq=2), outcome(checks.DESCRIPTION, "b", "off")]
     fs = build(outcomes=outs, calls=run, listed=listed)
-    assert [p["evidence"]["tools"] for p in by(fs, checks.INJECTION, "pass")] == [["a", "b"]]
-    assert unjudged_count(fs) == 0 and not by(fs, checks.INJECTION, "error")
+    [e] = by(fs, checks.INJECTION, "error")
+    assert (e["severity"], e["reasoning"], e["evidence"]["tool"]) == ("info", OFF_REASON, "a")
+    assert [p["evidence"]["tools"] for p in by(fs, checks.INJECTION, "pass")] == [["b"]]
+    [d] = by(fs, checks.DESCRIPTION, "error")
+    assert (d["reasoning"], d["evidence"]["tool"]) == (OFF_REASON, "b")
+    assert [p["evidence"]["tools"] for p in by(fs, checks.DESCRIPTION, "pass")] == [["a"]]
+    # The judge being off does not make the run inconclusive.
+    assert unjudged_count(fs) == 0
 
 
 def test_no_tool_called_dynamic_probes_skipped_static_still_run():

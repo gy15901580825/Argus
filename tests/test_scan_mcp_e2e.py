@@ -112,6 +112,9 @@ def test_vulnerable_server_fails_each_dynamic_probe(transport):
     # The judge is off, so the status text that only looks aimed at a model is listed, not decided.
     assert "Judge skipped:" in result.output
     assert f"not judged: {checks.INJECTION} status:" in result.output
+    # Not judged is never a pass: the status tool gets an error, not a place in the pass list.
+    status = [f for f in _by_probe(run, checks.INJECTION) if "status" in f["evidence"]["tools"]]
+    assert [(f["verdict"], f["reasoning"]) for f in status] == [("error", "not judged: judge off")]
     token = fake_token()
     assert token not in Path(OUT["json"]).read_text(encoding="utf-8")
     assert token not in result.output

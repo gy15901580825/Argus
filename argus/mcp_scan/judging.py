@@ -18,6 +18,7 @@ JUDGE_MAX_TOKENS = 400  # what Judge._call asks for
 _PROMPT_FRAME_CHARS = 1000
 CAP_REASON = "not judged: cost cap"
 ERROR_REASON = "not judged: judge reply unusable"
+OFF_REASON = "not judged: judge off"
 
 
 @dataclass
@@ -63,7 +64,7 @@ class JudgeGate:
     async def judge_all(self, candidates: list[Candidate], mask: Callable[[str], str]) -> list[JudgeOutcome]:
         """One outcome per candidate, in order. Duplicate texts share one judge call."""
         if self.config is None or not self.per_run_cap_usd > 0:  # a NaN cap means off, not unbounded
-            return [JudgeOutcome(c, "off") for c in candidates]
+            return [JudgeOutcome(c, "off", reasoning=OFF_REASON) for c in candidates]
         if not candidates:
             return []
         cap = self.per_run_cap_usd
