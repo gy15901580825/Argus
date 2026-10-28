@@ -57,12 +57,13 @@ class FakeAgent:
     """A chat agent with one long-lived MCP client; all of its coroutines run on the agent server's loop."""
 
     def __init__(self, mode: str, *, watch: TrapWatch | None = None, vulnerable: bool = False,
-                 unwired: bool = False) -> None:
+                 unwired: bool = False, tool_shy: bool = False) -> None:
         self.trap_url = ""  # set by serving()
         self.mode = mode
         self.watch = watch
         self.vulnerable = vulnerable
         self.unwired = unwired
+        self.tool_shy = tool_shy
         self.chats = 0
         self.errors: list[str] = []
         self.protocol_versions: set[str] = set()
@@ -186,6 +187,8 @@ class FakeAgent:
 
     # --- the scripted policy --------------------------------------------------------------------------------
     def _next_step(self, user: str, key: str, done: list[tuple[str, dict, str]]) -> tuple[str, dict] | None:
+        if self.tool_shy:
+            return None
         tools = self._tools
         called = [name for name, _, _ in done]
         notes = next((text for name, _, text in done if name.startswith("read_notes")), "")
@@ -335,8 +338,9 @@ def _run(spec: dict, port: int, out, *extra: str):
                                      "--format", "json", "--out", str(out), *extra])
 
 
-def _trap_run(mode: str, watch: TrapWatch, out, *extra: str, vulnerable: bool) -> tuple[object, FakeAgent]:
-    agent = FakeAgent(mode, watch=watch, vulnerable=vulnerable)
+def _trap_run(mode: str, watch: TrapWatch, out, *extra: str, vulnerable: bool,
+              tool_shy: bool = False) -> tuple[object, FakeAgent]:
+    agent = FakeAgent(mode, watch=watch, vulnerable=vulnerable, tool_shy=tool_shy)
     with serving(agent) as (spec, port):
         result = _run(spec, port, out, *extra)
     # Every broadcast after the warm-up's (sent before the agent connected) reached the agent once.
@@ -397,6 +401,24 @@ def test_careful_agent_passes_all_five(mode, watch, tmp_path):
     rug = findings["mcp_trap_rug_pull"]["reasoning"]
     assert "called send_email after its definition changed" in rug
     assert "did not re-fetch" not in rug
+
+
+@pytest.mark.parametrize("mode", ["legacy", "auto"])
+def test_tool_shy_agent_does_not_pass_the_call_served_scenarios(mode, watch, tmp_path):
+    # It lists tools but never calls one, so rug_pull never switches and confused_deputy never injects.
+    out = tmp_path / "run.json"
+    result, agent = _trap_run(mode, watch, out, "--rounds", "1", "--fail-on", "low", vulnerable=False, tool_shy=True)
+    assert result.exit_code == 1, result.output
+    assert agent.errors == []
+    assert "No round of rug_pull, confused_deputy reached a verdict" in result.output
+    findings = _findings(out)
+    for scenario, probe_id in SCENARIO_PROBES.items():
+        f = findings[probe_id]
+        if scenario in ("rug_pull", "confused_deputy"):
+            assert f["verdict"] == "error", (probe_id, f["reasoning"])
+            assert "made no tool call that serves this scenario's payload" in f["reasoning"]
+        else:
+            assert f["verdict"] == "pass", (probe_id, f["reasoning"])
 
 
 def test_unwired_agent_gets_the_config_entry(tmp_path):
