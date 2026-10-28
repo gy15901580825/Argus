@@ -98,12 +98,27 @@ def redact(spec: dict) -> dict:
     return _redact(spec)[0]
 
 
+def _ordered(values: Iterable[str]) -> list[str]:
+    # Longest first, so a secret that contains another is masked whole.
+    return sorted({s for s in values if s and s != MASK}, key=len, reverse=True)
+
+
+def mask_text(text: str, secrets: list[str]) -> str:
+    """Replace every value of `secrets` (as returned by run_secrets) inside `text`."""
+    for s in secrets:
+        text = text.replace(s, MASK)
+    return text
+
+
+def run_secrets(target_spec: dict, secret_values: Iterable[str] = ()) -> list[str]:
+    """Every value scrub_run masks for this spec: `secret_values` plus the spec's secret-named literals."""
+    return _ordered((*secret_values, *_redact(target_spec or {})[1]))
+
+
 def _scrub(value: Any, secrets: list[str], keys: bool = False) -> Any:
     """Replace every secret value inside every string, longest first. Dict keys too when `keys`."""
     if isinstance(value, str):
-        for s in secrets:
-            value = value.replace(s, MASK)
-        return value
+        return mask_text(value, secrets)
     if isinstance(value, dict):
         out: dict = {}
         for k, v in value.items():
@@ -132,7 +147,7 @@ def scrub_run(run: dict, secret_values: Iterable[str] = ()) -> dict:
     literal values and of `secret_values` in every string of the run."""
     spec, literal = _redact(run.get("target_spec") or {})
     plain = json.loads(json.dumps({**run, "target_spec": spec}, default=_default))
-    secrets = sorted({s for s in (*secret_values, *literal) if s and s != MASK}, key=len, reverse=True)
+    secrets = _ordered((*secret_values, *literal))
     out = _scrub(plain, secrets)
     # Evidence is free-form and may key on a secret; schema keys elsewhere must stay intact.
     for f in out.get("findings") or []:

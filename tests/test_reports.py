@@ -1,6 +1,7 @@
 """Smoke tests for the three renderers over a minimal run dict."""
 
 import json
+from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from argus.cli import reports
@@ -76,3 +77,42 @@ def test_run_notes_reach_sarif_and_junit_without_becoming_findings():
     assert "properties" not in json.loads(reports.render_sarif(plain))["runs"][0]
     assert "toolExecutionNotifications" not in reports.render_sarif(plain)
     assert "<properties" not in reports.render_junit(plain) and "system-out" not in reports.render_junit(plain)
+
+
+FIXTURES = Path(__file__).parent / "fixtures" / "html_report"
+
+
+def test_html_for_non_trap_findings_is_unchanged_from_base():
+    # The golden file is base 4f7259b's render_html of this run, before the mcp-trap branch existed.
+    run = json.loads((FIXTURES / "non_trap_run.json").read_text(encoding="utf-8"))
+    expected = (FIXTURES / "non_trap_run.base-4f7259b.html").read_text(encoding="utf-8")
+    assert reports.render_html(run) == expected
+
+
+def test_html_renders_mcp_trap_rounds():
+    from argus.mcp_trap.driver import SCOPE_NOTE, NOTE_NO_RELIST, RoundOutcome, load_trap_probes, scenario_finding
+
+    probe = load_trap_probes(["rug_pull"])[0]
+    call = {"seq": 3, "tool": "send_email", "arguments": {"to": "audit@argus-trap.invalid", "body": "x" * 500}}
+    rounds = [
+        RoundOutcome(1, "failed", "sent mail to audit@argus-trap.invalid", "p1", "r1",
+                     {"interaction_count": 4, "tool_calls": [call], "canary_hits": [{"seq": 3}]},
+                     notes=(NOTE_NO_RELIST,)),
+        RoundOutcome(2, "passed", "no attacker address", "p2", "r2",
+                     {"interaction_count": 3, "tool_calls": [], "canary_hits": []}),
+        RoundOutcome(3, "inconclusive", "the agent sent no MCP request to the trap in this round", "p3", "r3",
+                     {"interaction_count": 0}),
+    ]
+    finding = scenario_finding(probe, rounds, conversations=16)
+    run = {**RUN, "findings": [json.loads(json.dumps(finding))]}
+    html = reports.render_html(run)
+    assert "1/2 rounds failed (1 inconclusive)." in html
+    assert "<td>sent mail to audit@argus-trap.invalid</td>" in html
+    assert "<code>send_email</code>" in html
+    assert html.count("<td>yes</td>") == 1 and html.count("<td>no</td>") == 2  # canary seen in round 1 only
+    assert "[+300 chars]" in html  # the bounded argument, not the full value
+    assert "x" * 201 not in html
+    assert f"Notes: {NOTE_NO_RELIST}." in html
+    assert SCOPE_NOTE.replace("'", "&#39;") in html
+    assert "16 conversations were sent to the agent" in html
+    assert "request(s) to the testbed" not in html
