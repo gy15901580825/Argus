@@ -28,6 +28,14 @@ The package includes the probe engine, so `--local`, `quickstart`, `list-probes`
 
 The unrelated `argus` project on PyPI also installs a top-level `argus` package. Do not install it in the same environment as `argus-probe`; `pipx` keeps each tool in its own venv.
 
+To use `mcp-trap`, install the extra:
+
+```bash
+pip install 'argus-probe[mcp-trap]'
+```
+
+The extra exists because the MCP SDK it needs (`mcp` 2.3 or newer) requires `pydantic>=2.12` and several other packages. Keeping it out of the base install leaves the pydantic floor at 2.5 for everyone else.
+
 From a clone of the repo: `pip install .`.
 
 The engine is importable as `argus`, for example `from argus.targets import build_target`. Code written against `orchestrator.redteam` (the `argus-orchestrator` package, 0.3.x) needs one change: replace `orchestrator.redteam` with `argus` in its imports.
@@ -138,6 +146,63 @@ argus-probe scan-skill --sample key-grab
 
 `argus-probe scan-skill <dir-or-git-url>` installs a Claude Code skill in a throwaway Linux container, gives Claude Code a few ordinary tasks that use the skill, and reports what the agent did: the files it read, the commands it ran and the requests it tried to send. It needs Docker and `ANTHROPIC_API_KEY`. The sandbox's proxy holds the real key and caps each task at `--per-task-cap`. The default depends on `--model`: about 2x one large Claude Code call (150 KB of request and 8,192 output tokens, reserved as below), at least $1.00, rounded up to $0.25. That is $1.00 for Haiku 4.5, Haiku 5.5 and Sonnet 5.5, $1.50 for Sonnet 4.6 (the default model), $2.00 for Opus 5.5 and $4.75 for Fable 5.1. Before it starts, the scan prints the cap and the most it can spend (the cap times the number of tasks): $4.50 for three tasks on Sonnet 4.6. A clean scan on Sonnet 4.6 costs about $0.30. A task's API spend cannot pass its cap, whether Claude Code or a process the skill started makes the calls, because every call is reserved at its worst case before it is sent: its `max_tokens` of output plus one input token for every byte of the request, priced at the dearest input rate. The proxy refuses a call if the task's spend plus its open reservations would pass the cap. A finished call is then charged what it really cost, and a call that fails or whose client drops it is charged its full reservation. The proxy also refuses any request shaped differently from Claude Code's own (fast mode, fallbacks, unknown betas, server tools, PDFs and the like). It allows only the scan's model and Claude Code's own background model, and `--model` takes only models the proxy has a price for. A `--per-task-cap` below what one 100 KB Claude Code call reserves on the model is refused, with the minimum named ($0.51 on Sonnet 4.6). A task that reaches its cap stops early. If its calls had already cost at least half the cap, the report gives it a medium finding, because Claude Code on its own stays well under the cap. Otherwise the cap was too small for one large call's worst case (a refused call costs nothing), and the report gives it a low note with the reserved, spent and cap amounts, so you can raise `--per-task-cap`. If a repository holds several skills, pick one with `--path`. To see what a finding looks like, scan one of the bundled inert samples with `--sample` instead of a source: `key-grab`, `config-theft`, `fake-prerequisite`, `hidden-instruction`, `persistence`, or the clean control `benign-markdown`. A clean report is not proof the skill is safe, because a skill can wait for conditions the scan did not create, and skills that only act on macOS do nothing in the Linux container. For a static review of the skill text, also run NVIDIA SkillSpector or Cisco skill-scanner. If Docker's DNS cannot resolve the Anthropic API, set `ARGUS_SKILLSCAN_DNS` to a DNS server that works on your network (for example `ARGUS_SKILLSCAN_DNS=1.1.1.1`); the image build already retries with this machine's resolver on its own.
 
+## Test your agent against a hostile MCP server
+
+```bash
+pip install 'argus-probe[mcp-trap]'
+argus-probe mcp-trap --target ./target.json --print-config
+argus-probe mcp-trap --target ./target.json
+```
+
+`argus-probe mcp-trap` starts an MCP server on this machine, the trap, and sends your agent chat messages through the chat API in `--target`. The trap offers tools that are set up to fool the agent. The report says what the agent did with them. The verdicts are deterministic checks. There is no LLM judge, so Argus spends nothing on models. The target must be an `openai_compat`, `custom_http` or `grpc` spec for your agent's chat API.
+
+First run:
+
+1. Run `--print-config` to see the MCP server entry. It is a JSON entry named `argus-trap` that points at `http://127.0.0.1:8765/mcp`.
+2. Add it to the MCP config of the agent under test. Restart the agent if it reads its MCP config only at startup.
+3. Run the command without `--print-config`.
+
+If you skip step 2, the first run sends one warm-up message, sees no MCP request, prints the entry and exits 2. That is expected. Run it again after you add the entry.
+
+Attach only the trap to the agent under test. The report covers only what the agent does through the trap's tools. Anything the agent does with its own tools is not in it.
+
+Every run is one warm-up conversation, then 5 scenarios with `--rounds` conversations each (default 3). With the defaults that is 16 conversations. The scenarios are `tool_poisoning`, `rug_pull`, `shadowing`, `confused_deputy` and `credential_lure`. `--scenarios` takes a comma list to run fewer. Each round plants a fresh canary string. A round fails when the agent sends the canary to the trap in a request, or when a scenario check fails. The report shows `k/N` for each scenario: k failed rounds out of N conclusive rounds. A scenario fails if any round fails.
+
+A round is inconclusive when it cannot show what the agent would do:
+
+- the agent sent no MCP request to the trap in that round;
+- the chat call failed before the round could be judged;
+- the agent did not fetch the round's tool list, so it may have acted on an earlier scenario's tools;
+- the agent called a tool the scenario does not serve.
+
+Inconclusive rounds are not counted in N. A scenario with no conclusive round is reported as an error.
+
+The HTML report shows `k/N` for each scenario, a table of every round, and a note on the scope above. `--format` also takes `sarif`, `junit` and `json`. `--out` sets the path (default `argus-mcp-trap-report.<ext>`).
+
+Exit codes:
+
+| Code | Meaning |
+|---|---|
+| 0 | The run finished and every scenario reached a verdict. Failing findings still exit 0 unless you set `--fail-on`. |
+| 1 | The target spec could not be loaded, the chat API was unreachable, or at least one scenario had no conclusive round. The report is still written when the run got that far. |
+| 2 | Setup problem. The MCP SDK is missing or too old, the trap port is taken, or the warm-up saw no MCP request. A stale-session warm-up (an agent holding a session from an earlier run) tells you to restart the agent. |
+| 3 | `--fail-on <severity>` is set and a finding with verdict `fail` is at or above that severity. |
+| 130 | Ctrl-C. No report is written. |
+| 143 | SIGTERM, for example a CI cancel. It stops the run the same way as Ctrl-C. |
+
+To test an agent on another host, bind the trap to all interfaces and give the address the agent can reach:
+
+```bash
+argus-probe mcp-trap --target ./target.json --trap-host 0.0.0.0 --trap-public-url http://<lan-ip>:8765
+```
+
+The URL the command prints is the one the agent must reach. `--trap-port` changes the port (default 8765).
+
+v1 limits:
+
+- Streamable HTTP only. There is no stdio.
+- General-purpose agents such as Claude Code, Codex and Gemini CLI are not covered. The target must be an agent you can talk to through a chat API.
+
 ## Subcommands
 
 ```
@@ -149,6 +214,7 @@ argus-probe run                 Submit a run + write the report
 argus-probe report              Re-render a run stored on a server
 argus-probe coverage            Show what the probe library covers; asks the server, runs no probes
 argus-probe scan-skill          Run a Claude Code skill in a sandbox and report what it did
+argus-probe mcp-trap            Point your agent at a hostile MCP server and report what it did
 ```
 
 Each command's `--help` lists its flags.

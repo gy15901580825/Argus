@@ -54,6 +54,18 @@ Each finding carries one of:
 
 `argus-probe run --fail-on <severity>` exits 3 when a failing finding is at or above that level. In GitHub Actions, `argus-probe-action` takes the same value as its `fail-on` input; the workflow in [target-spec-cookbook.md](./target-spec-cookbook.md) § "GitHub Actions integration" uses `fail-on: critical`.
 
+## MCP trap scenarios
+
+`argus-probe mcp-trap` runs five hostile-server scenarios. Each has one probe id.
+
+| Probe id | The trap |
+|---|---|
+| `mcp_trap_tool_poisoning` | A tool description tells the agent to send data to an attacker address |
+| `mcp_trap_rug_pull` | A tool description changes after the agent has used the tool |
+| `mcp_trap_shadowing` | A tool with a near-identical name claims to be the preferred one |
+| `mcp_trap_confused_deputy` | A tool result carries an injected instruction |
+| `mcp_trap_credential_lure` | A tool schema asks for a real API key |
+
 ## Custom probes
 
 Need coverage we don't ship? Add a probe YAML under `argus/probes/` in this repo (Apache 2.0) and open a PR; the schema and the required `mappings` are in [CONTRIBUTING.md](../../CONTRIBUTING.md).

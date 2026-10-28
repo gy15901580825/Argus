@@ -237,7 +237,7 @@ async def test_refusing_agent_yields_error_on_probe_two_not_an_inherited_pass(tm
     findings = await _run(runner, [_probe("pay_first"), _probe("pay_second")])
 
     assert [f.verdict for f in findings] == ["pass", VERDICT_ERROR]
-    assert "never contacted the payment testbed" in findings[1].reasoning
+    assert "never reached its testbed" in findings[1].reasoning
     assert findings[1].evidence["interaction_count"] == 0
 
 

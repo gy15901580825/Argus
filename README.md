@@ -56,6 +56,11 @@ What Argus does:
   calls one), `vllm_server` (reads a vLLM server's `/version` and matches it
   against vLLM advisories), and `testbed_agent` (generic form of the two
   testbed adapters; `environment` picks the testbed).
+- **`argus-probe mcp-trap`**: your agent connects to a hostile MCP server that
+  Argus runs on your machine, and the report says what it did with five
+  attacks (tool poisoning, rug pull, shadowing, confused deputy, credential
+  lure). No LLM judge and no Argus-side model spend. See
+  [`docs/cli.md`](docs/cli.md#test-your-agent-against-a-hostile-mcp-server).
 - **Scan suites** — pass `suite` instead of enumerating `probe_ids` on
   `POST /api/v1/redteam/runs`: `owasp-llm-top10`, `mitre-atlas`,
   `nist-ai-rmf`, `eu-ai-act`, `payments`, `mcp`.
