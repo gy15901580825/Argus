@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from typing import ClassVar
 from urllib.parse import urlsplit
 
+from fastapi import WebSocketDisconnect
+
 from argus.targets._base import Target, TargetDeliveryError, Turn
 
 _SCENARIO_KINDS = frozenset({"dom_injection", "ui_phishing", "visual_injection", "os_cmd"})
@@ -99,6 +101,17 @@ class BrowserUseSpec:
         return (self.trap_host, self.trap_port, self.trap_public_url) != ("127.0.0.1", 0, "")
 
 
+def _is_delivery_failure(e: Exception) -> bool:
+    """True for the bridge and transport failures; caller bugs must propagate."""
+    # handle_response turns a JSON-RPC error into a bare Exception, and the
+    # bridge and starlette signal a missing or closed socket with RuntimeError.
+    if type(e) is Exception:
+        return True
+    if isinstance(e, RuntimeError):
+        return not isinstance(e, (NotImplementedError, RecursionError))
+    return isinstance(e, (asyncio.TimeoutError, OSError, WebSocketDisconnect))
+
+
 def _get_client_agent_ws():
     """Lazy import so tests can patch."""
     from argus.connection_manager import connection_manager
@@ -171,9 +184,13 @@ class BrowserUseTarget(Target):
                     timeout=self.spec.timeout_s + 5.0,
                 )
             except Exception as e:
-                # A JSON-RPC error reply is a bare Exception, so the bridge's
-                # failures can only be told apart from spec mistakes here.
+                if not _is_delivery_failure(e):
+                    raise
                 raise TargetDeliveryError(f"{type(e).__name__}: {e}") from e
+            if not isinstance(reply, dict):
+                raise TargetDeliveryError(
+                    f"client_agent reply has no result object (got {type(reply).__name__})"
+                )
         wall_latency_ms = (time.monotonic() - start) * 1000.0
         reported = reply.get("latency_ms")
         latency_ms = float(reported) if isinstance(reported, (int, float)) else wall_latency_ms

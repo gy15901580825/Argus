@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 
 from argus.probe import Probe, ProbeMappings
@@ -20,6 +21,8 @@ BRIDGE_ERRORS = [
     pytest.param(Exception({"code": -32000, "message": "browser crashed"}), "browser crashed", id="jsonrpc-error"),
     pytest.param(asyncio.TimeoutError(), "TimeoutError", id="timeout"),
     pytest.param(RuntimeError("No client_agent connected for redteam bridge"), "No client_agent connected", id="no-client"),
+    pytest.param(WebSocketDisconnect(code=1006), "WebSocketDisconnect", id="ws-disconnect"),
+    pytest.param(ConnectionResetError("peer reset"), "peer reset", id="connection-reset"),
 ]
 
 
@@ -82,6 +85,52 @@ async def test_bridge_error_message_is_bounded():
         findings = [f async for f in runner.run_probe(_probe("p"))]
     assert len(findings) == 1
     assert len(findings[0].reasoning) < 300
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reply", [None, "ok", ["ok"]])
+async def test_reply_without_a_result_object_errors_one_probe(reply):
+    ws = MagicMock()
+    ws.send_and_wait = AsyncMock(side_effect=[reply, {"final_text": "ok", "latency_ms": 1.0}])
+    runner = Runner(target=_target(), judge=_judge(), rubrics_dir=ARGUS_DIR / "rubrics")
+    findings = []
+    with patch("argus.targets.browser_use._get_client_agent_ws", return_value=ws):
+        for pid in ("first", "second"):
+            findings += [f async for f in runner.run_probe(_probe(pid))]
+
+    assert [(f.probe_id, f.verdict) for f in findings] == [("first", VERDICT_ERROR), ("second", "pass")]
+    assert findings[0].reasoning == (
+        "target could not deliver the probe: "
+        f"client_agent reply has no result object (got {type(reply).__name__})"
+    )
+
+
+@pytest.mark.asyncio
+async def test_wrong_bridge_signature_propagates_as_type_error():
+    class OldBridge:
+        async def send_and_wait(self, msg):
+            return {"final_text": "ok"}
+
+    runner = Runner(target=_target(), judge=_judge(), rubrics_dir=ARGUS_DIR / "rubrics")
+    with patch("argus.targets.browser_use._get_client_agent_ws", return_value=OldBridge()):
+        with pytest.raises(TypeError, match="timeout_s"):
+            [f async for f in runner.run_probe(_probe("p"))]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exc", [
+    AttributeError("'NoneType' object has no attribute 'send_json'"),
+    NameError("name 'conn' is not defined"),
+    KeyError("agent-1"),
+    NotImplementedError("bridge method"),
+])
+async def test_caller_bugs_in_the_bridge_propagate(exc):
+    ws = MagicMock()
+    ws.send_and_wait = AsyncMock(side_effect=exc)
+    runner = Runner(target=_target(), judge=_judge(), rubrics_dir=ARGUS_DIR / "rubrics")
+    with patch("argus.targets.browser_use._get_client_agent_ws", return_value=ws):
+        with pytest.raises(type(exc)):
+            [f async for f in runner.run_probe(_probe("p"))]
 
 
 @pytest.mark.asyncio
