@@ -164,6 +164,101 @@ def test_secret_near_misses(text):
     assert secret_hits(text) == []
 
 
+V = "Zq9" + "xY7wL2mN4pR8"  # a secret-like value without a provider prefix
+
+
+def _vals(text):
+    return [(k, text[s:e]) for k, s, e in secret_hits(text)]
+
+
+@pytest.mark.parametrize("make,kind,value", [
+    (lambda: '{"password": "' + V + '"}', "assignment", V),
+    (lambda: "DB_PASSWORD=" + V, "assignment", V),
+    (lambda: "GITHUB_TOKEN=" + V, "assignment", V),
+    (lambda: "auth_token: " + V, "assignment", V),
+    (lambda: "SECRET_KEY=" + V, "assignment", V),
+    (lambda: "PRIVATE_KEY=" + V, "assignment", V),
+    (lambda: "SIGNING_KEY=" + V, "assignment", V),
+    (lambda: "ENCRYPTION_KEY=" + V, "assignment", V),
+    (lambda: "client_secret=" + V, "assignment", V),
+    (lambda: "pwd=" + V, "assignment", V),
+    (lambda: "apiKey: " + V, "assignment", V),
+    (lambda: "X-Api-Key: " + V, "assignment", V),
+    (lambda: "{\\\"token\\\": \\\"" + V + "\\\"}", "assignment", V),
+    (lambda: 'password="correct horse battery staple"', "assignment", "correct horse battery staple"),
+    (lambda: "password=ab'cdefghijk", "assignment", "ab'cdefghijk"),
+    (lambda: '{"password": "pa\\"' + V + '"}', "assignment", 'pa\\"' + V),
+    (lambda: "DATABASE_URL=postgres://admin:" + V + "@db.invalid:5432/app", "url_credentials", V),
+    (lambda: "connect to https://admin:" + V + "@db.invalid/", "url_credentials", V),
+    (lambda: "clone https://" + V + "@git.invalid/r.git", "url_credentials", V),
+    (lambda: "Authorization: Bearer " + V, "auth_header", V),
+    (lambda: '"authorization": "Basic ' + V + '=="', "auth_header", V + "=="),
+    (lambda: "use bearer " + V + " here", "bearer_token", V),
+    (lambda: "-----BEGIN " + "PGP PRIVATE KEY BLOCK-----\nabc\n-----END " + "PGP PRIVATE KEY BLOCK-----",
+     "private_key", None),
+    (lambda: "AI" + "za" + "SyA" + "x" * 32, "google_api_key", None),
+    (lambda: "xo" + "xe-" + "1-abcdefghijk", "slack_token", None),
+    (lambda: "xa" + "pp-" + "1-A0abcdefghijk", "slack_token", None),
+    (lambda: "hf" + "_" + "a" * 34, "hf_token", None),
+    (lambda: "np" + "m_" + "a" * 36, "npm_token", None),
+    (lambda: "gl" + "pat-" + "a" * 20, "gitlab_token", None),
+    (lambda: "sk" + "_test_" + "a" * 24, "stripe_key", None),
+])
+def test_more_secret_shapes(make, kind, value):
+    text = make()
+    hits = _vals(text)
+    assert [k for k, _ in hits] == [kind], hits
+    if value is not None:
+        assert hits[0][1] == value
+    out = redact(text)
+    assert f"[REDACTED:{kind}]" in out and (value or hits[0][1]) not in out
+
+
+@pytest.mark.parametrize("text", [
+    '{"keyboard": "' + V + '"}',
+    "monkey: " + V,
+    "KEYBOARD_LAYOUT=" + V,
+    "DB_PASSWORDLESS=" + V,
+    "GITHUB_TOKENS_USED=" + V,
+    "oauth_port: " + V,
+    "author=" + V,
+    "{\\\"note\\\": \\\"" + V + "\\\"}",
+    'password=""',
+    "password=ab'cd",
+    "postgres://db.invalid:5432/app",
+    "https://git@git.invalid/r.git",
+    "https://host.invalid/a@b",
+    "Bearer authentication is used",
+    "Authorization: none",
+    "-----BEGIN " + "PGP PUBLIC KEY BLOCK-----\nabc",
+    "AI" + "za" + "SyA" + "x" * 31,
+    "xo" + "xz-" + "1-abcdefghijk",
+    "xa" + "pp-" + "1-A0",
+    "hf" + "_" + "a" * 29,
+    "np" + "m_" + "a" * 35,
+    "gl" + "pat-" + "a" * 19,
+    "sk" + "_tset_" + "a" * 24,
+])
+def test_more_secret_near_misses(text):
+    assert secret_hits(text) == []
+
+
+def test_private_key_without_end_is_redacted_to_the_blank_line():
+    body = "\n".join(["Q" * 64] * 102)  # about the size of an 8192-bit RSA key
+    text = "-----BEGIN " + "RSA PRIVATE KEY-----\n" + body + "\n\nafter"
+    assert redact(text) == "[REDACTED:private_key]\n\nafter"
+
+
+def test_private_key_without_end_or_blank_line_is_redacted_to_the_end():
+    text = "-----BEGIN " + "RSA PRIVATE KEY-----\n" + "\n".join(["Q" * 64] * 102)
+    assert redact(text) == "[REDACTED:private_key]"
+
+
+def test_many_unterminated_private_keys_are_fast():
+    text = ("-----BEGIN " + "RSA PRIVATE KEY-----\nQQQQ\n\n") * (TEXT_KEEP // 40)
+    _fast(lambda: secret_hits(text))
+
+
 def test_assignment_span_is_the_value_only():
     text = "token = 'abcdefgh123'"
     [(kind, s, e)] = secret_hits(text)
@@ -177,11 +272,10 @@ def test_private_key_span_runs_to_matching_end():
     assert (kind, text[s:e]) == ("private_key", pem)
 
 
-def test_private_key_without_end_spans_4000_chars():
+def test_private_key_without_end_spans_past_4000_chars():
     begin = "-----BEGIN " + "OPENSSH PRIVATE KEY-----"
     text = begin + "z" * 5000
-    [(kind, s, e)] = secret_hits(text)
-    assert (kind, s, e) == ("private_key", 0, 4000)
+    assert secret_hits(text) == [("private_key", 0, len(text))]
 
 
 def test_private_key_ignores_an_end_with_another_label():
@@ -463,4 +557,14 @@ def test_repeated_excerpts_of_one_text_are_fast():
 
 def test_secret_scan_is_fast():
     text = ("password" + " " * 50 + "= " + "token=" * 20 + "x" * 30 + " ") * (TEXT_KEEP // 200)
+    _fast(lambda: secret_hits(text))
+
+
+@pytest.mark.parametrize("text", [
+    "token=" * (TEXT_KEEP // 6),
+    "token='" * (TEXT_KEEP // 7),
+    "a://b:" * (TEXT_KEEP // 6),
+    ("api_key=" + "x" * 10 + " ") * (TEXT_KEEP // 19),
+])
+def test_dense_assignments_are_fast(text):
     _fast(lambda: secret_hits(text))

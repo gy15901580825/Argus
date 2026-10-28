@@ -6,6 +6,8 @@ import functools
 import re
 from typing import Sequence
 
+from argus.skillscan.urls import url_userinfo
+
 EXCERPT = 300
 
 _HIDDEN = re.compile(
@@ -25,18 +27,32 @@ _PHRASES = [(rule, re.compile(p, re.I)) for rule, p in (
     ("mcp_json_ref", r"\bmcp\.json\b"),
 )]
 
-# Specific kinds before `assignment`, so a value both match is reported as the specific kind.
+# Specific kinds before the generic ones, so a value several match is reported as the specific kind.
 _SECRETS = [(kind, re.compile(p)) for kind, p in (
-    ("private_key", r"-----BEGIN ([A-Z ]*)PRIVATE KEY-----"),
+    ("private_key", r"-----BEGIN ([A-Z ]*)PRIVATE KEY( BLOCK)?-----"),
     ("aws_access_key", r"\b(AKIA|ASIA)[0-9A-Z]{16}\b"),
     ("github_token", r"\bgh[pousr]_[A-Za-z0-9]{36,}\b|\bgithub_pat_[A-Za-z0-9_]{22,}"),
+    ("gitlab_token", r"\bglpat-[A-Za-z0-9_-]{20,}"),
+    ("google_api_key", r"\bAIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])"),
+    ("hf_token", r"\bhf_[A-Za-z0-9]{30,}"),
+    ("npm_token", r"\bnpm_[A-Za-z0-9]{36,}"),
     ("sk_key", r"\bsk-[A-Za-z0-9_-]{20,}"),
-    ("stripe_key", r"\b[rs]k_live_[A-Za-z0-9]{16,}"),
-    ("slack_token", r"\bxox[abprs]-[A-Za-z0-9-]{10,}"),
+    ("stripe_key", r"\b[rs]k_(?:live|test)_[A-Za-z0-9]{16,}"),
+    ("slack_token", r"\bxox[abeprs]-[A-Za-z0-9-]{10,}|\bxapp-[0-9]+-[A-Za-z0-9-]{10,}"),
     ("jwt", r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"),
-    ("assignment", r"(?i)\b(password|passwd|secret|token|api[_-]?key|access[_-]?key)\s*[:=]\s*[\"']?([^\s\"',;]{8,})"),
+    ("url_credentials", r"(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{0,30}://[^\s\"'<>`]+"),
+    ("auth_header", r"(?i)\bauthorization\\?[\"']?[ \t]*[:=][ \t]*\\?[\"']?(?:[a-z]{1,20}[ \t]+)?([A-Za-z0-9._~+/=-]{8,})"),
+    ("bearer_token", r"\b[Bb]earer[ \t]+([A-Za-z0-9._~+/=-]{8,})"),
+    # A name, its optional closing quote (plain or JSON-escaped), then : or =. The value is read by hand.
+    ("assignment", r"(?<![\w.-])([A-Za-z_][\w.-]{0,63})(\\?[\"'])?[ \t]*[:=][ \t]*"),
 )]
-_KEY_SPAN_MAX = 4000
+SECRET_WORDS = frozenset({"password", "passwd", "pwd", "passphrase", "secret", "secrets", "token", "key", "apikey",
+                          "accesskey", "privatekey", "auth", "credential", "credentials"})
+# Name parts: split on _ . - and camelCase, so keyboard, monkey and oauth are not secret names.
+_NAME_SPLIT = re.compile(r"[_.\-]+|(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+_BARE_VALUE = re.compile(r"[^\s\",;&\\]+")
+_TOKENISH = re.compile(r"[0-9._~+/=-]")
+_BLANK_LINE = re.compile(r"\n[ \t]*\r?\n")
 _PLACEHOLDER = re.compile(r"\[(?:DECOY|REDACTED):[^\]\s]*\]")
 _VALUE_MIN = 8
 
@@ -68,21 +84,86 @@ def _skipped(value: str) -> bool:
                                              and len(_PLACEHOLDER.sub("", value)) < _VALUE_MIN)
 
 
+def secret_name(name: str) -> bool:
+    """True when a whole part of the name (split on _ . - and camelCase) is a secret word."""
+    return any(p.lower() in SECRET_WORDS for p in _NAME_SPLIT.split(name) if p)
+
+
+def _closing(text: str, quote: str, start: int) -> int:
+    i = text.find(quote, start)
+    while len(quote) == 1 and i > 0 and text[i - 1] == "\\":
+        i = text.find(quote, i + 1)
+    return i
+
+
+def _assigned_value(text: str, m: re.Match) -> tuple[int, int] | None:
+    if not secret_name(m.group(1)):
+        return None
+    pos = m.end()
+    quote = text[pos:pos + 2] if text.startswith(("\\\"", "\\'"), pos) else text[pos:pos + 1]
+    if quote not in ("\"", "'", "\\\"", "\\'"):
+        quote = ""
+    vs = pos + len(quote)
+    if quote:
+        ve = _closing(text, quote, vs)
+        if ve >= 0 and text.find("\n", vs, ve) < 0:
+            return vs, ve
+    bare = _BARE_VALUE.match(text, vs)
+    return (vs, bare.end()) if bare else None
+
+
+def _url_credentials(text: str, m: re.Match) -> tuple[int, int] | None:
+    try:
+        ui = url_userinfo(m.group())
+    except ValueError:
+        return None
+    if not ui:
+        return None
+    at = m.start() + m.group().index("://") + 3
+    user, sep, password = ui.partition(":")
+    if sep and password:
+        return at + len(user) + 1, at + len(ui)
+    return (at, at + len(ui)) if len(ui) >= _VALUE_MIN else None  # a short user name such as git is no secret
+
+
 def secret_hits(text: str) -> list[tuple[str, int, int]]:
     """(kind, start, end) of every secret-shaped value, merged so that no two spans overlap."""
     found = []
+    end_at: dict[str, int] = {}  # END marker -> where it was last found, or -1 once none is left
+    key_end = value_end = -1  # a match inside the previous key or value is part of it; skipping keeps this linear
     for rank, (kind, rx) in enumerate(_SECRETS):
         for m in rx.finditer(text):
             if kind == "private_key":
-                end_marker = f"-----END {m.group(1)}PRIVATE KEY-----"
-                i = text.find(end_marker, m.end())
-                s, e = m.start(), (i + len(end_marker) if i >= 0 else min(m.start() + _KEY_SPAN_MAX, len(text)))
+                if m.start() < key_end:
+                    continue
+                marker = f"-----END {m.group(1)}PRIVATE KEY{m.group(2) or ''}-----"
+                i = end_at.get(marker)
+                if i is None or 0 <= i < m.end():
+                    i = end_at[marker] = text.find(marker, m.end())
+                if i >= 0:
+                    span = (m.start(), i + len(marker))
+                else:  # no END: to the first blank line or the end of the text
+                    blank = _BLANK_LINE.search(text, m.end())
+                    span = (m.start(), blank.start() if blank else len(text))
+                key_end = span[1]
             elif kind == "assignment":
-                s, e = m.span(2)
+                if m.start() < value_end:
+                    continue
+                span = _assigned_value(text, m)
+                if span:
+                    value_end = span[1]
+                if span and span[1] - span[0] < _VALUE_MIN:
+                    span = None
+            elif kind == "url_credentials":
+                span = _url_credentials(text, m)
+            elif kind in ("auth_header", "bearer_token"):
+                span = m.span(1)
+                if kind == "bearer_token" and not _TOKENISH.search(m.group(1)):
+                    span = None  # "Bearer authentication": a word, not a token
             else:
-                s, e = m.span()
-            if not _skipped(text[s:e]):
-                found.append((s, rank, e, kind))
+                span = m.span()
+            if span and not _skipped(text[span[0]:span[1]]):
+                found.append((span[0], rank, span[1], kind))
     merged: list[list] = []  # [start, end, rank, kind]
     for s, rank, e, kind in sorted(found):
         if merged and s < merged[-1][1]:
