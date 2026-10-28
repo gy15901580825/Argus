@@ -62,6 +62,14 @@ What Argus does:
   attacks (tool poisoning, rug pull, shadowing, confused deputy, credential
   lure). No LLM judge and no Argus-side model spend. See
   [`docs/cli.md`](docs/cli.md#test-your-agent-against-a-hostile-mcp-server).
+- **`argus-probe scan-mcp`**: Argus connects to one MCP server over Streamable
+  HTTP or stdio, calls its tools with inert payloads and reports command
+  execution, path traversal, secrets and injected instructions in results,
+  cross-session leaks and tool lists that change. By default it calls only
+  tools annotated read-only. Rules decide most verdicts, and an LLM judge
+  capped by `--per-run-cap` decides text that only looks aimed at a model. In
+  this release a stdio server runs on your machine and needs `--on-host`. See
+  [`docs/cli.md`](docs/cli.md#scan-an-mcp-servers-tools).
 - **Scan suites** — pass `suite` instead of enumerating `probe_ids` on
   `POST /api/v1/redteam/runs`: `owasp-llm-top10`, `mitre-atlas`,
   `nist-ai-rmf`, `eu-ai-act`, `payments`, `mcp`.
