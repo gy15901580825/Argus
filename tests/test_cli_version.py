@@ -14,4 +14,4 @@ def test_version_is_the_pyproject_version():
     version = tomllib.loads(PYPROJECT.read_text())["project"]["version"]
     result = CliRunner().invoke(main, ["--version"])
     assert result.exit_code == 0, result.output
-    assert result.output.strip().endswith(f", version {version}") and version == "0.4.0"
+    assert result.output.strip().endswith(f", version {version}") and version == "0.5.0"
