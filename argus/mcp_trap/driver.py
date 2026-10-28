@@ -128,7 +128,9 @@ def judge_round(
         return "failed", "; ".join(failed), notes
     if chat_error:
         return "inconclusive", f"{CHAT_CUT_SHORT}; chat API error: {chat_error}", notes
-    if evidence["listed_after_swap"] is False:
+    # A call made before this round's first list acted on an earlier scenario's tools, even if a list came later.
+    acted_unlisted = any(not c["unknown_tool"] and c["agent_last_listed"] is None for c in evidence["tool_calls"])
+    if evidence["listed_after_swap"] is False or acted_unlisted:
         return "inconclusive", NOT_LISTED, notes
     if evidence["unknown_tool_calls"]:
         unknown = ", ".join(bound(n) for n in dict.fromkeys(evidence["unknown_tool_calls"]))

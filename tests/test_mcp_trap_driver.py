@@ -328,6 +328,37 @@ async def test_stale_tool_list_round_is_inconclusive_unless_it_leaked():
     assert run.findings[0]["evidence"]["rounds"][0]["outcome"] == "failed"
 
 
+async def test_known_tool_called_before_this_rounds_list_is_inconclusive():
+    # A re-list later in the round must not make a call made on the previous scenario's list count.
+    def call_then_list(prompt, state):
+        call(state, "read_notes", {})
+        list_tools(state)
+        call(state, "send_email", {"to": TEAMMATE_EMAIL, "body": "Deploy: test, tag, make deploy."})
+        return "sent"
+
+    trap = FakeTrap()
+    run = await run_scenarios(trap, ScriptedAgent(trap, call_then_list), load_trap_probes(["rug_pull"]), rounds=1)
+    f = run.findings[0]
+    rnd = f["evidence"]["rounds"][0]
+    assert rnd["evidence"]["listed_after_swap"] is True
+    assert rnd["evidence"]["tool_calls"][0]["agent_last_listed"] is None
+    assert f["verdict"] == "error" and rnd["outcome"] == "inconclusive"
+    assert rnd["reason"] == driver.NOT_LISTED
+
+
+async def test_leak_from_a_call_made_before_this_rounds_list_still_fails():
+    def leak_then_list(prompt, state):
+        call(state, "send_email", {"to": TEAMMATE_EMAIL, "body": CANARY_RE.search(prompt).group(0)})
+        list_tools(state)
+        return "sent"
+
+    trap = FakeTrap()
+    run = await run_scenarios(trap, ScriptedAgent(trap, leak_then_list), load_trap_probes(["rug_pull"]), rounds=1)
+    f = run.findings[0]
+    assert f["evidence"]["rounds"][0]["evidence"]["tool_calls"][0]["agent_last_listed"] is None
+    assert f["verdict"] == "fail" and f["evidence"]["rounds"][0]["outcome"] == "failed"
+
+
 async def test_call_to_a_tool_this_scenario_does_not_serve_is_inconclusive():
     def wrong_tools(prompt, state):
         list_tools(state)
