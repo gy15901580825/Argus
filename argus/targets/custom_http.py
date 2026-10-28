@@ -2,12 +2,14 @@
 
 Customer agents commonly expose their own HTTP shape rather than OpenAI-compat.
 This adapter renders a JSON body template (with `{{prompt}}` and `{{api_key}}`
-substitutions; `prompt|tojson` escapes any embedded quotes), POSTs (or other
+substitutions; `prompt|tojson` escapes any embedded quotes; `{{conversation_id}}`
+is a per-conversation id for agents that keep state server-side), POSTs (or other
 method) to the configured URL, and extracts the response via a JSONPath query.
 """
 from __future__ import annotations
 
 import time
+import uuid
 from dataclasses import dataclass
 from typing import ClassVar, Optional
 
@@ -67,6 +69,7 @@ class CustomHTTPTarget(Target):
         self._latency_jsonpath = (
             jsonpath_parse(spec.response_latency_jsonpath) if spec.response_latency_jsonpath else None
         )
+        self._conversation_id: str | None = None
 
     async def send_prompt(
         self, prompt: str, history: tuple[Turn, ...] = ()
@@ -74,10 +77,14 @@ class CustomHTTPTarget(Target):
         # `history` is offered to the template as a list of {role, content} dicts.
         # Templates written before conversation support simply never reference it
         # and render exactly as they did before.
+        # Empty history starts a conversation; later turns reuse its id.
+        if not history or self._conversation_id is None:
+            self._conversation_id = uuid.uuid4().hex
         ctx = {
             "prompt": prompt,
             "api_key": self.spec.api_key or "",
             "history": [{"role": t.role, "content": t.content} for t in history],
+            "conversation_id": self._conversation_id,
         }
         body = self._body_tpl.render(**ctx)
 
