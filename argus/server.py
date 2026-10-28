@@ -105,10 +105,10 @@ async def websocket_endpoint(websocket: WebSocket):
                     # It's a response to our command
                     connection_manager.handle_response(data)
     except WebSocketDisconnect:
-        await connection_manager.disconnect(agent_id)
+        await connection_manager.disconnect(agent_id, connection=websocket)
     except Exception as e:
         logger.error(f"Error in websocket connection: {e}")
-        await connection_manager.disconnect(agent_id)
+        await connection_manager.disconnect(agent_id, connection=websocket)
 
 if __name__ == "__main__":
     import uvicorn

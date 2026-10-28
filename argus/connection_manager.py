@@ -10,11 +10,20 @@ import os
 import uuid
 import httpx
 from typing import Dict, Optional, Any
-from fastapi import WebSocket, HTTPException
+from fastapi import WebSocket, HTTPException, WebSocketDisconnect
 
 logger = logging.getLogger("ConnectionManager")
 
 ORCHESTRATOR_SECRET = os.getenv("ORCHESTRATOR_SECRET", "default_secret_change_me")
+
+
+class NoClientAgentError(RuntimeError):
+    """No client_agent is connected to carry a redteam browser probe."""
+
+
+class ClientAgentDisconnectedError(NoClientAgentError):
+    """The client_agent's socket closed before it replied to a redteam probe."""
+
 
 class ConnectionManager:
     """Manages WebSocket connections for agents"""
@@ -27,6 +36,8 @@ class ConnectionManager:
         # Ids whose handshake is in progress; reserved before accept() so two
         # concurrent connects with one id cannot both register.
         self._reserved: set = set()
+        # command_id -> agent_id for redteam probes, so a disconnect can fail them.
+        self._command_agents: Dict[str, str] = {}
         logger.info(f"ConnectionManager initialized, instance id: {id(self)}")
 
     async def connect(self, websocket: WebSocket, agent_id: str) -> bool:
@@ -65,12 +76,25 @@ class ConnectionManager:
         except Exception as e:
             logger.error(f"Failed to update agent status to {status}: {e}")
 
-    async def disconnect(self, agent_id: str):
+    async def disconnect(self, agent_id: str, *, connection: Any = None):
+        # A closing socket must not evict a newer socket that took its id.
+        if connection is not None and self.active_connections.get(agent_id) is not connection:
+            return
         if agent_id in self.active_connections:
             del self.active_connections[agent_id]
             logger.info(f"Agent disconnected: {agent_id}, total connections: {len(self.active_connections)}")
             
             await self._post_status(agent_id, "offline")
+        # A probe waiting on this agent would otherwise sit out its full timeout.
+        for command_id, owner in list(self._command_agents.items()):
+            if owner != agent_id:
+                continue
+            del self._command_agents[command_id]
+            future = self.pending_commands.pop(command_id, None)
+            if future is not None and not future.done():
+                future.set_exception(ClientAgentDisconnectedError(
+                    f"client_agent {agent_id} disconnected before replying"
+                ))
 
     async def send_command(self, agent_id: str, method: str, params: Dict[str, Any]) -> Any:
         if agent_id not in self.active_connections:
@@ -150,7 +174,7 @@ class RedteamBridge:
     async def send_and_wait(self, msg: Dict[str, Any], timeout_s: float = 60.0) -> Dict[str, Any]:
         agent_id = self._mgr.first_active_agent_id()
         if not agent_id:
-            raise RuntimeError("No client_agent connected for redteam bridge")
+            raise NoClientAgentError("No client_agent connected for redteam bridge")
         connection = self._mgr.active_connections[agent_id]
         command_id = str(uuid.uuid4())
         envelope = {
@@ -162,8 +186,18 @@ class RedteamBridge:
         loop = asyncio.get_running_loop()
         future = loop.create_future()
         self._mgr.pending_commands[command_id] = future
+        self._mgr._command_agents[command_id] = agent_id
         try:
-            await connection.send_json(envelope)
+            try:
+                await connection.send_json(envelope)
+            except (RuntimeError, OSError, WebSocketDisconnect) as e:
+                # A closed socket left registered would fail every later probe.
+                # Old starlette raises a plain RuntimeError here, so map it.
+                self._mgr._command_agents.pop(command_id, None)
+                await self._mgr.disconnect(agent_id, connection=connection)
+                raise ClientAgentDisconnectedError(
+                    f"client_agent {agent_id} socket is closed: {e}"
+                ) from e
             return await asyncio.wait_for(future, timeout=timeout_s)
         except asyncio.TimeoutError:
             self._mgr.pending_commands.pop(command_id, None)
@@ -173,6 +207,8 @@ class RedteamBridge:
             if not future.done():
                 future.cancel()
             raise
+        finally:
+            self._mgr._command_agents.pop(command_id, None)
 
 
 # Global connection manager instance
