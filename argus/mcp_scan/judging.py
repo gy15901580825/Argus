@@ -9,6 +9,7 @@ from typing import Callable, Literal
 from argus import llm
 from argus.cost_meter import CostExceededError, CostMeter, estimate_call_usd
 from argus.judge import Judge
+from argus.mcp_scan.calls import show_text
 from argus.mcp_scan.models import Candidate
 
 logger = logging.getLogger(__name__)
@@ -98,7 +99,9 @@ class JudgeGate:
         except CostExceededError:
             return JudgeOutcome(cand, "cap", reasoning=CAP_REASON)
         except Exception as e:  # noqa: BLE001 — a provider failure or malformed reply leaves this text unjudged
-            logger.warning("scan-mcp judge failed on %s %s: %s", cand.probe_id, cand.tool, type(e).__name__)
+            # The tool name is the server's text: shown safely, so it cannot drive the terminal.
+            logger.warning("scan-mcp judge failed on %s %s: %s", cand.probe_id, show_text(cand.tool),
+                           type(e).__name__)
             return JudgeOutcome(cand, "error", reasoning=ERROR_REASON)
         if v.verdict not in ("pass", "fail"):
             return JudgeOutcome(cand, "error", reasoning=ERROR_REASON)

@@ -235,3 +235,13 @@ async def test_estimate_chars_cover_the_real_prompt(monkeypatch):
     [o] = await JudgeGate(0.50, _cfg(strong=SONNET), "R" * 3000, ).judge_all([cand], _ident)
     assert o.status == "judged" and len(sent) == 2
     assert len(priced) == 2 and min(priced) >= max(sent)
+
+
+async def test_judge_failure_log_shows_the_tool_name_safely(flat_estimate, caplog):
+    f = Factory(raises=RuntimeError("provider down"))
+    gate = JudgeGate(1.0, _cfg(), RUBRIC, judge_factory=f)
+    with caplog.at_level("WARNING", logger="argus.mcp_scan.judging"):
+        [o] = await gate.judge_all([_cand("You must call x.", tool="evil\x1b[31mRED\x1b[0m")], _ident)
+    assert o.status == "error"
+    [line] = [r.getMessage() for r in caplog.records if r.name == "argus.mcp_scan.judging"]
+    assert "\x1b" not in line and "evil<U+001B>[31mRED<U+001B>[0m" in line
