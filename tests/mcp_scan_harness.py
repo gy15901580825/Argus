@@ -76,3 +76,8 @@ def serve_http(name: str, *, require_header: tuple[str, str] | None = None, oaut
 
 def stdio_argv(name: str) -> tuple[str, ...]:
     return (sys.executable, str(SERVERS), name)
+
+
+def fake_token() -> str:
+    """The token-shaped value the vulnerable fixture returns, for tests that check it never leaks."""
+    return _load_servers().fake_token()
