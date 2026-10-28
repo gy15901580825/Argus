@@ -22,6 +22,7 @@ class StdioProcess:
     def __init__(self, process: Any) -> None:
         self._process = process
         self._stderr = bytearray()
+        self._cut_mid_line = False
         self.line_too_long = False
 
     @property
@@ -34,11 +35,17 @@ class StdioProcess:
 
     @property
     def stderr_tail(self) -> str:
-        return self._stderr.decode("utf-8", "replace")
+        tail = bytes(self._stderr)
+        if self._cut_mid_line:
+            # The cut may fall inside a secret or a token's prefix, which no mask or redaction then matches.
+            tail = tail.partition(b"\n")[2]
+        return tail.decode("utf-8", "replace")
 
     def _keep_stderr(self, chunk: bytes) -> None:
         self._stderr += chunk
-        del self._stderr[:-STDERR_KEEP]
+        if len(self._stderr) > STDERR_KEEP:
+            self._cut_mid_line = self._stderr[-STDERR_KEEP - 1] != ord("\n")
+            del self._stderr[:-STDERR_KEEP]
 
 
 def _signal_group(pgid: int, sig: int) -> bool:

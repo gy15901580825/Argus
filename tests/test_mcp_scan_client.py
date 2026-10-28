@@ -399,6 +399,25 @@ async def test_list_changed_notification_is_recorded():
         assert s.list_changed is True
 
 
+def test_trimmed_stderr_tail_drops_its_partial_first_line():
+    from argus.mcp_scan.stdio import StdioProcess
+
+    secret = "qz7Kp" + "2Lm9Xw4Rt8Yv"
+    proc = StdioProcess(None)
+    proc._keep_stderr(f"token={secret}\n".encode())
+    assert proc.stderr_tail == f"token={secret}\n"
+    # The cut falls inside the secret: the rest of that line is dropped, not shown as a suffix.
+    proc._keep_stderr(b"Z" * (STDERR_KEEP - 12) + b"\n")
+    assert proc.stderr_tail == "Z" * (STDERR_KEEP - 12) + "\n"
+    # A cut at a line end keeps the whole next line; a tail with no line end left shows nothing.
+    exact = StdioProcess(None)
+    exact._keep_stderr(b"a\n" + b"b" * (STDERR_KEEP - 1) + b"\n")
+    assert exact.stderr_tail == "b" * (STDERR_KEEP - 1) + "\n"
+    one_line = StdioProcess(None)
+    one_line._keep_stderr(b"c" * (STDERR_KEEP + 10))
+    assert one_line.stderr_tail == ""
+
+
 async def test_stderr_is_kept_not_printed(capfd):
     async with open_session(_stdio("basic"), timeout_s=T) as s:
         await s.list_tools()
