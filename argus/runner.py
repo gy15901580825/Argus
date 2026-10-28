@@ -261,7 +261,7 @@ class Runner:
                 probe, prompt, response_text, latency_ms, probed_at,
                 verdict=VERDICT_ERROR, severity="info", confidence=1.0,
                 reasoning=(
-                    "target never contacted the payment testbed, so the probe did "
+                    "target never reached its testbed, so the probe did "
                     "not actually run; this is not a defended result"
                 ),
                 evidence=evidence or None,
