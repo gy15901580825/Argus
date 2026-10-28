@@ -19,6 +19,9 @@ _NEST_MAX = 16
 _HOP_MAX = 32
 _STEPS_MAX = 5000
 _PROPS_MAX = 1000
+_LITERAL_DEPTH = 3
+_LITERAL_NODES = 100
+_LITERAL_STR = 1000
 
 _FORMATS = {
     "uri": "https://example.invalid/",
@@ -52,6 +55,7 @@ class _Ctx:
         self.steps = 0
         self.unsatisfied = False
         self.active: set[str] = set()
+        self.required: dict[int, set] = {}
 
 
 def _pointer(root: dict, ref: str) -> Any:
@@ -112,6 +116,21 @@ def _type(schema: dict) -> str | None:
     return None
 
 
+def _small(v: Any, depth: int = 0, budget: list[int] | None = None) -> bool:
+    """True when a schema-supplied literal is shallow and small enough to send as is."""
+    budget = [_LITERAL_NODES] if budget is None else budget
+    budget[0] -= 1
+    if budget[0] < 0 or depth > _LITERAL_DEPTH:
+        return False
+    if isinstance(v, str):
+        return len(v) <= _LITERAL_STR
+    if isinstance(v, dict):
+        return all(isinstance(k, str) and _small(x, depth + 1, budget) for k, x in v.items())
+    if isinstance(v, list):
+        return all(_small(x, depth + 1, budget) for x in v)
+    return True
+
+
 def _value(schema: Any, ctx: _Ctx, depth: int) -> Any:
     ctx.steps += 1
     if ctx.steps > _STEPS_MAX:
@@ -128,13 +147,14 @@ def _value(schema: Any, ctx: _Ctx, depth: int) -> Any:
 def _typed(s: dict, ctx: _Ctx, depth: int) -> Any:
     if s.get("_cycle"):
         return {}
-    if "default" in s:
-        return s["default"]
     enum = s.get("enum")
-    if isinstance(enum, list) and enum:
-        return enum[0]
-    if "const" in s:
-        return s["const"]
+    for key, lit in (("default", s.get("default")), ("enum", enum[0] if isinstance(enum, list) and enum else None),
+                     ("const", s.get("const"))):
+        if key in s and (key != "enum" or lit is not None):
+            if _small(lit):
+                return lit
+            ctx.unsatisfied = True
+            break
     t = _type(s)
     if t == "integer" or t == "number":
         lo = s.get("minimum")
@@ -155,7 +175,7 @@ def _typed(s: dict, ctx: _Ctx, depth: int) -> Any:
         if not isinstance(props, dict):
             return {}
         req = s.get("required")
-        required = set(x for x in req if isinstance(x, str)) if isinstance(req, list) else set()
+        required = _required(req, ctx)
         out: dict = {}
         for i, (name, sub) in enumerate(props.items()):
             if i >= _PROPS_MAX:
@@ -168,6 +188,15 @@ def _typed(s: dict, ctx: _Ctx, depth: int) -> Any:
         return out
     fmt = s.get("format")
     return _FORMATS.get(fmt, "argus") if isinstance(fmt, str) else "argus"
+
+
+def _required(req: Any, ctx: _Ctx) -> set:
+    if not isinstance(req, list):
+        return set()
+    key = id(req)  # the schema outlives the run, so ids stay valid
+    if key not in ctx.required:
+        ctx.required[key] = {x for x in req[:_PROPS_MAX] if isinstance(x, str)}
+    return ctx.required[key]
 
 
 def _is_payload_eligible(schema: Any, ctx: _Ctx) -> bool:
