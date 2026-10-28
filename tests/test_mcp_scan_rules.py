@@ -667,3 +667,14 @@ def test_bare_value_stops_before_an_escaped_quote():
 ])
 def test_dense_backslash_and_ampersand_values_are_fast(text):
     _fast(lambda: secret_hits(text))
+
+
+def test_prefilter_own_tool_name_does_not_count_but_overlapping_names_do():
+    names = ["foo", "foo bar", "baz"]
+    assert not looks_aimed_at_model("Then foo runs.", names, own="foo")
+    assert looks_aimed_at_model("Then foo runs.", names, own="foo bar")
+    # Same start position: the own name must not hide a longer or shorter other name there.
+    assert looks_aimed_at_model("Then foo bar runs.", names, own="foo")
+    assert looks_aimed_at_model("Then foo bar runs.", names, own="foo bar")
+    assert not looks_aimed_at_model("Then foo bar runs.", ["foo bar"], own="foo bar")
+    assert looks_aimed_at_model("foo, then baz.", names, own="foo")

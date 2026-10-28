@@ -268,14 +268,39 @@ def strip_payload(text: str, payload: str | None) -> str:
     return text.replace(payload, "") if payload else text
 
 
-def looks_aimed_at_model(text: str, tool_names: Sequence[str]) -> bool:
+# One compiled pattern per tool set: a server may list 1000 tools, and each text is checked against all of them.
+@functools.lru_cache(maxsize=8)
+def _names_patterns(names: tuple[str, ...]) -> tuple[re.Pattern, re.Pattern] | None:
+    """The tool-name pattern with longest names first, and with shortest first."""
+    uniq = sorted({n for n in names if n}, key=len)
+    if not uniq:
+        return None
+    rx = [re.compile(r"(?<![\w-])(?:" + "|".join(map(re.escape, order)) + r")(?![\w-])")
+          for order in (uniq[::-1], uniq)]
+    return rx[0], rx[1]
+
+
+def _names_another_tool(text: str, names: tuple[str, ...], own: str | None) -> bool:
+    patterns = _names_patterns(names)
+    if patterns is None:
+        return False
+    longest, shortest = patterns
+    pos = 0
+    while m := longest.search(text, pos):
+        # At one position the longest and shortest matching names bound every other; if both are `own`, all are.
+        if m.group() != own or shortest.match(text, m.start()).group() != own:
+            return True
+        pos = m.start() + 1
+    return False
+
+
+def looks_aimed_at_model(text: str, tool_names: Sequence[str], own: str | None = None) -> bool:
     """Cheap judge pre-filter: text that talks to a model rather than describing data.
 
-    `tool_names` are the other tools the server listed."""
+    `tool_names` are the tools the server listed; a mention of `own` (the text's own tool) does not count."""
     if _USER_OR_ASSISTANT.search(text) or any(_starts_sentence(text, m.start()) for m in _IMPERATIVE.finditer(text)):
         return True
-    names = [re.escape(n) for n in tool_names if n]
-    if names and re.search(r"(?<![\w-])(?:" + "|".join(names) + r")(?![\w-])", text):
+    if _names_another_tool(text, tuple(tool_names), own):
         return True
     verbs = [m.span() for m in _SEND_VERB.finditer(text)]
     ends = [ve for _, ve in verbs]  # verbs do not overlap, so starts and ends are both sorted
