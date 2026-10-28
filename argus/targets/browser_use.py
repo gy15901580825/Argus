@@ -15,7 +15,9 @@ from dataclasses import dataclass
 from typing import ClassVar
 from urllib.parse import urlsplit
 
-from argus.targets._base import Target, Turn
+from fastapi import WebSocketDisconnect
+
+from argus.targets._base import Target, TargetDeliveryError, Turn
 
 _SCENARIO_KINDS = frozenset({"dom_injection", "ui_phishing", "visual_injection", "os_cmd"})
 
@@ -99,6 +101,24 @@ class BrowserUseSpec:
         return (self.trap_host, self.trap_port, self.trap_public_url) != ("127.0.0.1", 0, "")
 
 
+def _is_delivery_failure(e: Exception) -> bool:
+    """True for the bridge and transport failures; caller bugs must propagate."""
+    from argus.connection_manager import NoClientAgentError
+
+    # handle_response turns a JSON-RPC error into a bare Exception.
+    if type(e) is Exception:
+        return True
+    return isinstance(e, (NoClientAgentError, asyncio.TimeoutError, OSError, WebSocketDisconnect))
+
+
+def _describe(e: Exception, waited_s: float) -> str:
+    if str(e):
+        return f"{type(e).__name__}: {e}"
+    if isinstance(e, asyncio.TimeoutError):
+        return f"timed out after {waited_s:g}s"
+    return type(e).__name__
+
+
 def _get_client_agent_ws():
     """Lazy import so tests can patch."""
     from argus.connection_manager import connection_manager
@@ -164,10 +184,22 @@ class BrowserUseTarget(Target):
                 # An older client_agent would ignore these and serve on 127.0.0.1.
                 raise ValueError("trap_host, trap_port and trap_public_url only apply to --local runs")
             ws = _get_client_agent_ws()
-            reply = await asyncio.wait_for(
-                ws.send_and_wait(msg),
-                timeout=self.spec.timeout_s + 5.0,
-            )
+            # Same 5 s grace as --local, so the client_agent's own timeout error
+            # can still arrive; the outer wait is only a backstop for the bridge.
+            bridge_timeout_s = self.spec.timeout_s + 5.0
+            try:
+                reply = await asyncio.wait_for(
+                    ws.send_and_wait(msg, timeout_s=bridge_timeout_s),
+                    timeout=self.spec.timeout_s + 10.0,
+                )
+            except Exception as e:
+                if not _is_delivery_failure(e):
+                    raise
+                raise TargetDeliveryError(_describe(e, bridge_timeout_s)) from e
+            if not isinstance(reply, dict):
+                raise TargetDeliveryError(
+                    f"client_agent reply has no result object (got {type(reply).__name__})"
+                )
         wall_latency_ms = (time.monotonic() - start) * 1000.0
         reported = reply.get("latency_ms")
         latency_ms = float(reported) if isinstance(reported, (int, float)) else wall_latency_ms
