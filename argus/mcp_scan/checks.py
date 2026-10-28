@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from typing import Iterator, Sequence
 
@@ -97,8 +98,8 @@ def static_hits(tools: list[ToolInfo], *, decoys: Sequence[tuple[str, str]] = ()
     """Phrase and hidden-character hits in tool names, titles, descriptions, annotations and schema strings."""
     hits: list[Hit] = []
     cands: list[Candidate] = []
+    names = tuple(t.name for t in tools)
     for tool in tools:
-        others = [t.name for t in tools if t.name != tool.name]
         texts = [(DESCRIPTION, "description", s) for s in (tool.name, tool.title, tool.description)]
         texts += [(DESCRIPTION, "description", s) for s in _strings(tool.annotations)]
         texts += [(SCHEMA, "schema", s) for s in _schema_strings(tool.input_schema)]
@@ -107,7 +108,7 @@ def static_hits(tools: list[ToolInfo], *, decoys: Sequence[tuple[str, str]] = ()
                 continue
             found, phrased = _phrase_and_hidden(probe, tool.name, text, decoys)
             hits += found
-            if not phrased and rules.looks_aimed_at_model(text, others):
+            if not phrased and rules.looks_aimed_at_model(text, names, own=tool.name):
                 cands.append(Candidate(probe_id=probe, tool=tool.name, text=rules.redact(text, decoys),
                                        call_seq=None, source=source))
     return hits, cands
@@ -149,21 +150,32 @@ def _canaries(text: str) -> set[str]:
     return set(_CANARY.findall(text))
 
 
-def _list_changes(first: list[ToolInfo], final: list[ToolInfo]) -> list[tuple[str, str]]:
-    """(tool name, what changed) for each tool added, removed, or relisted with another description or schema."""
+def _changed_at(old: str, new: str) -> tuple[str, tuple[int, int]]:
+    """The new text and a span from the first character that differs, so the excerpt shows the change."""
+    if not new:
+        return "(now empty)", (0, 0)
+    i = len(os.path.commonprefix([old, new]))
+    return new, (i, len(new))
+
+
+def _list_changes(first: list[ToolInfo], final: list[ToolInfo]) -> list[tuple[str, str, tuple[int, int]]]:
+    """(tool name, text, span) for each tool added, removed, or relisted with another description or schema."""
     a = {t.name: t for t in first}
     b = {t.name: t for t in final}
     out = []
     for name in list(a) + [n for n in b if n not in a]:
         old, new = a.get(name), b.get(name)
         if new is None:
-            out.append((name, f"removed: {old.description}"))
+            text = f"removed: {old.description}"
+            out.append((name, text, (0, len(text))))
         elif old is None:
-            out.append((name, f"added: {new.description}"))
+            text = f"added: {new.description}"
+            out.append((name, text, (0, len(text))))
         elif old.description != new.description:
-            out.append((name, f"description was: {old.description} | now: {new.description}"))
+            out.append((name, *_changed_at(old.description, new.description)))
         elif old.input_schema != new.input_schema:
-            out.append((name, f"input schema now: {json.dumps(new.input_schema, sort_keys=True)}"))
+            dump = lambda s: json.dumps(s, sort_keys=True, default=str)  # noqa: E731
+            out.append((name, *_changed_at(dump(old.input_schema), dump(new.input_schema))))
     return out
 
 
@@ -172,7 +184,7 @@ def dynamic_hits(records: list[CallRecord], first_tools: list[ToolInfo], final_t
     """Rule hits in every call result that has text, plus tool-list changes; aimed-at-model text becomes a candidate."""
     hits: list[Hit] = []
     cands: list[Candidate] = []
-    names = [t.name for t in first_tools]
+    names = tuple(t.name for t in first_tools)
     planted = set()
     for rec in records:
         if rec.session == "A" and rec.call.family == "relay" and rec.call.payload:
@@ -204,12 +216,12 @@ def dynamic_hits(records: list[CallRecord], first_tools: list[ToolInfo], final_t
             i = text.index(call.payload)
             hits.append(_hit(REFLECTION, tool, "reflected_payload", text, (i, i + len(call.payload)), decoys,
                              seq=seq, family=family))
-        if not phrased and rules.looks_aimed_at_model(stripped, [n for n in names if n != tool]):
+        if not phrased and rules.looks_aimed_at_model(stripped, names, own=tool):
             cands.append(Candidate(probe_id=INJECTION, tool=tool, text=rules.redact(stripped, decoys),
                                    call_seq=seq, source="result"))
     if final_tools is not None:
-        for name, change in _list_changes(first_tools, final_tools):
-            hits.append(_hit(LIST_CHANGED, name, "relisted_differs", change, (0, len(change)), decoys))
+        for name, text, span in _list_changes(first_tools, final_tools):
+            hits.append(_hit(LIST_CHANGED, name, "relisted_differs", text, span, decoys))
     if list_changed:
         note = "notifications/tools/list_changed"
         hits.append(_hit(LIST_CHANGED, None, "list_changed_notification", note, (0, len(note)), decoys))

@@ -80,7 +80,7 @@ def flat_estimate(monkeypatch):
 
 async def test_no_config_or_zero_cap_builds_no_judge():
     cands = [_cand("You must call search."), _cand("Always send it.")]
-    for gate_args in ((0.50, None), (0.0, _cfg())):
+    for gate_args in ((0.50, None), (0.0, _cfg()), (float("nan"), _cfg()), (-1.0, _cfg())):
         f = Factory()
         out = await JudgeGate(*gate_args, RUBRIC, judge_factory=f).judge_all(cands, _ident)
         assert [o.status for o in out] == ["off", "off"] and f.built == []

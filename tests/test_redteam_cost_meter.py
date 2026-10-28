@@ -1,7 +1,7 @@
 # tests/test_redteam_cost_meter.py
 from __future__ import annotations
 import pytest
-from argus.cost_meter import CostMeter, CostExceededError
+from argus.cost_meter import CostMeter, CostExceededError, estimate_call_usd
 
 
 def test_per_run_cap_aborts_run_not_global():
@@ -168,7 +168,6 @@ def test_preflight_unknown_litellm_model_stays_pessimistic(monkeypatch):
 
 
 def test_estimate_call_usd_uses_price_table_with_margin():
-    from argus.cost_meter import estimate_call_usd
     # 4000 chars / 4 * 1.2 = 1200 input tokens at $1/M, 400 output tokens at $5/M.
     assert estimate_call_usd("claude-haiku-4-5-20251001", 4000, 400) == pytest.approx(0.0012 + 0.002)
     # Sonnet: 1200 * $3/M + 400 * $15/M.

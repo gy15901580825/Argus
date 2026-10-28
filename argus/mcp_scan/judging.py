@@ -62,7 +62,7 @@ class JudgeGate:
 
     async def judge_all(self, candidates: list[Candidate], mask: Callable[[str], str]) -> list[JudgeOutcome]:
         """One outcome per candidate, in order. Duplicate texts share one judge call."""
-        if self.config is None or self.per_run_cap_usd <= 0:
+        if self.config is None or not self.per_run_cap_usd > 0:  # a NaN cap means off, not unbounded
             return [JudgeOutcome(c, "off") for c in candidates]
         if not candidates:
             return []
