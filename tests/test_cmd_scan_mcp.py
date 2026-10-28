@@ -639,3 +639,42 @@ def test_unknown_call_tools_shows_ten_names_and_a_count(monkeypatch):
     _fake(monkeypatch, raises=UnknownTools(["nope"], names[:10]))
     exact = _invoke(URL, "--call-tools", "nope")
     assert f"The server lists: {', '.join(names[:10])}." in exact.stderr and "more" not in exact.stderr
+
+
+def _stderr_secrets() -> list[str]:
+    # Built from parts so repo secret scanners do not flag the shapes.
+    return ["gh" + "p_" + "Zq9W" * 9, "AKIA" + "Q" * 16, "hunter2" + "hunter2"]
+
+
+def test_server_stderr_tail_is_redacted_end_to_end(tmp_path):
+    pytest.importorskip("mcp")
+    token, aws, password = _stderr_secrets()
+    server = tmp_path / "stderr_server.py"
+    server.write_text(textwrap.dedent(f'''
+        import sys
+        sys.stderr.write("config loaded GITHUB_TOKEN={token} aws={aws}\\n")
+        sys.stderr.write("password={password}\\n")
+        sys.exit(1)
+    '''), encoding="utf-8")
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "REDTEAM_MODEL_PROVIDER")}
+    out = subprocess.run([sys.executable, "-c", "from argus.cli.__main__ import main; main()", "scan-mcp",
+                          "--on-host", "--timeout", "10", "--", sys.executable, str(server)],
+                         capture_output=True, text=True, cwd=tmp_path, env=env, timeout=120)
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "The server's stderr ended with:" in out.stderr
+    assert "config loaded" in out.stderr and "[REDACTED:" in out.stderr
+    assert [s for s in (token, aws, password) if s in out.stdout + out.stderr] == []
+
+
+def test_sdk_error_lines_are_redacted(monkeypatch):
+    token, aws, _ = _stderr_secrets()
+
+    async def during(cfg, mask, echo):
+        logging.getLogger("mcp.client.streamable_http").error("Error parsing SSE message %s %s", token, aws)
+
+    _fake(monkeypatch, during=during)
+    result = _invoke(URL)
+    assert result.exit_code == 0, result.output
+    assert "MCP SDK error: Error parsing SSE message [REDACTED:" in result.stderr
+    assert token not in result.output and aws not in result.output

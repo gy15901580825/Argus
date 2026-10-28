@@ -99,11 +99,14 @@ class _SdkErrors(logging.Handler):
         self._say = say
 
     def emit(self, record: logging.LogRecord) -> None:
+        from argus.mcp_scan import rules
+
         try:
             text = record.getMessage()
         except Exception:
             text = str(record.msg)
-        self._say(f"MCP SDK error: {' '.join(text.split())}", err=True)
+        # The message can quote server text; say() then masks the known secrets.
+        self._say(f"MCP SDK error: {' '.join(rules.redact(text).split())}", err=True)
 
 
 @contextlib.contextmanager
@@ -256,7 +259,9 @@ def cmd_scan_mcp(argv: tuple[str, ...], call_tools, tool_args: dict, headers: tu
             sys.exit(2)
         say(f"Error: could not connect: {e}", err=True)
         if e.stderr_tail:
-            say(f"The server's stderr ended with:\n{e.stderr_tail}", err=True)
+            from argus.mcp_scan import rules
+
+            say(f"The server's stderr ended with:\n{rules.redact(e.stderr_tail)}", err=True)
         sys.exit(1)
     except scan.UnknownTools as e:
         shown = ", ".join(e.valid[:_NAMES_SHOWN]) or "no tools"
