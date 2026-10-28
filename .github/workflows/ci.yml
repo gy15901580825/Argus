@@ -15,14 +15,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  orchestrator:
-    name: orchestrator — tests + import boundary
+  argus:
+    name: argus — tests + import boundary
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        # tests/test_redteam_probe.py resolves PROBES_DIR relative to this dir,
-        # so the suite must be invoked from here, not the repo root.
-        working-directory: orchestrator
     steps:
       - uses: actions/checkout@v4
 
@@ -30,43 +25,52 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-          cache-dependency-path: orchestrator/requirements-dev.txt
+          cache-dependency-path: pyproject.toml
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt -r requirements-dev.txt
+          pip install -e ".[dev]"
 
       - name: Run test suite
         run: python -m pytest tests/ -q
 
-      - name: Check redteam import boundary
-        # redteam/ must never import web_ui_* — see .importlinter
-        run: lint-imports --config .importlinter
+      - name: Check import boundaries
+        # The engine must not import argus.cli or argus.server; see .importlinter
+        run: lint-imports
 
-  cli:
-    name: cli — tests
+  install:
+    name: argus-probe — install from source
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: cli
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: pip
-          cache-dependency-path: cli/pyproject.toml
 
-      - name: Install dependencies
-        # pyproject.toml declares no "dev" extra, so install the package plus pytest directly.
+      - name: Install into a fresh venv with the empty [local] extra
+        # An explicit bash shell runs with pipefail, so a failed pip install fails the step despite tee.
+        shell: bash
         run: |
-          python -m pip install --upgrade pip
-          pip install -e . pytest
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --upgrade pip
+          "$RUNNER_TEMP/venv/bin/pip" install ".[local]" 2>&1 | tee "$RUNNER_TEMP/pip.log"
+          if grep -q "does not provide the extra" "$RUNNER_TEMP/pip.log"; then
+            echo "argus-probe must still provide the [local] extra" >&2
+            exit 1
+          fi
 
-      - name: Run test suite
-        run: python -m pytest tests/ -q
+      - name: Import, package data and CLI work outside the checkout
+        # Run from a temp dir so the source tree cannot shadow the installed package.
+        working-directory: ${{ runner.temp }}
+        run: |
+          PY="$RUNNER_TEMP/venv/bin/python"
+          "$PY" -c "import argus.runner, argus.cli.run_json, argus.email_alert, argus.skillscan.sandbox"
+          "$PY" -c "import argus, pathlib; assert (pathlib.Path(argus.__file__).parent / 'skillscan/docker/proxy_addon.py').is_file()"
+          "$RUNNER_TEMP/venv/bin/argus-probe" --help
+          "$RUNNER_TEMP/venv/bin/argus-probe" quickstart --out "$RUNNER_TEMP/qs.html"
+          test -s "$RUNNER_TEMP/qs.html"
 
   payment_testbed:
     name: payment_testbed — tests
@@ -135,8 +139,8 @@ jobs:
           import sys, glob, yaml
           from pathlib import Path
 
-          probes = sorted(glob.glob("orchestrator/orchestrator/redteam/probes/**/*.yaml", recursive=True))
-          rubrics = Path("orchestrator/orchestrator/redteam/rubrics")
+          probes = sorted(glob.glob("argus/probes/**/*.yaml", recursive=True))
+          rubrics = Path("argus/rubrics")
           required = {"id", "name", "target_class", "attack_class", "severity", "prompts"}
           severities = {"info", "low", "medium", "high", "critical"}
           errors, seen = [], {}

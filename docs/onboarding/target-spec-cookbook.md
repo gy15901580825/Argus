@@ -142,7 +142,7 @@ We provide a thin reference adapter you can drop into your agent harness; ask in
 `argus-probe run --local` runs browser probes on your machine with no server and no client_agent. For each probe the CLI serves the trap page itself and sends your agent its URL. Browser probes are judged, so set a judge key:
 
 ```bash
-pipx install "argus-probe[local]"
+pipx install argus-probe
 export ANTHROPIC_API_KEY=<your key>
 argus-probe run --local --target argus-target.json \
   --probes browser_dom_inject_html_comment,browser_os_cmd_install_tutorial --format html --out report.html
@@ -193,7 +193,7 @@ If your agent can't reach your machine at all, submit the run with `--api-url` a
 **What's on the other end:** `inner` is a nested target spec (any kind above — here, `openai_compat`) for the transport that actually talks to your agent; the payment adapter wraps it. The `testbed_url` must point at a running `payment_testbed/` instance from this repo — see `payment_testbed/README.md` for `testbed/` (mock merchant + facilitator) and `demo_agent/` (the vulnerable reference agent the example above points at). Nothing in `payment_testbed/` touches a blockchain or real funds.
 
 **Notes:**
-- `payment_agent` only runs probes whose `target_class` includes `payment_agent` (the ones under `orchestrator/orchestrator/redteam/probes/payment/`). Point an ordinary chat probe at a `payment_agent` target and it's skipped, not run; point a payment probe at a `custom_http`/`openai_compat` target and it's skipped too — the two families only match each other.
+- `payment_agent` only runs probes whose `target_class` includes `payment_agent` (the ones under `argus/probes/payment/`). Point an ordinary chat probe at a `payment_agent` target and it's skipped, not run; point a payment probe at a `custom_http`/`openai_compat` target and it's skipped too — the two families only match each other.
 - `script` is an optional fallback merchant script (`quote_amount`, `payee_override`, `inject_followup`, `fail_first_settle`) used only when a probe declares no `scenario.payload` of its own — each probe's own payload takes precedence.
 
 ---
@@ -220,7 +220,7 @@ If your agent can't reach your machine at all, submit the run with `--api-url` a
 **What's on the other end:** `inner` is a nested target spec (any kind above — here, `openai_compat`) for the transport that actually talks to your agent. The `testbed_url` must point at a running `mcp_testbed/` instance from this repo — see `mcp_testbed/README.md` for `testbed/` (the hostile MCP server, staging tool poisoning / rug-pull / shadowing / confused-deputy / credential-lure scenarios) and `demo_agent/` (the vulnerable reference MCP client the example above points at).
 
 **Notes:**
-- `mcp_agent` only runs probes whose `target_class` includes `mcp_agent` (the ones under `orchestrator/orchestrator/redteam/probes/mcp/`). Point an ordinary chat probe at an `mcp_agent` target and it's skipped, not run; point an MCP probe at a `custom_http`/`openai_compat` target and it's skipped too — the two families only match each other.
+- `mcp_agent` only runs probes whose `target_class` includes `mcp_agent` (the ones under `argus/probes/mcp/`). Point an ordinary chat probe at an `mcp_agent` target and it's skipped, not run; point an MCP probe at a `custom_http`/`openai_compat` target and it's skipped too — the two families only match each other.
 - `script` is an optional fallback scenario (`{"scenario": "tool_poisoning"}` etc.) used only when a probe declares no `scenario.payload` of its own — each probe's own payload takes precedence.
 
 ---
@@ -239,7 +239,7 @@ If your agent can't reach your machine at all, submit the run with `--api-url` a
 
 **What it sends:** an OPTIONS preflight and an `initialize` with a foreign `Origin`, an `initialize` without `headers`, then `initialize` + `tools/list` with `headers`. **It never sends `tools/call`.** Listing an env-dump tool is enough to prove the exposure, and calling it would copy your secrets into the report.
 
-**Probes** (`orchestrator/orchestrator/redteam/probes/mcp_server/`, decided by assertions, no judge):
+**Probes** (`argus/probes/mcp_server/`, decided by assertions, no judge):
 
 | probe | fails when |
 |---|---|
@@ -319,7 +319,7 @@ If your agent can't reach your machine at all, submit the run with `--api-url` a
 
 ## GitHub Actions integration
 
-Use [`argus-probe-action`](https://github.com/marketplace/actions/argus-agent-red-team-scan). It installs `argus-probe[local]` from PyPI, runs the probes in local mode, uploads the SARIF to code scanning and applies the `fail-on` gate. `argus-probe init --workflow` writes this file (the `OPENAI_API_KEY` line appears because the target spec reads that key):
+Use [`argus-probe-action`](https://github.com/marketplace/actions/argus-agent-red-team-scan). It installs `argus-probe` from PyPI, runs the probes in local mode, uploads the SARIF to code scanning and applies the `fail-on` gate. `argus-probe init --workflow` writes this file (the `OPENAI_API_KEY` line appears because the target spec reads that key):
 
 ```yaml
 # .github/workflows/argus-probe.yml

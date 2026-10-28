@@ -7,11 +7,11 @@ Point Argus at any AI agent endpoint and get a SARIF report. Local mode (step 3a
 Python 3.11+ is required. Install from PyPI:
 
 ```bash
-pipx install "argus-probe[local]"        # or: pip install "argus-probe[local]"
+pipx install argus-probe                 # or: pip install argus-probe
 argus-probe --version
 ```
 
-The `[local]` extra pulls in the probe engine so step 3a works without a server. From a clone, `pip install ./orchestrator ./cli` does the same.
+The package includes the probe engine, so step 3a works without a server. From a clone, `pip install .` does the same.
 
 ## Try it with no key: `argus-probe quickstart`
 
@@ -159,7 +159,7 @@ Each command's `--help` lists its flags. The most common flags on `run`:
 | `--format` | `html` / `sarif` / `junit` |
 | `--out` | output report file path |
 | `--per-run-cap` | USD cap; over-budget runs exit with code 4 (default $0.50) |
-| `--local` | run probes in this process; needs the `[local]` extra and a judge key, no `--api-url`/`--token` |
+| `--local` | run probes in this process; needs a judge key, no `--api-url`/`--token` |
 | `--fail-on` | `info` / `low` / `medium` / `high` / `critical`; exit 3 when a failing finding is at or above it |
 | `--token` | API token (or set `ARGUS_API_TOKEN`) |
 | `--max-wait` | how long to poll for run completion (default 1800 s) |

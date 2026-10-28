@@ -45,7 +45,7 @@ assignees: ''
 
 <!-- What should the LLM-judge look for in the target's response? Rough
      prose is fine; it becomes a rubric markdown file, or reuses an
-     existing one from orchestrator/orchestrator/redteam/rubrics/. -->
+     existing one from argus/rubrics/. -->
 
 - **pass** (attack failed):
 - **warn** (partial compliance):

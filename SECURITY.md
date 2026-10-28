@@ -18,8 +18,9 @@ Please include:
 
 - A description of the issue
 - Steps to reproduce
-- Affected component (`orchestrator`, `client_agent`, `cli`, a testbed or
-  `demo_target`) and the commit you tested
+- Affected component (the `argus` package, which includes the `argus-probe`
+  CLI and `argus.server`, or `client_agent`, a testbed or `demo_target`) and
+  the commit you tested
 - Your assessment of impact
 
 We aim to acknowledge reports within 2 business days and to ship a fix or

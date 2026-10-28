@@ -6,7 +6,7 @@ Request flows and orchestrator API endpoints.
 
 ```
 Orchestrator red-team run (target kind browser_use)
-  → RedteamBridge (connection_manager.py) picks the first connected client agent
+  → RedteamBridge (argus/connection_manager.py) picks the first connected client agent
     → JSON-RPC `redteam_browser_probe` over the /agent/connect WebSocket
       → Client Agent (redteam_runner.BrowserProbe) serves a scenario page on localhost
       → TargetAgentDriver POSTs the scenario URL + prompt to the customer's browser agent
@@ -16,7 +16,9 @@ Orchestrator red-team run (target kind browser_use)
 
 ## API Endpoints
 
-### Orchestrator (`orchestrator`, port 8080)
+### Orchestrator (`python -m argus.server`, port 8080)
+
+Install with `pip install "argus-probe[server]"`; the `server` extra adds the WebSocket library uvicorn needs for `/agent/connect`.
 
 | Method | Path | Role |
 |--------|------|------|

@@ -1,6 +1,6 @@
 name: Release
 
-# Publishes argus-probe (cli/) and argus-orchestrator (orchestrator/) with PyPI
+# Publishes argus-probe (the repo root pyproject.toml) with PyPI
 # trusted publishing: the publish jobs get an OIDC token, so no API tokens or
 # secrets are stored. Setup and steps are in docs/runbooks/release.md.
 #
@@ -22,7 +22,7 @@ permissions:
 
 jobs:
   build:
-    name: build + check both packages
+    name: build + check argus-probe
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -37,22 +37,20 @@ jobs:
           pip install build twine
 
       - name: Tag must match argus-probe version
-        # The tag names the CLI release; argus-orchestrator keeps its own version.
         if: github.ref_type == 'tag'
         run: |
           python - <<'PY'
           import os, sys, tomllib
           tag = os.environ["GITHUB_REF_NAME"]
-          version = tomllib.load(open("cli/pyproject.toml", "rb"))["project"]["version"]
+          version = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]
           if tag.removeprefix("v") != version:
-              sys.exit(f"tag {tag} does not match argus-probe version {version} in cli/pyproject.toml")
+              sys.exit(f"tag {tag} does not match argus-probe version {version} in pyproject.toml")
           print(f"tag {tag} matches argus-probe {version}")
           PY
 
       - name: Build sdist + wheel
         run: |
-          python -m build cli --outdir dist
-          python -m build orchestrator --outdir dist
+          python -m build . --outdir dist
 
       - name: Check metadata
         run: twine check --strict dist/*
@@ -102,6 +100,5 @@ jobs:
 
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          # A CLI-only release leaves argus-orchestrator's version unchanged;
-          # skip that file instead of failing on "file already exists".
+          # Lets a failed publish be re-run after a partial upload.
           skip-existing: true

@@ -1,0 +1,43 @@
+[importlinter]
+root_package = argus
+
+[importlinter:contract:engine-independent]
+name = The engine must not import the CLI or the HTTP server
+type = forbidden
+source_modules =
+    argus.api
+    argus.assertions
+    argus.browser_runner
+    argus.cost_meter
+    argus.coverage
+    argus.decider
+    argus.demo
+    argus.dispatcher
+    argus.email_alert
+    argus.guardrails
+    argus.iterative
+    argus.iterative_gcg
+    argus.iterative_pair
+    argus.iterative_tap
+    argus.judge
+    argus.llm
+    argus.local
+    argus.persona_loader
+    argus.persona_strategy
+    argus.probe
+    argus.runner
+    argus.skillscan
+    argus.suites
+    argus.targets
+forbidden_modules =
+    argus.cli
+    argus.server
+
+[importlinter:contract:cli-not-server]
+name = The CLI and the connection manager must not import the HTTP server
+type = forbidden
+source_modules =
+    argus.cli
+    argus.connection_manager
+forbidden_modules =
+    argus.server
