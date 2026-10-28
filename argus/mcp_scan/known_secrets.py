@@ -89,9 +89,14 @@ def value_mask(values: Iterable[str]) -> Callable[[str], str]:
     """The engine's mask: each value of VALUE_MIN or more characters, longest first, replaced by *** even with
     hidden characters inserted in it, which the report would otherwise show as <U+XXXX> between its halves."""
     plain = sorted({strip_hidden(v) for v in values} - {MASK}, key=len, reverse=True)
-    patterns = [re.compile(HIDDEN_RUN.join(map(re.escape, v))) for v in plain if len(v) >= VALUE_MIN]
+    plain = [v for v in plain if len(v) >= VALUE_MIN]
+    patterns = [re.compile(HIDDEN_RUN.join(map(re.escape, v))) for v in plain]
 
     def mask(text: str) -> str:
+        if strip_hidden(text) == text:  # same result as the regexes, without their cost on a long repetitive value
+            for v in plain:
+                text = text.replace(v, MASK)
+            return text
         for p in patterns:
             text = p.sub(MASK, text)
         return text

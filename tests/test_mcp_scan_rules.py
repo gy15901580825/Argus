@@ -583,6 +583,15 @@ def test_value_mask_matches_a_value_with_hidden_characters_inserted():
     assert value_mask(["ab\x07cdef"])("x abcdef ab\x07cdef") == "x *** ***"
 
 
+def test_value_mask_on_text_without_hidden_characters_is_fast():
+    # The hidden-character regex costs text length times value length on a long repetitive value.
+    mask = value_mask(["a" * 1000])
+    text = ("a" * 999 + "b") * 262
+    start = time.perf_counter()
+    assert mask(text + "a" * 1000) == text + "***"
+    assert time.perf_counter() - start < 0.2
+
+
 # ---- source hygiene ----
 
 def test_sources_hold_no_raw_invisible_characters():
