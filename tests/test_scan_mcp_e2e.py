@@ -267,3 +267,16 @@ def test_run_time_limit_stops_the_calls_and_exits_1():
     assert "The run time limit (--max-runtime) was reached;" in result.output
     [err] = [f for f in _by_probe(_run_json(), checks.SECRET) if f["verdict"] == "error"]
     assert "slow_5: run time limit reached" in err["reasoning"]
+
+
+def test_many_tools_console_shows_a_summary_and_the_report_every_tool():
+    result = _scan("stdio", "many_tools", "--format", "html")
+    assert result.exit_code == 0, result.output
+    assert "1000 tool(s) listed: 0 called, 1000 not called by policy, 0 not exercised, 0 not tested." in result.output
+    shown = [line for line in result.output.splitlines() if line.startswith("tool_")]
+    assert shown == [f"tool_{i} [no annotations]: not called by policy: not annotated read-only" for i in range(20)]
+    assert "and 980 more tool(s); the report lists every one." in result.output
+    html = Path(OUT["html"]).read_text(encoding="utf-8")
+    assert "tool_999 [no annotations]: not called by policy" in html
+    # The other notes still reach the console.
+    assert "tools/list returned 5000 tools; kept the first 1000" in result.output and SNYK_LINE in result.output

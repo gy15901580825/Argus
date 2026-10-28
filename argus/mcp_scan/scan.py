@@ -13,7 +13,7 @@ from argus.mcp_scan import checks, policy
 from argus.mcp_scan.calls import CallHooks, CallRun, run_calls, show_text
 from argus.mcp_scan.client import HttpServer, StdioServer, open_session
 from argus.mcp_scan.findings import (SNYK_LINE, all_selected_unexercised, build_findings, inventory_notes,
-                                     unjudged_count)
+                                     inventory_summary, unjudged_count)
 from argus.mcp_scan.judging import JudgeGate
 from argus.mcp_scan.models import ServerInfo
 from argus.mcp_scan.payloads import new_run_id
@@ -62,6 +62,8 @@ class ScanResult:
     unjudged: int
     no_tool_called: bool
     out_of_time: bool = False
+    inventory: int = 0  # how many leading notes are per-tool inventory lines
+    inventory_summary: str = ""
 
 
 @functools.lru_cache(maxsize=1)
@@ -104,7 +106,8 @@ async def scan_mcp(cfg: ScanConfig, *, mask: Callable[[str], str], echo: Callabl
                           listed=listed, transport=cfg.transport, sandbox=cfg.transport == "stdio-sandbox",
                           decoys=cfg.decoys, mask=mask)
 
-    notes = inventory_notes(listed, reasons, calls) + list_notes + (calls.notes if calls is not None else [])
+    inventory = inventory_notes(listed, reasons, calls)
+    notes = inventory + list_notes + (calls.notes if calls is not None else [])
     # A replay often returns the baseline's text again: list each (probe, tool, text) once.
     off = list(dict.fromkeys(
         f"not judged: {o.candidate.probe_id} {show_text(o.candidate.tool)}: {show_text(o.candidate.text)}"
@@ -123,4 +126,5 @@ async def scan_mcp(cfg: ScanConfig, *, mask: Callable[[str], str], echo: Callabl
     notes.append(SNYK_LINE)
     return ScanResult(findings=scan + server, notes=notes, server_info=server_info,
                       all_selected_unexercised=all_selected_unexercised(calls), unjudged=unjudged_count(scan),
-                      no_tool_called=not chosen, out_of_time=calls is not None and calls.out_of_time)
+                      no_tool_called=not chosen, out_of_time=calls is not None and calls.out_of_time,
+                      inventory=len(inventory), inventory_summary=inventory_summary(listed, reasons, calls))

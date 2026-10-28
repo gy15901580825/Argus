@@ -302,12 +302,23 @@ def _unjudged(ctx: _Ctx, probe: Probe, name: str | None) -> dict:
 
 def inventory_notes(listed: list[ToolInfo], reasons: Mapping[str, str], calls: CallRun | None) -> list[str]:
     """One line per listed tool: its annotations and whether it was called, not called by policy, or not exercised."""
+    return [line for _, line in _inventory(listed, reasons, calls)]
+
+
+def inventory_summary(listed: list[ToolInfo], reasons: Mapping[str, str], calls: CallRun | None) -> str:
+    """One line counting the inventory, for a console that shows only its first lines."""
+    kinds = [kind for kind, _ in _inventory(listed, reasons, calls)]
+    return (f"{len(kinds)} tool(s) listed: {kinds.count('called')} called, {kinds.count('policy')} not called by "
+            f"policy, {kinds.count('not_exercised')} not exercised, {kinds.count('not_tested')} not tested.")
+
+
+def _inventory(listed: list[ToolInfo], reasons: Mapping[str, str], calls: CallRun | None) -> list[tuple[str, str]]:
     outcomes = calls.outcomes if calls is not None else {}
     replays: dict[str, int] = {}
     for r in calls.records if calls is not None else []:
         if r.session == "B":
             replays[r.call.tool] = replays.get(r.call.tool, 0) + 1
-    lines: list[str] = []
+    lines: list[tuple[str, str]] = []
     seen: set[str] = set()
     for tool in listed:
         if tool.name in seen:
@@ -316,18 +327,18 @@ def inventory_notes(listed: list[ToolInfo], reasons: Mapping[str, str], calls: C
         head = f"{show_text(tool.name)} [{_annotations(tool)}]"
         o = outcomes.get(tool.name)
         if tool.name in reasons:
-            lines.append(f"{head}: not called by policy: {reasons[tool.name]}")
+            lines.append(("policy", f"{head}: not called by policy: {reasons[tool.name]}"))
         elif o is None:
-            lines.append(f"{head}: not tested: not selected")
+            lines.append(("not_tested", f"{head}: not tested: not selected"))
         elif o.status == "called":
             # The console counts session-A calls, so the replay is shown apart.
             n = replays.get(tool.name, 0)
             counts = f"{o.calls - n} calls" + (f", {n} replay" if n == 1 else f", {n} replays" if n else "")
-            lines.append(f"{head}: called ({counts})" + (f"; {o.detail}" if o.detail else ""))
+            lines.append(("called", f"{head}: called ({counts})" + (f"; {o.detail}" if o.detail else "")))
         elif o.status == "not_exercised" and o.calls:
-            lines.append(f"{head}: called but every call errored (not exercised): {o.detail}")
+            lines.append(("not_exercised", f"{head}: called but every call errored (not exercised): {o.detail}"))
         else:
-            lines.append(f"{head}: not tested: {o.detail.removeprefix('not tested: ')}")
+            lines.append(("not_tested", f"{head}: not tested: {o.detail.removeprefix('not tested: ')}"))
     return lines
 
 

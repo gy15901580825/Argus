@@ -11,7 +11,7 @@ import argus
 from argus.mcp_scan import checks, findings
 from argus.mcp_scan.calls import CallRun, ToolOutcome
 from argus.mcp_scan.findings import (READONLY, SNYK_LINE, all_selected_unexercised, build_findings,
-                                     inventory_notes, unjudged_count)
+                                     inventory_notes, inventory_summary, unjudged_count)
 from argus.mcp_scan.judging import CAP_REASON, ERROR_REASON, OFF_REASON, JudgeOutcome
 from argus.mcp_scan.models import CallRecord, CallResult, Candidate, Hit, PlannedCall, ToolInfo
 from argus.probe import load_all_probes
@@ -449,6 +449,16 @@ def test_inventory_lists_every_tool_with_annotations():
     # Without a call run every tool is accounted for by policy.
     assert inventory_notes([tool("rw", {})], {"rw": "not annotated read-only"}, None) == [
         "rw [no annotations]: not called by policy: not annotated read-only"]
+
+
+def test_inventory_summary_counts_each_kind():
+    tools = [tool("ro"), tool("rw", {}), tool("wipe", {}), tool("err"), tool("halt"), tool("capped")]
+    run = call_run([], {"ro": called(6), "err": ToolOutcome("not_exercised", 2, "timeout: no reply"),
+                        "halt": ToolOutcome("not_exercised", 0, "the server stopped answering"),
+                        "capped": ToolOutcome("not_tested_cap", 0, "not tested: call cap reached")})
+    reasons = {"rw": "not annotated read-only", "wipe": "annotated destructive"}
+    assert inventory_summary(tools, reasons, run) == (
+        "6 tool(s) listed: 1 called, 2 not called by policy, 1 not exercised, 2 not tested.")
 
 
 def test_inventory_counts_session_a_calls_and_replays_apart():

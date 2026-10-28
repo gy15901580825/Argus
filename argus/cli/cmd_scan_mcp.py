@@ -35,6 +35,7 @@ _HEADER_RE = re.compile(r"\s*([!#$%&'*+.^_`|~0-9A-Za-z-]+)\s*:\s*(\S.*?)\s*")
 _EXCERPT_MAX = 100
 _SDK_LOGGERS = ("mcp", "client")
 _NAMES_SHOWN = 10
+_INVENTORY_SHOWN = 20
 
 
 @dataclass(frozen=True)
@@ -309,7 +310,13 @@ def cmd_scan_mcp(argv: tuple[str, ...], call_tools, tool_args: dict, headers: tu
     out_file = out_file or f"argus-mcp-scan-report.{_EXTENSIONS[report_format]}"
     _write_report(out_file, report, encoding="utf-8", echo=say)
     say(f"Wrote report to {out_file}")
-    for note in result.notes:
+    notes = result.notes
+    # A server may list 1000 tools: the console shows a count and the first lines, the report every line.
+    if result.inventory > _INVENTORY_SHOWN:
+        notes = [result.inventory_summary, *notes[:_INVENTORY_SHOWN],
+                 f"... and {result.inventory - _INVENTORY_SHOWN} more tool(s); the report lists every one.",
+                 *notes[result.inventory:]]
+    for note in notes:
         say(note)
 
     if result.out_of_time:
