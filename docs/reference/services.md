@@ -8,13 +8,15 @@ Request flows and orchestrator API endpoints.
 Orchestrator red-team run (target kind browser_use)
   → RedteamBridge (argus/connection_manager.py) picks the first connected client agent
     → JSON-RPC `redteam_browser_probe` over the /agent/connect WebSocket
-      → Client Agent (redteam_runner.BrowserProbe) serves a scenario page on localhost
+      → Client Agent (redteam_runner.BrowserProbe) serves a scenario page (localhost by default)
       → TargetAgentDriver POSTs the scenario URL + prompt to the customer's browser agent
     → Client Agent replies on the same WebSocket with the probe result
   → Orchestrator judges the result and records the finding
 ```
 
 The `redteam_browser_probe` message carries two text fields. `prompt` is the user's instruction and is what the client agent sends to the browser agent; `payload` is the hostile scenario planted in the trap page and must never be treated as the instruction. A probe without a `scenario` block sends its prompt in both fields.
+
+The message can also carry `trap_host`, `trap_port` and `trap_public_url`, copied from the target spec. Each key is present only when the spec sets a value other than the default, and is never null. The client agent binds the trap page to `trap_host` and `trap_port`, and sends the browser agent `trap_public_url` with `/scenario` appended. A missing key keeps the default: `127.0.0.1`, a free port, and a URL built from the bound address.
 
 ## API Endpoints
 

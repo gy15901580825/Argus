@@ -11,7 +11,7 @@ import contextlib
 import contextvars
 import ipaddress
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import ClassVar
 from urllib.parse import urlsplit
 
@@ -44,8 +44,8 @@ class BrowserUseSpec:
     scenario_kind: str = ""
     timeout_s: float = 60.0
     extra_context: tuple[tuple[str, str], ...] = ()
-    # Where the local trap page listens and the URL the agent is told to open.
-    # Only used by --local; the agent must be able to reach that URL.
+    # Where the trap page listens and the URL the agent is told to open: on this
+    # machine under --local, else on the client_agent's. The agent must reach that URL.
     trap_host: str = "127.0.0.1"
     trap_port: int = 0
     trap_public_url: str = ""
@@ -180,9 +180,9 @@ class BrowserUseTarget(Target):
                 self._run_in_process(msg), timeout=self.spec.timeout_s + 5.0
             )
         else:
-            if self.spec.sets_trap:
-                # An older client_agent would ignore these and serve on 127.0.0.1.
-                raise ValueError("trap_host, trap_port and trap_public_url only apply to --local runs")
+            # Send only the trap settings that differ from the default; never null.
+            msg.update({f.name: getattr(self.spec, f.name) for f in fields(self.spec)
+                        if f.name.startswith("trap_") and getattr(self.spec, f.name) != f.default})
             ws = _get_client_agent_ws()
             # Same 5 s grace as --local, so the client_agent's own timeout error
             # can still arrive; the outer wait is only a backstop for the bridge.

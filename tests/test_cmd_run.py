@@ -384,16 +384,18 @@ def test_baseline_key_same_for_different_probe_selection(tmp_path, monkeypatch):
     assert bodies[0]["baseline_key"] == bodies[1]["baseline_key"]
 
 
-def test_run_rejects_trap_options_without_local(tmp_path):
+def test_run_submits_trap_options_without_local(tmp_path, monkeypatch):
+    _stub_remote(monkeypatch, [])
+    bodies = []
+    monkeypatch.setattr(api_client, "post_run", lambda *a, **k: bodies.append(k["body"]) or {"run_id": "r1"})
+    spec = {"kind": "browser_use", "agent_url": "http://a", "scenario_kind": "dom_injection",
+            "trap_host": "0.0.0.0", "trap_port": 8765, "trap_public_url": "http://10.0.0.5:8765"}
     p = tmp_path / "b.json"
-    p.write_text(json.dumps({"kind": "browser_use", "agent_url": "http://a", "scenario_kind": "dom_injection",
-                             "trap_port": 8765, "trap_public_url": "http://10.0.0.5:8765"}))
-    with patch("argus.cli.api_client.post_run") as post_run:
-        result = CliRunner().invoke(cmd_run, [
-            "--target", str(p), "--probes", "p", "--out", str(tmp_path / "r.html"),
-            "--api-url", "https://argus.example", "--token", "t",
-        ])
-    assert result.exit_code == 2, result.output
-    assert "trap_* options only apply to --local runs" in result.output
-    assert "trap_port, trap_public_url" in result.output
-    post_run.assert_not_called()
+    p.write_text(json.dumps(spec))
+    result = CliRunner().invoke(cmd_run, [
+        "--target", str(p), "--probes", "p", "--out", str(tmp_path / "r.html"),
+        "--api-url", "https://argus.example", "--token", "t",
+    ])
+    assert result.exit_code == 0, result.output
+    assert len(bodies) == 1
+    assert bodies[0]["target"] == spec

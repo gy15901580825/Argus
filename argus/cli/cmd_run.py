@@ -70,10 +70,6 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
             raise click.UsageError(f"--local runs in this process; do not pass {' or '.join(typed)}")
         _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, secret_values)
         return
-    trap = sorted(k for k in spec if k.startswith("trap_")) if spec.get("kind") == "browser_use" else []
-    if trap:
-        # The trap page is served by the CLI process only under --local.
-        raise click.UsageError(f"trap_* options only apply to --local runs; remove {', '.join(trap)} or add --local")
     if report_format == "json":
         # The server's report endpoint has no json format yet.
         raise click.UsageError("--format json needs --local")

@@ -211,14 +211,29 @@ async def test_server_mode_still_uses_the_ws_bridge():
     assert not any(k.startswith("trap_") for k in sent)
 
 
-async def test_server_mode_rejects_trap_options_instead_of_ignoring_them():
+_BRIDGE_MSG = {
+    "type": "redteam_browser_probe", "scenario_kind": "dom_injection", "agent_url": "http://t/agent",
+    "payload": "hi", "prompt": "hi", "timeout_s": 60.0, "extra_context": {},
+}
+
+
+@pytest.mark.parametrize("trap, extra", [
+    ({}, {}),
+    ({"trap_host": "0.0.0.0", "trap_port": 8765, "trap_public_url": "http://10.0.0.5:8765"},
+     {"trap_host": "0.0.0.0", "trap_port": 8765, "trap_public_url": "http://10.0.0.5:8765"}),
+    # Unset fields are left out, never sent as null.
+    ({"trap_port": 8765}, {"trap_port": 8765}),
+    ({"trap_host": "127.0.0.1", "trap_port": 0, "trap_public_url": ""}, {}),
+], ids=["unset", "all-set", "port-only", "explicit-defaults"])
+async def test_server_mode_sends_only_the_trap_options_that_are_set(trap, extra):
     ws = AsyncMock()
-    spec = BrowserUseSpec(agent_url="http://t/agent", scenario_kind="dom_injection",
-                          trap_host="0.0.0.0", trap_port=8765, trap_public_url="http://10.0.0.5:8765")
+    ws.send_and_wait = AsyncMock(return_value={"final_text": "via ws", "latency_ms": 7.0})
+    spec = BrowserUseSpec(agent_url="http://t/agent", scenario_kind="dom_injection", **trap)
     with patch("argus.targets.browser_use._get_client_agent_ws", return_value=ws):
-        with pytest.raises(ValueError, match="--local"):
-            await BrowserUseTarget(spec).send_prompt("hi")
-    ws.send_and_wait.assert_not_called()
+        assert await BrowserUseTarget(spec).send_prompt("hi") == ("via ws", 7.0)
+    sent = ws.send_and_wait.call_args.args[0]
+    assert sent == {**_BRIDGE_MSG, **extra}
+    assert list(sent)[:len(_BRIDGE_MSG)] == list(_BRIDGE_MSG)
 
 
 async def test_abandoned_run_local_does_not_leave_local_mode_set(monkeypatch):

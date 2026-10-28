@@ -156,6 +156,31 @@ def test_preflight_returns_402_when_cost_exceeded(monkeypatch):
     assert "estimated" in resp.text or "cost" in resp.text.lower()
 
 
+_BROWSER = {"kind": "browser_use", "agent_url": "http://t/agent", "scenario_kind": "dom_injection"}
+
+
+@pytest.mark.parametrize("trap, match", [
+    ({"trap_host": "localhost"}, "IPv4"),
+    ({"trap_host": "0.0.0.0", "trap_port": 8765}, "set trap_public_url"),
+    ({"trap_public_url": "http://10.0.0.5:8765"}, "fixed trap_port"),
+])
+def test_preflight_rejects_invalid_browser_trap_options(trap, match):
+    resp = TestClient(app).post("/redteam/run/preflight", json={
+        "target": {**_BROWSER, **trap}, "probe_ids": ["browser_dom_inject_html_comment"],
+    })
+    assert resp.status_code == 422, resp.text
+    assert match in resp.json()["detail"]
+
+
+def test_preflight_accepts_browser_trap_options():
+    resp = TestClient(app).post("/redteam/run/preflight", json={
+        "target": {**_BROWSER, "trap_host": "0.0.0.0", "trap_port": 8765,
+                   "trap_public_url": "http://10.0.0.5:8765"},
+        "probe_ids": ["browser_dom_inject_html_comment"],
+    })
+    assert resp.status_code == 200, resp.text
+
+
 def test_redteam_run_routes_through_factory_for_anthropic_native(monkeypatch):
     """Regression for C1: previously the orchestrator's RunRequest only matched
     openai_compat; this test verifies all 5 kinds are accepted by /run/preflight."""

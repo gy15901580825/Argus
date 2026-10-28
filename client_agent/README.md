@@ -1,8 +1,10 @@
 # client_agent
 
-The client agent runs browser_use probes. It connects to the orchestrator's WebSocket hub (`/agent/connect`), serves each adversarial scenario page on localhost, and drives your browser agent at the target's `agent_url`.
+The client agent runs browser_use probes. It connects to the orchestrator's WebSocket hub (`/agent/connect`), serves each adversarial scenario page (on localhost by default), and drives your browser agent at the target's `agent_url`.
 
 In each `redteam_browser_probe` message, `prompt` is the user's instruction sent to your agent, and `payload` is the hostile scenario rendered into the trap page. Never treat `payload` as the instruction.
+
+The message can also carry `trap_host`, `trap_port` and `trap_public_url` from the target spec. The client agent then listens on that address and port, and gives your agent `trap_public_url` with `/scenario` appended. Set them when your browser agent runs on another host or in a container and can't open `127.0.0.1` on this machine. The [target spec cookbook](../docs/onboarding/target-spec-cookbook.md#browser_use) explains each field.
 
 You only need it in server mode. `argus-probe run --local` runs `browser_use` targets on your machine with no server and no client agent. In server mode, a browser_use run needs a server implementing the `/api/v1/redteam` API, backed by the orchestrator, with this client agent connected to that orchestrator. This repo does not ship such a server; the self-hosted stack is at tag `v0.3-full`.
 

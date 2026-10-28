@@ -352,14 +352,17 @@ async def test_cancellation_still_propagates():
 
 
 @pytest.mark.asyncio
-async def test_server_only_trap_settings_still_abort_the_run():
-    # A spec mistake is not a delivery failure; it must keep failing loudly.
+async def test_server_mode_trap_settings_reach_the_client_agent():
+    ws = MagicMock()
+    ws.send_and_wait = AsyncMock(return_value={"final_text": "ok", "latency_ms": 1.0})
     target = BrowserUseTarget(BrowserUseSpec(
         agent_url="https://t.example.com/agent", scenario_kind="dom_injection", trap_port=8765,
     ))
     runner = Runner(target=target, judge=_judge(), rubrics_dir=ARGUS_DIR / "rubrics")
-    with pytest.raises(ValueError, match="only apply to --local"):
-        [f async for f in runner.run_probe(_probe("p"))]
+    with patch("argus.targets.browser_use._get_client_agent_ws", return_value=ws):
+        findings = [f async for f in runner.run_probe(_probe("p"))]
+    assert [f.verdict for f in findings] == ["pass"]
+    assert ws.send_and_wait.call_args.args[0]["trap_port"] == 8765
 
 
 @pytest.mark.asyncio
