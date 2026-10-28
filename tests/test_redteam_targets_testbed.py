@@ -123,6 +123,43 @@ def test_send_prompt_renders_the_environment_placeholder(monkeypatch, env, key, 
     assert seen["prompt"] == f"go to {url}"
 
 
+@pytest.mark.parametrize(
+    "env,key,url",
+    [("payment", "merchant_url", "http://tb/s/s1/pay"), ("mcp", "mcp_url", "http://tb/s/s1/mcp")],
+)
+def test_send_prompt_renders_the_placeholder_in_history(monkeypatch, env, key, url):
+    # The runner stores each turn as the probe wrote it, so turn 1's
+    # placeholder reaches turn 2 unrendered unless the target renders history.
+    from argus.targets._base import Turn
+
+    monkeypatch.setattr(
+        testbed_mod,
+        "httpx",
+        SimpleNamespace(AsyncClient=_fake_client_factory({"session_id": "s1", key: url})),
+    )
+    seen = {}
+
+    class FakeInner:
+        supports_history = True
+
+        async def send_prompt(self, prompt, history=()):
+            seen["prompt"], seen["history"] = prompt, history
+            return "ok", 1.0
+
+    t = build_target(_spec(environment=env))
+    t._inner = FakeInner()
+    history = (
+        Turn(role="user", content="connect to {" + key + "} and list tools"),
+        Turn(role="assistant", content="connected to {" + key + "}"),
+    )
+    asyncio.run(t.send_prompt("now use it", history=history))
+    assert seen["prompt"] == "now use it"
+    assert seen["history"] == (
+        Turn(role="user", content=f"connect to {url} and list tools"),
+        Turn(role="assistant", content=f"connected to {url}"),
+    )
+
+
 @pytest.mark.parametrize("env,noun", [("mcp", "unstaged MCP server"), ("payment", "unstaged merchant")])
 def test_generic_messages_use_the_environment_noun(env, noun):
     t = build_target(_spec(environment=env))

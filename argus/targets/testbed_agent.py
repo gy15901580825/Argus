@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, ClassVar
 
 import httpx
@@ -139,7 +139,10 @@ class TestbedAgentTarget(Target):
     ) -> tuple[str, float]:
         session = await self._open_session()
         # The probe writes {<url_key>}; only the session knows the real one.
-        rendered = prompt.replace("{" + self.url_key + "}", session[self.url_key])
+        # History holds earlier turns as the probe wrote them, so render it too.
+        placeholder, url = "{" + self.url_key + "}", session[self.url_key]
+        rendered = prompt.replace(placeholder, url)
+        history = tuple(replace(t, content=t.content.replace(placeholder, url)) for t in history)
         return await self._inner.send_prompt(rendered, history=history)
 
     async def collect_evidence(self) -> dict:
