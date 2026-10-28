@@ -22,8 +22,8 @@ A pending publisher does not reserve the project name. Someone else can still re
 
 ```bash
 python3.11 -m venv /tmp/argus-rc && . /tmp/argus-rc/bin/activate
-pip install --no-deps --index-url https://test.pypi.org/simple/ argus-probe==0.2.0
-pip install "argus-probe[local]==0.2.0"   # the empty extra must install without a warning
+pip install --no-deps --index-url https://test.pypi.org/simple/ argus-probe==0.4.0
+pip install "argus-probe[local]==0.4.0"   # the empty extra must install without a warning
 pip check
 argus-probe --version
 ```
@@ -38,10 +38,12 @@ Never upload to either index by hand with `twine`. A manual upload creates the p
 2. Merge to `main`, then tag that commit with `v` plus the argus-probe version and push the tag:
 
 ```bash
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.4.0
+git push origin v0.4.0
 ```
 
 The build job fails if the tag does not match the version in `pyproject.toml`.
+
+The tags `v0.1.0`, `v0.2.0` and `v0.3.0` belong to GitHub Releases from before argus-probe was on PyPI, so those versions cannot be used. The next version after 0.1.4 is 0.4.0.
 
 `argus-orchestrator` (the engine as a separate package, import name `orchestrator.redteam`) stopped at 0.3.4 and gets no more releases. It stays installable from PyPI for code that still imports `orchestrator.redteam`.
