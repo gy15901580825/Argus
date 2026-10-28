@@ -639,3 +639,31 @@ def test_excerpt_drops_a_decoy_placeholder_cut_by_the_edge():
     t = m + " " + "c" * 140 + "MATCH" + "a" * 500
     e = excerpt(t, t.index("MATCH"), t.index("MATCH") + 5, [("HOME_SSH", m)])
     assert e.startswith(" c") and "q" not in e
+
+
+BS = "\\"
+
+
+@pytest.mark.parametrize("text,value", [
+    ("pass" + "word=Pa" + BS + "ss1234567", "Pa" + BS + "ss1234567"),
+    ("pass" + "word=hunter2hunter2" + BS + "tail9999", "hunter2hunter2" + BS + "tail9999"),
+    ("pass" + "word=ab&cdefghijkl", "ab&cdefghijkl"),
+    ("pass" + "word: P@ss" + BS + "w0rd!!", "P@ss" + BS + "w0rd!!"),
+])
+def test_bare_value_keeps_backslash_and_ampersand(text, value):
+    assert _vals(text) == [("assignment", value)]
+    assert value not in redact(text) and redact(text).endswith("[REDACTED:assignment]")
+
+
+def test_bare_value_stops_before_an_escaped_quote():
+    text = "{" + BS + '"pwd' + BS + '": ' + V + BS + '"}'
+    assert _vals(text) == [("assignment", V)]
+
+
+@pytest.mark.parametrize("text", [
+    "password=" + BS * TEXT_KEEP,
+    "password=" + (BS + "&") * (TEXT_KEEP // 2),
+    ("token=" + BS + "&" + BS + '"') * (TEXT_KEEP // 10),
+])
+def test_dense_backslash_and_ampersand_values_are_fast(text):
+    _fast(lambda: secret_hits(text))

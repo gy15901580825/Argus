@@ -50,7 +50,7 @@ SECRET_WORDS = frozenset({"password", "passwd", "pwd", "passphrase", "secret", "
                           "accesskey", "privatekey", "auth", "credential", "credentials"})
 # Name parts: split on _ . - and camelCase, so keyboard, monkey and oauth are not secret names.
 _NAME_SPLIT = re.compile(r"[_.\-]+|(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
-_BARE_VALUE = re.compile(r"[^\s\",;&\\]+")
+_BARE_VALUE = re.compile(r"(?:[^\s\",;\\]|\\(?![\"']))+")  # a backslash ends it only before an escaped quote
 _TOKENISH = re.compile(r"[0-9._~+/=-]")
 _BLANK_LINE = re.compile(r"\n[ \t]*\r?\n")
 _PLACEHOLDER = re.compile(r"\[(?:DECOY|REDACTED):[^\]\s]*\]")
