@@ -73,10 +73,10 @@ def outcome(probe, name, status, *, verdict="", seq=None, text="You must call ot
                         judge_model=model, escalated_model=escalated)
 
 
-def build(*, hits=(), outcomes=(), calls=None, listed=None, transport="http", sandbox=False, decoys=()):
+def build(*, hits=(), outcomes=(), calls=None, listed=None, transport="http", sandbox=False, decoys=(), **kw):
     return build_findings(probes=PROBES, hits=list(hits), outcomes=list(outcomes), calls=calls,
                           listed=list(listed if listed is not None else [tool("a"), tool("b")]),
-                          transport=transport, sandbox=sandbox, decoys=decoys)
+                          transport=transport, sandbox=sandbox, decoys=decoys, **kw)
 
 
 def by(fs, probe_id, verdict=None):
@@ -449,6 +449,21 @@ def test_inventory_lists_every_tool_with_annotations():
     # Without a call run every tool is accounted for by policy.
     assert inventory_notes([tool("rw", {})], {"rw": "not annotated read-only"}, None) == [
         "rw [no annotations]: not called by policy: not annotated read-only"]
+
+
+def test_listing_findings_say_whether_the_listing_was_cut():
+    listed, run = two_tools_called()
+    listing_probes = (*STATIC, checks.HIDDEN)
+    fs = build(calls=run, listed=listed, truncated=True, tools_listed=5000)
+    for f in fs:
+        ev = f["evidence"]
+        if f["probe_id"] in listing_probes:
+            assert (ev["truncated"], ev["tools_listed"]) == (True, 5000), f["probe_id"]
+        else:
+            assert "truncated" not in ev, f["probe_id"]
+    fs = build(calls=run, listed=listed)
+    assert {(f["evidence"]["truncated"], f["evidence"]["tools_listed"]) for f in fs
+            if f["probe_id"] in listing_probes} == {(False, 2)}
 
 
 def test_inventory_summary_counts_each_kind():

@@ -344,6 +344,7 @@ async def test_endless_cursor_stops_at_page_cap():
     assert LIST_PAGES_MAX == 20
     assert len(tools) == 20
     assert notes == ["tools/list stopped after 20 pages"]
+    assert (s.list_truncated, s.tools_listed) == (True, 20)
 
 
 async def test_tool_count_capped():
@@ -353,6 +354,10 @@ async def test_tool_count_capped():
     assert len(tools) == 1000
     assert [t.name for t in tools[:2]] == ["tool_0", "tool_1"]
     assert notes == ["tools/list returned 5000 tools; kept the first 1000"]
+    assert (s.list_truncated, s.tools_listed) == (True, 5000)
+    async with open_session(_stdio("basic"), timeout_s=T) as s:
+        tools, _ = await s.list_tools()
+    assert (s.list_truncated, s.tools_listed) == (False, len(tools))
 
 
 # unknown_flood uses a method the SDK drops before its message handler; the cap must still count it.

@@ -278,5 +278,9 @@ def test_many_tools_console_shows_a_summary_and_the_report_every_tool():
     assert "and 980 more tool(s); the report lists every one." in result.output
     html = Path(OUT["html"]).read_text(encoding="utf-8")
     assert "tool_999 [no annotations]: not called by policy" in html
+    result = _scan("stdio", "many_tools", "--format", "json")
+    assert result.exit_code == 0, result.output
+    [d] = _by_probe(_run_json(), checks.DESCRIPTION)
+    assert (d["evidence"]["truncated"], d["evidence"]["tools_listed"]) == (True, 5000)
     # The other notes still reach the console.
     assert "tools/list returned 5000 tools; kept the first 1000" in result.output and SNYK_LINE in result.output

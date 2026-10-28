@@ -165,6 +165,9 @@ class McpSession:
 
         self.server_info: ServerInfo | None = None
         self.list_changed = False
+        # What the last tools/list saw: tools the server returned, and whether a cap cut the listing.
+        self.tools_listed = 0
+        self.list_truncated = False
         self.alive = True
         self._target = target
         self._timeout_s = timeout_s
@@ -383,6 +386,7 @@ class McpSession:
             notes.append(f"tools/list returned {seen} tools; kept the first {TOOLS_MAX}")
         elif cursor and len(tools) >= TOOLS_MAX:
             notes.append(f"tools/list has more than {TOOLS_MAX} tools; kept the first {TOOLS_MAX}")
+        self.tools_listed, self.list_truncated = seen, bool(notes)
         return tools, notes
 
     async def call(self, name: str, arguments: dict) -> CallResult:

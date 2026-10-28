@@ -64,6 +64,7 @@ class _Ctx:
     names: list[str]
     tools: dict[str, ToolInfo]
     mask: rules.Mask = rules.same
+    listing: dict = field(default_factory=dict)
     by_seq: dict[int, CallRecord] = field(default_factory=dict)
     by_tool: dict[str, list[CallRecord]] = field(default_factory=dict)
     hits: dict[tuple[str, str | None], list[Hit]] = field(default_factory=dict)
@@ -78,13 +79,15 @@ class _Ctx:
 
 def build_findings(*, probes: Mapping[str, Probe], hits: list[Hit], outcomes: list[JudgeOutcome],
                    calls: CallRun | None, listed: list[ToolInfo], transport: str, sandbox: bool,
-                   decoys: Sequence[tuple[str, str]] = (), mask: rules.Mask = rules.same) -> list[dict]:
+                   decoys: Sequence[tuple[str, str]] = (), mask: rules.Mask = rules.same, truncated: bool = False,
+                   tools_listed: int | None = None) -> list[dict]:
     """One `fail` per (probe, tool), one `error` per unjudged (probe, tool), then per probe one `pass` for the clean
     tools, one `error` for the tools it could not exercise, or one `skipped` when it never ran."""
     tools: dict[str, ToolInfo] = {}
     for t in listed:
         tools.setdefault(t.name, t)
-    ctx = _Ctx(probes, calls, transport, sandbox, decoys, list(tools), tools, mask)
+    listing = {"truncated": truncated, "tools_listed": len(listed) if tools_listed is None else tools_listed}
+    ctx = _Ctx(probes, calls, transport, sandbox, decoys, list(tools), tools, mask, listing)
     for rec in calls.records if calls is not None else []:
         ctx.by_seq[rec.seq] = rec
         ctx.by_tool.setdefault(rec.call.tool, []).append(rec)
@@ -95,7 +98,12 @@ def build_findings(*, probes: Mapping[str, Probe], hits: list[Hit], outcomes: li
     out: list[dict] = []
     for pid in PROBE_ORDER:
         if pid in probes:
-            out += _probe_findings(ctx, probes[pid])
+            found = _probe_findings(ctx, probes[pid])
+            # The tool-list checks saw only what the caps kept; say so where the JSON reader looks.
+            if pid in _STATIC or pid == HIDDEN:
+                for f in found:
+                    f["evidence"].update(listing)
+            out += found
     return out
 
 

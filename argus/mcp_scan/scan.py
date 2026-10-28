@@ -83,6 +83,7 @@ async def scan_mcp(cfg: ScanConfig, *, mask: Callable[[str], str], echo: Callabl
             raise UnknownTools(unknown, sorted({t.name for t in listed}))
         echo(f"Listed {len(listed)} tool(s)")
         server_info = session.server_info
+        truncated, tools_listed = session.list_truncated, session.tools_listed
         hits, cands = checks.static_hits(listed, decoys=cfg.decoys)
         if isinstance(cfg.target, HttpServer):
             server = await http_server_findings(cfg.target.url, cfg.target.headers, cfg.timeout_s, mask)
@@ -104,7 +105,7 @@ async def scan_mcp(cfg: ScanConfig, *, mask: Callable[[str], str], echo: Callabl
     outcomes = await gate.judge_all(cands, mask)
     scan = build_findings(probes={p.id: p for p in _scan_probes()}, hits=hits, outcomes=outcomes, calls=calls,
                           listed=listed, transport=cfg.transport, sandbox=cfg.transport == "stdio-sandbox",
-                          decoys=cfg.decoys, mask=mask)
+                          decoys=cfg.decoys, mask=mask, truncated=truncated, tools_listed=tools_listed)
 
     inventory = inventory_notes(listed, reasons, calls)
     notes = inventory + list_notes + (calls.notes if calls is not None else [])
