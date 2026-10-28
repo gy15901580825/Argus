@@ -120,6 +120,30 @@ jobs:
       - name: Run test suite
         run: python -m pytest tests/ -q
 
+  client_agent:
+    name: client_agent — tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client_agent
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: client_agent/requirements-dev.txt
+
+      - name: Install dependencies
+        # The tests need no browser binaries, so this skips `playwright install`.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run test suite
+        run: python -m pytest tests/ -q
+
   probe-library:
     name: probe library — schema validation
     runs-on: ubuntu-latest

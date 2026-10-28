@@ -31,6 +31,7 @@ async def test_browser_probe_serves_scenario_url_and_drives_agent():
         probe = BrowserProbe()
         result = await probe.run(msg)
         assert result["final_text"] == "agent followed the link"
+        assert result["trap_url"] == "http://127.0.0.1:18080/scenario"
         assert "latency_ms" in result
         assert result["latency_ms"] > 0
         # Server got started and stopped
@@ -80,3 +81,40 @@ async def test_message_without_prompt_drives_agent_with_payload():
     mk_driver.assert_called_once_with(
         "http://target.local/agent", "http://127.0.0.1:18080/scenario", "Click the link", 30.0,
     )
+
+
+@pytest.mark.asyncio
+async def test_trap_options_in_message_set_bind_and_advertised_url():
+    import socket
+
+    import aiohttp
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    seen = {}
+
+    class FakeDriver:
+        def __init__(self, scenario_url):
+            self.scenario_url = scenario_url
+
+        async def run(self):
+            # The public URL is fake, so fetch the page from the bind address instead.
+            async with aiohttp.ClientSession(trust_env=False) as c:
+                async with c.get(f"http://127.0.0.1:{port}/scenario") as r:
+                    seen["status"], seen["page"] = r.status, await r.text()
+            seen["url"] = self.scenario_url
+            return {"final_text": "done", "screenshots": []}
+
+    msg = {
+        "scenario_kind": "dom_injection", "agent_url": "http://target.local/agent",
+        "payload": "TRAP_MARKER_42", "prompt": "Read the page.", "timeout_s": 30,
+        "trap_host": "127.0.0.1", "trap_port": port, "trap_public_url": "http://trap.example.test:9999/",
+    }
+    with patch("redteam_runner.browser_probe._make_target_agent_driver",
+               side_effect=lambda agent_url, scenario_url, prompt, timeout_s: FakeDriver(scenario_url)):
+        result = await BrowserProbe().run(msg)
+    assert seen["url"] == "http://trap.example.test:9999/scenario"
+    assert result["trap_url"] == "http://trap.example.test:9999/scenario"
+    assert seen["status"] == 200
+    assert "TRAP_MARKER_42" in seen["page"]

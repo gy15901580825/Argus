@@ -11,7 +11,7 @@ import contextlib
 import contextvars
 import ipaddress
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import ClassVar
 from urllib.parse import urlsplit
 
@@ -44,8 +44,8 @@ class BrowserUseSpec:
     scenario_kind: str = ""
     timeout_s: float = 60.0
     extra_context: tuple[tuple[str, str], ...] = ()
-    # Where the local trap page listens and the URL the agent is told to open.
-    # Only used by --local; the agent must be able to reach that URL.
+    # Where the trap page listens and the URL the agent is told to open: on this
+    # machine under --local, else on the client_agent's. The agent must reach that URL.
     trap_host: str = "127.0.0.1"
     trap_port: int = 0
     trap_public_url: str = ""
@@ -70,6 +70,9 @@ class BrowserUseSpec:
         self._validate_trap()
 
     def _validate_trap(self) -> None:
+        # IPv4Address also accepts an int, which would reach the wire as a number.
+        if not isinstance(self.trap_host, str):
+            raise ValueError(f"trap_host must be an IPv4 address string, got {self.trap_host!r}")
         try:
             host = ipaddress.IPv4Address(self.trap_host)
         except ValueError:
@@ -180,9 +183,9 @@ class BrowserUseTarget(Target):
                 self._run_in_process(msg), timeout=self.spec.timeout_s + 5.0
             )
         else:
-            if self.spec.sets_trap:
-                # An older client_agent would ignore these and serve on 127.0.0.1.
-                raise ValueError("trap_host, trap_port and trap_public_url only apply to --local runs")
+            # Send only the trap settings that differ from the default; never null.
+            msg.update({f.name: getattr(self.spec, f.name) for f in fields(self.spec)
+                        if f.name.startswith("trap_") and getattr(self.spec, f.name) != f.default})
             ws = _get_client_agent_ws()
             # Same 5 s grace as --local, so the client_agent's own timeout error
             # can still arrive; the outer wait is only a backstop for the bridge.
@@ -200,10 +203,33 @@ class BrowserUseTarget(Target):
                 raise TargetDeliveryError(
                     f"client_agent reply has no result object (got {type(reply).__name__})"
                 )
+            self._check_trap_url(reply.get("trap_url"))
         wall_latency_ms = (time.monotonic() - start) * 1000.0
         reported = reply.get("latency_ms")
         latency_ms = float(reported) if isinstance(reported, (int, float)) else wall_latency_ms
         return reply.get("final_text", ""), latency_ms
+
+    def _check_trap_url(self, got) -> None:
+        """A client_agent without trap support serves on 127.0.0.1 and omits trap_url."""
+        s = self.spec
+        if not s.sets_trap:
+            return
+        if s.trap_public_url:
+            expected = s.trap_public_url.rstrip("/") + "/scenario"
+            ok = got == expected
+        else:
+            expected = f"http://{s.trap_host}:{s.trap_port or '<any port>'}/scenario"
+            try:
+                parts = urlsplit(got) if isinstance(got, str) else None
+                ok = parts is not None and parts.hostname == s.trap_host \
+                    and s.trap_port in (0, parts.port)
+            except ValueError:
+                ok = False
+        if not ok:
+            raise TargetDeliveryError(
+                "client_agent did not use the trap settings (upgrade client_agent): "
+                f"expected {expected}, got {got!r}"
+            )
 
     async def _run_in_process(self, msg: dict) -> dict:
         from argus.browser_runner.browser_probe import BrowserProbe

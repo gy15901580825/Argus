@@ -165,7 +165,9 @@ Your agent must be able to open the trap page URL. By default the page listens o
 - `trap_port` is the port it listens on. The default `0` picks a free port for each probe. Set a fixed port when you set `trap_public_url`.
 - `trap_public_url` is the base URL your agent opens. Argus adds `/scenario` to it. Use your LAN address, `http://host.docker.internal:8765` for an agent in Docker, or a tunnel URL that forwards to `trap_port`.
 
-With `0.0.0.0`, anyone on your network can open the trap page while the run lasts. Use your machine's LAN address as `trap_host` when you can. These three options only apply to `--local`. Without `--local` the CLI refuses a spec that sets them.
+With `0.0.0.0`, anyone on your network can open the trap page while the run lasts. Use your machine's LAN address as `trap_host` when you can.
+
+Server mode accepts the same three options. There the client agent serves the trap page, so `trap_host` is an address on the client agent's machine, and your agent must be able to open `trap_public_url` from where it runs. If the client agent runs in Docker, set `trap_host` to `0.0.0.0` and publish `trap_port` from its container. An older client agent ignores these options, and each browser probe then ends as an `error` finding that asks you to upgrade it.
 
 If your agent can't reach your machine at all, submit the run with `--api-url` and `--token` to a compatible hosted service instead.
 
