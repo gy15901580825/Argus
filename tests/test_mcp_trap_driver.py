@@ -192,13 +192,11 @@ async def test_leaking_agent_fails_every_scenario_and_counts_rounds():
 async def test_rounds_run_in_order_each_in_a_fresh_conversation(monkeypatch):
     monkeypatch.setattr(driver, "ROUND_SETTLE_S", 0.5)
     events: list = []
-    real_sleep = asyncio.sleep
 
     async def _sleep(seconds):
         events.append(("sleep", seconds))
-        await real_sleep(0)
 
-    monkeypatch.setattr(asyncio, "sleep", _sleep)
+    monkeypatch.setattr(driver, "_sleep", _sleep)
     trap = FakeTrap(events)
     agent = ScriptedAgent(trap, careful)
     echoed: list[str] = []
@@ -263,7 +261,43 @@ async def test_chat_error_round_is_inconclusive_and_says_why():
     run = await run_scenarios(trap, agent, load_trap_probes(["tool_poisoning"]), rounds=1)
     f = run.findings[0]
     assert f["verdict"] == "error"
-    assert "no MCP request to the trap in this round; chat API error: timed out" in f["reasoning"]
+    assert "no MCP request to the trap in this round; chat API error: ReadTimeout: timed out" in f["reasoning"]
+
+
+async def test_traffic_then_chat_error_without_leak_is_inconclusive():
+    trap = FakeTrap()
+    agent = ScriptedAgent(trap, careful, raises=httpx.ReadTimeout("timed out"))
+    run = await run_scenarios(trap, agent, load_trap_probes(["confused_deputy"]), rounds=1)
+    f = run.findings[0]
+    assert f["evidence"]["rounds"][0]["evidence"]["interaction_count"] > 0
+    assert f["verdict"] == "error" and f["severity"] == "info"
+    assert f["evidence"]["rounds"][0]["reason"] == (
+        "the chat call failed, so the agent may have acted after the round was judged; "
+        "chat API error: ReadTimeout: timed out"
+    )
+
+
+async def test_non_httpx_chat_error_is_inconclusive_and_the_run_continues():
+    # gRPC AioRpcError, custom_http JSONDecodeError and friends must not abort the run.
+    class Flaky(ScriptedAgent):
+        async def send_prompt(self, prompt, history=()):
+            if not self.prompts:
+                self.prompts.append(prompt)
+                raise json.JSONDecodeError("Expecting value", "<html>", 0)
+            return await super().send_prompt(prompt, history)
+
+    trap = FakeTrap()
+    run = await run_scenarios(trap, Flaky(trap, careful), load_trap_probes(["tool_poisoning", "shadowing"]), rounds=2)
+    first = run.findings[0]
+    assert [r["outcome"] for r in first["evidence"]["rounds"]] == ["inconclusive", "passed"]
+    assert "chat API error: JSONDecodeError: Expecting value" in first["evidence"]["rounds"][0]["reason"]
+    assert [f["verdict"] for f in run.findings] == ["pass", "pass"]
+
+
+async def test_warm_up_non_httpx_error_is_chat_error():
+    trap = FakeTrap()
+    result = await warm_up(trap, ScriptedAgent(trap, silent, raises=RuntimeError("rpc failed")))
+    assert result == Warmup("chat_error", "RuntimeError: rpc failed")
 
 
 async def test_leak_before_a_chat_error_still_fails():
@@ -355,13 +389,46 @@ async def test_attacker_address_past_the_bound_still_fails():
     assert "attacker address" in f["reasoning"]
 
 
-def test_bound_walks_nested_values():
+def test_bound_walks_nested_values_and_keeps_keys():
     long = "a" * 250
-    assert bound({"k": [long, 7, None, {"n": "short"}], long: True}) == {
-        "k": ["a" * 200 + "…[+50 chars]", 7, None, {"n": "short"}],
-        "a" * 200 + "…[+50 chars]": True,
+    cut = "a" * 200 + "…[+50 chars]"
+    assert bound({"k": [long, 7, None, {"n": "short"}, (long, 1)], long: long}) == {
+        "k": [cut, 7, None, {"n": "short"}, (cut, 1)],
+        long: cut,
     }
     assert bound("abcdef", limit=3) == "abc…[+3 chars]"
+
+
+async def test_agent_chosen_strings_in_reasons_are_bounded():
+    def long_method(prompt, state):
+        list_tools(state)
+        canary = CANARY_RE.search(prompt).group(0)
+        _request(state, "m" * 5000, {"key": canary})
+        return "ok"
+
+    trap = FakeTrap()
+    echoed: list[str] = []
+    run = await run_scenarios(trap, ScriptedAgent(trap, long_method), load_trap_probes(["tool_poisoning"]),
+                              rounds=1, echo=echoed.append)
+    f = run.findings[0]
+    assert f["verdict"] == "fail"
+    assert "m" * 300 not in f["reasoning"] and "m" * 300 not in echoed[0]
+    assert "chars]" in f["reasoning"]
+
+
+async def test_latency_is_the_mean_of_the_rounds_chat_calls():
+    class Slow(ScriptedAgent):
+        async def send_prompt(self, prompt, history=()):
+            await asyncio.sleep(0.05)
+            return await super().send_prompt(prompt, history)
+
+    trap = FakeTrap()
+    run = await run_scenarios(trap, Slow(trap, careful), load_trap_probes(["shadowing"]), rounds=2)
+    assert run.findings[0]["target_latency_ms"] >= 50
+
+    probe = load_trap_probes(["shadowing"])[0]
+    rounds = [driver.RoundOutcome(n, "passed", "ok", "p", "r", {}, (), ms) for n, ms in ((1, 10.0), (2, 30.0))]
+    assert driver.scenario_finding(probe, rounds, 3)["target_latency_ms"] == 20.0
 
 
 def test_judge_round_rejects_an_empty_round_before_assertions():

@@ -24,6 +24,12 @@ def test_public_url_is_what_the_agent_is_told():
     assert "192.168.1.20:*" in address.allowed_hosts
 
 
+def test_ipv6_public_host_is_bracketed_like_the_host_header():
+    address = TrapAddress("0.0.0.0", 8765, "http://[fe80::1]:8765")
+    assert address.mcp_url == "http://[fe80::1]:8765/mcp"
+    assert address.allowed_hosts[-1] == "[fe80::1]:*"
+
+
 @pytest.mark.parametrize("public_url", ["https://trap.example/", "https://trap.example/mcp"])
 def test_public_url_path_root_or_mcp_is_accepted(public_url):
     assert TrapAddress("127.0.0.1", 8765, public_url).mcp_url == "https://trap.example/mcp"
@@ -37,6 +43,8 @@ def test_public_url_path_root_or_mcp_is_accepted(public_url):
     ("127.0.0.1", 8765, "ftp://x", "http"),
     ("127.0.0.1", 8765, "http://h:1/other", "/mcp"),
     ("127.0.0.1", 8765, "http://h:1/?a=1", "query"),
+    ("127.0.0.1", 8765, "http://user:pw@h:1", "user name or password"),
+    ("127.0.0.1", 8765, "http://user@h:1/mcp", "user name or password"),
 ])
 def test_rejects(host, port, public_url, match):
     with pytest.raises(TrapAddressError, match=match):

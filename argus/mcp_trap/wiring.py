@@ -50,6 +50,8 @@ class TrapAddress:
             )
         if parts.query or parts.fragment:
             raise TrapAddressError("--trap-public-url must not carry a query string or fragment")
+        if parts.username is not None or parts.password is not None:
+            raise TrapAddressError("--trap-public-url must not carry a user name or password (user:pass@)")
         if parts.path not in ("", "/", "/mcp"):
             raise TrapAddressError(
                 f"--trap-public-url path must be empty, / or /mcp (the trap serves /mcp), got {parts.path!r}"
@@ -66,7 +68,9 @@ class TrapAddress:
     def allowed_hosts(self) -> list[str]:
         hosts = ["127.0.0.1:*", "localhost:*"]
         if self.public_url:
-            hosts.append(f"{urlsplit(self.public_url).hostname}:*")
+            host = urlsplit(self.public_url).hostname
+            # The SDK matches the Host header by prefix, and an IPv6 Host header is bracketed.
+            hosts.append(f"[{host}]:*" if ":" in host else f"{host}:*")
         return hosts
 
 
