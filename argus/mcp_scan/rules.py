@@ -4,11 +4,12 @@ from __future__ import annotations
 import bisect
 import functools
 import re
-from typing import Sequence
+from typing import Any, Callable, Sequence
 
 from argus.skillscan.urls import url_userinfo
 
 EXCERPT = 300
+Mask = Callable[[str], str]  # the CLI's known-secret mask
 
 _HIDDEN = re.compile(
     r"(?P<zero_width>[\U0000200B-\U0000200D\U00002060\U0000FEFF])"
@@ -261,6 +262,21 @@ def excerpt(text: str, start: int, end: int, decoys: Sequence[tuple[str, str]] =
     if right:
         we = right[0]
     return _render(red[ws:we])
+
+
+def same(text: str) -> str:
+    return text
+
+
+def mask_strings(value: Any, mask: Mask) -> Any:
+    """A copy of a JSON-like value with `mask` applied to every string in it; keys are kept."""
+    if isinstance(value, str):
+        return mask(value)
+    if isinstance(value, dict):
+        return {k: mask_strings(v, mask) for k, v in value.items()}
+    if isinstance(value, list):
+        return [mask_strings(v, mask) for v in value]
+    return value
 
 
 def strip_payload(text: str, payload: str | None) -> str:

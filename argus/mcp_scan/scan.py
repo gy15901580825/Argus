@@ -68,7 +68,7 @@ def _scan_probes() -> tuple[Probe, ...]:
 
 async def scan_mcp(cfg: ScanConfig, *, mask: Callable[[str], str], echo: Callable[[str], None]) -> ScanResult:
     """Raises client.ConnectError when session A or the first tools/list fails, UnknownTools for a bad --call-tools."""
-    opener = functools.partial(open_session, cfg.target, timeout_s=cfg.timeout_s)
+    opener = functools.partial(open_session, cfg.target, timeout_s=cfg.timeout_s, mask=mask)
     calls: CallRun | None = None
     async with opener() as session:
         listed, list_notes = await session.list_tools()
@@ -79,7 +79,7 @@ async def scan_mcp(cfg: ScanConfig, *, mask: Callable[[str], str], echo: Callabl
         server_info = session.server_info
         hits, cands = checks.static_hits(listed, decoys=cfg.decoys)
         if isinstance(cfg.target, HttpServer):
-            server = await http_server_findings(cfg.target.url, cfg.target.headers, cfg.timeout_s)
+            server = await http_server_findings(cfg.target.url, cfg.target.headers, cfg.timeout_s, mask)
         else:
             server = stdio_server_findings(listed, server_info)
         chosen, reasons = policy.select(listed, cfg.call_tools)
@@ -98,7 +98,7 @@ async def scan_mcp(cfg: ScanConfig, *, mask: Callable[[str], str], echo: Callabl
     outcomes = await gate.judge_all(cands, mask)
     scan = build_findings(probes={p.id: p for p in _scan_probes()}, hits=hits, outcomes=outcomes, calls=calls,
                           listed=listed, transport=cfg.transport, sandbox=cfg.transport == "stdio-sandbox",
-                          decoys=cfg.decoys)
+                          decoys=cfg.decoys, mask=mask)
 
     notes = inventory_notes(listed, reasons, calls) + list_notes + (calls.notes if calls is not None else [])
     # A replay often returns the baseline's text again: list each (probe, tool, text) once.

@@ -19,6 +19,7 @@ FLOOD = 5000
 STDERR_NOISE = 6000
 READY_MARK = "basic-ready"
 STATE_DIR_ENV = "ARGUS_FIXTURE_DIR"  # where the vulnerable and liar servers keep state; stdio needs --env
+SECRET_ENV = "ARGUS_FIXTURE_SECRET"  # the value the leaky server places across each report cut
 RUG_PULL_AFTER = 3
 _RO = {"readOnlyHint": True}
 _STR = {"type": "string"}
@@ -110,6 +111,13 @@ def _tools(name: str) -> list[dict]:
                  "annotations": {"readOnlyHint": True}}]
     if name == "many_tools":
         return [{"name": f"tool_{i}", "description": "One of many.", "inputSchema": _schema()} for i in range(MANY_TOOLS)]
+    if name == "leaky":
+        return [
+            {"name": "show_cfg", "description": _leaky_description(os.environ[SECRET_ENV]),
+             "inputSchema": _schema(), "annotations": _RO},
+            {"name": "fail_cfg", "description": "Fails with the configuration in its error.",
+             "inputSchema": _schema(), "annotations": _RO},
+        ]
     if name in ("notify_flood", "unknown_flood"):
         return [{"name": "flood", "description": "Sends notifications before answering.", "inputSchema": _schema(),
                  "annotations": {"readOnlyHint": True}}]
@@ -152,6 +160,13 @@ def build(name: str) -> Any:
             return text(_vulnerable(params.name, args))
         if name in ("clean", "clean_unannotated"):
             return text(_clean(params.name, args))
+        if name == "leaky":
+            secret = os.environ[SECRET_ENV]
+            if params.name == "fail_cfg":
+                from mcp.shared.exceptions import MCPError
+
+                raise MCPError(code=-32050, message="x" * 260 + secret)
+            return text(leaky_text(secret))
         if name == "liar":
             marker = {"save_note": "saved_note.txt", "wipe": "wiped", "drop_table": "dropped"}[params.name]
             with _state(marker).open("a", encoding="utf-8") as f:
@@ -211,6 +226,24 @@ def _vulnerable(tool: str, args: dict) -> str:
     if tool == "echo":
         return str(args.get("text", ""))
     return STATUS_TEXT
+
+
+def _leaky_description(secret: str) -> str:
+    # The secret starts at 295, so a 300-character cut of the description keeps its first 5 characters.
+    return "Shows the configuration. " + "d " * 135 + secret
+
+
+def leaky_text(secret: str) -> str:
+    """A result that holds `secret` across the 2000-character report cut, a 300-character excerpt edge and the
+    262,144-character kept-text cut, where the text before it has no token boundary to back off to."""
+    from argus.mcp_scan.models import RESULT_KEEP, TEXT_KEEP
+
+    text = "a " * ((RESULT_KEEP - 6) // 2) + secret
+    # An excerpt shows 145 characters after the 11-character tag, so it ends 5 characters into the secret.
+    text += " <IMPORTANT> " + "b" * 138 + " " + secret + " "
+    tail = "A" * 520 + "<system>"
+    text += "c" * (TEXT_KEEP - 5 - len(tail) - len(text)) + tail
+    return text + secret + " end"
 
 
 def _clean(tool: str, args: dict) -> str:

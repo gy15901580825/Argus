@@ -82,21 +82,20 @@ def keep_text(text: str) -> str:
     return text[:cut]
 
 
-def _result_text(result: Any) -> str:
+def _result_text(result: Any, mask: rules.Mask) -> str:
     parts = [c.text for c in result.content if getattr(c, "type", None) == "text"]
     if result.structured_content is not None:
         # ensure_ascii=False keeps hidden characters visible to the checks.
         parts.append(json.dumps(result.structured_content, ensure_ascii=False))
-    return keep_text("\n".join(parts))
+    # Known secrets are masked in the whole text: a later cut could keep part of one, which no mask matches.
+    return keep_text(mask("\n".join(parts)))
 
 
-def _detail(text: str) -> str:
-    return rules.redact(text)[:_DETAIL_KEEP]
-
-
-def _tool_info(tool: Any) -> ToolInfo:
-    raw = tool.model_dump(by_alias=True, mode="json", exclude_none=True)
-    return ToolInfo(name=tool.name, title=tool.title or "", description=tool.description or "",
+def _tool_info(tool: Any, mask: rules.Mask) -> ToolInfo:
+    # Every listed text but the name is masked; the name is kept as listed so the tool can still be called.
+    raw = {**rules.mask_strings(tool.model_dump(by_alias=True, mode="json", exclude_none=True), mask),
+           "name": tool.name}
+    return ToolInfo(name=tool.name, title=raw.get("title") or "", description=raw.get("description") or "",
                     input_schema=raw.get("inputSchema"), annotations=raw.get("annotations") or {}, raw=raw)
 
 
@@ -160,7 +159,8 @@ def _leaves(exc: BaseException) -> list[BaseException]:
 class McpSession:
     """One MCP session, owned by a background task so a transport crash ends the session, not the scan."""
 
-    def __init__(self, target: HttpServer | StdioServer, timeout_s: float) -> None:
+    def __init__(self, target: HttpServer | StdioServer, timeout_s: float,
+                 mask: rules.Mask = rules.same) -> None:
         import anyio
 
         self.server_info: ServerInfo | None = None
@@ -168,6 +168,7 @@ class McpSession:
         self.alive = True
         self._target = target
         self._timeout_s = timeout_s
+        self._mask = mask
         self._http = _HttpState()
         self._proc: StdioProcess | None = None
         self._session: Any = None
@@ -351,8 +352,11 @@ class McpSession:
             if exc.message == "Connection closed":  # the session itself is gone, not one response stream
                 self._end("the connection closed")
                 return "transport_error", self._death
-            return "transport_error", _detail(exc.message)
-        return "rpc_error", _detail(f"JSON-RPC error {exc.code}: {exc.message}")
+            return "transport_error", self._detail(exc.message)
+        return "rpc_error", self._detail(f"JSON-RPC error {exc.code}: {exc.message}")
+
+    def _detail(self, text: str) -> str:
+        return rules.redact(self._mask(text))[:_DETAIL_KEEP]
 
     async def list_tools(self) -> tuple[list[ToolInfo], list[str]]:
         import mcp_types
@@ -369,7 +373,7 @@ class McpSession:
                 code = {"timeout": "timeout", "transport_error": "died"}.get(status, "protocol")
                 raise ConnectError(code, f"tools/list failed: {detail}.", self.stderr_tail)
             seen += len(result.tools)
-            tools.extend(_tool_info(t) for t in result.tools[:TOOLS_MAX - len(tools)])
+            tools.extend(_tool_info(t, self._mask) for t in result.tools[:TOOLS_MAX - len(tools)])
             cursor = result.next_cursor
             if not cursor or len(tools) >= TOOLS_MAX:
                 break
@@ -391,16 +395,19 @@ class McpSession:
         latency_ms = (time.monotonic() - start) * 1000
         if failure is not None:
             return CallResult(status=failure[0], is_error=False, text="", detail=failure[1], latency_ms=latency_ms)
-        return CallResult(status="ok", is_error=bool(result.is_error), text=_result_text(result), detail="",
-                          latency_ms=latency_ms)
+        return CallResult(status="ok", is_error=bool(result.is_error), text=_result_text(result, self._mask),
+                          detail="", latency_ms=latency_ms)
 
 
 @asynccontextmanager
-async def open_session(target: HttpServer | StdioServer, *, timeout_s: float) -> AsyncIterator[McpSession]:
-    """Connect and run the handshake-era `initialize`; raises ConnectError when the session cannot start."""
+async def open_session(target: HttpServer | StdioServer, *, timeout_s: float,
+                       mask: rules.Mask = rules.same) -> AsyncIterator[McpSession]:
+    """Connect and run the handshake-era `initialize`; raises ConnectError when the session cannot start.
+
+    `mask` replaces known secrets in every text the server sends, before any of it is cut or checked."""
     import anyio
 
-    session = McpSession(target, timeout_s)
+    session = McpSession(target, timeout_s, mask)
     body_error: Exception | None = None
     async with anyio.create_task_group() as tg:
         tg.start_soon(session._own)

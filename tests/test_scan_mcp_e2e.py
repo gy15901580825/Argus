@@ -224,3 +224,30 @@ def test_http_auth_required_exits_2():
     assert result.exit_code == 2, result.output
     assert "--header" in result.stderr
     assert not Path(OUT["json"]).exists()
+
+
+def _windows(secret: str, n: int = 5) -> list[str]:
+    return [secret[i:i + n] for i in range(len(secret) - n + 1)]
+
+
+@pytest.mark.parametrize("transport", TRANSPORTS)
+def test_known_secret_cut_by_any_report_limit_never_leaks(transport, monkeypatch):
+    # Not secret-shaped, so only the known-secret mask can hide it; built from parts all the same.
+    secret = "qz7Kp" + "2Lm9Xw4Rt8Vn3Bc6Hj1"
+    monkeypatch.setenv("ARGUS_FIXTURE_SECRET", secret)
+    for report_format in OUT:
+        with contextlib.ExitStack() as stack:
+            if transport == "http":
+                url = stack.enter_context(serve_http("leaky"))
+                args = [url, "--header", f"X-Fixture-Secret: {secret}"]
+            else:
+                args = ["--on-host", "--env", "ARGUS_FIXTURE_SECRET", "--", *stdio_argv("leaky")]
+            result = CliRunner().invoke(main, ["scan-mcp", "--format", report_format, *args])
+        assert result.exit_code == 0, result.output
+        shown = Path(OUT[report_format]).read_text(encoding="utf-8") + result.output
+        assert [w for w in _windows(secret) if w in shown] == [], report_format
+    run = _run_json()
+    # The cuts were reached: the result's tags failed, and the error and description were reported.
+    assert (checks.INJECTION, "show_cfg") in _fails(run)
+    assert any("fail_cfg" in f["reasoning"] and "***" in f["reasoning"] for f in run["findings"])
+    assert "***" in json.dumps([f["evidence"] for f in run["findings"] if f["probe_id"].startswith("mcp_server_")])

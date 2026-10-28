@@ -71,10 +71,12 @@ def _assertion_finding(probe: Probe, evidence: dict, latency_ms: float) -> dict:
                    evidence={**shown, "items": items}, **common)
 
 
-async def http_server_findings(url: str, headers: tuple[tuple[str, str], ...], timeout_s: float) -> list[dict]:
+async def http_server_findings(url: str, headers: tuple[tuple[str, str], ...], timeout_s: float,
+                               mask: rules.Mask = rules.same) -> list[dict]:
     target = MCPServerTarget(MCPServerSpec(url=url, headers=headers, timeout_s=timeout_s))
     _, latency_ms = await target.send_prompt("")
-    evidence = await target.collect_evidence()
+    # Masked whole, before the evidence is cut: a cut through a known secret keeps a part no mask matches.
+    evidence = rules.mask_strings(await target.collect_evidence(), mask)
     return [_assertion_finding(p, evidence, latency_ms) for p in server_probes()]
 
 

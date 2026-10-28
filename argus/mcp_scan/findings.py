@@ -62,6 +62,7 @@ class _Ctx:
     decoys: Sequence[tuple[str, str]]
     names: list[str]
     tools: dict[str, ToolInfo]
+    mask: rules.Mask = rules.same
     by_seq: dict[int, CallRecord] = field(default_factory=dict)
     by_tool: dict[str, list[CallRecord]] = field(default_factory=dict)
     hits: dict[tuple[str, str | None], list[Hit]] = field(default_factory=dict)
@@ -76,13 +77,13 @@ class _Ctx:
 
 def build_findings(*, probes: Mapping[str, Probe], hits: list[Hit], outcomes: list[JudgeOutcome],
                    calls: CallRun | None, listed: list[ToolInfo], transport: str, sandbox: bool,
-                   decoys: Sequence[tuple[str, str]] = ()) -> list[dict]:
+                   decoys: Sequence[tuple[str, str]] = (), mask: rules.Mask = rules.same) -> list[dict]:
     """One `fail` per (probe, tool), one `error` per unjudged (probe, tool), then per probe one `pass` for the clean
     tools, one `error` for the tools it could not exercise, or one `skipped` when it never ran."""
     tools: dict[str, ToolInfo] = {}
     for t in listed:
         tools.setdefault(t.name, t)
-    ctx = _Ctx(probes, calls, transport, sandbox, decoys, list(tools), tools)
+    ctx = _Ctx(probes, calls, transport, sandbox, decoys, list(tools), tools, mask)
     for rec in calls.records if calls is not None else []:
         ctx.by_seq[rec.seq] = rec
         ctx.by_tool.setdefault(rec.call.tool, []).append(rec)
@@ -226,7 +227,8 @@ def _exercised(ctx: _Ctx, pid: str, name: str, outcome: ToolOutcome) -> tuple[st
 
 
 def _call_text(ctx: _Ctx, rec: CallRecord) -> tuple[str, str]:
-    prompt = f"tools/call {show_text(rec.call.tool)} {json.dumps(rec.call.arguments, default=str)}"
+    # Masked before the cut: --args values are known secrets, and the arguments can run past PROMPT_MAX.
+    prompt = ctx.mask(f"tools/call {show_text(rec.call.tool)} {json.dumps(rec.call.arguments, default=str)}")
     return rules.redact(prompt, ctx.decoys)[:PROMPT_MAX], rules.redact(rec.result.text, ctx.decoys)[:RESULT_KEEP]
 
 
