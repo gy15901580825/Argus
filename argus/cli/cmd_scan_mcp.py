@@ -163,6 +163,9 @@ def _console_line(f: dict, clean) -> str:
               help="stdio only: run the server on this machine with your privileges. Only for code you trust.")
 @click.option("--timeout", "timeout_s", type=click.FloatRange(min=1), default=30.0, show_default=True,
               callback=_finite, metavar="SECONDS", help="Per request.")
+@click.option("--max-runtime", "max_runtime_s", type=click.FloatRange(min=0, min_open=True), default=1800.0,
+              show_default=True, callback=_finite, metavar="SECONDS",
+              help="Whole run. Past it no more tool calls are made, and the command exits 1.")
 @click.option("--per-run-cap", "per_run_cap", type=click.FloatRange(min=0), default=0.50, show_default=True,
               callback=_finite, metavar="USD", help="Judge spend limit. 0 turns the judge off.")
 @click.option("--out", "out_file", type=click.Path(dir_okay=False), default=None,
@@ -171,7 +174,7 @@ def _console_line(f: dict, clean) -> str:
 @click.option("--fail-on", "fail_on", type=click.Choice(SEVERITY_ORDER), default=None,
               help="Exit 3 when any finding has verdict=fail and severity at or above this level.")
 def cmd_scan_mcp(argv: tuple[str, ...], call_tools, tool_args: dict, headers: tuple[tuple[str, str], ...],
-                 env_names: tuple[str, ...], on_host: bool, timeout_s: float, per_run_cap: float,
+                 env_names: tuple[str, ...], on_host: bool, timeout_s: float, max_runtime_s: float, per_run_cap: float,
                  out_file: str | None, report_format: str, fail_on: str | None) -> None:
     """Scan an MCP server over Streamable HTTP (URL) or stdio (a command after --) and report what its tools do."""
     from argus.mcp_scan import known_secrets
@@ -243,8 +246,8 @@ def cmd_scan_mcp(argv: tuple[str, ...], call_tools, tool_args: dict, headers: tu
     from argus.mcp_scan import scan
 
     cfg = scan.ScanConfig(target=target, call_tools=call_tools, args=tool_args, timeout_s=timeout_s,
-                          per_run_cap_usd=per_run_cap, judge_config=judge_config, judge_off_reason=judge_off,
-                          transport="http" if url is not None else "stdio-host")
+                          max_runtime_s=max_runtime_s, per_run_cap_usd=per_run_cap, judge_config=judge_config,
+                          judge_off_reason=judge_off, transport="http" if url is not None else "stdio-host")
     if on_host:
         say(_HOST_NOTE)
     started_at = datetime.now(timezone.utc)
@@ -309,6 +312,11 @@ def cmd_scan_mcp(argv: tuple[str, ...], call_tools, tool_args: dict, headers: tu
     for note in result.notes:
         say(note)
 
+    if result.out_of_time:
+        _count_fail_on(result.findings, fail_on)
+        say(f"The run time limit (--max-runtime {max_runtime_s:g} s) was reached before every tool was called, so "
+            "the scan is incomplete; raise --max-runtime to finish it.", err=True)
+        sys.exit(1)
     if result.all_selected_unexercised:
         _count_fail_on(result.findings, fail_on)
         say("No tool selected for calling could be exercised, so the call checks did not run; the notes above say "

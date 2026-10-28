@@ -61,9 +61,10 @@ def _f(probe_id, verdict="fail", severity="high", **evidence):
                    evidence={"transport": "http", **evidence}, target_response=response)
 
 
-def _result(findings=(), notes=None, unexercised=False, unjudged=0, no_tool_called=False):
+def _result(findings=(), notes=None, unexercised=False, unjudged=0, no_tool_called=False, out_of_time=False):
     return ScanResult(findings=list(findings), notes=list(notes or [SNYK_LINE]), server_info=None,
-                      all_selected_unexercised=unexercised, unjudged=unjudged, no_tool_called=no_tool_called)
+                      all_selected_unexercised=unexercised, unjudged=unjudged, no_tool_called=no_tool_called,
+                      out_of_time=out_of_time)
 
 
 def _fake(monkeypatch, result=None, *, raises=None, during=None):
@@ -175,6 +176,10 @@ def _args_file(tmp_path, content):
     ("cap negative", ["--per-run-cap", "-1", URL], "--per-run-cap"),
     ("timeout nan", ["--timeout", "nan", URL], "--timeout"),
     ("timeout below 1", ["--timeout", "0.5", URL], "--timeout"),
+    ("max-runtime zero", ["--max-runtime", "0", URL], "--max-runtime"),
+    ("max-runtime negative", ["--max-runtime", "-5", URL], "--max-runtime"),
+    ("max-runtime inf", ["--max-runtime", "inf", URL], "--max-runtime"),
+    ("max-runtime nan", ["--max-runtime", "nan", URL], "--max-runtime"),
 ])
 def test_usage_errors(monkeypatch, tmp_path, case, args, expect):
     monkeypatch.delenv("ARGUS_T8_UNSET_VAR", raising=False)
@@ -316,6 +321,10 @@ def test_http_config(monkeypatch, tmp_path):
     assert cfg.call_tools == frozenset({"echo", "read"})
     assert dict(cfg.args) == {"echo": {"text": "hi"}}
     assert (cfg.timeout_s, cfg.per_run_cap_usd, cfg.transport) == (5.0, 0.25, "http")
+    assert cfg.max_runtime_s == 1800.0
+    seen.clear()
+    assert _invoke(URL, "--max-runtime", "90").exit_code == 0
+    assert seen[0].max_runtime_s == 90.0
 
 
 def test_stdio_config_passes_only_named_env(monkeypatch):
@@ -678,3 +687,15 @@ def test_sdk_error_lines_are_redacted(monkeypatch):
     assert result.exit_code == 0, result.output
     assert "MCP SDK error: Error parsing SSE message [REDACTED:" in result.stderr
     assert token not in result.output and aws not in result.output
+
+
+def test_run_time_limit_exits_1_with_report_after_counting_fail_on(monkeypatch, tmp_path):
+    fails = [_f(checks.COMMAND, "fail", "high", tool="run")]
+    _fake(monkeypatch, _result(fails, out_of_time=True))
+    result = _invoke(URL, "--fail-on", "high", "--max-runtime", "60")
+    assert result.exit_code == 1, result.output
+    assert (tmp_path / OUT_FILE["html"]).is_file()
+    message = ("The run time limit (--max-runtime 60 s) was reached before every tool was called, so the scan is "
+               "incomplete; raise --max-runtime to finish it.")
+    assert f"1 finding(s) at or above high: {checks.COMMAND}" in result.stderr and message in result.stderr
+    assert result.stderr.index("at or above high") < result.stderr.index(message)

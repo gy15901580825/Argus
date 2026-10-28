@@ -16,6 +16,8 @@ SERVER_VERSION = "1.0.0"
 HUGE_BYTES = 50 * 1024 * 1024
 MANY_TOOLS = 5000
 FLOOD = 5000
+SLOW_TOOLS = 6
+SLOW_S = 1.0
 STDERR_NOISE = 6000
 READY_MARK = "basic-ready"
 STATE_DIR_ENV = "ARGUS_FIXTURE_DIR"  # where the vulnerable and liar servers keep state; stdio needs --env
@@ -118,6 +120,9 @@ def _tools(name: str) -> list[dict]:
             {"name": "fail_cfg", "description": "Fails with the configuration in its error.",
              "inputSchema": _schema(), "annotations": _RO},
         ]
+    if name == "slow":
+        return [{"name": f"slow_{i}", "description": "Answers after a second.", "inputSchema": _schema(),
+                 "annotations": _RO} for i in range(SLOW_TOOLS)]
     if name in ("notify_flood", "unknown_flood"):
         return [{"name": "flood", "description": "Sends notifications before answering.", "inputSchema": _schema(),
                  "annotations": {"readOnlyHint": True}}]
@@ -181,6 +186,9 @@ def build(name: str) -> Any:
             return text(str(args.get("text", "")))
         if params.name == "hang":
             await anyio.sleep_forever()
+        if name == "slow":
+            await anyio.sleep(SLOW_S)
+            return text("ok")
         if params.name == "huge":
             return text("A" * HUGE_BYTES)
         if params.name == "flood":

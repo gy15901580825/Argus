@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import dataclasses
+import time
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Literal, Mapping, Protocol, Sequence
@@ -22,6 +23,7 @@ RESTARTS_MAX = 3
 
 REASON_SERVER = "not tested: the server session kept closing"
 REASON_SILENT = "the server stopped answering"
+REASON_RUNTIME = "run time limit reached"
 _INVALID_PARAMS = "JSON-RPC error -32602"  # how client.McpSession formats an invalid-params reply
 _ARGS_HINT = "; pass --args with arguments this tool accepts"
 
@@ -49,6 +51,7 @@ class CallRun:
     outcomes: dict[str, ToolOutcome]
     hook_hits: list[Hit]
     notes: list[str]
+    out_of_time: bool = False
 
 
 def show_text(text: str) -> str:
@@ -126,9 +129,18 @@ def _reason(exc: Exception) -> str:
 async def run_calls(session_a: McpSession, open_session: Callable[[], AbstractAsyncContextManager[McpSession]],
                     tools: list[ToolInfo], *, overrides: Mapping[str, dict], run_id: str,
                     extra_paths: Sequence[str] = (), hooks: CallHooks | None = None,
-                    echo: Callable[[str], None] = lambda s: None) -> CallRun:
-    """Call `tools` (already selected by policy) and account for every one of them in `outcomes`."""
+                    echo: Callable[[str], None] = lambda s: None, deadline: float | None = None) -> CallRun:
+    """Call `tools` (already selected by policy) and account for every one of them in `outcomes`.
+
+    `deadline` is a time.monotonic() value; once it passes no further call is made."""
     run = _Runner(session_a, open_session)
+    out_of_time = False
+
+    def late() -> bool:
+        nonlocal out_of_time
+        out_of_time = out_of_time or (deadline is not None and time.monotonic() >= deadline)
+        return out_of_time
+
     records: list[CallRecord] = []
     hook_hits: list[Hit] = []
     skipped: dict[str, ToolOutcome] = {}
@@ -142,6 +154,8 @@ async def run_calls(session_a: McpSession, open_session: Callable[[], AbstractAs
         if hooks is not None:
             await hooks.before_calls()
         for tool in tools:
+            if halt is None and late():
+                halt = ToolOutcome("not_exercised", 0, REASON_RUNTIME)
             if halt is None:
                 base = baseline(tool.input_schema, overrides.get(tool.name))
                 plan = _plan(tool, base, run_id, next_seq, extra_paths)
@@ -156,6 +170,9 @@ async def run_calls(session_a: McpSession, open_session: Callable[[], AbstractAs
             bases[tool.name] = base
             timeouts = made = 0
             for call in plan:
+                if made and late():
+                    stopped[tool.name] = f"stopped at the run time limit ({made} of {len(plan)} calls made)"
+                    break
                 result = await run.current.call(call.tool, call.arguments)
                 records.append(CallRecord(next_seq + made, "A", call, result))
                 made += 1
@@ -182,9 +199,11 @@ async def run_calls(session_a: McpSession, open_session: Callable[[], AbstractAs
 
         final_tools = None
         # Spend a restart on the relist if one is left, so a rug pull is still compared.
-        if not run.current.alive:
+        if not late() and not run.current.alive:
             await run.restart()
-        if run.current.alive:
+        if late():
+            run.notes.append("The second tools/list did not run: the run time limit was reached.")
+        elif run.current.alive:
             try:
                 final_tools, list_notes = await run.current.list_tools()
                 run.notes.extend(list_notes)
@@ -195,7 +214,9 @@ async def run_calls(session_a: McpSession, open_session: Callable[[], AbstractAs
 
         good = {r.call.tool for r in records if good_result(r.result)}
         replay = [t for t in tools if t.name in good]
-        if replay:
+        if replay and late():
+            run.notes.append("No tool was replayed in a second session: the run time limit was reached.")
+        elif replay:
             echo(f"  replaying {len(replay)} tool(s) in a second session")
             cm = open_session()
             try:
@@ -214,6 +235,10 @@ async def run_calls(session_a: McpSession, open_session: Callable[[], AbstractAs
                             run.notes.append(f"The second session stopped answering; {len(replay) - n} tool(s) "
                                              "were not replayed.")
                             break
+                        if late():
+                            run.notes.append(f"The run time limit was reached; {len(replay) - n} tool(s) were not "
+                                             "replayed.")
+                            break
                         call = dataclasses.replace(baseline_call(tool.name, bases[tool.name]), family="replay")
                         result = await session_b.call(call.tool, call.arguments)
                         records.append(CallRecord(next_seq, "B", call, result))
@@ -226,15 +251,18 @@ async def run_calls(session_a: McpSession, open_session: Callable[[], AbstractAs
 
     outcomes = _outcomes(tools, records, bases, skipped, stopped)
     return CallRun(records=records, final_tools=final_tools, list_changed=any(s.list_changed for s in run.sessions),
-                   outcomes=outcomes, hook_hits=hook_hits, notes=run.notes)
+                   outcomes=outcomes, hook_hits=hook_hits, notes=run.notes, out_of_time=out_of_time)
 
 
 def _note_skipped(skipped: dict[str, ToolOutcome], notes: list[str]) -> None:
     if not skipped:
         return
-    status = next(iter(skipped.values())).status
+    first = next(iter(skipped.values()))
+    status = first.status
     if status == "not_tested_cap":
         notes.append(f"The call cap of {CALLS_MAX} was reached; {len(skipped)} tool(s) were not tested.")
+    elif first.detail == REASON_RUNTIME:
+        notes.append(f"The run time limit (--max-runtime) was reached; {len(skipped)} tool(s) were not called.")
     elif status == "not_exercised":
         notes.append(f"{TIMED_OUT_TOOLS_MAX} tools in a row timed out, so the server stopped answering; "
                      f"{len(skipped)} tool(s) were not called.")

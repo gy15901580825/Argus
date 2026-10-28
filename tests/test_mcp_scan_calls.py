@@ -284,6 +284,31 @@ async def test_replays_stop_when_session_b_stops_answering():
     assert any("stopped answering" in n for n in res.notes)
 
 
+async def test_run_time_limit_stops_calls_and_leaves_the_rest_not_exercised(monkeypatch):
+    now = [0.0]
+    monkeypatch.setattr(calls.time, "monotonic", lambda: now[0])
+
+    def behave(s, name, args):
+        now[0] += 1.0
+        return ok()
+
+    # a has 4 calls planned (baseline, two cmd, relay); the limit falls after its third.
+    world = World([tool("a"), tool("b", schema=None), tool("c", schema=None)], behave)
+    _, res = await run(world, deadline=2.5)
+    assert [(r.call.tool, r.call.family) for r in res.records] == [("a", "baseline"), ("a", "cmd"), ("a", "cmd")]
+    assert res.outcomes["a"] == calls.ToolOutcome("called", 3, "stopped at the run time limit (3 of 4 calls made)")
+    assert res.outcomes["b"] == res.outcomes["c"] == calls.ToolOutcome("not_exercised", 0, calls.REASON_RUNTIME)
+    assert res.out_of_time
+    # No relist and no replay once the limit is reached.
+    assert [m for _, m, _, _ in world.log] == ["tools/call"] * 3
+    assert "The run time limit (--max-runtime) was reached; 2 tool(s) were not called." in res.notes
+
+
+async def test_no_run_time_limit_by_default():
+    _, res = await run(World([tool("a", schema=None)]))
+    assert not res.out_of_time and res.outcomes["a"].status == "called"
+
+
 async def test_no_schema_tool_called_once_with_empty_args():
     world = World([tool("bare", schema=None)])
     _, res = await run(world)

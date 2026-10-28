@@ -254,3 +254,16 @@ def test_known_secret_cut_by_any_report_limit_never_leaks(transport, monkeypatch
     assert (checks.INJECTION, "show_cfg") in _fails(run)
     assert any("fail_cfg" in f["reasoning"] and "***" in f["reasoning"] for f in run["findings"])
     assert "***" in json.dumps([f["evidence"] for f in run["findings"] if f["probe_id"].startswith("mcp_server_")])
+
+
+def test_run_time_limit_stops_the_calls_and_exits_1():
+    started = time.monotonic()
+    result = _scan("stdio", "slow", "--format", "json", "--max-runtime", "3")
+    elapsed = time.monotonic() - started
+    assert result.exit_code == 1, result.output
+    # Six tools of a second each, plus a replay each, would take over 12 s.
+    assert elapsed < 10, elapsed
+    assert "raise --max-runtime" in result.stderr
+    assert "The run time limit (--max-runtime) was reached;" in result.output
+    [err] = [f for f in _by_probe(_run_json(), checks.SECRET) if f["verdict"] == "error"]
+    assert "slow_5: run time limit reached" in err["reasoning"]

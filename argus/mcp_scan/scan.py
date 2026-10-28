@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import functools
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Literal, Mapping
@@ -35,6 +36,7 @@ class ScanConfig:
     call_tools: CallTools = None
     args: Mapping[str, dict] = field(default_factory=dict)
     timeout_s: float = 30.0
+    max_runtime_s: float = 1800.0
     per_run_cap_usd: float = 0.50
     judge_config: LLMConfig | None = None
     judge_off_reason: str = ""
@@ -59,6 +61,7 @@ class ScanResult:
     all_selected_unexercised: bool
     unjudged: int
     no_tool_called: bool
+    out_of_time: bool = False
 
 
 @functools.lru_cache(maxsize=1)
@@ -68,6 +71,7 @@ def _scan_probes() -> tuple[Probe, ...]:
 
 async def scan_mcp(cfg: ScanConfig, *, mask: Callable[[str], str], echo: Callable[[str], None]) -> ScanResult:
     """Raises client.ConnectError when session A or the first tools/list fails, UnknownTools for a bad --call-tools."""
+    deadline = time.monotonic() + cfg.max_runtime_s
     opener = functools.partial(open_session, cfg.target, timeout_s=cfg.timeout_s, mask=mask)
     calls: CallRun | None = None
     async with opener() as session:
@@ -86,7 +90,7 @@ async def scan_mcp(cfg: ScanConfig, *, mask: Callable[[str], str], echo: Callabl
         if chosen:
             echo(f"Calling {len(chosen)} tool(s)")
             calls = await run_calls(session, opener, chosen, overrides=cfg.args, run_id=new_run_id(),
-                                    extra_paths=cfg.extra_paths, hooks=cfg.hooks, echo=echo)
+                                    extra_paths=cfg.extra_paths, hooks=cfg.hooks, echo=echo, deadline=deadline)
     if calls is not None:
         dyn, dyn_cands = checks.dynamic_hits(calls.records, listed, calls.final_tools, calls.list_changed,
                                              decoys=cfg.decoys)
@@ -119,4 +123,4 @@ async def scan_mcp(cfg: ScanConfig, *, mask: Callable[[str], str], echo: Callabl
     notes.append(SNYK_LINE)
     return ScanResult(findings=scan + server, notes=notes, server_info=server_info,
                       all_selected_unexercised=all_selected_unexercised(calls), unjudged=unjudged_count(scan),
-                      no_tool_called=not chosen)
+                      no_tool_called=not chosen, out_of_time=calls is not None and calls.out_of_time)
