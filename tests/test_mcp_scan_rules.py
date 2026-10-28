@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from argus.mcp_scan.known_secrets import command_secrets, mask_argv, safe_url, url_secrets
+from argus.mcp_scan.known_secrets import command_secrets, mask_argv, safe_url, url_secrets, value_mask
 from argus.mcp_scan.models import (
     RESULT_KEEP, TEXT_KEEP, CallRecord, CallResult, Candidate, Hit, PlannedCall, ServerInfo, ToolInfo,
 )
@@ -562,6 +562,17 @@ def test_mask_argv_longest_first():
     tok = "abc12345"
     assert mask_argv(["--token=" + tok + "xyz", "x" + tok], [tok, tok + "xyz"]) == ["--token=***", "x***"]
     assert mask_argv(["a"], [""]) == ["a"]
+
+
+
+def test_value_mask_matches_a_value_with_hidden_characters_inserted():
+    secret = "qz7Kp" + "2Lm9Xw4Rt8Yv"
+    mask = value_mask([secret, "abc", secret[:8]])
+    text = (f"svc={secret} split={secret[:5]}\x07{secret[5:]} zw={secret[:3]}\u200b\u202e{secret[3:]} "
+            f"head={secret[:8]} abc")
+    assert mask(text) == "svc=*** split=*** zw=*** head=*** abc"
+    # A value that itself holds a hidden character matches with or without it.
+    assert value_mask(["ab\x07cdef"])("x abcdef ab\x07cdef") == "x *** ***"
 
 
 # ---- source hygiene ----

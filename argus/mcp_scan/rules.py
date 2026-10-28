@@ -11,11 +11,14 @@ from argus.skillscan.urls import url_userinfo
 EXCERPT = 300
 Mask = Callable[[str], str]  # the CLI's known-secret mask
 
-_HIDDEN = re.compile(
-    r"(?P<zero_width>[\U0000200B-\U0000200D\U00002060\U0000FEFF])"
-    r"|(?P<bidi>[\U0000202A-\U0000202E\U00002066-\U00002069])"
-    r"|(?P<tag>[\U000e0000-\U000e007f])"
-    r"|(?P<control>[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f])")
+_HIDDEN_KINDS = (
+    ("zero_width", r"\U0000200B-\U0000200D\U00002060\U0000FEFF"),
+    ("bidi", r"\U0000202A-\U0000202E\U00002066-\U00002069"),
+    ("tag", r"\U000e0000-\U000e007f"),
+    ("control", r"\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f"))
+_HIDDEN = re.compile("|".join(f"(?P<{kind}>[{chars}])" for kind, chars in _HIDDEN_KINDS))
+# Any run of hidden characters: a known-value mask allows one between the value's characters.
+HIDDEN_RUN = "[" + "".join(chars for _, chars in _HIDDEN_KINDS) + "]*+"
 
 _PHRASES = [(rule, re.compile(p, re.I)) for rule, p in (
     ("ignore_previous", r"ignore\s+(all\s+)?(previous|prior)\s+instructions"),
@@ -71,6 +74,10 @@ _USER_OR_ASSISTANT = re.compile(r"\bthe\s+(?:user|assistant)\b", re.I)
 _URL = re.compile(r"https?://[^\s<>\"')]+", re.I)
 _SEND_VERB = re.compile(r"\b(?:send|post|upload|forward|submit)(?:s|ed|ing|ted|ting)?\b", re.I)
 _URL_VERB_GAP = 40
+
+
+def strip_hidden(text: str) -> str:
+    return _HIDDEN.sub("", text)
 
 
 def hidden_chars(text: str) -> list[tuple[str, int]]:

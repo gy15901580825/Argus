@@ -246,12 +246,15 @@ def _leaky_description(secret: str) -> str:
 
 def leaky_text(secret: str) -> str:
     """A result that holds `secret` across the 2000-character report cut, a 300-character excerpt edge and the
-    262,144-character kept-text cut, where the text before it has no token boundary to back off to."""
+    262,144-character kept-text cut, where the text before it has no token boundary to back off to, and once
+    with a hidden character inside it."""
     from argus.mcp_scan.models import RESULT_KEEP, TEXT_KEEP
 
     text = "a " * ((RESULT_KEEP - 6) // 2) + secret
     # An excerpt shows 145 characters after the 11-character tag, so it ends 5 characters into the secret.
     text += " <IMPORTANT> " + "b" * 138 + " " + secret + " "
+    # A hidden character inside the secret: the report shows it as <U+0007> between the two halves.
+    text += secret[:5] + "\x07" + secret[5:] + " "
     tail = "A" * 520 + "<system>"
     text += "c" * (TEXT_KEEP - 5 - len(tail) - len(text)) + tail
     return text + secret + " end"

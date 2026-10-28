@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import re
 import urllib.parse
-from typing import Sequence
+from typing import Callable, Iterable, Sequence
 
-from argus.mcp_scan.rules import secret_name
+from argus.mcp_scan.rules import HIDDEN_RUN, secret_name, strip_hidden
 from argus.skillscan.urls import safe_source, url_secrets as _userinfo_pairs
 
 MASK = "***"
@@ -83,6 +83,20 @@ def args_secrets(value) -> list[str]:
         return _keep([value])
     items = value.values() if isinstance(value, dict) else value if isinstance(value, list) else ()
     return _keep(s for v in items for s in args_secrets(v))
+
+
+def value_mask(values: Iterable[str]) -> Callable[[str], str]:
+    """The engine's mask: each value of VALUE_MIN or more characters, longest first, replaced by *** even with
+    hidden characters inserted in it, which the report would otherwise show as <U+XXXX> between its halves."""
+    plain = sorted({strip_hidden(v) for v in values} - {MASK}, key=len, reverse=True)
+    patterns = [re.compile(HIDDEN_RUN.join(map(re.escape, v))) for v in plain if len(v) >= VALUE_MIN]
+
+    def mask(text: str) -> str:
+        for p in patterns:
+            text = p.sub(MASK, text)
+        return text
+
+    return mask
 
 
 def mask_argv(argv: Sequence[str], secrets: Sequence[str]) -> list[str]:

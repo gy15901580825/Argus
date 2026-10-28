@@ -239,10 +239,7 @@ def cmd_scan_mcp(argv: tuple[str, ...], call_tools, tool_args: dict, headers: tu
         return run_json.mask_text(text, secrets)
 
     # The engine masks server text before its checks, so it skips values under VALUE_MIN: X-Trace: 1 would blank every 1.
-    engine_secrets = [s for s in secrets if len(s) >= known_secrets.VALUE_MIN]
-
-    def engine_mask(text: str) -> str:
-        return run_json.mask_text(text, engine_secrets)
+    engine_mask = known_secrets.value_mask(secrets)
 
     def clean(text: str) -> str:
         # Strip control bytes first, so one hidden inside a secret cannot dodge the mask.
