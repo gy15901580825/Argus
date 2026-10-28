@@ -463,6 +463,30 @@ def test_command_secret_names(argv, expected):
     assert set(command_secrets(argv)) == expected
 
 
+@pytest.mark.parametrize("argv", [
+    ["--author", "alice-smith"], ["--max-tokens", "4096"], ["--oauth-port", "8080"], ["--keyboard=us-intl"],
+    ["MONKEY=banana12"], ["--tokens-used", "123456"],
+])
+def test_command_secrets_match_whole_name_parts(argv):
+    assert command_secrets(argv) == []
+
+
+def test_command_secrets_takes_header_values():
+    v = "Zq9" + "xY7wL2mN4pR8"
+    got = set(command_secrets(["npx", "mcp-remote", "https://h.invalid/mcp", "--header", "Authorization: Bearer " + v,
+                               "-H", "X-Api-Key:" + v + "2", "-H", "Cookie: session=" + v + "3", "-H", "Accept: text/plain"]))
+    assert got == {"Bearer " + v, v, v + "2", "session=" + v + "3"}
+
+
+@pytest.mark.parametrize("argv,expected", [
+    (["--password", "-dashpw123"], {"-dashpw123"}),
+    (["--token", "-v"], set()),
+    (["--token", "--verbose"], set()),
+])
+def test_command_secret_value_may_start_with_a_dash(argv, expected):
+    assert set(command_secrets(argv)) == expected
+
+
 def test_command_secrets_takes_url_credentials():
     url = "https://user:pa55word99@h.invalid/mcp?token=qwerty123"
     assert {"pa55word99", "qwerty123"} <= set(command_secrets(["npx", "srv", url]))
@@ -496,6 +520,16 @@ def test_safe_url_drops_userinfo_and_masks_secret_query():
 
 def test_safe_url_keeps_other_parts_verbatim():
     assert safe_url("https://h.invalid:8443/a/b?q=a%20b&Auth=zz&flag#frag") == "https://h.invalid:8443/a/b?q=a%20b&Auth=***&flag#frag"
+
+
+def test_safe_url_masks_fragment_and_path_params():
+    assert safe_url("https://h.invalid/cb#access_token=abc12345&state=xyz") == "https://h.invalid/cb#access_token=***&state=xyz"
+    assert safe_url("https://h.invalid/mcp;token=secretval123/x;v=1?a=1") == "https://h.invalid/mcp;token=***/x;v=1?a=1"
+
+
+def test_url_secrets_include_fragment_and_path_params():
+    got = set(url_secrets("https://h.invalid/mcp;token=secretval123/x#access_token=abc12345&state=xyz"))
+    assert got == {"secretval123", "abc12345"}
 
 
 def test_mask_argv_longest_first():
