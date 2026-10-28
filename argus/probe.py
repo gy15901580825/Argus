@@ -36,6 +36,8 @@ VALID_TARGET_CLASSES = {
     "mcp_agent",
     # Served by `argus-probe mcp-trap`, never by a target adapter.
     "mcp_trap",
+    # Served by `argus-probe scan-mcp`, never by a target adapter.
+    "mcp_scan",
     # MCP server exposure probes test the server itself, not an agent.
     "mcp_server",
     # The vLLM version probe tests the model server itself, not an agent.

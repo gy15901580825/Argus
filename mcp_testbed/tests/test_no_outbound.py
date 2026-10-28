@@ -25,3 +25,12 @@ def test_mcp_trap_server_package_imports_no_outbound_client():
     for f in trap.rglob("*.py"):
         hits = TRAP_BANNED.findall(f.read_text())
         assert not hits, f"{f.name} imports an outbound client: {hits}"
+
+
+def test_mcp_scan_fixture_servers_import_no_outbound_client():
+    fixtures = pathlib.Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "mcp_scan"
+    files = list(fixtures.rglob("*.py"))
+    assert files, f"{fixtures} has no servers; this guard cannot check what it cannot read"
+    for f in files:
+        hits = TRAP_BANNED.findall(f.read_text())
+        assert not hits, f"{f.name} imports an outbound client: {hits}"

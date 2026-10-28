@@ -31,13 +31,14 @@ AI RMF** controls without translation.
 
 What Argus does:
 
-- **219 probes** in the bundled library — 15 OWASP LLM Top 10 hand-authored,
+- **230 probes** in the bundled library — 15 OWASP LLM Top 10 hand-authored,
   5 from public LLM system cards (best-of-N, crescendo, confused deputy,
   many-shot jailbreak, sleeper agent), 31 browser-agent specific, 26
-  payment-abuse probes (x402 wallet flows, against `payment_agent`), 21
+  payment-abuse probes (x402 wallet flows, against `payment_agent`), 32
   MCP-abuse probes (12 poisoned tool servers, against `mcp_agent`; 5
   hostile-server scenarios for `argus-probe mcp-trap`; 4 exposure checks of an
-  MCP server itself, against `mcp_server`), 16
+  MCP server itself, against `mcp_server`; 11 checks of an MCP server's tools
+  for `argus-probe scan-mcp`), 16
   Semia-mapped agent-skill detectors (missing human gate, encoded payload,
   install-time exec, shadow credentials), 4 agent-autonomy probes (AGENTS.md
   install, credential grab, guardrail log noise with its control),
@@ -61,6 +62,14 @@ What Argus does:
   attacks (tool poisoning, rug pull, shadowing, confused deputy, credential
   lure). No LLM judge and no Argus-side model spend. See
   [`docs/cli.md`](docs/cli.md#test-your-agent-against-a-hostile-mcp-server).
+- **`argus-probe scan-mcp`**: Argus connects to one MCP server over Streamable
+  HTTP or stdio, calls its tools with inert payloads and reports command
+  execution, path traversal, secrets and injected instructions in results,
+  cross-session leaks and tool lists that change. By default it calls only
+  tools annotated read-only. Rules decide most verdicts, and an LLM judge
+  capped by `--per-run-cap` decides text that only looks aimed at a model. In
+  this release a stdio server runs on your machine and needs `--on-host`. See
+  [`docs/cli.md`](docs/cli.md#scan-an-mcp-servers-tools).
 - **Scan suites** — pass `suite` instead of enumerating `probe_ids` on
   `POST /api/v1/redteam/runs`: `owasp-llm-top10`, `mitre-atlas`,
   `nist-ai-rmf`, `eu-ai-act`, `payments`, `mcp`.

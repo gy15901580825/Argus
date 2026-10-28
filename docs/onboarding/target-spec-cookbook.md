@@ -406,6 +406,19 @@ The agent must be able to reach the trap as an MCP server. Add the printed entry
 
 ---
 
+## scan-mcp
+
+`argus-probe scan-mcp` takes no target spec. Give it the MCP server's URL, or put the command that starts the server after `--`:
+
+```bash
+argus-probe scan-mcp http://127.0.0.1:8000/mcp --header 'Authorization: Bearer <token>'
+argus-probe scan-mcp --on-host -- python server.py
+```
+
+To scan a server your agent already uses, copy the URL or the command from its entry in the agent's MCP config. For an HTTP server, pass each header from the entry with `--header`. For a stdio server, export each variable in the entry's `env` in your shell and pass its name with `--env NAME`. What the scan calls, the warnings and the exit codes are in [cli.md](../cli.md#scan-an-mcp-servers-tools).
+
+---
+
 ## Next
 
 - [Quickstart](./quickstart.md) — install + first run
