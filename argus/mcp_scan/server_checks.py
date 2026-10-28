@@ -22,6 +22,8 @@ HTTP_ONLY_REASON = "HTTP-only check; this server speaks stdio"
 TOOLS_KEEP = 50
 DESCRIPTION_KEEP = rules.EXCERPT
 NOT_REACHED = "the server never answered these checks, so the probe did not actually run; this is not a defended result"
+# The checks make about six requests; together they get this many --timeout periods.
+CHECKS_TIMEOUTS = 6
 
 
 @functools.lru_cache(maxsize=1)
@@ -73,10 +75,20 @@ def _assertion_finding(probe: Probe, evidence: dict, latency_ms: float) -> dict:
 
 async def http_server_findings(url: str, headers: tuple[tuple[str, str], ...], timeout_s: float,
                                mask: rules.Mask = rules.same) -> list[dict]:
+    import anyio
+
     target = MCPServerTarget(MCPServerSpec(url=url, headers=headers, timeout_s=timeout_s))
-    _, latency_ms = await target.send_prompt("")
+    # The target's timeout is per read, so a server that trickles bytes would hold it forever.
+    with anyio.move_on_after(CHECKS_TIMEOUTS * timeout_s) as scope:
+        _, latency_ms = await target.send_prompt("")
+        raw = await target.collect_evidence()
+    if scope.cancelled_caught:
+        return [finding(p, verdict=VERDICT_ERROR, severity="info", reasoning=NOT_REACHED,
+                        evidence={"url": mask(url), "items": [],
+                                  "errors": [f"the checks did not finish within {CHECKS_TIMEOUTS * timeout_s:g} s"]})
+                for p in server_probes()]
     # Masked whole, before the evidence is cut: a cut through a known secret keeps a part no mask matches.
-    evidence = rules.mask_strings(await target.collect_evidence(), mask)
+    evidence = rules.mask_strings(raw, mask)
     return [_assertion_finding(p, evidence, latency_ms) for p in server_probes()]
 
 

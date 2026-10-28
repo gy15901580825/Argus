@@ -47,14 +47,41 @@ class _Gate:
         await send({"type": "http.response.body", "body": b"unauthorized"})
 
 
+class _TrickleOptions:
+    """Answers OPTIONS with a body that never ends, one byte at a time, until the client goes away."""
+
+    def __init__(self, app: Any) -> None:
+        self._app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http" or scope["method"] != "OPTIONS":
+            await self._app(scope, receive, send)
+            return
+        import anyio
+
+        async def drip() -> None:
+            while True:
+                await send({"type": "http.response.body", "body": b".", "more_body": True})
+                await anyio.sleep(0.2)
+
+        await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"text/plain")]})
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(drip)
+            while (await receive())["type"] != "http.disconnect":
+                pass
+            tg.cancel_scope.cancel()
+
+
 @contextlib.contextmanager
 def serve_http(name: str, *, require_header: tuple[str, str] | None = None, oauth: bool = False,
-               json_response: bool = False) -> Iterator[str]:
+               json_response: bool = False, trickle_options: bool = False) -> Iterator[str]:
     """Serve fixture `name` on a free 127.0.0.1 port in a thread; yields the /mcp URL."""
     import uvicorn
 
     server_app = _load_servers().build(name).streamable_http_app(json_response=json_response)
-    app = _Gate(server_app, require_header, oauth)
+    app: Any = _Gate(server_app, require_header, oauth)
+    if trickle_options:
+        app = _TrickleOptions(app)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))
     server = uvicorn.Server(uvicorn.Config(app, log_level="critical", lifespan="on",

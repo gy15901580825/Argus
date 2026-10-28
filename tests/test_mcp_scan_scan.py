@@ -166,3 +166,26 @@ async def test_note_order_with_args_hint_and_all_unexercised(monkeypatch):
     assert result.notes[1] == f"echo [no annotations]: not tested: {detail}"
     [e] = by(result, checks.SECRET)
     assert e["verdict"] == "error" and e["reasoning"].startswith("the selected tools could not be exercised")
+
+
+async def test_trickling_server_checks_stop_at_their_deadline():
+    import time
+
+    import anyio
+
+    from argus.mcp_scan import server_checks
+
+    with serve_http("clean", trickle_options=True) as url:
+        started = time.monotonic()
+        # Without the deadline the trickled OPTIONS reply never ends, so this bound fails the test.
+        with anyio.fail_after(60):
+            result = await scan_mcp(ScanConfig(target=HttpServer(url), timeout_s=1.0), mask=lambda s: s,
+                                    echo=lambda s: None)
+        elapsed = time.monotonic() - started
+    server = [f for f in result.findings if f["probe_id"] in SERVER_IDS]
+    assert {f["probe_id"] for f in server} == SERVER_IDS and len(server) == 4
+    assert {(f["verdict"], f["severity"], f["reasoning"]) for f in server} == {
+        ("error", "info", server_checks.NOT_REACHED)}
+    assert elapsed < server_checks.CHECKS_TIMEOUTS * 1.0 + 15, elapsed
+    # The rest of the scan still ran.
+    assert by(result, checks.INJECTION, "pass")
