@@ -7,8 +7,10 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 
+import httpx
 import pytest
 from click.testing import CliRunner
 
@@ -454,6 +456,96 @@ def test_stop_signal_stops_the_rounds_and_frees_the_port(monkeypatch, request, t
     monkeypatch.undo()
     sock = wiring.bind_trap_socket(TrapAddress(port=_isolated[0]))
     sock.close()
+
+
+def _connect_later(port_holder, delay):
+    """Send one MCP initialize to the trap `delay` seconds after it binds, as a late-starting agent would."""
+    def run():
+        while not port_holder:
+            time.sleep(0.01)
+        time.sleep(delay)
+        httpx.post(f"http://127.0.0.1:{port_holder[0]}/mcp", timeout=5, headers={
+            "Accept": "application/json, text/event-stream", "Content-Type": "application/json"},
+            json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+                "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "late", "version": "0"}}})
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    return thread
+
+
+def _recording_warm_up(seen):
+    async def fake(trap, chat, mask=None):
+        seen.append(trap.state.evidence()["interaction_count"])
+        return Warmup("not_wired")
+    return fake
+
+
+def test_wait_for_agent_holds_the_warm_up_until_the_agent_connects(monkeypatch, _isolated):
+    seen: list[int] = []
+    monkeypatch.setattr(driver, "warm_up", _recording_warm_up(seen))
+    thread = _connect_later(_isolated, 0.5)
+    started = time.monotonic()
+    result = _invoke("--target", SPEC_ARG, "--wait-for-agent", "30")
+    elapsed = time.monotonic() - started
+    thread.join(5)
+    url = f"http://127.0.0.1:{wiring.DEFAULT_TRAP_PORT}/mcp"
+    assert f"Trap is up at {url}. Start or restart your agent now; waiting up to 30 s for it to connect..." \
+        in result.output
+    assert "Your agent connected; sending the warm-up task" in result.output
+    assert seen == [1]
+    assert 0.5 <= elapsed < 10
+
+
+def test_wait_for_agent_runs_the_warm_up_after_the_timeout(monkeypatch):
+    seen: list[int] = []
+    monkeypatch.setattr(driver, "warm_up", _recording_warm_up(seen))
+    started = time.monotonic()
+    result = _invoke("--target", SPEC_ARG, "--wait-for-agent", "1")
+    assert time.monotonic() - started >= 1
+    assert "No MCP request reached the trap within 1 s; sending the warm-up task anyway" in result.output
+    assert seen == [0]
+    assert result.exit_code == 2, result.output
+
+
+def test_no_wait_by_default(monkeypatch):
+    seen: list[int] = []
+    monkeypatch.setattr(driver, "warm_up", _recording_warm_up(seen))
+    result = _invoke("--target", SPEC_ARG)
+    assert "sending the warm-up task to your agent" in result.output and "Trap is up" not in result.output
+    assert seen == [0]
+
+
+@pytest.mark.parametrize("flags", [["--wait-for-agent", "-1"], ["--wait-for-agent", "3601"]])
+def test_wait_for_agent_out_of_range_is_a_usage_error(flags):
+    result = _invoke("--target", SPEC_ARG, *flags)
+    assert result.exit_code == 2, result.output
+    assert "--wait-for-agent" in result.output
+
+
+@pytest.mark.parametrize("signum, code", [(signal.SIGINT, 130), (signal.SIGTERM, 143)])
+def test_stop_signal_during_the_wait_stops_the_run(monkeypatch, request, tmp_path, signum, code):
+    if signum == signal.SIGTERM:
+        def _escaped(*_):
+            raise RuntimeError("SIGTERM reached the previous handler")
+        previous = signal.signal(signal.SIGTERM, _escaped)
+        request.addfinalizer(lambda: signal.signal(signal.SIGTERM, previous))
+    waiting = threading.Event()
+    real_wait = driver.wait_for_agent
+
+    async def wait(trap, seconds):
+        waiting.set()
+        return await real_wait(trap, seconds)
+
+    monkeypatch.setattr(driver, "wait_for_agent", wait)
+    monkeypatch.setattr(driver, "warm_up", _warm("wired"))
+    pid = os.getpid()
+    threading.Thread(target=lambda: waiting.wait(10) and os.kill(pid, signum), daemon=True).start()
+    started = time.monotonic()
+    result = _invoke("--target", SPEC_ARG, "--wait-for-agent", "60")
+    assert result.exit_code == code, result.output
+    assert time.monotonic() - started < 10
+    assert "the run was stopped before it finished" in result.output
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_help_and_print_config_do_not_import_the_sdk():

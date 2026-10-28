@@ -88,23 +88,29 @@ def _cancel_on_stop_signals(task: asyncio.Task):
                 signal.signal(sig, old)
 
 
-async def _drive(trap, chat, probes, rounds, say, mask):
+async def _drive(trap, chat, probes, rounds, say, mask, wait_s, url):
     from argus.mcp_trap import driver
 
+    if wait_s:
+        say(f"Trap is up at {url}. Start or restart your agent now; waiting up to {wait_s} s for it to connect...")
+        if await driver.wait_for_agent(trap, wait_s):
+            say("Your agent connected; sending the warm-up task ...")
+        else:
+            say(f"No MCP request reached the trap within {wait_s} s; sending the warm-up task anyway ...")
     warmup = await driver.warm_up(trap, chat, mask=mask)
     if warmup.status != "wired":
         return warmup
     return await driver.run_scenarios(trap, chat, probes, rounds, echo=say, mask=mask)
 
 
-async def _session(sock, address, chat, probes, rounds, say, mask):
+async def _session(sock, address, chat, probes, rounds, say, mask, wait_s):
     """Serve the trap on `sock` while driving the agent. Returns a Warmup, a TrapRun, or _Stopped."""
     from argus.mcp_trap.trap.server import TrapServer
     from argus.mcp_trap.trap.state import TrapState
 
     trap = TrapServer(TrapState(), allowed_hosts=address.allowed_hosts)
     async with trap.serving(sock):
-        work = asyncio.create_task(_drive(trap, chat, probes, rounds, say, mask))
+        work = asyncio.create_task(_drive(trap, chat, probes, rounds, say, mask, wait_s, address.mcp_url))
         with _cancel_on_stop_signals(work) as stopped:
             try:
                 return await work
@@ -135,9 +141,13 @@ async def _session(sock, address, chat, probes, rounds, say, mask):
 @click.option("--trap-public-url", default="",
               help="URL your agent uses to reach the trap, when it runs on another host "
                    "(e.g. http://192.168.1.20:8765).")
+@click.option("--wait-for-agent", "wait_s", type=click.IntRange(0, 3600), default=0, show_default=True,
+              metavar="SECONDS",
+              help="Start the trap, then wait up to this long for your agent to connect before the warm-up. "
+                   "Use it for an agent that connects to MCP servers only at startup.")
 def cmd_mcp_trap(target: str, rounds: int, scenarios: list[str], out_file: str | None, report_format: str,
                  fail_on: str | None, print_config: bool, trap_host: str, trap_port: int,
-                 trap_public_url: str) -> None:
+                 trap_public_url: str, wait_s: int) -> None:
     """Point your agent at a hostile MCP server on this machine and report what it did."""
     try:
         address = wiring.TrapAddress(trap_host, trap_port, trap_public_url)
@@ -188,10 +198,11 @@ def cmd_mcp_trap(target: str, rounds: int, scenarios: list[str], out_file: str |
         click.echo(f"Error: cannot listen on {address.host}:{address.port}: {e.strerror or e}", err=True)
         sys.exit(2)
 
-    say(f"Trap listening at {address.mcp_url}; sending the warm-up task to your agent ...")
+    if not wait_s:
+        say(f"Trap listening at {address.mcp_url}; sending the warm-up task to your agent ...")
     started_at = datetime.now(timezone.utc)
     try:
-        outcome = asyncio.run(_session(sock, address, chat, probes, rounds, say, mask))
+        outcome = asyncio.run(_session(sock, address, chat, probes, rounds, say, mask, wait_s))
     except KeyboardInterrupt:
         outcome = _Stopped(signal.SIGINT)
     except Exception as e:  # no traceback for the operator

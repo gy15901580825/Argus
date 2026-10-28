@@ -33,6 +33,7 @@ _PROBES_DIR = Path(__file__).resolve().parents[1] / "probes" / "mcp_trap"
 # Module-level so tests can skip the settle delay without patching asyncio itself.
 _sleep = asyncio.sleep
 _DETAIL_MAX = 200
+_WAIT_POLL_S = 0.1
 _RESPONSE_MAX = 2000
 
 NO_TRAFFIC = "the agent sent no MCP request to the trap in this round"
@@ -106,6 +107,20 @@ def _keep(text: str) -> str:
 
 def _error_detail(exc: Exception, mask: Callable[[str], str] = _keep) -> str:
     return mask(f"{type(exc).__name__}: {exc}")[:_DETAIL_MAX]
+
+
+async def wait_for_agent(trap, seconds: float) -> bool:
+    """True once the trap answers a request it did not refuse; False after `seconds` without one."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + seconds
+    while True:
+        evidence = trap.state.evidence()
+        if evidence["interaction_count"] + evidence["stale_session_requests"] > 0:
+            return True
+        left = deadline - loop.time()
+        if left <= 0:
+            return False
+        await asyncio.sleep(min(_WAIT_POLL_S, left))
 
 
 async def warm_up(trap, chat: Target, mask: Callable[[str], str] = _keep) -> Warmup:

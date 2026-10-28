@@ -195,6 +195,31 @@ async def test_warm_up_chat_error():
     assert "connection refused" in result.detail and len(result.detail) <= 200
 
 
+async def test_wait_for_agent_returns_at_the_first_request_not_refused():
+    trap = FakeTrap()
+
+    async def connect_late():
+        await asyncio.sleep(0.2)
+        refused("", trap.state, n=1)
+        await asyncio.sleep(0.2)
+        _request(trap.state, "initialize", {}, session=False)
+
+    task = asyncio.create_task(connect_late())
+    started = asyncio.get_running_loop().time()
+    assert await driver.wait_for_agent(trap, 10) is True
+    elapsed = asyncio.get_running_loop().time() - started
+    await task
+    assert 0.4 <= elapsed < 2
+
+
+async def test_wait_for_agent_times_out_on_refused_requests_only():
+    trap = FakeTrap()
+    refused("", trap.state, n=3)
+    started = asyncio.get_running_loop().time()
+    assert await driver.wait_for_agent(trap, 0.5) is False
+    assert asyncio.get_running_loop().time() - started >= 0.5
+
+
 # --- probes ----------------------------------------------------------------
 
 def test_load_trap_probes_orders_by_scenario_names():
