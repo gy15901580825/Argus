@@ -299,6 +299,7 @@ async def test_oversized_body_stops_buffering_and_gets_413_once(monkeypatch):
     await recorder(scope, receive, send)
     assert pulled == DEFAULT_MAX_REQUEST_BODY_SIZE // chunk + 1
     assert sent[0]["type"] == "http.response.start" and sent[0]["status"] == 413
+    assert (b"content-length", str(len(sent[1]["body"])).encode()) in sent[0]["headers"]
     assert finished == [413]
     ev = state.evidence()
     assert [(q["http_method"], q["status"]) for q in ev["requests"]] == [("POST", 413)]
@@ -306,13 +307,18 @@ async def test_oversized_body_stops_buffering_and_gets_413_once(monkeypatch):
 
 
 class _Session:
-    def __init__(self, stuck: bool) -> None:
+    def __init__(self, stuck: bool = False, broken: bool = False) -> None:
         self.stuck = stuck
+        self.broken = broken
         self.notified = 0
 
     async def send_tool_list_changed(self) -> None:
         if self.stuck:
             await asyncio.Event().wait()
+        if self.broken:
+            raise RuntimeError("stream closed")
+        # Yield first, so a sibling's failure could cancel this send.
+        await asyncio.sleep(0)
         self.notified += 1
 
 
@@ -326,6 +332,16 @@ async def test_stuck_session_cannot_stall_begin_round(monkeypatch):
     assert time.monotonic() - started < 1.0
     assert (stuck.notified, healthy.notified) == (0, 1)
     assert trap.state.evidence()["scenario"] == "rug_pull"
+
+
+async def test_failing_session_does_not_abort_begin_round():
+    trap = TrapServer(TrapState(), allowed_hosts=ALLOWED_HOSTS)
+    broken, healthy = _Session(broken=True), _Session()
+    trap._sessions.update({"broken": broken, "healthy": healthy})
+    await trap.begin_round("rug_pull", "ARGUS-CANARY-00000000000000AC")
+    assert healthy.notified == 1
+    assert trap.state.evidence()["scenario"] == "rug_pull"
+    assert trap._sessions["broken"] is broken
 
 
 def test_broadcast_timeout_is_two_seconds():

@@ -17,6 +17,8 @@ SHUTDOWN_GRACE_S = 2.0
 BROADCAST_TIMEOUT_S = 2.0
 MCP_PATH = "/mcp"
 
+logger = logging.getLogger(__name__)
+
 
 def _rpc_methods(body: bytes) -> list[str]:
     try:
@@ -80,7 +82,7 @@ class _Recorder:
         try:
             if too_large:
                 await record_status({"type": "http.response.start", "status": 413,
-                                     "headers": [(b"content-type", b"text/plain")]})
+                                     "headers": [(b"content-type", b"text/plain"), (b"content-length", b"22")]})
                 await send({"type": "http.response.body", "body": b"Request body too large"})
             else:
                 await self._app(scope, replay, record_status)
@@ -164,9 +166,12 @@ class TrapServer:
         from mcp.server.subscriptions import ToolsListChanged
 
         async def bounded(send: Any, *args: Any) -> None:
-            # A timed-out recipient misses this change only.
-            with anyio.move_on_after(BROADCAST_TIMEOUT_S):
-                await send(*args)
+            # A timed-out or failing recipient misses this change only; it stays registered and may reconnect.
+            try:
+                with anyio.move_on_after(BROADCAST_TIMEOUT_S):
+                    await send(*args)
+            except Exception:
+                logger.debug("list_changed send failed", exc_info=True)
 
         async with anyio.create_task_group() as tg:
             for session in list(self._sessions.values()):
