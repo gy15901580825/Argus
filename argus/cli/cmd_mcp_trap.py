@@ -28,9 +28,9 @@ _CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 # A CI cancel sends SIGTERM; Ctrl-C sends SIGINT. Both stop the run the same way.
 _STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM)
 _STOP_MESSAGES = {signal.SIGINT: "Interrupted", signal.SIGTERM: "Terminated"}
-_REFUSED = ("The trap refused {n} requests (Host/Origin check): your agent reached it under a host name or "
-            "origin it does not accept. Give the agent the trap URL above, or pass the address the agent uses "
-            "with --trap-public-url.")
+_REFUSED = ("The trap refused {n} requests (Host/Origin/Content-Type check): your agent sent a Host, Origin or "
+            "Content-Type header the trap does not accept. Give the agent the trap URL above, or pass the address "
+            "the agent uses with --trap-public-url.")
 
 
 @dataclass(frozen=True)

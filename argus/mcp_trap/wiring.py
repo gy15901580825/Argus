@@ -90,6 +90,7 @@ def config_entry(address: TrapAddress) -> str:
         "Attach only this MCP server to the agent you are testing: "
         "Argus sees only what the agent does through the trap's tools.",
         "If your agent reads its MCP configuration only at startup, restart it after adding the entry.",
+        "If your agent connects only at startup, rerun with --wait-for-agent 120.",
     ])
 
 

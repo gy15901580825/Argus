@@ -245,6 +245,7 @@ def test_not_wired_warm_up_prints_config_and_exits_2(monkeypatch, tmp_path):
     assert "The trap at http://127.0.0.1:8765/mcp got no MCP request" in result.output
     assert "This is expected on a first run" in result.output
     assert '"mcpServers"' in result.output
+    assert result.output.count("If your agent connects only at startup, rerun with --wait-for-agent 120.") == 1
     assert list(tmp_path.iterdir()) == []
 
 
@@ -260,7 +261,7 @@ def test_refused_only_warm_up_names_the_host_check_not_the_config(monkeypatch, t
     monkeypatch.setattr(driver, "warm_up", _warm("refused_only", "2"))
     result = _invoke("--target", SPEC_ARG)
     assert result.exit_code == 2, result.output
-    assert "The trap refused 2 requests (Host/Origin check): " in result.output
+    assert "The trap refused 2 requests (Host/Origin/Content-Type check): " in result.output
     assert "--trap-public-url" in result.output
     assert "mcpServers" not in result.output and "got no MCP request" not in result.output
     assert list(tmp_path.iterdir()) == []
@@ -320,7 +321,7 @@ def test_rounds_that_saw_only_refused_requests_name_the_host_check(monkeypatch, 
            evidence={"interaction_count": 0, "refused_requests": 2})
     result = _invoke("--target", SPEC_ARG)
     assert result.exit_code == 1, result.output
-    assert "The trap refused 30 requests (Host/Origin check): " in result.output
+    assert "The trap refused 30 requests (Host/Origin/Content-Type check): " in result.output
     assert "mcpServers" not in result.output and "does not appear to be wired" not in result.output
     assert (tmp_path / OUT_FILE["html"]).is_file()
 

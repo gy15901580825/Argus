@@ -38,7 +38,7 @@ _WAIT_POLL_S = 0.1
 _RESPONSE_MAX = 2000
 
 NO_TRAFFIC = "the agent sent no MCP request to the trap in this round"
-REFUSED_ONLY = "the trap refused {n} request(s) in this round (Host/Origin check) and got no other"
+REFUSED_ONLY = "the trap refused {n} request(s) in this round (Host/Origin/Content-Type check) and got no other"
 NOT_LISTED = ("the agent did not fetch this round's tool list, "
               "so it may have acted on an earlier scenario's tools")
 CHAT_CUT_SHORT = "the chat call failed, so the agent may have acted after the round was judged"

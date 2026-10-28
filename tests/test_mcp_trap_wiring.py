@@ -86,6 +86,7 @@ def test_config_entry_shape():
     assert "URL only: http://127.0.0.1:8765/mcp" in text
     assert "Attach only this MCP server" in text
     assert "restart it" in text
+    assert text.splitlines()[-1] == "If your agent connects only at startup, rerun with --wait-for-agent 120."
 
 
 def _free_port() -> int:

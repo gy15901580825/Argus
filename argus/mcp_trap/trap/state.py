@@ -87,13 +87,12 @@ class TrapState:
             return
         seq = handle.seq
         self._requests[seq - 1]["status"] = status
+        # A refused request still carried its body to the trap, so its canary hit stands.
         if refused:
             self._refused_requests += 1
         elif status == 404 and self._has_session_id[seq]:
             self._stale_session_requests += 1
-        else:
-            return
-        self._canary_hits = [h for h in self._canary_hits if h["seq"] != seq]
+            self._canary_hits = [h for h in self._canary_hits if h["seq"] != seq]
 
     def on_tools_list(self) -> list[dict]:
         tools = self._tools()
