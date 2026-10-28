@@ -245,7 +245,7 @@ argus-probe scan-skill --sample key-grab
            │                              │  implementing /api/v1/redteam
            ▼                              ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  orchestrator  /redteam  (engine; also a FastAPI app)                   │
+│  argus  (engine; argus.server is the FastAPI app for server mode)       │
 │    probe loader  ──▶  target adapter  ──▶  judge harness                │
 │        │                  │                      │                      │
 │        └──── 214 YAML     │                      └──▶ fast model, then  │
@@ -261,7 +261,8 @@ argus-probe scan-skill --sample key-grab
 │                  │  mcp_agent       │                                   │
 │                  │  testbed_agent   │                                   │
 │                  │  vllm_server     │                                   │
-│                  │  browser_use ────┼──▶ client_agent (WebSocket)       │
+│                  │  browser_use ────┼──▶ local trap page, or            │
+│                  │                  │    client_agent in server mode    │
 │                  └──────┬───────────┘                                   │
 └─────────────────────────┼───────────────────────────────────────────────┘
                           │
