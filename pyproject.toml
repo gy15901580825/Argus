@@ -39,6 +39,8 @@ local = []
 server = ["websockets>=12"]
 # `argus-probe mcp-trap`: kept out of base deps because mcp 2.3 needs pydantic>=2.12.
 mcp-trap = ["mcp>=2.3,<3"]
+# `argus-probe scan-mcp`: kept out of base deps because mcp 2.3 needs pydantic>=2.12.
+scan-mcp = ["mcp>=2.3,<3"]
 dev = [
     "websockets>=12",
     "pytest>=8.3,<10",
