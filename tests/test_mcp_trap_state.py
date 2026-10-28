@@ -12,10 +12,10 @@ def test_new_canary_format():
 
 def test_begin_round_resets_everything():
     s = _round("confused_deputy")
-    seq = s.start_request(http_method="POST", rpc_methods=["tools/list"], has_session_id=True, body="{}")
+    handle = s.start_request(http_method="POST", rpc_methods=["tools/list"], has_session_id=True, body="{}")
     s.on_tools_list(); s.on_tool_call("read_notes", {})
     s.begin_round("shadowing", "ARGUS-CANARY-00000000000000BB")
-    s.finish_request(seq, 200)                                  # a response that outlives its round
+    s.finish_request(handle, 200)                               # a response that outlives its round
     ev = s.evidence()
     assert (ev["scenario"], ev["canary"]) == ("shadowing", "ARGUS-CANARY-00000000000000BB")
     assert ev["interaction_count"] == ev["tools_list_count"] == 0
@@ -50,8 +50,8 @@ def test_unknown_tool_call_is_recorded_and_errors():
 def test_canary_hit_found_in_raw_body_beyond_any_bound():
     s = _round("tool_poisoning")
     body = '{"method":"tools/call","params":{"arguments":{"notes":"' + "x" * 5000 + 'ARGUS-CANARY-00000000000000AA"}}}'
-    seq = s.start_request(http_method="POST", rpc_methods=["tools/call"], has_session_id=True, body=body)
-    s.finish_request(seq, 200)
+    s.finish_request(s.start_request(http_method="POST", rpc_methods=["tools/call"], has_session_id=True,
+                                     body=body), 200)
     assert s.evidence()["canary_hits"] == [{"seq": 1, "rpc_methods": ["tools/call"]}]
 
 def test_stale_session_404_is_not_an_interaction():
@@ -72,17 +72,29 @@ def test_stale_404_is_reclassified_at_finish_and_drops_its_canary_hit():
     s.finish_request(stale, 404); s.finish_request(live, 404)      # no session id: a real 404, not stale
     ev = s.evidence()
     assert (ev["interaction_count"], ev["stale_session_requests"]) == (1, 1)
-    assert ev["canary_hits"] == [{"seq": live, "rpc_methods": ["tools/call"]}]
-    assert [(r["seq"], r["status"]) for r in ev["requests"]] == [(stale, 404), (live, 404)]
+    assert ev["canary_hits"] == [{"seq": live.seq, "rpc_methods": ["tools/call"]}]
+    assert [(r["seq"], r["status"]) for r in ev["requests"]] == [(stale.seq, 404), (live.seq, 404)]
+
+def test_late_finish_from_an_earlier_round_leaves_the_current_round_alone():
+    s = _round("shadowing")
+    old = s.start_request(http_method="POST", rpc_methods=["tools/list"], has_session_id=True, body="{}")
+    s.begin_round("rug_pull", "ARGUS-CANARY-00000000000000BB")
+    new = s.start_request(http_method="POST", rpc_methods=["tools/list"], has_session_id=True,
+                          body="ARGUS-CANARY-00000000000000BB")
+    assert old.seq == new.seq == 1
+    s.finish_request(old, 404)
+    ev = s.evidence()
+    assert ev["requests"] == [{"seq": 1, "http_method": "POST", "rpc_methods": ["tools/list"], "status": None}]
+    assert (ev["stale_session_requests"], ev["interaction_count"], len(ev["canary_hits"])) == (0, 1, 1)
 
 def test_handler_is_stamped_with_its_own_request_seq():
     s = _round("rug_pull")
     s.finish_request(s.start_request(http_method="GET", rpc_methods=[], has_session_id=True, body=""), 200)
-    seq = s.start_request(http_method="POST", rpc_methods=["tools/list"], has_session_id=True, body="{}")
+    handle = s.start_request(http_method="POST", rpc_methods=["tools/list"], has_session_id=True, body="{}")
     s.on_tools_list()
-    s.finish_request(seq, 200)
+    s.finish_request(handle, 200)
     ev = s.evidence()
-    assert seq == 2 and ev["lists_served"][0]["seq"] == 2
+    assert handle.seq == 2 and ev["lists_served"][0]["seq"] == 2
     assert ev["requests"][1] == {"seq": 2, "http_method": "POST", "rpc_methods": ["tools/list"], "status": 200}
 
 def test_begin_round_rejects_an_unknown_scenario():
@@ -117,8 +129,8 @@ def test_scenario_text_names_only_reserved_hosts():
 def test_agent_last_listed_is_per_tool_and_none_when_not_listed():
     s = _round("rug_pull")
     s.on_tool_call("read_notes", {})                                  # switch, nothing listed yet
-    seq = s.start_request(http_method="POST", rpc_methods=["tools/list"], has_session_id=True, body="{}")
-    s.on_tools_list(); s.finish_request(seq, 200); s.on_tool_call("read_notes", {})
+    handle = s.start_request(http_method="POST", rpc_methods=["tools/list"], has_session_id=True, body="{}")
+    s.on_tools_list(); s.finish_request(handle, 200); s.on_tool_call("read_notes", {})
     s.on_tool_call("send_email", {"to": sc.TEAMMATE_EMAIL, "body": "hi"})
     calls = s.evidence()["tool_calls"]
     assert [(c["definition_in_force"], c["agent_last_listed"]) for c in calls] == [

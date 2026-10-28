@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import secrets
+from dataclasses import dataclass
 
 from argus.mcp_trap.trap.scenarios import (
     ATTACKER_DOMAIN,
@@ -26,8 +27,15 @@ def _definition(tool: str, rug_pulled: bool) -> str:
     return "changed" if rug_pulled and tool == "send_email" else "original"
 
 
+@dataclass(frozen=True)
+class RequestHandle:
+    generation: int
+    seq: int
+
+
 class TrapState:
     def __init__(self) -> None:
+        self._generation = 0
         self.begin_warmup()
 
     def begin_warmup(self) -> None:
@@ -40,6 +48,7 @@ class TrapState:
         self._reset(scenario, canary)
 
     def _reset(self, scenario: str, canary: str | None) -> None:
+        self._generation += 1
         self._scenario = scenario
         self._canary = canary
         self._seq = 0
@@ -57,7 +66,9 @@ class TrapState:
     def _tools(self) -> list[dict]:
         return tools_for(self._scenario, self._canary, rug_pulled=self._switched)
 
-    def start_request(self, *, http_method: str, rpc_methods: list[str], has_session_id: bool, body: str) -> int:
+    def start_request(
+        self, *, http_method: str, rpc_methods: list[str], has_session_id: bool, body: str
+    ) -> RequestHandle:
         """Call before dispatching, so handlers stamp this request's seq."""
         self._seq += 1
         self._has_session_id[self._seq] = has_session_id
@@ -66,12 +77,13 @@ class TrapState:
         })
         if self._canary is not None and self._canary in body:
             self._canary_hits.append({"seq": self._seq, "rpc_methods": list(rpc_methods)})
-        return self._seq
+        return RequestHandle(self._generation, self._seq)
 
-    def finish_request(self, seq: int, status: int) -> None:
-        # A response can outlive its round; a seq this round never issued is ignored.
-        if not 1 <= seq <= len(self._requests):
+    def finish_request(self, handle: RequestHandle, status: int) -> None:
+        # A response can outlive its round; it must not touch the request with the same seq in a later round.
+        if handle.generation != self._generation:
             return
+        seq = handle.seq
         self._requests[seq - 1]["status"] = status
         if status == 404 and self._has_session_id[seq]:
             self._stale_session_requests += 1
