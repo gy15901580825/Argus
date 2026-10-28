@@ -118,6 +118,11 @@ async def test_notes_end_with_snyk_line():
     assert result.unjudged == 0 and [f["verdict"] for f in by(result, checks.INJECTION)] == ["pass"]
 
 
+def test_host_note_does_not_point_at_an_unshipped_sandbox():
+    assert HOST_NOTE == ("Annotations are the server's own claims; host mode cannot see a read-only tool that "
+                         "writes.")
+
+
 async def test_judge_off_reason_ending_in_a_period_reads_cleanly():
     # llm.credential_error ends its message with a period.
     cfg = ScanConfig(target=StdioServer(argv=stdio_argv("basic"), env=host_env([])), transport="stdio-host",

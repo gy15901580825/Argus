@@ -22,8 +22,7 @@ from argus.probe import Probe, load_all_probes
 
 SCAN_PROBES_DIR = Path(argus.__file__).parent / "probes" / "mcp_scan"
 RUBRIC_PATH = Path(argus.__file__).parent / "rubrics" / "mcp_tool_output_injection.md"
-HOST_NOTE = ("Annotations are the server's own claims; host mode cannot see a read-only tool that writes. "
-             "Scan untrusted servers in the sandbox.")
+HOST_NOTE = "Annotations are the server's own claims; host mode cannot see a read-only tool that writes."
 CALL_TOOLS_NOTE = ("No tool was called, so only the static checks ran; pass --call-tools NAMES or --call-tools all "
                    "to call more.")
 ARGS_NOTE = "Some tools could not be exercised with generated arguments; pass --args FILE with arguments they accept."
