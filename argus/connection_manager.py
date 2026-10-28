@@ -16,6 +16,11 @@ logger = logging.getLogger("ConnectionManager")
 
 ORCHESTRATOR_SECRET = os.getenv("ORCHESTRATOR_SECRET", "default_secret_change_me")
 
+
+class NoClientAgentError(RuntimeError):
+    """No client_agent is connected to carry a redteam browser probe."""
+
+
 class ConnectionManager:
     """Manages WebSocket connections for agents"""
     
@@ -150,7 +155,7 @@ class RedteamBridge:
     async def send_and_wait(self, msg: Dict[str, Any], timeout_s: float = 60.0) -> Dict[str, Any]:
         agent_id = self._mgr.first_active_agent_id()
         if not agent_id:
-            raise RuntimeError("No client_agent connected for redteam bridge")
+            raise NoClientAgentError("No client_agent connected for redteam bridge")
         connection = self._mgr.active_connections[agent_id]
         command_id = str(uuid.uuid4())
         envelope = {

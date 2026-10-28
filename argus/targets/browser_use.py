@@ -17,6 +17,11 @@ from urllib.parse import urlsplit
 
 from fastapi import WebSocketDisconnect
 
+try:
+    from starlette.websockets import WebSocketDisconnected  # send on a closed socket
+except ImportError:  # older starlette raises a plain RuntimeError there
+    WebSocketDisconnected = WebSocketDisconnect
+
 from argus.targets._base import Target, TargetDeliveryError, Turn
 
 _SCENARIO_KINDS = frozenset({"dom_injection", "ui_phishing", "visual_injection", "os_cmd"})
@@ -103,13 +108,15 @@ class BrowserUseSpec:
 
 def _is_delivery_failure(e: Exception) -> bool:
     """True for the bridge and transport failures; caller bugs must propagate."""
-    # handle_response turns a JSON-RPC error into a bare Exception, and the
-    # bridge and starlette signal a missing or closed socket with RuntimeError.
+    from argus.connection_manager import NoClientAgentError
+
+    # handle_response turns a JSON-RPC error into a bare Exception.
     if type(e) is Exception:
         return True
-    if isinstance(e, RuntimeError):
-        return not isinstance(e, (NotImplementedError, RecursionError))
-    return isinstance(e, (asyncio.TimeoutError, OSError, WebSocketDisconnect))
+    return isinstance(e, (
+        NoClientAgentError, asyncio.TimeoutError, OSError,
+        WebSocketDisconnect, WebSocketDisconnected,
+    ))
 
 
 def _get_client_agent_ws():

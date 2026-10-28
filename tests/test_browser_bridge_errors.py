@@ -9,7 +9,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnected
 
+from argus.connection_manager import ConnectionManager, NoClientAgentError
 from argus.probe import Probe, ProbeMappings
 from argus.runner import VERDICT_ERROR, Runner
 from argus.targets.browser_use import BrowserUseSpec, BrowserUseTarget
@@ -20,9 +22,13 @@ ARGUS_DIR = Path(__file__).resolve().parents[1] / "argus"
 BRIDGE_ERRORS = [
     pytest.param(Exception({"code": -32000, "message": "browser crashed"}), "browser crashed", id="jsonrpc-error"),
     pytest.param(asyncio.TimeoutError(), "TimeoutError", id="timeout"),
-    pytest.param(RuntimeError("No client_agent connected for redteam bridge"), "No client_agent connected", id="no-client"),
+    pytest.param(NoClientAgentError("No client_agent connected for redteam bridge"), "No client_agent connected", id="no-client"),
     pytest.param(WebSocketDisconnect(code=1006), "WebSocketDisconnect", id="ws-disconnect"),
     pytest.param(ConnectionResetError("peer reset"), "peer reset", id="connection-reset"),
+    pytest.param(
+        WebSocketDisconnected('Cannot call "send" once a close message has been sent.'),
+        "once a close message", id="ws-closed",
+    ),
 ]
 
 
@@ -134,6 +140,38 @@ async def test_caller_bugs_in_the_bridge_propagate(exc):
 
 
 @pytest.mark.asyncio
+async def test_bridge_raises_no_client_agent_error_that_is_still_a_runtime_error():
+    bridge = ConnectionManager().get_redteam_bridge()
+    with pytest.raises(NoClientAgentError) as info:
+        await bridge.send_and_wait({"payload": "p"})
+    assert isinstance(info.value, RuntimeError)
+    assert str(info.value) == "No client_agent connected for redteam bridge"
+
+
+@pytest.mark.asyncio
+async def test_real_bridge_with_no_client_errors_one_probe():
+    bridge = ConnectionManager().get_redteam_bridge()
+    runner = Runner(target=_target(), judge=_judge(), rubrics_dir=ARGUS_DIR / "rubrics")
+    with patch("argus.targets.browser_use._get_client_agent_ws", return_value=bridge):
+        findings = [f async for f in runner.run_probe(_probe("p"))]
+    assert [(f.verdict, f.reasoning) for f in findings] == [(
+        VERDICT_ERROR,
+        "target could not deliver the probe: "
+        "NoClientAgentError: No client_agent connected for redteam bridge",
+    )]
+
+
+@pytest.mark.asyncio
+async def test_plain_runtime_error_from_the_bridge_propagates():
+    ws = MagicMock()
+    ws.send_and_wait = AsyncMock(side_effect=RuntimeError("bug in bridge"))
+    runner = Runner(target=_target(), judge=_judge(), rubrics_dir=ARGUS_DIR / "rubrics")
+    with patch("argus.targets.browser_use._get_client_agent_ws", return_value=ws):
+        with pytest.raises(RuntimeError, match="bug in bridge"):
+            [f async for f in runner.run_probe(_probe("p"))]
+
+
+@pytest.mark.asyncio
 async def test_cancellation_still_propagates():
     ws = MagicMock()
     ws.send_and_wait = AsyncMock(side_effect=asyncio.CancelledError())
@@ -171,7 +209,7 @@ async def test_iterative_bridge_failure_ends_the_thread_with_an_error_finding():
     ws = MagicMock()
     ws.send_and_wait = AsyncMock(side_effect=[
         {"final_text": "ok", "latency_ms": 1.0},
-        RuntimeError("No client_agent connected for redteam bridge"),
+        NoClientAgentError("No client_agent connected for redteam bridge"),
     ])
     probe = MagicMock()
     probe.id = "iter_1"
@@ -194,7 +232,7 @@ async def test_iterative_bridge_failure_ends_the_thread_with_an_error_finding():
     assert [f.verdict for f in findings] == ["pass", VERDICT_ERROR]
     assert findings[1].reasoning == (
         "target could not deliver round 1 prompt: "
-        "RuntimeError: No client_agent connected for redteam bridge"
+        "NoClientAgentError: No client_agent connected for redteam bridge"
     )
     assert ws.send_and_wait.await_count == 2
 
@@ -213,7 +251,7 @@ def test_sse_stream_ends_normally_when_one_browser_probe_fails(monkeypatch):
 
     ws = MagicMock()
     ws.send_and_wait = AsyncMock(side_effect=[
-        RuntimeError("No client_agent connected for redteam bridge"),
+        NoClientAgentError("No client_agent connected for redteam bridge"),
         {"final_text": "ok", "latency_ms": 1.0},
     ])
     body = {
