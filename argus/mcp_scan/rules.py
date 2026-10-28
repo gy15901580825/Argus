@@ -7,8 +7,8 @@ from typing import Sequence
 EXCERPT = 300
 
 _HIDDEN = re.compile(
-    r"(?P<zero_width>[​-‍⁠﻿])"
-    r"|(?P<bidi>[‪-‮⁦-⁩])"
+    r"(?P<zero_width>[\U0000200B-\U0000200D\U00002060\U0000FEFF])"
+    r"|(?P<bidi>[\U0000202A-\U0000202E\U00002066-\U00002069])"
     r"|(?P<tag>[\U000e0000-\U000e007f])"
     r"|(?P<control>[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f])")
 

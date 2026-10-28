@@ -5,6 +5,7 @@ Secret-shaped strings are built by concatenation at runtime so repo secret scann
 from __future__ import annotations
 
 import dataclasses
+import pathlib
 
 import pytest
 
@@ -52,17 +53,17 @@ def test_pinned_constants_and_defaults():
 # ---- hidden characters ----
 
 def test_hidden_char_kinds():
-    assert [k for k, _ in hidden_chars("a​b‮c\U000E0041d\x1be\tf\n")] == [
+    assert [k for k, _ in hidden_chars("a\U0000200Bb\U0000202Ec\U000E0041d\x1be\tf\n")] == [
         "zero_width", "bidi", "tag", "control"]
 
 
 def test_hidden_char_indexes():
-    assert hidden_chars("ab⁠") == [("zero_width", 2)]
+    assert hidden_chars("ab\U00002060") == [("zero_width", 2)]
 
 
 @pytest.mark.parametrize("ch,kind", [
-    ("​", "zero_width"), ("‍", "zero_width"), ("⁠", "zero_width"), ("﻿", "zero_width"),
-    ("‪", "bidi"), ("‮", "bidi"), ("⁦", "bidi"), ("⁩", "bidi"),
+    ("\U0000200B", "zero_width"), ("\U0000200D", "zero_width"), ("\U00002060", "zero_width"), ("\U0000FEFF", "zero_width"),
+    ("\U0000202A", "bidi"), ("\U0000202E", "bidi"), ("\U00002066", "bidi"), ("\U00002069", "bidi"),
     ("\U000E0000", "tag"), ("\U000E007F", "tag"),
     ("\x00", "control"), ("\x08", "control"), ("\x0b", "control"), ("\x0c", "control"), ("\x0e", "control"),
     ("\x1f", "control"), ("\x7f", "control"), ("\x9f", "control"),
@@ -71,7 +72,7 @@ def test_each_hidden_char_range_edge(ch, kind):
     assert hidden_chars("x" + ch) == [(kind, 1)]
 
 
-@pytest.mark.parametrize("ch", ["\t", "\n", "\r", "‎", "⁡", "⁥", "⁪", " ", "\U000E0080"])
+@pytest.mark.parametrize("ch", ["\t", "\n", "\r", "\U0000200E", "\U00002061", "\U00002065", "\U0000206A", "\U000000A0", "\U000E0080"])
 def test_ordinary_whitespace_and_neighbours_are_not_hidden(ch):
     assert hidden_chars("x" + ch + "y") == []
 
@@ -226,7 +227,7 @@ def test_redact_is_idempotent():
 # ---- excerpt ----
 
 def test_excerpt_is_bounded_and_shows_hidden_chars():
-    t = "a" * 1000 + "​" + "b" * 1000
+    t = "a" * 1000 + "\U0000200B" + "b" * 1000
     e = excerpt(t, 1000, 1001)
     assert len(e) <= 300 + 8 and "<U+200B>" in e
     assert abs(e.count("a") - e.count("b")) <= 1  # centred on the span
@@ -395,3 +396,16 @@ def test_mask_argv_longest_first():
     tok = "abc12345"
     assert mask_argv(["--token=" + tok + "xyz", "x" + tok], [tok, tok + "xyz"]) == ["--token=***", "x***"]
     assert mask_argv(["a"], [""]) == ["a"]
+
+
+# ---- source hygiene ----
+
+def test_sources_hold_no_raw_invisible_characters():
+    # Written as escapes so a reviewer can see them; raw ones hide in diffs.
+    bad = {chr(c) for c in (*range(0x200B, 0x200E), 0x2060, 0xFEFF, *range(0x202A, 0x202F), *range(0x2066, 0x206A))}
+    root = pathlib.Path(__file__).resolve().parents[1]
+    files = [*sorted((root / "argus" / "mcp_scan").glob("*.py")), pathlib.Path(__file__)]
+    assert len(files) >= 5
+    found = [(f.name, n) for f in files for n, line in enumerate(f.read_text(encoding="utf-8").split("\n"), 1)
+             if bad & set(line)]
+    assert found == []
