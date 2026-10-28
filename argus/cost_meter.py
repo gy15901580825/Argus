@@ -66,6 +66,13 @@ _SAFETY_MARGIN = 1.2
 _DEFAULT_ITERATIVE_ROUNDS = 1
 
 
+def estimate_call_usd(model: str, input_chars: int, output_tokens: int) -> float:
+    """Pre-call price of one completion: char-based input tokens with the safety margin, at `model`'s rate."""
+    prices = _price_for(model)
+    input_tokens = input_chars / _CHARS_PER_TOKEN * _SAFETY_MARGIN
+    return (input_tokens / 1_000_000) * prices["input"] + (output_tokens / 1_000_000) * prices["output"]
+
+
 # Half a cent: below this a remaining budget is float residue, not money.
 _BUDGET_EPSILON_USD = 0.005
 

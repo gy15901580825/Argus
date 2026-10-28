@@ -165,3 +165,13 @@ def test_preflight_unknown_litellm_model_stays_pessimistic(monkeypatch):
     m = CostMeter(daily_cap_usd=13.50, per_run_cap_usd=0.50)
     with pytest.raises(CostExceededError, match="per_run_cap"):
         _big_run(m)
+
+
+def test_estimate_call_usd_uses_price_table_with_margin():
+    from argus.cost_meter import estimate_call_usd
+    # 4000 chars / 4 * 1.2 = 1200 input tokens at $1/M, 400 output tokens at $5/M.
+    assert estimate_call_usd("claude-haiku-4-5-20251001", 4000, 400) == pytest.approx(0.0012 + 0.002)
+    # Sonnet: 1200 * $3/M + 400 * $15/M.
+    assert estimate_call_usd("claude-sonnet-4-6", 4000, 400) == pytest.approx(0.0036 + 0.006)
+    # An unknown model is billed at the dearest known rate, as record() does.
+    assert estimate_call_usd("no-such-model", 4000, 400) == pytest.approx(1200 * 15 / 1e6 + 400 * 75 / 1e6)
