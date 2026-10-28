@@ -189,8 +189,11 @@ def _list_changes(first: list[ToolInfo], final: list[ToolInfo]) -> list[tuple[st
 
 
 def dynamic_hits(records: list[CallRecord], first_tools: list[ToolInfo], final_tools: list[ToolInfo] | None,
-                 list_changed: bool, *, decoys: Sequence[tuple[str, str]] = ()) -> tuple[list[Hit], list[Candidate]]:
-    """Rule hits in every call result that has text, plus tool-list changes; aimed-at-model text becomes a candidate."""
+                 list_changed: bool, *, decoys: Sequence[tuple[str, str]] = (),
+                 mask: rules.Mask = rules.same) -> tuple[list[Hit], list[Candidate]]:
+    """Rule hits in every call result that has text, plus tool-list changes; aimed-at-model text becomes a candidate.
+
+    `mask` is the one the result texts went through, so payloads are compared in the same masked form."""
     hits: list[Hit] = []
     cands: list[Candidate] = []
     names = tuple(t.name for t in first_tools)
@@ -199,22 +202,23 @@ def dynamic_hits(records: list[CallRecord], first_tools: list[ToolInfo], final_t
         if rec.session == "A" and rec.call.family == "relay" and rec.call.payload:
             planted |= _canaries(rec.call.payload)
     # A store-and-recall tool returns a payload from another call; that text is Argus's, not the server's.
-    sent = sorted({r.call.payload for r in records if r.call.family in ("relay", "cmd") and r.call.payload},
+    sent = sorted({mask(r.call.payload) for r in records if r.call.family in ("relay", "cmd") and r.call.payload},
                   key=len, reverse=True)
     for rec in records:
         text, call = rec.result.text, rec.call
         if not text:
             continue
         tool, seq, family = call.tool, rec.seq, call.family
-        if family == "cmd" and call.expect and call.expect in text:
-            i = text.index(call.expect)
-            hits.append(_hit(COMMAND, tool, "cmd_marker", text, (i, i + len(call.expect)), decoys, seq=seq, family=family))
+        payload, expect = mask(call.payload or ""), mask(call.expect or "")
+        if family == "cmd" and expect and expect in text:
+            i = text.index(expect)
+            hits.append(_hit(COMMAND, tool, "cmd_marker", text, (i, i + len(expect)), decoys, seq=seq, family=family))
         if ETC_PASSWD in text:
             i = text.index(ETC_PASSWD)
             hits.append(_hit(TRAVERSAL, tool, "etc_passwd", text, (i, i + len(ETC_PASSWD)), decoys, seq=seq, family=family))
         hits += _secret_hits(rec, text, decoys)
         # The server's own words only: an echo of any payload is reflection or a cross-session leak, not injection.
-        stripped = rules.strip_payload(text, call.payload)
+        stripped = rules.strip_payload(text, payload)
         own_words = _strip_sent(stripped, sent)
         found, phrased = _phrase_and_hidden(INJECTION, tool, own_words, decoys, seq=seq, family=family)
         hits += found
@@ -225,9 +229,9 @@ def dynamic_hits(records: list[CallRecord], first_tools: list[ToolInfo], final_t
                     hits.append(_hit(CROSS_SESSION, tool, "canary_from_session_a", stripped, m.span(), decoys,
                                      seq=seq, family=family))
                     break
-        if call.payload and rec.result.status == "ok" and not rec.result.is_error and call.payload in text:
-            i = text.index(call.payload)
-            hits.append(_hit(REFLECTION, tool, "reflected_payload", text, (i, i + len(call.payload)), decoys,
+        if payload and rec.result.status == "ok" and not rec.result.is_error and payload in text:
+            i = text.index(payload)
+            hits.append(_hit(REFLECTION, tool, "reflected_payload", text, (i, i + len(payload)), decoys,
                              seq=seq, family=family))
         if not phrased and rules.looks_aimed_at_model(own_words, names, own=tool):
             cands.append(Candidate(probe_id=INJECTION, tool=tool, text=rules.redact(own_words, decoys),

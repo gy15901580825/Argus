@@ -96,7 +96,7 @@ async def scan_mcp(cfg: ScanConfig, *, mask: Callable[[str], str], echo: Callabl
                                     extra_paths=cfg.extra_paths, hooks=cfg.hooks, echo=echo, deadline=deadline)
     if calls is not None:
         dyn, dyn_cands = checks.dynamic_hits(calls.records, listed, calls.final_tools, calls.list_changed,
-                                             decoys=cfg.decoys)
+                                             decoys=cfg.decoys, mask=mask)
         hits += dyn + calls.hook_hits
         cands += dyn_cands
     gate = JudgeGate(cfg.per_run_cap_usd, cfg.judge_config, RUBRIC_PATH.read_text(encoding="utf-8"))

@@ -121,6 +121,14 @@ def test_vulnerable_server_fails_each_dynamic_probe(transport):
     assert SNYK_LINE in result.output
 
 
+@pytest.mark.parametrize("header", ["X-Trace: 1", "X-Api-Version: 2"])
+def test_short_header_value_does_not_change_the_fails(header):
+    # Header values are masked in the output at any length; one that short must not blind the payload checks.
+    result = _scan("http", "vulnerable", "--format", "json", "--header", header)
+    assert result.exit_code == 0, result.output
+    assert {(p, t) for p, t in _fails(_run_json()) if p.startswith("mcp_scan_")} == VULNERABLE_FAILS
+
+
 @pytest.mark.parametrize("transport", TRANSPORTS)
 def test_vulnerable_server_fail_on_high_exits_3(transport):
     result = _scan(transport, "vulnerable", "--format", "sarif", "--fail-on", "high")

@@ -238,6 +238,12 @@ def cmd_scan_mcp(argv: tuple[str, ...], call_tools, tool_args: dict, headers: tu
     def mask(text: str) -> str:
         return run_json.mask_text(text, secrets)
 
+    # The engine masks server text before its checks, so it skips values under VALUE_MIN: X-Trace: 1 would blank every 1.
+    engine_secrets = [s for s in secrets if len(s) >= known_secrets.VALUE_MIN]
+
+    def engine_mask(text: str) -> str:
+        return run_json.mask_text(text, engine_secrets)
+
     def clean(text: str) -> str:
         # Strip control bytes first, so one hidden inside a secret cannot dodge the mask.
         return mask(CONTROL_RE.sub("", text))
@@ -255,7 +261,7 @@ def cmd_scan_mcp(argv: tuple[str, ...], call_tools, tool_args: dict, headers: tu
     started_at = datetime.now(timezone.utc)
     try:
         with _sdk_logs(say):
-            outcome = asyncio.run(_scan(cfg, mask, say))
+            outcome = asyncio.run(_scan(cfg, engine_mask, say))
     except KeyboardInterrupt:
         outcome = _Stopped(signal.SIGINT)
     except ConnectError as e:
