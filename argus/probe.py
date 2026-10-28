@@ -34,6 +34,8 @@ VALID_TARGET_CLASSES = {
     # MCP probes only run against the instrumented hostile MCP server, for the
     # same reason payment probes only run against the payment testbed.
     "mcp_agent",
+    # Served by `argus-probe mcp-trap`, never by a target adapter.
+    "mcp_trap",
     # MCP server exposure probes test the server itself, not an agent.
     "mcp_server",
     # The vLLM version probe tests the model server itself, not an agent.
