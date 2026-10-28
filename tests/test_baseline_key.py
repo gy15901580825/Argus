@@ -21,3 +21,10 @@ def test_headers_ignored_and_lists_cleaned():
     assert baseline_key(a) == baseline_key(b)
     assert len(baseline_key(a)) == 32
 
+
+
+def test_trap_settings_do_not_change_the_key():
+    b = {"kind": "browser_use", "agent_url": "http://a", "scenario_kind": "dom_injection"}
+    lan = {**b, "trap_host": "0.0.0.0", "trap_port": 8765, "trap_public_url": "http://10.0.0.5:8765"}
+    assert baseline_key({**lan, "trap_public_url": "http://10.0.0.9:8765"}) == baseline_key(lan) == baseline_key(b)
+    assert baseline_key({**b, "agent_url": "http://other"}) != baseline_key(b)

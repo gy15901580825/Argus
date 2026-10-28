@@ -15,5 +15,10 @@ def _clean(value):
     return value
 
 
+# Where browser_use's trap page listens is a deployment detail, not the target's identity.
+_DEPLOYMENT_KEYS = ("trap_host", "trap_port", "trap_public_url")
+
+
 def baseline_key(target: dict) -> str:
+    target = {k: v for k, v in target.items() if k not in _DEPLOYMENT_KEYS}
     return hashlib.sha256(json.dumps(_clean(target), sort_keys=True).encode()).hexdigest()[:32]
