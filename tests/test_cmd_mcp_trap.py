@@ -465,10 +465,14 @@ def _connect_later(port_holder, delay):
         while not port_holder:
             time.sleep(0.01)
         time.sleep(delay)
-        httpx.post(f"http://127.0.0.1:{port_holder[0]}/mcp", timeout=5, headers={
-            "Accept": "application/json, text/event-stream", "Content-Type": "application/json"},
-            json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-                "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "late", "version": "0"}}})
+        try:
+            httpx.post(f"http://127.0.0.1:{port_holder[0]}/mcp", timeout=5, headers={
+                "Accept": "application/json, text/event-stream", "Content-Type": "application/json"},
+                json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+                    "protocolVersion": "2025-06-18", "capabilities": {},
+                    "clientInfo": {"name": "late", "version": "0"}}})
+        except httpx.RemoteProtocolError:
+            pass  # the trap may shut down once it has seen the request, before the reply ends
     thread = threading.Thread(target=run, daemon=True)
     thread.start()
     return thread
@@ -489,6 +493,7 @@ def test_wait_for_agent_holds_the_warm_up_until_the_agent_connects(monkeypatch, 
     result = _invoke("--target", SPEC_ARG, "--wait-for-agent", "30")
     elapsed = time.monotonic() - started
     thread.join(5)
+    assert not thread.is_alive()
     url = f"http://127.0.0.1:{wiring.DEFAULT_TRAP_PORT}/mcp"
     assert f"Trap is up at {url}. Start or restart your agent now; waiting up to 30 s for it to connect..." \
         in result.output
