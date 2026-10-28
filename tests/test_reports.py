@@ -116,3 +116,26 @@ def test_html_renders_mcp_trap_rounds():
     assert SCOPE_NOTE.replace("'", "&#39;") in html
     assert "16 conversations were sent to the agent" in html
     assert "request(s) to the testbed" not in html
+
+
+def test_html_rug_pull_rows_show_which_definition_each_call_ran_under():
+    from argus.mcp_trap.driver import RoundOutcome, load_trap_probes, scenario_finding
+
+    calls = [{"seq": 2, "tool": "read_notes", "arguments": {}, "definition_in_force": "original",
+              "agent_last_listed": "original"},
+             {"seq": 4, "tool": "send_email", "arguments": {"to": "sam@team.example"},
+              "definition_in_force": "changed", "agent_last_listed": None}]
+    rug = {"interaction_count": 4, "tool_calls": calls, "canary_hits": [],
+           "rug_pull": {"switch_after_calls": 1, "switched": True, "relisted_after_switch": False}}
+    other = {"interaction_count": 2, "tool_calls": [{**calls[0]}] * 51, "canary_hits": [], "rug_pull": None}
+    findings = [
+        scenario_finding(load_trap_probes([name])[0], [RoundOutcome(1, "passed", "ok", "p", "r", ev)], 3)
+        for name, ev in (("rug_pull", rug), ("shadowing", other))
+    ]
+    html = reports.render_html({**RUN, "findings": json.loads(json.dumps(findings))})
+    assert "<code>read_notes</code> <code>{}</code> (definition in force: original; agent last listed: original)" \
+        in html
+    assert "(definition in force: changed; agent last listed: never)" in html
+    # Only rug_pull changes a definition, so other scenarios do not show it.
+    assert html.count("definition in force") == 2
+    assert "…[+1 more]" in html and "<code></code>" not in html

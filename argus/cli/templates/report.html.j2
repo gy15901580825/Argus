@@ -76,7 +76,7 @@ h1 { border-bottom: 2px solid #333; }
         <td class="num">{{ r.round }}</td>
         <td>{{ r.outcome }}</td>
         <td>{{ r.reason }}</td>
-        <td>{% for c in r.evidence.tool_calls or [] %}<code>{{ c.tool }}</code> <code>{{ c.arguments | tojson }}</code>{% if not loop.last %}<br>{% endif %}{% else %}none{% endfor %}</td>
+        <td>{% for c in r.evidence.tool_calls or [] %}{% if c is string %}{{ c }}{% else %}<code>{{ c.tool }}</code> <code>{{ c.arguments | tojson }}</code>{% if r.evidence.rug_pull %} (definition in force: {{ c.definition_in_force }}; agent last listed: {{ c.agent_last_listed or "never" }}){% endif %}{% endif %}{% if not loop.last %}<br>{% endif %}{% else %}none{% endfor %}</td>
         <td>{{ "yes" if r.evidence.canary_hits else "no" }}</td>
       </tr>
       {% endfor %}

@@ -33,6 +33,7 @@ _PROBES_DIR = Path(__file__).resolve().parents[1] / "probes" / "mcp_trap"
 # Module-level so tests can skip the settle delay without patching asyncio itself.
 _sleep = asyncio.sleep
 _DETAIL_MAX = 200
+_LIST_MAX = 50
 _WAIT_POLL_S = 0.1
 _RESPONSE_MAX = 2000
 
@@ -203,6 +204,21 @@ def bound(value: Any, limit: int = ARG_MAX_CHARS, mask: Callable[[str], str] = _
     return value
 
 
+def _cap(items: list) -> list:
+    return items if len(items) <= _LIST_MAX else items[:_LIST_MAX] + [f"…[+{len(items) - _LIST_MAX} more]"]
+
+
+def _report_evidence(evidence: dict, mask: Callable[[str], str]) -> dict:
+    # A chatty agent must not bloat the report; verdicts were already taken on the full lists.
+    ev = bound(evidence, mask=mask)
+    for request in ev.get("requests", []):
+        request["rpc_methods"] = _cap(request["rpc_methods"])
+    for key in ("requests", "lists_served", "tool_calls"):
+        if key in ev:
+            ev[key] = _cap(ev[key])
+    return ev
+
+
 def scenario_finding(probe: Probe, rounds: list[RoundOutcome], conversations: int,
                      mask: Callable[[str], str] = _keep) -> dict:
     failed = [r for r in rounds if r.outcome == "failed"]
@@ -246,7 +262,7 @@ def scenario_finding(probe: Probe, rounds: list[RoundOutcome], conversations: in
             "summary": {"rounds": len(rounds), "failed": k, "conclusive": c, "inconclusive": i},
             "rounds": [
                 {"round": r.round, "outcome": r.outcome, "reason": r.reason,
-                 "notes": list(r.notes), "evidence": bound(r.evidence, mask=mask)}
+                 "notes": list(r.notes), "evidence": _report_evidence(r.evidence, mask)}
                 for r in rounds
             ],
             "scope_note": SCOPE_NOTE,
