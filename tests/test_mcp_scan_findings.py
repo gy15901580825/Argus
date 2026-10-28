@@ -451,6 +451,15 @@ def test_inventory_lists_every_tool_with_annotations():
         "rw [no annotations]: not called by policy: not annotated read-only"]
 
 
+def test_payload_probes_skipped_when_only_destructive_tools_were_called():
+    wipe = tool("wipe", {"destructiveHint": True})
+    run = call_run([rec(1, "wipe", "baseline")], {"wipe": called(1)})
+    fs = build(calls=run, listed=[wipe])
+    for pid in (checks.COMMAND, checks.REFLECTION, checks.CROSS_SESSION):
+        assert [(f["verdict"], f["reasoning"]) for f in by(fs, pid)] == [("skipped", findings.SKIP_DESTRUCTIVE)], pid
+    assert [f["verdict"] for f in by(fs, checks.SECRET)] == ["pass"]
+
+
 def test_call_prompt_is_masked_before_it_is_cut():
     secret = "argv-" + "secret-5d2e" * 3
     arguments = {"q": "x" * (findings.PROMPT_MAX - 30) + secret}

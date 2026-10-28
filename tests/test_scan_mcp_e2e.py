@@ -284,3 +284,15 @@ def test_many_tools_console_shows_a_summary_and_the_report_every_tool():
     assert (d["evidence"]["truncated"], d["evidence"]["tools_listed"]) == (True, 5000)
     # The other notes still reach the console.
     assert "tools/list returned 5000 tools; kept the first 1000" in result.output and SNYK_LINE in result.output
+
+
+def test_destructive_tool_named_in_call_tools_gets_the_baseline_only(state_dir):
+    result = _scan("stdio", "liar", "--format", "json", "--call-tools", "purge")
+    assert result.exit_code == 0, result.output
+    # One baseline call in session A and no replay: no payload ever reached the tool.
+    assert (state_dir / "purged").read_text(encoding="utf-8") == "argus\n"
+    assert "Annotated destructive, so only the baseline call was made: purge." in result.output
+    # save_note took the payloads; purge is in no payload check's pass list.
+    for probe_id in (checks.COMMAND, checks.REFLECTION, checks.CROSS_SESSION):
+        assert [(f["verdict"], f["evidence"]["tools"]) for f in _by_probe(_run_json(), probe_id)] == [
+            ("pass", ["save_note"])], probe_id

@@ -29,6 +29,7 @@ SKIP_SANDBOX = "runs only in the stdio sandbox"
 SKIP_NO_TOOLS = "the server listed no tools"
 SKIP_NO_PAYLOAD = "no called tool takes a string (or path-like) parameter"
 SKIP_NO_READONLY = "no tool annotated read-only was called"
+SKIP_DESTRUCTIVE = "no payload was sent: tools annotated destructive get the baseline call only"
 NONE_EXERCISED = "the selected tools could not be exercised"
 NO_RELIST = "the second tools/list did not complete, so the tool list was not compared"
 
@@ -173,7 +174,10 @@ def _probe_findings(ctx: _Ctx, probe: Probe) -> list[dict]:
         out.append(finding(probe, verdict=VERDICT_ERROR, severity="info", reasoning=NO_RELIST,
                             evidence=ctx.evidence(tools=[], items=[])))
     if not out:
-        return [_skipped(ctx, probe, SKIP_NO_READONLY if pid == READONLY else SKIP_NO_PAYLOAD)]
+        if pid == READONLY:
+            return [_skipped(ctx, probe, SKIP_NO_READONLY)]
+        destructive = any(t is not None and t.destructive and _takes_string(t) for t in map(ctx.tools.get, selected))
+        return [_skipped(ctx, probe, SKIP_DESTRUCTIVE if destructive else SKIP_NO_PAYLOAD)]
     return out
 
 

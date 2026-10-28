@@ -309,6 +309,18 @@ async def test_no_run_time_limit_by_default():
     assert not res.out_of_time and res.outcomes["a"].status == "called"
 
 
+@pytest.mark.parametrize("call_tools", [frozenset({"wipe"}), "all"])
+async def test_destructive_tool_gets_the_baseline_only(call_tools):
+    wipe = tool("wipe", {"destructiveHint": True}, schema=_schema("path", "q"))
+    chosen, _ = policy.select([wipe, tool("read")], call_tools)
+    world = World([wipe, tool("read")])
+    _, res = await run(world, chosen)
+    assert [(r.session, r.call.family) for r in res.records if r.call.tool == "wipe"] == [("A", "baseline")]
+    assert {r.call.family for r in res.records if r.call.tool == "read"} == {"baseline", "cmd", "relay", "replay"}
+    assert res.outcomes["wipe"] == calls.ToolOutcome("called", 1, "")
+    assert "Annotated destructive, so only the baseline call was made: wipe." in res.notes
+
+
 async def test_no_schema_tool_called_once_with_empty_args():
     world = World([tool("bare", schema=None)])
     _, res = await run(world)

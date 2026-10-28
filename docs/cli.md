@@ -249,6 +249,7 @@ Which tools it calls:
 
 - By default, only tools annotated `readOnlyHint: true` and not `destructiveHint: true`. Every other tool is listed in the report with the reason it was not called, such as `not annotated read-only` or `annotated destructive`.
 - `--call-tools a,b` also calls the named tools. `--call-tools all` calls every tool.
+- A tool annotated `destructiveHint: true` gets only its baseline call, even when you name it in `--call-tools` or pass `--call-tools all`. No payload is sent to it and it is not replayed in the second session, and the notes list it. That one baseline call can still delete or change data, so name a destructive tool only on a disposable deployment.
 - A tool that looks like it returns environment variables or secrets, such as `read_env` or `printenv`, is never called unless you name it in `--call-tools`. `--call-tools all` does not include it.
 - If no tool is annotated read-only and you pass no `--call-tools`, only the `tools/list` checks run. The call checks are `skipped`, the console says to pass `--call-tools NAMES` or `--call-tools all`, and the command exits 0.
 

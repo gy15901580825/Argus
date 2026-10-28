@@ -81,6 +81,9 @@ def _plan(tool: ToolInfo, base: Baseline, run_id: str, start: int,
     A tool without a usable schema has no string parameters, so it gets the baseline `{}` call only.
     """
     first = baseline_call(tool.name, base)
+    # A payload could make a destructive tool delete or change more than the baseline would, even when opted in.
+    if tool.destructive:
+        return [first]
     # A dry run finds where the relay calls sit, so canary seq equals record seq without assuming the layout.
     shape = payload_calls(tool.name, base, run_id, lambda: 0, extra_paths=extra_paths)
     slots = iter([start + 1 + i for i, c in enumerate(shape) if c.family == "relay"])
@@ -196,6 +199,9 @@ async def run_calls(session_a: McpSession, open_session: Callable[[], AbstractAs
             if timed_out_tools >= TIMED_OUT_TOOLS_MAX:
                 halt = ToolOutcome("not_exercised", 0, REASON_SILENT)
         _note_skipped(skipped, run.notes)
+        destructive = [show_text(t.name) for t in tools if t.destructive and t.name in bases]
+        if destructive:
+            run.notes.append(f"Annotated destructive, so only the baseline call was made: {', '.join(destructive)}.")
 
         final_tools = None
         # Spend a restart on the relist if one is left, so a rug pull is still compared.
@@ -213,7 +219,7 @@ async def run_calls(session_a: McpSession, open_session: Callable[[], AbstractAs
             run.notes.append("The second tools/list did not run: the session had closed and no restart was left.")
 
         good = {r.call.tool for r in records if good_result(r.result)}
-        replay = [t for t in tools if t.name in good]
+        replay = [t for t in tools if t.name in good and not t.destructive]
         if replay and late():
             run.notes.append("No tool was replayed in a second session: the run time limit was reached.")
         elif replay:
