@@ -209,15 +209,10 @@ def _apply(text: str, spans: list[tuple[int, int, str]]) -> tuple[str, list[tupl
 
 def _map(p: int, regions: list[tuple[int, int, int, int]], is_end: bool) -> int:
     """Where position p of the old text lands in the new one; inside a replaced span, at its edge."""
-    out = p
-    for os_, oe, ns, ne in regions:
-        if p >= oe:
-            out = ne + (p - oe)
-        elif p > os_:
-            return ne if is_end else ns
-        else:
-            break
-    return out
+    k = bisect.bisect_right(regions, p, key=lambda r: r[1])  # regions that end at or before p
+    if k < len(regions) and regions[k][0] < p:
+        return regions[k][3] if is_end else regions[k][2]
+    return regions[k - 1][3] + (p - regions[k - 1][1]) if k else p
 
 
 # Callers excerpt one result many times; keep the last few redactions instead of redoing each.
@@ -225,7 +220,9 @@ def _map(p: int, regions: list[tuple[int, int, int, int]], is_end: bool) -> int:
 def _redacted_cached(text: str, decoys: tuple[tuple[str, str], ...]):
     s1, r1 = _apply(text, _decoy_spans(text, decoys))
     out, r2 = _apply(s1, [(s, e, f"[REDACTED:{kind}]") for kind, s, e in secret_hits(s1)])
-    return out, r1, r2
+    # Every placeholder's (start, end) in the redacted text, sorted, for trimming excerpt edges.
+    holes = sorted([(ns, ne) for _, _, ns, ne in r2] + [(_map(ns, r2, False), _map(ne, r2, True)) for _, _, ns, ne in r1])
+    return out, r1, r2, holes
 
 
 def _redacted(text: str, decoys: Sequence[tuple[str, str]]):
@@ -237,6 +234,11 @@ def redact(text: str, decoys: Sequence[tuple[str, str]] = ()) -> str:
     return _redacted(text, decoys)[0]
 
 
+def _hole_at(holes: list[tuple[int, int]], x: int) -> tuple[int, int] | None:
+    k = bisect.bisect_left(holes, (x,)) - 1  # the last placeholder starting before x
+    return holes[k] if k >= 0 and holes[k][1] > x else None
+
+
 def _render(text: str) -> str:
     return _HIDDEN.sub(lambda m: f"<U+{ord(m.group()):04X}>", text)
 
@@ -244,7 +246,7 @@ def _render(text: str) -> str:
 def excerpt(text: str, start: int, end: int, decoys: Sequence[tuple[str, str]] = ()) -> str:
     """At most EXCERPT characters centred on text[start:end], redacted, hidden characters shown as <U+XXXX>."""
     # Redact the whole text before cutting: a window edge inside a secret would keep a prefix no pattern matches.
-    red, r1, r2 = _redacted(text, decoys)
+    red, r1, r2, holes = _redacted(text, decoys)
     rs, re_ = _map(_map(start, r1, False), r2, False), _map(_map(end, r1, True), r2, True)
     if re_ - rs >= EXCERPT:
         ws, we = rs, rs + EXCERPT
@@ -253,13 +255,11 @@ def excerpt(text: str, start: int, end: int, decoys: Sequence[tuple[str, str]] =
         we = min(len(red), ws + EXCERPT)
         ws = max(0, we - EXCERPT)
     # Do not show half a placeholder at either edge.
-    placeholders = [(ns, ne) for _, _, ns, ne in r2]
-    placeholders += [(_map(ns, r2, False), _map(ne, r2, True)) for _, _, ns, ne in r1]
-    for a, b in placeholders:
-        if a < ws < b:
-            ws = b
-        if a < we < b:
-            we = a
+    left, right = _hole_at(holes, ws), _hole_at(holes, we)
+    if left:
+        ws = left[1]
+    if right:
+        we = right[0]
     return _render(red[ws:we])
 
 

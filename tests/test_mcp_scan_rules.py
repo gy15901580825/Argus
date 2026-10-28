@@ -616,3 +616,26 @@ def test_secret_scan_is_fast():
 ])
 def test_dense_assignments_are_fast(text):
     _fast(lambda: secret_hits(text))
+
+
+def test_repeated_excerpts_of_a_secret_dense_text_are_fast():
+    unit = "gh" + "p_" + "a" * 36 + " x "
+    text = unit * (TEXT_KEEP // len(unit))
+    n = len(text) // len(unit)
+    _fast(lambda: [excerpt(text, i * len(unit) + 41, i * len(unit) + 42) for i in range(0, n, 3)])
+    e = excerpt(text, 41, 42)
+    assert "a" * 8 not in e and e.startswith("[REDACTED:github_token]")
+
+
+def test_excerpt_of_a_span_inside_a_secret_centres_on_its_placeholder():
+    tok = "gh" + "p_" + "Z" * 36
+    t = "x" * 500 + " " + tok + " " + "y" * 500
+    e = excerpt(t, 505, 507)
+    assert "[REDACTED:github_token]" in e and (e.count("x"), e.count("y")) == (137, 138)
+
+
+def test_excerpt_drops_a_decoy_placeholder_cut_by_the_edge():
+    m = "decoy" + "marker" + "q" * 30
+    t = m + " " + "c" * 140 + "MATCH" + "a" * 500
+    e = excerpt(t, t.index("MATCH"), t.index("MATCH") + 5, [("HOME_SSH", m)])
+    assert e.startswith(" c") and "q" not in e
