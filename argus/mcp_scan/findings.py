@@ -8,7 +8,7 @@ from typing import Mapping, Sequence
 from uuid import uuid4
 
 from argus.mcp_scan import rules
-from argus.mcp_scan.calls import CallRun, ToolOutcome
+from argus.mcp_scan.calls import CallRun, ToolOutcome, good_result, show_text
 from argus.mcp_scan.checks import (COMMAND, CROSS_SESSION, DESCRIPTION, HIDDEN, INJECTION, LIST_CHANGED, REFLECTION,
                                    SCHEMA, SECRET, TRAVERSAL)
 from argus.mcp_scan.judging import CAP_REASON, ERROR_REASON, JudgeOutcome
@@ -26,6 +26,7 @@ PROMPT_MAX = 500
 ITEMS_MAX = 50
 SKIP_NO_TOOL = "no tool was called; pass --call-tools NAMES or --call-tools all to call more"
 SKIP_SANDBOX = "runs only in the stdio sandbox"
+SKIP_NO_TOOLS = "the server listed no tools"
 SKIP_NO_PAYLOAD = "no called tool takes a string (or path-like) parameter"
 SKIP_NO_READONLY = "no tool annotated read-only was called"
 NONE_EXERCISED = "the selected tools could not be exercised"
@@ -34,15 +35,6 @@ NO_RELIST = "the second tools/list did not complete, so the tool list was not co
 _STATIC = frozenset({DESCRIPTION, SCHEMA})
 _PAYLOAD_FAMILIES = frozenset({"cmd", "path", "relay"})
 _UNJUDGED = frozenset({"cap", "error"})
-
-
-def shown(text: str) -> str:
-    """Server text made safe to print: redacted, bounded, hidden characters shown, on one line."""
-    return " ".join(rules.excerpt(text, 0, len(text)).split())
-
-
-def _good(rec: CallRecord) -> bool:
-    return rec.result.status == "ok" and not rec.result.is_error
 
 
 def finding(probe: Probe, *, verdict: str, severity: str, reasoning: str, evidence: dict, attack_prompt: str = "",
@@ -119,6 +111,8 @@ def _probe_findings(ctx: _Ctx, probe: Probe) -> list[dict]:
     pid = probe.id
     if pid == READONLY and not ctx.sandbox:
         return [_skipped(ctx, probe, SKIP_SANDBOX)]
+    if not ctx.names:
+        return [_skipped(ctx, probe, SKIP_NO_TOOLS)]
     selected = ctx.calls.outcomes if ctx.calls is not None else {}
     if pid not in _STATIC and pid != HIDDEN and not selected:
         return [_skipped(ctx, probe, SKIP_NO_TOOL)]
@@ -151,18 +145,18 @@ def _probe_findings(ctx: _Ctx, probe: Probe) -> list[dict]:
     out = [_fail(ctx, probe, name) for name in sorted(failing, key=ctx.order)]
     out += [_unjudged(ctx, probe, name) for name in sorted(unjudged, key=ctx.order)]
     if clean:
-        names = [shown(n) for n in clean]
+        names = [show_text(n) for n in clean]
         out.append(finding(probe, verdict=VERDICT_PASS, severity="info",
                             reasoning=f"no finding in {len(clean)} tool(s)",
                             evidence=ctx.evidence(tools=names, items=names)))
     if missed:
-        listed = "; ".join(f"{shown(n)}: {d}" for n, d in missed)
+        listed = "; ".join(f"{show_text(n)}: {d}" for n, d in missed)
         reasoning = f"not exercised: {listed}"
         if not (failing or unjudged or clean):
             reasoning = f"{NONE_EXERCISED}; {reasoning}"
         out.append(finding(probe, verdict=VERDICT_ERROR, severity="info", reasoning=reasoning,
-                            evidence=ctx.evidence(tools=[shown(n) for n, _ in missed],
-                                                  items=[f"{shown(n)}: {d}" for n, d in missed])))
+                            evidence=ctx.evidence(tools=[show_text(n) for n, _ in missed],
+                                                  items=[f"{show_text(n)}: {d}" for n, d in missed])))
     if pid == LIST_CHANGED and not relisted and not failing:
         out.append(finding(probe, verdict=VERDICT_ERROR, severity="info", reasoning=NO_RELIST,
                             evidence=ctx.evidence(tools=[], items=[])))
@@ -176,9 +170,22 @@ def _skipped(ctx: _Ctx, probe: Probe, reason: str) -> dict:
                     evidence=ctx.evidence(tools=[], items=[]))
 
 
-def _path_like(tool: ToolInfo | None) -> bool:
+def _props(tool: ToolInfo | None) -> dict:
     props = (tool.input_schema or {}).get("properties") if tool is not None else None
-    return isinstance(props, dict) and any(p in str(k).lower() for k in props for p in PATH_LIKE)
+    return props if isinstance(props, dict) else {}
+
+
+def _path_like(tool: ToolInfo | None) -> bool:
+    return any(p in str(k).lower() for k in _props(tool) for p in PATH_LIKE)
+
+
+def _takes_string(tool: ToolInfo | None) -> bool:
+    """A property typed string, or untyped, could have taken a payload."""
+    for prop in _props(tool).values():
+        kind = prop.get("type") if isinstance(prop, dict) else None
+        if kind is None or kind == "string" or (isinstance(kind, list) and "string" in kind):
+            return True
+    return False
 
 
 def _exercised(ctx: _Ctx, pid: str, name: str, outcome: ToolOutcome) -> tuple[str, str]:
@@ -192,21 +199,23 @@ def _exercised(ctx: _Ctx, pid: str, name: str, outcome: ToolOutcome) -> tuple[st
         return "missed", outcome.detail
     recs = ctx.by_tool.get(name, [])
     tried = {r.call.family for r in recs}
-    good = {r.call.family for r in recs if _good(r)}
-    # A tool stopped partway had payload calls planned that never ran.
+    good = {r.call.family for r in recs if good_result(r.result)}
+    # A tool stopped partway had payload calls planned that never ran. A tool with no good call may have been
+    # stopped by timeouts before its payload calls, so any string parameter makes it a payload target.
     stopped = outcome.status == "called" and bool(outcome.detail)
+    unsure = stopped or (outcome.status != "called" and _takes_string(tool))
     if pid in (SECRET, INJECTION, HIDDEN):
         return ("ok", "") if good else ("missed", outcome.detail)
     if pid == COMMAND:
-        applies, ok, what = "cmd" in tried or stopped, "cmd" in good, "no command payload call succeeded"
+        applies, ok, what = "cmd" in tried or unsure, "cmd" in good, "no command payload call succeeded"
     elif pid == TRAVERSAL:
-        applies = "path" in tried or (stopped and _path_like(tool))
+        applies = "path" in tried or (unsure and _path_like(tool))
         ok, what = "path" in good, "no path payload call succeeded"
     elif pid == REFLECTION:
-        applies, ok, what = bool(tried & _PAYLOAD_FAMILIES) or stopped, bool(good & _PAYLOAD_FAMILIES), \
+        applies, ok, what = bool(tried & _PAYLOAD_FAMILIES) or unsure, bool(good & _PAYLOAD_FAMILIES), \
             "no payload call succeeded"
     else:  # CROSS_SESSION
-        applies = "relay" in tried or stopped
+        applies = "relay" in tried or unsure
         ok = "relay" in good and "replay" in good
         what = "the second-session replay did not succeed" if "relay" in good else "no relay payload call succeeded"
     if not applies:
@@ -217,13 +226,13 @@ def _exercised(ctx: _Ctx, pid: str, name: str, outcome: ToolOutcome) -> tuple[st
 
 
 def _call_text(ctx: _Ctx, rec: CallRecord) -> tuple[str, str]:
-    prompt = f"tools/call {shown(rec.call.tool)} {json.dumps(rec.call.arguments, default=str)}"
+    prompt = f"tools/call {show_text(rec.call.tool)} {json.dumps(rec.call.arguments, default=str)}"
     return rules.redact(prompt, ctx.decoys)[:PROMPT_MAX], rules.redact(rec.result.text, ctx.decoys)[:RESULT_KEEP]
 
 
 def _fail(ctx: _Ctx, probe: Probe, name: str | None) -> dict:
     pid = probe.id
-    shown_name = shown(name) if name is not None else None
+    shown_name = show_text(name) if name is not None else None
     # Provider-shaped secrets (confidence 1.0) rank ahead of generic secret-named assignments.
     hits = sorted(ctx.hits.get((pid, name), []), key=lambda h: -h.confidence)
     if hits:
@@ -246,15 +255,17 @@ def _fail(ctx: _Ctx, probe: Probe, name: str | None) -> dict:
         fails.sort(key=lambda o: -o.confidence)
         top = fails[0]
         seq, family = top.candidate.call_seq, None
-        excerpt = shown(rules.redact(top.candidate.text, ctx.decoys))
+        excerpt = show_text(rules.redact(top.candidate.text, ctx.decoys))
         why = rules.redact(top.reasoning, ctx.decoys)
         reasoning = f"judged: {why}"
         items = [{"tool": shown_name, "call_seq": o.candidate.call_seq, "source": o.candidate.source,
                   "verdict": o.verdict, "confidence": o.confidence, "judge_model": o.judge_model,
                   "reasoning": rules.redact(o.reasoning, ctx.decoys),
-                  "excerpt": shown(rules.redact(o.candidate.text, ctx.decoys))} for o in fails[:ITEMS_MAX]]
+                  "excerpt": show_text(rules.redact(o.candidate.text, ctx.decoys))} for o in fails[:ITEMS_MAX]]
         ev = ctx.evidence(tool=shown_name, call_seq=seq, family=None, decided_by="judge", reasoning=why,
                           excerpt=excerpt)
+        if ctx.sandbox:
+            ev["decoy"] = None  # the judge names no decoy; the key matches rule-decided fails
         judge = (top.confidence, top.judge_model, top.escalated_model)
     rec = ctx.by_seq.get(seq) if seq is not None else None
     if rec is not None:
@@ -274,9 +285,9 @@ def _fail(ctx: _Ctx, probe: Probe, name: str | None) -> dict:
 
 def _unjudged(ctx: _Ctx, probe: Probe, name: str | None) -> dict:
     left = [o for o in ctx.judged[(probe.id, name)] if o.status in _UNJUDGED]
-    shown_name = shown(name) if name is not None else None
+    shown_name = show_text(name) if name is not None else None
     items = [{"tool": shown_name, "call_seq": o.candidate.call_seq, "source": o.candidate.source,
-              "excerpt": shown(rules.redact(o.candidate.text, ctx.decoys))} for o in left[:ITEMS_MAX]]
+              "excerpt": show_text(rules.redact(o.candidate.text, ctx.decoys))} for o in left[:ITEMS_MAX]]
     return finding(probe, verdict=VERDICT_ERROR, severity="info", reasoning=left[0].reasoning,
                     evidence=ctx.evidence(tool=shown_name, tools=[shown_name] if shown_name else [], items=items))
 
@@ -290,7 +301,7 @@ def inventory_notes(listed: list[ToolInfo], reasons: Mapping[str, str], calls: C
         if tool.name in seen:
             continue
         seen.add(tool.name)
-        head = f"{shown(tool.name)} [{_annotations(tool)}]"
+        head = f"{show_text(tool.name)} [{_annotations(tool)}]"
         o = outcomes.get(tool.name)
         if tool.name in reasons:
             lines.append(f"{head}: not called by policy: {reasons[tool.name]}")
@@ -306,6 +317,6 @@ def inventory_notes(listed: list[ToolInfo], reasons: Mapping[str, str], calls: C
 
 
 def _annotations(tool: ToolInfo) -> str:
-    parts = [f"{k}: {shown(json.dumps(tool.annotations[k], default=str))}"
+    parts = [f"{k}: {show_text(json.dumps(tool.annotations[k], default=str))}"
              for k in ("readOnlyHint", "destructiveHint") if k in tool.annotations]
     return ", ".join(parts) if parts else "no annotations"

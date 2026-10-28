@@ -18,6 +18,9 @@ from argus.targets.mcp_server import MCPServerSpec, MCPServerTarget
 SERVER_PROBES_DIR = Path(argus.__file__).parent / "probes" / "mcp_server"
 HTTP_ONLY = frozenset({"mcp_server_foreign_origin", "mcp_server_no_auth"})
 HTTP_ONLY_REASON = "HTTP-only check; this server speaks stdio"
+# The evidence copy in each finding keeps this many tools, each description redacted and then cut.
+TOOLS_KEEP = 50
+DESCRIPTION_KEEP = rules.EXCERPT
 NOT_REACHED = "the server never answered these checks, so the probe did not actually run; this is not a defended result"
 
 
@@ -37,10 +40,23 @@ def _redacted(value):
     return value
 
 
+def _shown_evidence(evidence: dict) -> dict:
+    """The evidence written to the report: redacted, with the tool list bounded."""
+    tools = evidence.get("tools")
+    shown = _redacted({k: v for k, v in evidence.items() if k != "tools"})
+    if isinstance(tools, list):
+        shown["tools"] = [{k: rules.redact(str(v))[:DESCRIPTION_KEEP] for k, v in t.items()}
+                          for t in tools[:TOOLS_KEEP] if isinstance(t, dict)]
+        shown["tools_listed"] = len(tools)
+    elif "tools" in evidence:
+        shown["tools"] = tools
+    return shown
+
+
 def _assertion_finding(probe: Probe, evidence: dict, latency_ms: float) -> dict:
     """What Runner._assertion_finding builds, with server text redacted and the results kept as evidence items."""
     raw = json.dumps(evidence, sort_keys=True)
-    shown = _redacted(evidence)
+    shown = _shown_evidence(evidence)
     common = dict(attack_prompt=probe.prompts[0], target_response=rules.redact(raw)[:RESULT_KEEP],
                   latency_ms=latency_ms)
     if probe.requires_interaction and not evidence.get("interaction_count"):

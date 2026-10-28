@@ -151,7 +151,10 @@ def test_judged_fail_carries_judge_model_and_confidence():
     ev = f["evidence"]
     assert ev["decided_by"] == "judge" and ev["call_seq"] == 3 and ev["items"]
     assert "send [REDACTED:github_token] away" in ev["reasoning"] and secret not in json.dumps(f)
-    assert f["reasoning"].startswith("judged:")
+    assert f["reasoning"].startswith("judged:") and "decoy" not in ev
+    [f] = by(build(outcomes=outs, calls=run, listed=listed, transport="stdio-sandbox", sandbox=True),
+             checks.INJECTION, "fail")
+    assert f["evidence"]["decoy"] is None
     # A judged pass makes a tool clean.
     outs = [outcome(checks.INJECTION, "a", "judged", verdict="pass", seq=3, confidence=0.9, model="m1")]
     [p] = by(build(outcomes=outs, calls=run, listed=listed), checks.INJECTION)
@@ -205,23 +208,92 @@ def test_no_tool_called_dynamic_probes_skipped_static_still_run():
     assert not all_selected_unexercised(None)
 
 
+def two_timeouts(name: str, start: int) -> list[CallRecord]:
+    """What calls.py records when a tool's baseline and first payload call time out: it stops calling that tool."""
+    return [rec(start, name, "baseline", status="timeout"), rec(start + 1, name, "cmd", status="timeout")]
+
+
 def test_all_selected_unexercised_sets_flag_and_errors_not_passes():
-    a, b = tool("a"), tool("b")
-    records = [rec(i + 1, "a", f, status="timeout") for i, f in enumerate(["baseline", "cmd", "cmd", "relay"])]
-    run = call_run(records, {"a": ToolOutcome("not_exercised", 4, "timeout: boom"),
-                             "b": ToolOutcome("not_exercised", 0, "the server stopped answering")},
-                   final_tools=[a, b])
+    # Three tools in a row time out twice each, so calls.py stops; the fourth is never called.
+    names = ["a", "b", "c", "d"]
+    listed = [tool(n, props=("path",) if n == "b" else ("q",)) for n in names]
+    records = two_timeouts("a", 1) + two_timeouts("b", 3) + two_timeouts("c", 5)
+    outcomes = {n: ToolOutcome("not_exercised", 2, "timeout: boom") for n in "abc"}
+    outcomes["d"] = ToolOutcome("not_exercised", 0, "the server stopped answering")
+    run = call_run(records, outcomes, final_tools=listed)
     assert all_selected_unexercised(run)
-    fs = build(calls=run, listed=[a, b])
+    fs = build(calls=run, listed=listed)
     for pid in (checks.COMMAND, checks.SECRET, checks.INJECTION, checks.CROSS_SESSION, checks.REFLECTION):
         assert not by(fs, pid, "pass"), pid
         [e] = by(fs, pid, "error")
         assert e["reasoning"].startswith("the selected tools could not be exercised"), pid
         assert "not exercised: a: timeout: boom" in e["reasoning"]
-        assert e["evidence"]["tools"] == ["a", "b"] and e["severity"] == "info"
+        assert e["evidence"]["tools"] == names and e["severity"] == "info"
+    # Only b has a path-like parameter; d was never called, so it cannot be ruled out.
+    [e] = by(fs, checks.TRAVERSAL)
+    assert e["verdict"] == "error" and e["evidence"]["tools"] == ["b", "d"]
     # The static half of hidden_characters still ran; its dynamic half is reported as not exercised.
     assert [f["verdict"] for f in by(fs, checks.HIDDEN)] == ["pass", "error"]
     assert not all_selected_unexercised(call_run([], {"a": called(1), "b": ToolOutcome("not_exercised", 0, "x")}))
+
+
+def test_timed_out_tool_is_not_exercised_not_skipped():
+    a, b = tool("a"), tool("b", props=("path",))
+    run = call_run(full_run("a", 1, path=True) + two_timeouts("b", 10),
+                   {"a": called(6), "b": ToolOutcome("not_exercised", 2, "timeout: boom")}, final_tools=[a, b])
+    fs = build(calls=run, listed=[a, b])
+    for pid in (checks.TRAVERSAL, checks.CROSS_SESSION, checks.REFLECTION, checks.COMMAND):
+        [p] = by(fs, pid, "pass")
+        assert p["evidence"]["tools"] == ["a"], pid
+        [e] = by(fs, pid, "error")
+        assert e["reasoning"] == "not exercised: b: timeout: boom" and e["evidence"]["tools"] == ["b"], pid
+
+
+def test_only_tool_whose_baseline_failed_is_not_exercised_for_every_payload_probe():
+    b = tool("b", props=("path",))
+    run = call_run([rec(1, "b", "baseline", status="transport_error")],
+                   {"b": ToolOutcome("not_exercised", 1, "transport_error: closed")}, final_tools=None)
+    fs = build(calls=run, listed=[b])
+    for pid in (checks.COMMAND, checks.TRAVERSAL, checks.CROSS_SESSION, checks.REFLECTION):
+        [e] = by(fs, pid)
+        assert e["verdict"] == "error", pid
+        assert e["reasoning"] == "the selected tools could not be exercised; not exercised: b: transport_error: closed"
+        assert e["evidence"]["tools"] == ["b"]
+
+
+def test_failed_tool_without_string_parameters_is_not_a_payload_target():
+    a = tool("a", props=())
+    run = call_run([rec(1, "a", "baseline", status="timeout", arguments={})],
+                   {"a": ToolOutcome("not_exercised", 1, "timeout: boom")}, final_tools=[a])
+    fs = build(calls=run, listed=[a])
+    for pid in (checks.COMMAND, checks.TRAVERSAL, checks.CROSS_SESSION, checks.REFLECTION):
+        assert [f["verdict"] for f in by(fs, pid)] == ["skipped"], pid
+    assert [f["verdict"] for f in by(fs, checks.SECRET)] == ["error"]
+
+
+def test_tool_stopped_partway_counts_the_families_it_never_reached():
+    a = tool("a", props=("path",))
+    # The session closed after the baseline and both cmd calls; path and relay never ran.
+    records = [rec(1, "a", "baseline"), rec(2, "a", "cmd", payload="p1"), rec(3, "a", "cmd", payload="p2"),
+               rec(100, "a", "replay", session="B", arguments={})]
+    detail = "the session closed after 3 of 7 calls"
+    run = call_run(records, {"a": called(4, detail)}, final_tools=[a])
+    fs = build(calls=run, listed=[a])
+    for pid in (checks.COMMAND, checks.SECRET, checks.REFLECTION):
+        assert [f["verdict"] for f in by(fs, pid)] == ["pass"], pid
+    for pid in (checks.TRAVERSAL, checks.CROSS_SESSION):
+        [e] = by(fs, pid)
+        assert (e["verdict"], e["reasoning"]) == ("error", f"the selected tools could not be exercised; "
+                                                           f"not exercised: a: {detail}"), pid
+    assert inventory_notes([a], {}, run) == [f"a [readOnlyHint: true]: called (4 calls); {detail}"]
+
+
+def test_no_tools_listed_says_so():
+    fs = build(calls=None, listed=[])
+    assert {f["probe_id"] for f in fs} == set(PROBES)
+    for f in fs:
+        expected = "runs only in the stdio sandbox" if f["probe_id"] == READONLY else "the server listed no tools"
+        assert (f["verdict"], f["reasoning"]) == ("skipped", expected), f["probe_id"]
 
 
 def test_not_exercised_note_names_args_flag():
@@ -408,6 +480,17 @@ def test_stdio_server_checks_run_two_and_skip_http_only():
     k = v["mcp_server_known_vulnerable_version"]
     assert (k["verdict"], k["severity"]) == ("pass", "info")
     assert secret not in json.dumps(fs)
+    # The embedded tool list is bounded: at most TOOLS_KEEP tools, each description redacted then cut.
+    from argus.mcp_scan import server_checks
+    many = [dataclasses.replace(tool(f"t{i}"), description=f"{secret} " + "d" * 5000) for i in range(300)]
+    fs = stdio_server_findings(many, None)
+    for f in fs:
+        if f["verdict"] != "skipped":
+            listed_tools = f["evidence"]["tools"]
+            assert len(listed_tools) == server_checks.TOOLS_KEEP
+            assert all(len(t["description"]) == server_checks.DESCRIPTION_KEEP for t in listed_tools)
+            assert f["evidence"]["tools_listed"] == 300
+    assert secret not in json.dumps(fs) and "gh" + "p_" not in json.dumps(fs)
     # No serverInfo: the version check cannot identify the server, so it fails as under `run`.
     [k] = [f for f in stdio_server_findings([], None) if f["probe_id"] == "mcp_server_known_vulnerable_version"]
     assert k["verdict"] == "fail"

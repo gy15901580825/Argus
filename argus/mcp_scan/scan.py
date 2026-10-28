@@ -9,9 +9,9 @@ from typing import Callable, Literal, Mapping
 import argus
 from argus.llm import LLMConfig
 from argus.mcp_scan import checks, policy
-from argus.mcp_scan.calls import CallHooks, CallRun, run_calls
+from argus.mcp_scan.calls import CallHooks, CallRun, run_calls, show_text
 from argus.mcp_scan.client import HttpServer, StdioServer, open_session
-from argus.mcp_scan.findings import (SNYK_LINE, all_selected_unexercised, build_findings, inventory_notes, shown,
+from argus.mcp_scan.findings import (SNYK_LINE, all_selected_unexercised, build_findings, inventory_notes,
                                      unjudged_count)
 from argus.mcp_scan.judging import JudgeGate
 from argus.mcp_scan.models import ServerInfo
@@ -103,8 +103,9 @@ async def scan_mcp(cfg: ScanConfig, *, mask: Callable[[str], str], echo: Callabl
 
     notes = inventory_notes(listed, reasons, calls) + list_notes + (calls.notes if calls is not None else [])
     # A replay often returns the baseline's text again: list each (probe, tool, text) once.
-    off = list(dict.fromkeys(f"not judged: {o.candidate.probe_id} {shown(o.candidate.tool)}: {shown(o.candidate.text)}"
-                             for o in outcomes if o.status == "off"))
+    off = list(dict.fromkeys(
+        f"not judged: {o.candidate.probe_id} {show_text(o.candidate.tool)}: {show_text(o.candidate.text)}"
+        for o in outcomes if o.status == "off"))
     if off:
         reason = cfg.judge_off_reason or "no judge is configured"
         notes.append(f"Judge skipped: {reason}; {len(off)} text(s) that looked aimed at a model were not judged:")
