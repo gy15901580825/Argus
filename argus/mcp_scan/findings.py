@@ -295,6 +295,10 @@ def _unjudged(ctx: _Ctx, probe: Probe, name: str | None) -> dict:
 def inventory_notes(listed: list[ToolInfo], reasons: Mapping[str, str], calls: CallRun | None) -> list[str]:
     """One line per listed tool: its annotations and whether it was called, not called by policy, or not exercised."""
     outcomes = calls.outcomes if calls is not None else {}
+    replays: dict[str, int] = {}
+    for r in calls.records if calls is not None else []:
+        if r.session == "B":
+            replays[r.call.tool] = replays.get(r.call.tool, 0) + 1
     lines: list[str] = []
     seen: set[str] = set()
     for tool in listed:
@@ -308,7 +312,10 @@ def inventory_notes(listed: list[ToolInfo], reasons: Mapping[str, str], calls: C
         elif o is None:
             lines.append(f"{head}: not tested: not selected")
         elif o.status == "called":
-            lines.append(f"{head}: called ({o.calls} calls)" + (f"; {o.detail}" if o.detail else ""))
+            # The console counts session-A calls, so the replay is shown apart.
+            n = replays.get(tool.name, 0)
+            counts = f"{o.calls - n} calls" + (f", {n} replay" if n == 1 else f", {n} replays" if n else "")
+            lines.append(f"{head}: called ({counts})" + (f"; {o.detail}" if o.detail else ""))
         elif o.status == "not_exercised" and o.calls:
             lines.append(f"{head}: called but every call errored (not exercised): {o.detail}")
         else:

@@ -285,7 +285,7 @@ def test_tool_stopped_partway_counts_the_families_it_never_reached():
         [e] = by(fs, pid)
         assert (e["verdict"], e["reasoning"]) == ("error", f"the selected tools could not be exercised; "
                                                            f"not exercised: a: {detail}"), pid
-    assert inventory_notes([a], {}, run) == [f"a [readOnlyHint: true]: called (4 calls); {detail}"]
+    assert inventory_notes([a], {}, run) == [f"a [readOnlyHint: true]: called (3 calls, 1 replay); {detail}"]
 
 
 def test_no_tools_listed_says_so():
@@ -443,6 +443,16 @@ def test_inventory_lists_every_tool_with_annotations():
     # Without a call run every tool is accounted for by policy.
     assert inventory_notes([tool("rw", {})], {"rw": "not annotated read-only"}, None) == [
         "rw [no annotations]: not called by policy: not annotated read-only"]
+
+
+def test_inventory_counts_session_a_calls_and_replays_apart():
+    # The console counts session-A calls only, so the note must not fold the replay into that number.
+    records = full_run("a", 1) + full_run("b", 10)[:-1]
+    run = call_run(records, {"a": called(5), "b": called(4)})
+    assert inventory_notes([tool("a"), tool("b")], {}, run) == [
+        "a [readOnlyHint: true]: called (4 calls, 1 replay)",
+        "b [readOnlyHint: true]: called (4 calls)",
+    ]
 
 
 def test_snyk_line_verbatim():
