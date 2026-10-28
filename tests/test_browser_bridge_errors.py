@@ -260,6 +260,78 @@ async def test_disconnect_fails_the_waiting_probe_at_once(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_old_socket_disconnect_leaves_a_same_id_reconnect_alone(monkeypatch):
+    monkeypatch.delenv("API_SERVICE_URL", raising=False)
+    mgr = ConnectionManager()
+    old, new = _Conn(mgr), _Conn(mgr, reply=False)
+    mgr.active_connections["a"] = new  # "a" reconnected; `old` is closing late
+    bridge = mgr.get_redteam_bridge()
+    waiting = asyncio.create_task(bridge.send_and_wait({"payload": "p"}, timeout_s=5.0))
+    while not new.sent:
+        await asyncio.sleep(0.01)
+
+    await mgr.disconnect("a", connection=old)
+
+    assert mgr.active_connections["a"] is new
+    assert not waiting.done()
+    mgr.handle_response({"id": new.sent[0]["id"], "result": {"final_text": "ok"}})
+    assert await asyncio.wait_for(waiting, timeout=1.0) == {"final_text": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_disconnect_with_the_registered_socket_removes_it(monkeypatch):
+    monkeypatch.delenv("API_SERVICE_URL", raising=False)
+    mgr = ConnectionManager()
+    conn = _Conn(mgr, reply=False)
+    mgr.active_connections["a"] = conn
+    waiting = asyncio.create_task(mgr.get_redteam_bridge().send_and_wait({"payload": "p"}, timeout_s=5.0))
+    while not conn.sent:
+        await asyncio.sleep(0.01)
+
+    await mgr.disconnect("a", connection=conn)
+
+    assert mgr.active_connections == {}
+    with pytest.raises(ClientAgentDisconnectedError):
+        await asyncio.wait_for(waiting, timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_disconnect_without_connection_still_removes_by_id(monkeypatch):
+    monkeypatch.delenv("API_SERVICE_URL", raising=False)
+    mgr = ConnectionManager()
+    conn = _Conn(mgr, reply=False)
+    mgr.active_connections["a"] = conn
+    waiting = asyncio.create_task(mgr.get_redteam_bridge().send_and_wait({"payload": "p"}, timeout_s=5.0))
+    while not conn.sent:
+        await asyncio.sleep(0.01)
+
+    await mgr.disconnect("a")
+
+    assert mgr.active_connections == {}
+    with pytest.raises(ClientAgentDisconnectedError, match="client_agent a disconnected before replying"):
+        await asyncio.wait_for(waiting, timeout=1.0)
+
+
+def test_server_websocket_handler_disconnects_its_own_socket(monkeypatch):
+    from argus.server import app, connection_manager as server_mgr
+
+    monkeypatch.delenv("AGENT_CONNECT_SECRET", raising=False)
+    monkeypatch.delenv("API_SERVICE_URL", raising=False)
+    calls = []
+    real = server_mgr.disconnect
+
+    async def _spy(agent_id, **kwargs):
+        calls.append((agent_id, kwargs))
+        await real(agent_id, **kwargs)
+
+    monkeypatch.setattr(server_mgr, "disconnect", _spy)
+    with TestClient(app).websocket_connect("/agent/connect", headers={"x-agent-id": "srv-a"}):
+        registered = server_mgr.active_connections["srv-a"]
+    assert calls == [("srv-a", {"connection": registered})]
+    assert "srv-a" not in server_mgr.active_connections
+
+
+@pytest.mark.asyncio
 async def test_plain_runtime_error_from_the_bridge_propagates():
     ws = MagicMock()
     ws.send_and_wait = AsyncMock(side_effect=RuntimeError("bug in bridge"))

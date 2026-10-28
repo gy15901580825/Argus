@@ -76,7 +76,10 @@ class ConnectionManager:
         except Exception as e:
             logger.error(f"Failed to update agent status to {status}: {e}")
 
-    async def disconnect(self, agent_id: str):
+    async def disconnect(self, agent_id: str, *, connection: Any = None):
+        # A closing socket must not evict a newer socket that took its id.
+        if connection is not None and self.active_connections.get(agent_id) is not connection:
+            return
         if agent_id in self.active_connections:
             del self.active_connections[agent_id]
             logger.info(f"Agent disconnected: {agent_id}, total connections: {len(self.active_connections)}")
@@ -191,8 +194,7 @@ class RedteamBridge:
                 # A closed socket left registered would fail every later probe.
                 # Old starlette raises a plain RuntimeError here, so map it.
                 self._mgr._command_agents.pop(command_id, None)
-                if self._mgr.active_connections.get(agent_id) is connection:
-                    await self._mgr.disconnect(agent_id)
+                await self._mgr.disconnect(agent_id, connection=connection)
                 raise ClientAgentDisconnectedError(
                     f"client_agent {agent_id} socket is closed: {e}"
                 ) from e
