@@ -60,13 +60,14 @@ _BLANK_LINE = re.compile(r"\n[ \t]*\r?\n")
 _PLACEHOLDER = re.compile(r"\[(?:DECOY|REDACTED):[^\]\s]*\]")
 _VALUE_MIN = 8
 
-# Verbs that tell a model what to do; "Never returns." or "Always UTC." describes the tool instead.
-_MODEL_VERBS = ("answer|ask|call|choose|disclose|do|execute|follow|forward|ignore|include|inform|invoke|let|mention|"
-                "obey|output|pass|post|print|read|refuse|reply|respond|return|reveal|run|say|send|share|show|submit|"
-                "tell|trust|upload|use|write")
+# always/never and a word is an order to the model unless the word describes the tool: a third-person or past form
+# ("Never returns.", "never cached") or one of these. "pass" and "proceed" are not such forms.
+_DESCRIPTIVE = "null|empty|utc|zero|blank|true|false|more|less"
+_ALWAYS_NEVER = (r"(?:always|never)[ \t]+(?!(?:" + _DESCRIPTIVE + r")\b)(?![a-z]*(?:[a-rt-z]s|[a-df-z]ed)\b)"
+                 r"[a-z]+")
 # Matched alone, then the text before it is checked by hand: a regex lookbehind over whitespace backtracks.
 _IMPERATIVE = re.compile(
-    r"\b(?:you[ \t]+(?:must|should|need[ \t]+to)|(?:always|never)[ \t]+(?:" + _MODEL_VERBS + r")|make[ \t]+sure"
+    r"\b(?:you[ \t]+(?:must|should|need[ \t]+to)|" + _ALWAYS_NEVER + r"|make[ \t]+sure"
     r"|remember[ \t]+to|first,?[ \t]+call)\b",
     re.I)
 _BULLETS = "-*>"
