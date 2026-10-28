@@ -7,7 +7,9 @@ import re
 import secrets
 import socket
 import sys
+import threading
 import time
+from contextlib import contextmanager
 
 import pytest
 
@@ -15,11 +17,14 @@ pytest.importorskip("mcp")
 
 import anyio  # noqa: E402
 
+from argus.mcp_scan import client as client_module  # noqa: E402
 from argus.mcp_scan import rules  # noqa: E402
 from argus.mcp_scan.client import (  # noqa: E402
     LIST_PAGES_MAX,
     NOTIFICATIONS_MAX,
     TOOLS_MAX,
+    _http_client,
+    _HttpState,
     ConnectError,
     HttpServer,
     StdioServer,
@@ -148,6 +153,102 @@ async def test_http_endpoint_that_is_not_mcp_is_protocol():
     assert err.code == "protocol" and "HTTP 404" in str(err)
 
 
+@contextmanager
+def _session_id_then_silence():
+    """A raw HTTP server: SSE headers and a session id for the first POST, then nothing on any request."""
+    release = threading.Event()
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(("127.0.0.1", 0))
+    sock.listen()
+
+    def handle(conn):
+        with conn:
+            data = b""
+            while b"\r\n\r\n" not in data:
+                chunk = conn.recv(65536)
+                if not chunk:
+                    return
+                data += chunk
+            if data.startswith(b"POST"):
+                conn.sendall(b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nmcp-session-id: abc\r\n"
+                             b"transfer-encoding: chunked\r\n\r\n")
+            release.wait(30)
+
+    def serve():
+        while not release.is_set():
+            try:
+                conn, _ = sock.accept()
+            except OSError:
+                return
+            threading.Thread(target=handle, args=(conn,), daemon=True).start()
+
+    threading.Thread(target=serve, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{sock.getsockname()[1]}/mcp"
+    finally:
+        release.set()
+        sock.close()
+
+
+async def test_http_server_that_never_answers_after_session_id_times_out(monkeypatch):
+    monkeypatch.setattr(client_module, "_CLOSE_WAIT_S", 2.0)
+    with _session_id_then_silence() as url:
+        start = time.monotonic()
+        with anyio.fail_after(20):
+            err = await _connect_error(HttpServer(url), timeout_s=1)
+    assert err.code == "timeout"
+    assert time.monotonic() - start < 8
+
+
+async def test_exception_in_body_leaves_bare():
+    for exc in (ValueError("body"), ConnectError("died", "tools/list failed.")):
+        with pytest.raises(type(exc)) as e:
+            async with open_session(_stdio("basic"), timeout_s=T):
+                raise exc
+        assert e.value is exc
+
+
+async def test_list_tools_failure_in_body_is_a_connect_error():
+    with pytest.raises(ConnectError) as e:
+        async with open_session(_stdio("huge_result"), timeout_s=T) as s:
+            assert (await s.call("huge", {})).status == "too_large"
+            await s.list_tools()
+    assert e.value.code == "died"
+
+
+async def test_stdio_server_that_stops_reading_is_connection_closed():
+    script = (
+        "import json, os, sys, time\n"
+        "req = json.loads(sys.stdin.readline())\n"
+        "res = {'protocolVersion': req['params']['protocolVersion'], 'capabilities': {},"
+        " 'serverInfo': {'name': 'closer', 'version': '1'}}\n"
+        "sys.stdout.write(json.dumps({'jsonrpc': '2.0', 'id': req['id'], 'result': res}) + '\\n')\n"
+        "sys.stdout.flush()\n"
+        "sys.stdin.readline()\n"
+        "os.close(0)\n"
+        "sys.stderr.write('stdin-closed\\n')\n"
+        "sys.stderr.flush()\n"
+        "time.sleep(30)\n")
+    async with open_session(StdioServer(argv=(sys.executable, "-c", script), env=host_env([])), timeout_s=T) as s:
+        with anyio.fail_after(5):  # a request written before the close would sit in the pipe until it times out
+            while "stdin-closed" not in s.stderr_tail:
+                await anyio.sleep(0.01)
+        r = await s.call("anything", {})
+        assert r.status == "transport_error"
+        assert r.detail == "the connection closed"
+        assert s.alive is False
+
+
+async def test_http_client_honours_env_proxy(monkeypatch):
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example.invalid:3128")
+    client = _http_client(HttpServer("https://mcp.example.invalid/mcp"), 5.0, _HttpState())
+    try:
+        assert any(pattern.pattern == "https://" and transport is not None
+                   for pattern, transport in client._mounts.items())
+    finally:
+        await client.aclose()
+
+
 # --- hangs -----------------------------------------------------------------------------------------------------
 
 
@@ -254,11 +355,13 @@ async def test_tool_count_capped():
     assert notes == ["tools/list returned 5000 tools; kept the first 1000"]
 
 
+# unknown_flood uses a method the SDK drops before its message handler; the cap must still count it.
+@pytest.mark.parametrize("fixture", ["notify_flood", "unknown_flood"])
 @pytest.mark.parametrize("transport", ["stdio", "http"])
-async def test_notification_flood_closes_session(transport):
+async def test_notification_flood_closes_session(transport, fixture):
     assert NOTIFICATIONS_MAX == 1000
-    with serve_http("notify_flood") as url:
-        target = _stdio("notify_flood") if transport == "stdio" else HttpServer(url)
+    with serve_http(fixture) as url:
+        target = _stdio(fixture) if transport == "stdio" else HttpServer(url)
         async with open_session(target, timeout_s=T) as s:
             r = await s.call("flood", {})
             assert r.status == "transport_error"
@@ -336,6 +439,13 @@ def test_cut_drops_a_secret_value_with_slashes_split_by_the_boundary():
     stored = keep_text(text)
     assert _no_prefix(stored, value)
     assert rules.secret_hits(stored) == []
+
+
+def test_cut_without_a_delimiter_keeps_the_hard_cut():
+    tags = "\U000E0041" * (TEXT_KEEP + 1)
+    assert keep_text(tags) == tags[:TEXT_KEEP]
+    long_token = "w " + "z" * (TEXT_KEEP + 10)
+    assert len(keep_text(long_token)) == TEXT_KEEP
 
 
 def test_cut_keeps_text_under_the_limit():

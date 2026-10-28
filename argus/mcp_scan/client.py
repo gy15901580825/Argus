@@ -29,6 +29,8 @@ _DETAIL_KEEP = 300
 # A cut result ends at one of these, so no partial token, and no secret prefix, survives the cut.
 _CUT_AT = re.compile(r"[\s\"',;&=:/]")
 _CUT_WINDOW = 16_384
+# Past this, keep the hard cut: dropping a longer token could empty the text and hide it from every check.
+_CUT_BACK_MAX = 512
 
 
 @dataclass(frozen=True)
@@ -72,8 +74,11 @@ def keep_text(text: str) -> str:
         if lo + s < cut < lo + e:
             cut = lo + s
     if not _CUT_AT.match(text, cut):
-        while cut and not _CUT_AT.match(text, cut - 1):
-            cut -= 1
+        back = cut
+        while back > cut - _CUT_BACK_MAX and back and not _CUT_AT.match(text, back - 1):
+            back -= 1
+        if back and _CUT_AT.match(text, back - 1):
+            cut = back
     return text[:cut]
 
 
@@ -127,15 +132,11 @@ def _http_client(target: HttpServer, timeout_s: float, state: _HttpState) -> Any
         async def aclose(self) -> None:
             await self._inner.aclose()
 
-    class CappedTransport(httpx2.AsyncHTTPTransport):
-        async def handle_async_request(self, request: Any) -> Any:
-            response = await super().handle_async_request(request)
-            # An event stream is capped per event by the SDK (max_sse_event_size), not as a whole.
-            if not response.headers.get("content-type", "").lower().startswith("text/event-stream"):
-                response.stream = CappedStream(response.stream)
-            return response
-
     async def record(response: Any) -> None:
+        # Hooks run before the body is read, so the cap applies here; a custom transport would drop env proxies.
+        # An event stream is capped per event by the SDK (max_sse_event_size), not as a whole.
+        if not response.headers.get("content-type", "").lower().startswith("text/event-stream"):
+            response.stream = CappedStream(response.stream)
         status = response.status_code
         if status in (401, 403) and state.auth_status is None:
             state.auth_status = status
@@ -147,7 +148,7 @@ def _http_client(target: HttpServer, timeout_s: float, state: _HttpState) -> Any
 
     # Read timeout off: it would keep cutting the standing GET stream; requests are bounded by the session.
     return httpx2.AsyncClient(headers=dict(target.headers), timeout=httpx2.Timeout(timeout_s, read=None),
-                              event_hooks={"response": [record]}, transport=CappedTransport())
+                              event_hooks={"response": [record]})
 
 
 def _leaves(exc: BaseException) -> list[BaseException]:
@@ -202,8 +203,12 @@ class McpSession:
                 else:
                     read, write, self._proc = await stack.enter_async_context(
                         stdio_streams(self._target, line_max=MESSAGE_BYTES_MAX))
+                relay_send, relay_recv = anyio.create_memory_object_stream[Any](0)
+                relay = await stack.enter_async_context(anyio.create_task_group())
+                stack.callback(relay.cancel_scope.cancel)  # runs after the session exits, before the group joins
+                relay.start_soon(self._relay, read, relay_send)
                 session = await stack.enter_async_context(ClientSession(
-                    read, write, read_timeout_seconds=self._timeout_s, message_handler=self._on_message))
+                    relay_recv, write, read_timeout_seconds=self._timeout_s, message_handler=self._on_message))
                 with anyio.fail_after(self._timeout_s):
                     init = await session.initialize()
                 self._session = session
@@ -267,13 +272,30 @@ class McpSession:
     async def _on_message(self, message: Any) -> None:
         import mcp_types
 
-        if isinstance(message, Exception):
-            return
-        self._notifications += 1
         if isinstance(message, mcp_types.ToolListChangedNotification):
             self.list_changed = True
-        if self._notifications > NOTIFICATIONS_MAX and self.alive:
-            self._end(f"the server sent more than {NOTIFICATIONS_MAX} notifications; the session was closed")
+
+    async def _relay(self, source: Any, sink: Any) -> None:
+        """Pass transport items to the session, counting everything that is not a response.
+
+        Counted here, not in the message handler: the SDK drops unknown and malformed notifications before it.
+        """
+        import anyio
+        import mcp_types
+
+        async with sink:
+            try:
+                async for item in source:
+                    if not isinstance(getattr(item, "message", None), (mcp_types.JSONRPCResponse,
+                                                                        mcp_types.JSONRPCError)):
+                        self._notifications += 1
+                        if self._notifications > NOTIFICATIONS_MAX:
+                            self._end(f"the server sent more than {NOTIFICATIONS_MAX} notifications; "
+                                      "the session was closed")
+                            return
+                    await sink.send(item)
+            except (anyio.ClosedResourceError, anyio.BrokenResourceError):
+                pass
 
     # --- requests ------------------------------------------------------------------------------------------------
 
@@ -318,7 +340,7 @@ class McpSession:
                 return "too_large", self._death
             if self.alive:
                 rc = self._proc.returncode
-                self._end("the server process exited" + (f" (exit code {rc})" if rc is not None else ""))
+                self._end(f"the server process exited (exit code {rc})" if rc is not None else "the connection closed")
             return "transport_error", self._death
         if self._http.body_too_large and exc.code == PARSE_ERROR:
             return "too_large", too_large
@@ -379,16 +401,34 @@ async def open_session(target: HttpServer | StdioServer, *, timeout_s: float) ->
     import anyio
 
     session = McpSession(target, timeout_s)
+    body_error: Exception | None = None
     async with anyio.create_task_group() as tg:
         tg.start_soon(session._own)
-        await session._ready.wait()
-        if session._connect_error is None:
+        # The owner's teardown after a failed handshake can hang (an unanswered HTTP DELETE): bound it too.
+        if not await _wait(session._ready, timeout_s + _CLOSE_WAIT_S):
+            session._connect_error = ConnectError(
+                "timeout", f"The server did not finish the MCP handshake within {timeout_s:g} s.", session.stderr_tail)
+            tg.cancel_scope.cancel()
+        elif session._connect_error is None:
             try:
                 yield session
+            except Exception as exc:
+                # Re-raised outside the task group, which would otherwise wrap it in an ExceptionGroup.
+                body_error = exc
             finally:
                 session._stop.set()
-                with anyio.move_on_after(_CLOSE_WAIT_S, shield=True):
-                    await session._done.wait()
+                await _wait(session._done, _CLOSE_WAIT_S)
                 tg.cancel_scope.cancel()
+    if body_error is not None:
+        raise body_error
     if session._connect_error is not None:
         raise session._connect_error from None
+
+
+async def _wait(event: Any, seconds: float) -> bool:
+    """Wait for `event` at most `seconds`, shielded from outside cancellation; True when it was set."""
+    import anyio
+
+    with anyio.move_on_after(seconds, shield=True):
+        await event.wait()
+    return event.is_set()

@@ -42,7 +42,7 @@ class _Gate:
         status = 403 if sent else 401
         headers = [(b"content-type", b"text/plain")]
         if self._oauth and status == 401:
-            headers.append((b"www-authenticate", b'Bearer resource_metadata="http://127.0.0.1/.well-known/x"'))
+            headers.append((b"www-authenticate", b'Bearer resource_metadata="https://example.invalid/.well-known/x"'))
         await send({"type": "http.response.start", "status": status, "headers": headers})
         await send({"type": "http.response.body", "body": b"unauthorized"})
 

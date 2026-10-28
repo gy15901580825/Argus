@@ -41,7 +41,7 @@ def _tools(name: str) -> list[dict]:
                  "annotations": {"readOnlyHint": True}}]
     if name == "many_tools":
         return [{"name": f"tool_{i}", "description": "One of many.", "inputSchema": _schema()} for i in range(MANY_TOOLS)]
-    if name == "notify_flood":
+    if name in ("notify_flood", "unknown_flood"):
         return [{"name": "flood", "description": "Sends notifications before answering.", "inputSchema": _schema(),
                  "annotations": {"readOnlyHint": True}}]
     raise ValueError(f"unknown fixture server: {name}")
@@ -85,10 +85,13 @@ def build(name: str) -> Any:
             return text("A" * HUGE_BYTES)
         if params.name == "flood":
             for i in range(FLOOD):
-                await ctx.session.send_notification(
-                    mcp_types.LoggingMessageNotification(
-                        params=mcp_types.LoggingMessageNotificationParams(level="info", data=f"flood {i}")),
-                    related_request_id=ctx.request_id)
+                if name == "unknown_flood":
+                    # A method no MCP version defines: the SDK client drops it before its message handler.
+                    note: Any = mcp_types.Notification(method="notifications/argus_unknown", params=None)
+                else:
+                    note = mcp_types.LoggingMessageNotification(
+                        params=mcp_types.LoggingMessageNotificationParams(level="info", data=f"flood {i}"))
+                await ctx.session.send_notification(note, related_request_id=ctx.request_id)
             return text("done")
         return text(f"unknown tool {params.name}", is_error=True)
 
