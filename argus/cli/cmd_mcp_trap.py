@@ -2,9 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
-import importlib.metadata
-import re
 import signal
 import sys
 import uuid
@@ -14,7 +11,7 @@ from pathlib import Path
 
 import click
 
-from argus.cli import reports, run_json
+from argus.cli import mcp_sdk, reports, run_json
 from argus.cli.cmd_run import _apply_fail_on
 from argus.cli.severity import SEVERITY_ORDER
 from argus.cli.target_loader import TargetLoadError, load_target_spec_with_secrets
@@ -22,12 +19,9 @@ from argus.mcp_trap import wiring
 from argus.mcp_trap.trap.scenarios import SCENARIO_NAMES
 
 _EXTENSIONS = {"html": "html", "sarif": "sarif", "junit": "xml", "json": "json"}
-_SDK_HINT = "mcp-trap needs the MCP SDK 2.3 or newer: pip install 'argus-probe[mcp-trap]'"
-# Agent-chosen text (tool names, chat errors) must not be able to drive the user's terminal.
-_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
-# A CI cancel sends SIGTERM; Ctrl-C sends SIGINT. Both stop the run the same way.
-_STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM)
-_STOP_MESSAGES = {signal.SIGINT: "Interrupted", signal.SIGTERM: "Terminated"}
+_CONTROL_RE = mcp_sdk.CONTROL_RE
+_STOP_MESSAGES = mcp_sdk.STOP_MESSAGES
+_cancel_on_stop_signals = mcp_sdk.cancel_on_stop_signals
 _REFUSED = ("The trap refused {n} requests (Host/Origin/Content-Type check): your agent sent a Host, Origin or "
             "Content-Type header the trap does not accept. Give the agent the trap URL above, or pass the address "
             "the agent uses with --trap-public-url.")
@@ -53,39 +47,7 @@ def _parse_scenarios(ctx: click.Context, param: click.Parameter, value: str) -> 
 
 
 def _sdk_problem() -> str | None:
-    try:
-        import mcp  # noqa: F401
-    except ImportError:
-        return _SDK_HINT
-    try:
-        found = importlib.metadata.version("mcp")
-    except importlib.metadata.PackageNotFoundError:
-        return _SDK_HINT
-    m = re.match(r"(\d+)\.(\d+)", found)
-    if m is None or not (2, 3) <= (int(m[1]), int(m[2])) < (3, 0):
-        return f"{_SDK_HINT} (found mcp {found})"
-    return None
-
-
-@contextlib.contextmanager
-def _cancel_on_stop_signals(task: asyncio.Task):
-    # uvicorn's handlers stop the trap first and re-raise only after its shutdown grace period,
-    # so rounds would run on against a dead trap; cancel them at once instead.
-    loop = asyncio.get_running_loop()
-    hits: list[int] = []
-
-    def handler(signum, frame):
-        hits.append(signum)
-        loop.call_soon_threadsafe(task.cancel)
-
-    previous = {sig: signal.signal(sig, handler) for sig in _STOP_SIGNALS}
-    try:
-        yield hits
-    finally:
-        for sig, old in previous.items():
-            # If the server already exited, it restored the original handler; leave that in place.
-            if signal.getsignal(sig) is handler:
-                signal.signal(sig, old)
+    return mcp_sdk.sdk_problem("mcp-trap")
 
 
 async def _drive(trap, chat, probes, rounds, say, mask, wait_s, url):

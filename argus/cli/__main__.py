@@ -11,6 +11,7 @@ from argus.cli.cmd_validate_target import cmd_validate_target
 from argus.cli.cmd_quickstart import cmd_quickstart
 from argus.cli.cmd_scan_skill import cmd_scan_skill
 from argus.cli.cmd_mcp_trap import cmd_mcp_trap
+from argus.cli.cmd_scan_mcp import cmd_scan_mcp
 
 
 @click.group()
@@ -29,6 +30,7 @@ main.add_command(cmd_validate_target, "validate-target")
 main.add_command(cmd_quickstart, "quickstart")
 main.add_command(cmd_scan_skill, "scan-skill")
 main.add_command(cmd_mcp_trap, "mcp-trap")
+main.add_command(cmd_scan_mcp, "scan-mcp")
 
 
 if __name__ == "__main__":
