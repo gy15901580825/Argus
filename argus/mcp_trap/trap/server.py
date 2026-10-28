@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
@@ -12,6 +13,8 @@ from argus.mcp_trap.trap.state import TrapState
 
 SERVER_NAME = "argus-mcp-trap"
 SHUTDOWN_GRACE_S = 2.0
+# One stuck agent must not stall a round or a tool call.
+BROADCAST_TIMEOUT_S = 2.0
 MCP_PATH = "/mcp"
 
 
@@ -27,9 +30,10 @@ def _rpc_methods(body: bytes) -> list[str]:
 class _Recorder:
     """Records every /mcp request in TrapState, including ones the SDK rejects before any handler."""
 
-    def __init__(self, app: Any, state: TrapState) -> None:
+    def __init__(self, app: Any, state: TrapState, max_body: int) -> None:
         self._app = app
         self._state = state
+        self._max_body = max_body
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         if scope["type"] != "http" or scope["path"] != MCP_PATH:
@@ -38,15 +42,19 @@ class _Recorder:
 
         chunks: list[bytes] = []
         pending: list[dict] = []
+        size = 0
         while True:
             message = await receive()
             if message["type"] != "http.request":
                 pending.append(message)
                 break
             chunks.append(message.get("body", b""))
-            if not message.get("more_body", False):
+            size += len(chunks[-1])
+            if size > self._max_body or not message.get("more_body", False):
                 break
-        body = b"".join(chunks)
+        too_large = size > self._max_body
+        # Past the SDK's own body limit, stop buffering: the SDK would refuse the request anyway.
+        body = b"".join(chunks)[: self._max_body]
         pending.insert(0, {"type": "http.request", "body": body, "more_body": False})
 
         async def replay() -> Any:
@@ -70,7 +78,12 @@ class _Recorder:
             await send(message)
 
         try:
-            await self._app(scope, replay, record_status)
+            if too_large:
+                await record_status({"type": "http.response.start", "status": 413,
+                                     "headers": [(b"content-type", b"text/plain")]})
+                await send({"type": "http.response.body", "body": b"Request body too large"})
+            else:
+                await self._app(scope, replay, record_status)
         finally:
             if not finished:
                 # uvicorn answers 500 when the app ends without starting a response.
@@ -147,22 +160,29 @@ class TrapServer:
         await self._broadcast()
 
     async def _broadcast(self) -> None:
+        import anyio
         from mcp.server.subscriptions import ToolsListChanged
 
-        for session in list(self._sessions.values()):
-            await session.send_tool_list_changed()
-        await self._bus.publish(ToolsListChanged())
+        async def bounded(send: Any, *args: Any) -> None:
+            # A timed-out recipient misses this change only.
+            with anyio.move_on_after(BROADCAST_TIMEOUT_S):
+                await send(*args)
+
+        async with anyio.create_task_group() as tg:
+            for session in list(self._sessions.values()):
+                tg.start_soon(bounded, session.send_tool_list_changed)
+            tg.start_soon(bounded, self._bus.publish, ToolsListChanged())
 
     def asgi_app(self) -> Any:
-        from mcp.server.transport_security import TransportSecuritySettings
+        from mcp.server.transport_security import DEFAULT_MAX_REQUEST_BODY_SIZE, TransportSecuritySettings
 
         security = TransportSecuritySettings(
             enable_dns_rebinding_protection=True,
             allowed_hosts=self._allowed_hosts,
-            allowed_origins=[f"http://{h}" for h in self._allowed_hosts],
+            allowed_origins=[f"{scheme}://{h}" for h in self._allowed_hosts for scheme in ("http", "https")],
         )
         app = self._server.streamable_http_app(streamable_http_path=MCP_PATH, transport_security=security)
-        return _Recorder(app, self.state)
+        return _Recorder(app, self.state, DEFAULT_MAX_REQUEST_BODY_SIZE)
 
     @contextlib.asynccontextmanager
     async def serving(self, sock: Any) -> AsyncIterator[None]:
@@ -182,9 +202,18 @@ class TrapServer:
                 await asyncio.sleep(0.01)
             yield
         finally:
-            server.should_exit = True
-            # Open SSE streams can outlast uvicorn's graceful timeout; never hang the caller on them.
-            done, _ = await asyncio.wait({task}, timeout=SHUTDOWN_GRACE_S + 3)
-            if not done:
-                task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+            # Agents keep streams open, so uvicorn logs cancellation errors at every exit; quiet only the shutdown.
+            loggers = [logging.getLogger(name) for name in ("uvicorn", "uvicorn.error")]
+            levels = [lg.level for lg in loggers]
+            for lg in loggers:
+                lg.setLevel(logging.CRITICAL)
+            try:
+                server.should_exit = True
+                # Open SSE streams can outlast uvicorn's graceful timeout; never hang the caller on them.
+                done, _ = await asyncio.wait({task}, timeout=SHUTDOWN_GRACE_S + 3)
+                if not done:
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            finally:
+                for lg, level in zip(loggers, levels):
+                    lg.setLevel(level)

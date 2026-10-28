@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import socket
 import time
 
@@ -13,7 +14,8 @@ import pytest
 from mcp import Client
 
 from argus.mcp_trap.trap.scenarios import ATTACKER_EMAIL
-from argus.mcp_trap.trap.server import TrapServer
+from argus.mcp_trap.trap import server as trap_server
+from argus.mcp_trap.trap.server import TrapServer, _rpc_methods
 from argus.mcp_trap.trap.state import TrapState
 
 ALLOWED_HOSTS = ["127.0.0.1:*", "localhost:*", "192.168.1.20:*"]
@@ -197,9 +199,9 @@ async def test_unknown_session_id_gets_404_and_counts_as_stale(trap_url):
     assert (ev["stale_session_requests"], ev["interaction_count"]) == (1, 0)
 
 
-def _initialize(host: str) -> dict:
+def _initialize(host: str, origin: str | None = None) -> dict:
     return {
-        "headers": {"Host": host, **MCP_HEADERS},
+        "headers": {"Host": host, **MCP_HEADERS, **({"Origin": origin} if origin else {})},
         "json": {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
             "protocolVersion": "2025-06-18", "capabilities": {},
             "clientInfo": {"name": "host-check", "version": "0"},
@@ -216,7 +218,7 @@ async def test_public_host_header_is_accepted_and_others_refused(trap_url):
     assert evil.status_code >= 400
 
 
-async def test_serving_exits_promptly_with_open_streams():
+async def test_serving_exits_promptly_with_open_streams(capfd, caplog):
     sock = _listening_socket()
     port = sock.getsockname()[1]
     url = f"http://127.0.0.1:{port}/mcp"
@@ -246,6 +248,9 @@ async def test_serving_exits_promptly_with_open_streams():
                 reqs = trap.state.evidence()["requests"]
             assert any(r["http_method"] == "GET" for r in reqs)
             assert any("subscriptions/listen" in r["rpc_methods"] for r in reqs)
+            capfd.readouterr()
+            caplog.clear()
+            run_levels = [logging.getLogger(n).level for n in ("uvicorn", "uvicorn.error")]
             started = time.monotonic()
         elapsed = time.monotonic() - started
     finally:
@@ -256,3 +261,91 @@ async def test_serving_exits_promptly_with_open_streams():
     assert elapsed < 5
     again = _listening_socket(port)
     again.close()
+    # Open agent streams at exit are normal; uvicorn's cancellation errors must not reach the user.
+    err = capfd.readouterr().err
+    assert "ERROR" not in err and "Traceback" not in err, err
+    assert [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR] == []
+    assert [logging.getLogger(n).level for n in ("uvicorn", "uvicorn.error")] == run_levels
+
+
+async def test_oversized_body_stops_buffering_and_gets_413_once(monkeypatch):
+    from mcp.server.transport_security import DEFAULT_MAX_REQUEST_BODY_SIZE
+
+    state = TrapState()
+    state.begin_round("confused_deputy", "ARGUS-CANARY-00000000000000FF")
+    finished: list[int] = []
+    real_finish = state.finish_request
+    monkeypatch.setattr(state, "finish_request", lambda h, status: (finished.append(status), real_finish(h, status)))
+    chunk = 1024 * 1024
+    total_chunks = DEFAULT_MAX_REQUEST_BODY_SIZE // chunk * 4
+    pulled = 0
+
+    async def receive() -> dict:
+        nonlocal pulled
+        pulled += 1
+        head = b"ARGUS-CANARY-00000000000000FF" if pulled == 1 else b""
+        return {"type": "http.request", "body": head + b" " * (chunk - len(head)), "more_body": pulled < total_chunks}
+
+    async def inner(scope, receive, send) -> None:
+        raise AssertionError("an oversized body must not reach the SDK")
+
+    sent: list[dict] = []
+
+    async def send(message: dict) -> None:
+        sent.append(message)
+
+    recorder = trap_server._Recorder(inner, state, DEFAULT_MAX_REQUEST_BODY_SIZE)
+    scope = {"type": "http", "path": "/mcp", "method": "POST", "headers": []}
+    await recorder(scope, receive, send)
+    assert pulled == DEFAULT_MAX_REQUEST_BODY_SIZE // chunk + 1
+    assert sent[0]["type"] == "http.response.start" and sent[0]["status"] == 413
+    assert finished == [413]
+    ev = state.evidence()
+    assert [(q["http_method"], q["status"]) for q in ev["requests"]] == [("POST", 413)]
+    assert len(ev["canary_hits"]) == 1
+
+
+class _Session:
+    def __init__(self, stuck: bool) -> None:
+        self.stuck = stuck
+        self.notified = 0
+
+    async def send_tool_list_changed(self) -> None:
+        if self.stuck:
+            await asyncio.Event().wait()
+        self.notified += 1
+
+
+async def test_stuck_session_cannot_stall_begin_round(monkeypatch):
+    monkeypatch.setattr(trap_server, "BROADCAST_TIMEOUT_S", 0.2)
+    trap = TrapServer(TrapState(), allowed_hosts=ALLOWED_HOSTS)
+    stuck, healthy = _Session(stuck=True), _Session(stuck=False)
+    trap._sessions.update({"stuck": stuck, "healthy": healthy})
+    started = time.monotonic()
+    await asyncio.wait_for(trap.begin_round("rug_pull", "ARGUS-CANARY-00000000000000AB"), 5)
+    assert time.monotonic() - started < 1.0
+    assert (stuck.notified, healthy.notified) == (0, 1)
+    assert trap.state.evidence()["scenario"] == "rug_pull"
+
+
+def test_broadcast_timeout_is_two_seconds():
+    assert trap_server.BROADCAST_TIMEOUT_S == 2.0
+
+
+@pytest.mark.parametrize(("body", "methods"), [
+    (b'[{"jsonrpc":"2.0","id":1,"method":"tools/list"},{"jsonrpc":"2.0","method":"notifications/initialized"},'
+     b'{"jsonrpc":"2.0","id":2,"result":{}}]', ["tools/list", "notifications/initialized"]),
+    (b"not json \xff", []),
+    (b'{"jsonrpc":"2.0","id":3,"result":{}}', []),
+    (b'{"jsonrpc":"2.0","id":4,"method":7}', []),
+])
+def test_rpc_methods_parses_batches_and_tolerates_junk(body, methods):
+    assert _rpc_methods(body) == methods
+
+
+async def test_allowed_origins_cover_http_and_https(trap_url):
+    trap, url = trap_url
+    async with httpx.AsyncClient() as h:
+        codes = [(await h.post(url, **_initialize("127.0.0.1:1", origin=o))).status_code
+                 for o in ("http://192.168.1.20:8765", "https://192.168.1.20:8765", "https://evil.example:443")]
+    assert codes[:2] == [200, 200] and codes[2] >= 400
