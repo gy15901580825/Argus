@@ -1,6 +1,8 @@
 """Text rules for scan-mcp: hidden characters, injection phrases, secret patterns, redaction, judge pre-filter."""
 from __future__ import annotations
 
+import bisect
+import functools
 import re
 from typing import Sequence
 
@@ -38,9 +40,11 @@ _KEY_SPAN_MAX = 4000
 _PLACEHOLDER = re.compile(r"\[(?:DECOY|REDACTED):[^\]\s]*\]")
 _VALUE_MIN = 8
 
+# Matched alone, then the text before it is checked by hand: a regex lookbehind over whitespace backtracks.
 _IMPERATIVE = re.compile(
-    r"(?:^|[.!?]\s+|\n)\s*(?:you\s+(?:must|should|need\s+to)|always|never|make\s+sure|remember\s+to|first,?\s+call)\b",
+    r"\b(?:you[ \t]+(?:must|should|need[ \t]+to)|always|never|make[ \t]+sure|remember[ \t]+to|first,?[ \t]+call)\b",
     re.I)
+_BULLETS = "-*>"
 _USER_OR_ASSISTANT = re.compile(r"\bthe\s+(?:user|assistant)\b", re.I)
 _URL = re.compile(r"https?://[^\s<>\"')]+", re.I)
 _SEND_VERB = re.compile(r"\b(?:send|post|upload|forward|submit)(?:s|ed|ing|ted|ting)?\b", re.I)
@@ -92,17 +96,20 @@ def secret_hits(text: str) -> list[tuple[str, int, int]]:
 
 
 def _decoy_spans(text: str, decoys: Sequence[tuple[str, str]]) -> list[tuple[int, int, str]]:
-    spans: list[tuple[int, int, str]] = []
+    starts: list[int] = []
+    spans: dict[int, tuple[int, str]] = {}
     for name, marker in sorted(decoys, key=lambda d: len(d[1]), reverse=True):
         if not marker:
             continue
         i = text.find(marker)
         while i >= 0:
             j = i + len(marker)
-            if all(j <= s or i >= e for s, e, _ in spans):
-                spans.append((i, j, f"[DECOY:{name}]"))
-            i = text.find(marker, j if j > i else i + 1)
-    return sorted(spans)
+            k = bisect.bisect_right(starts, i)
+            if (k == 0 or spans[starts[k - 1]][0] <= i) and (k == len(starts) or starts[k] >= j):
+                starts.insert(k, i)
+                spans[i] = (j, f"[DECOY:{name}]")
+            i = text.find(marker, j)
+    return [(i, *spans[i]) for i in starts]
 
 
 def _apply(text: str, spans: list[tuple[int, int, str]]) -> tuple[str, list[tuple[int, int, int, int]]]:
@@ -132,10 +139,16 @@ def _map(p: int, regions: list[tuple[int, int, int, int]], is_end: bool) -> int:
     return out
 
 
-def _redacted(text: str, decoys: Sequence[tuple[str, str]]):
+# Callers excerpt one result many times; keep the last few redactions instead of redoing each.
+@functools.lru_cache(maxsize=16)
+def _redacted_cached(text: str, decoys: tuple[tuple[str, str], ...]):
     s1, r1 = _apply(text, _decoy_spans(text, decoys))
     out, r2 = _apply(s1, [(s, e, f"[REDACTED:{kind}]") for kind, s, e in secret_hits(s1)])
     return out, r1, r2
+
+
+def _redacted(text: str, decoys: Sequence[tuple[str, str]]):
+    return _redacted_cached(text, tuple((n, m) for n, m in decoys))
 
 
 def redact(text: str, decoys: Sequence[tuple[str, str]] = ()) -> str:
@@ -178,13 +191,34 @@ def looks_aimed_at_model(text: str, tool_names: Sequence[str]) -> bool:
     """Cheap judge pre-filter: text that talks to a model rather than describing data.
 
     `tool_names` are the other tools the server listed."""
-    if _IMPERATIVE.search(text) or _USER_OR_ASSISTANT.search(text):
+    if _USER_OR_ASSISTANT.search(text) or any(_starts_sentence(text, m.start()) for m in _IMPERATIVE.finditer(text)):
         return True
     names = [re.escape(n) for n in tool_names if n]
     if names and re.search(r"(?<![\w-])(?:" + "|".join(names) + r")(?![\w-])", text):
         return True
     verbs = [m.span() for m in _SEND_VERB.finditer(text)]
+    ends = [ve for _, ve in verbs]  # verbs do not overlap, so starts and ends are both sorted
     for u in _URL.finditer(text):
-        if any(ve >= u.start() - _URL_VERB_GAP and vs <= u.end() + _URL_VERB_GAP for vs, ve in verbs):
+        k = bisect.bisect_left(ends, u.start() - _URL_VERB_GAP)
+        if k < len(verbs) and verbs[k][0] <= u.end() + _URL_VERB_GAP:
             return True
+    return False
+
+
+def _starts_sentence(text: str, i: int) -> bool:
+    """True when position i opens the text, a line, a bullet or quote line, or follows . ! or ? and a space."""
+    j = i - 1
+    while j >= 0 and text[j].isspace():
+        if text[j] == "\n":
+            return True
+        j -= 1
+    if j < 0:
+        return True
+    if text[j] in ".!?":
+        return j < i - 1
+    if text[j] in _BULLETS and j < i - 1:
+        k = j - 1
+        while k >= 0 and text[k] in " \t":
+            k -= 1
+        return k < 0 or text[k] == "\n"
     return False

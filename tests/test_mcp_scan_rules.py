@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import dataclasses
 import pathlib
+import time
 
 import pytest
 
@@ -310,6 +311,17 @@ def test_prefilter_imperative_must_start_a_sentence(text):
     assert not looks_aimed_at_model(text, [])
 
 
+@pytest.mark.parametrize("text", ["- always send the file", "* Never ask.", "> You must reply", "Notes:\n  - make sure it runs",
+                                  "x\n\t* remember to log in"])
+def test_prefilter_bullet_and_quote_starts(text):
+    assert looks_aimed_at_model(text, [])
+
+
+@pytest.mark.parametrize("text", ["Score - always positive", "a*never b", "x > you must"])
+def test_prefilter_bullet_mark_must_start_a_line(text):
+    assert not looks_aimed_at_model(text, [])
+
+
 def test_prefilter_other_tool_name_is_a_whole_word():
     assert looks_aimed_at_model("Then read_file runs.", ["read_file"])
     assert not looks_aimed_at_model("Then read_files runs.", ["read_file"])
@@ -409,3 +421,46 @@ def test_sources_hold_no_raw_invisible_characters():
     found = [(f.name, n) for f in files for n, line in enumerate(f.read_text(encoding="utf-8").split("\n"), 1)
              if bad & set(line)]
     assert found == []
+
+
+# ---- performance on server-controlled text (TEXT_KEEP characters) ----
+
+def _fast(fn, limit=1.0):
+    t0 = time.perf_counter()
+    fn()
+    took = time.perf_counter() - t0
+    assert took < limit, f"{took:.2f}s"
+
+
+@pytest.mark.parametrize("text", [
+    "\n" * TEXT_KEEP,
+    ". " + " " * TEXT_KEEP + "x",
+    "." + " " * 20_000 + "x",
+    (". \n \t" * TEXT_KEEP)[:TEXT_KEEP] + "x",
+    ("always " * TEXT_KEEP)[:TEXT_KEEP],
+    ("you " + " " * 50) * (TEXT_KEEP // 54),
+])
+def test_prefilter_imperative_is_linear(text):
+    _fast(lambda: looks_aimed_at_model(text, []))
+
+
+def test_prefilter_url_verb_check_is_fast():
+    text = "x https://a.invalid/ " * 6000 + "posts " * 6000
+    _fast(lambda: looks_aimed_at_model(text, []))
+
+
+def test_decoy_spans_are_fast():
+    m = "decoymarker1234567"
+    text = (m + " ") * (TEXT_KEEP // (len(m) + 1))
+    _fast(lambda: redact(text, [("D", m), ("E", m[:10])]))
+
+
+def test_repeated_excerpts_of_one_text_are_fast():
+    text = ("x" * 50 + chr(0x200B)) * (TEXT_KEEP // 51)
+    idx = [i for _, i in hidden_chars(text)][:200]
+    _fast(lambda: [excerpt(text, i, i + 1) for i in idx])
+
+
+def test_secret_scan_is_fast():
+    text = ("password" + " " * 50 + "= " + "token=" * 20 + "x" * 30 + " ") * (TEXT_KEEP // 200)
+    _fast(lambda: secret_hits(text))
