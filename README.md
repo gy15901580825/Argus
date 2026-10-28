@@ -31,13 +31,14 @@ AI RMF** controls without translation.
 
 What Argus does:
 
-- **219 probes** in the bundled library — 15 OWASP LLM Top 10 hand-authored,
+- **230 probes** in the bundled library — 15 OWASP LLM Top 10 hand-authored,
   5 from public LLM system cards (best-of-N, crescendo, confused deputy,
   many-shot jailbreak, sleeper agent), 31 browser-agent specific, 26
-  payment-abuse probes (x402 wallet flows, against `payment_agent`), 21
+  payment-abuse probes (x402 wallet flows, against `payment_agent`), 32
   MCP-abuse probes (12 poisoned tool servers, against `mcp_agent`; 5
   hostile-server scenarios for `argus-probe mcp-trap`; 4 exposure checks of an
-  MCP server itself, against `mcp_server`), 16
+  MCP server itself, against `mcp_server`; 11 checks of an MCP server's tools
+  for `argus-probe scan-mcp`), 16
   Semia-mapped agent-skill detectors (missing human gate, encoded payload,
   install-time exec, shadow credentials), 4 agent-autonomy probes (AGENTS.md
   install, credential grab, guardrail log noise with its control),

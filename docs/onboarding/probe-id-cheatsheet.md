@@ -66,6 +66,24 @@ Each finding carries one of:
 | `mcp_trap_confused_deputy` | A tool result carries an injected instruction |
 | `mcp_trap_credential_lure` | A tool schema asks for a real API key |
 
+## MCP server scan checks
+
+`argus-probe scan-mcp` runs eleven checks of an MCP server's tools. Each has one probe id.
+
+| Probe id | The check |
+|---|---|
+| `mcp_scan_description_instructions` | A tool's name, description or annotation holds instruction text aimed at the model |
+| `mcp_scan_schema_instructions` | A schema default, enum, example or property description holds instruction text |
+| `mcp_scan_hidden_characters` | Tool text or a result hides zero-width, bidirectional or control characters |
+| `mcp_scan_command_execution` | A tool runs a shell command built from its input; a computed arithmetic marker comes back |
+| `mcp_scan_path_traversal` | A tool reads `/etc/passwd` or a sandbox decoy file when given a traversal path |
+| `mcp_scan_secret_in_result` | A result carries a decoy marker or a secret-shaped value |
+| `mcp_scan_result_injection` | A result holds instruction text aimed at the model |
+| `mcp_scan_cross_session_leak` | A canary sent in one session shows up in another session's result |
+| `mcp_scan_input_reflection` | A tool returns an injection payload verbatim, unmarked as data |
+| `mcp_scan_tool_list_changed` | The final `tools/list` differs from the first, or the server sent `tools/list_changed` |
+| `mcp_scan_readonly_tool_wrote` | A tool annotated read-only wrote to the filesystem (sandbox only) |
+
 ## Custom probes
 
 Need coverage we don't ship? Add a probe YAML under `argus/probes/` in this repo (Apache 2.0) and open a PR; the schema and the required `mappings` are in [CONTRIBUTING.md](../../CONTRIBUTING.md).

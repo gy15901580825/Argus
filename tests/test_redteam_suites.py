@@ -184,3 +184,14 @@ def test_mcp_trap_probes_join_no_suite():
     suites = derive_suites(load_all_probes(PROBES_DIR))
     assert not [pid for ids in suites.values() for pid in ids if pid.startswith("mcp_trap_")]
     assert len(suites["mcp"]) == 16
+
+
+def test_mcp_scan_probes_join_no_suite():
+    # They run only under `argus-probe scan-mcp`, never through a suite run.
+    scan = _probe("scan_only", atlas=("AML.T0051.001",), owasp_llm=("LLM01",))
+    scan = Probe(**{**scan.__dict__, "target_class": ("mcp_scan",), "attack_class": ("mcp-abuse",)})
+    assert derive_suites([scan]) == {}
+
+    suites = derive_suites(load_all_probes(PROBES_DIR))
+    assert not [pid for ids in suites.values() for pid in ids if pid.startswith("mcp_scan_")]
+    assert len(suites["mcp"]) == 16
