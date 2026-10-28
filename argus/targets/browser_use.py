@@ -17,11 +17,6 @@ from urllib.parse import urlsplit
 
 from fastapi import WebSocketDisconnect
 
-try:
-    from starlette.websockets import WebSocketDisconnected  # send on a closed socket
-except ImportError:  # older starlette raises a plain RuntimeError there
-    WebSocketDisconnected = WebSocketDisconnect
-
 from argus.targets._base import Target, TargetDeliveryError, Turn
 
 _SCENARIO_KINDS = frozenset({"dom_injection", "ui_phishing", "visual_injection", "os_cmd"})
@@ -113,10 +108,15 @@ def _is_delivery_failure(e: Exception) -> bool:
     # handle_response turns a JSON-RPC error into a bare Exception.
     if type(e) is Exception:
         return True
-    return isinstance(e, (
-        NoClientAgentError, asyncio.TimeoutError, OSError,
-        WebSocketDisconnect, WebSocketDisconnected,
-    ))
+    return isinstance(e, (NoClientAgentError, asyncio.TimeoutError, OSError, WebSocketDisconnect))
+
+
+def _describe(e: Exception, waited_s: float) -> str:
+    if str(e):
+        return f"{type(e).__name__}: {e}"
+    if isinstance(e, asyncio.TimeoutError):
+        return f"timed out after {waited_s:g}s"
+    return type(e).__name__
 
 
 def _get_client_agent_ws():
@@ -184,16 +184,18 @@ class BrowserUseTarget(Target):
                 # An older client_agent would ignore these and serve on 127.0.0.1.
                 raise ValueError("trap_host, trap_port and trap_public_url only apply to --local runs")
             ws = _get_client_agent_ws()
+            # Same 5 s grace as --local, so the client_agent's own timeout error
+            # can still arrive; the outer wait is only a backstop for the bridge.
+            bridge_timeout_s = self.spec.timeout_s + 5.0
             try:
-                # The bridge's own 60 s default would cap any longer spec timeout.
                 reply = await asyncio.wait_for(
-                    ws.send_and_wait(msg, timeout_s=self.spec.timeout_s),
-                    timeout=self.spec.timeout_s + 5.0,
+                    ws.send_and_wait(msg, timeout_s=bridge_timeout_s),
+                    timeout=self.spec.timeout_s + 10.0,
                 )
             except Exception as e:
                 if not _is_delivery_failure(e):
                     raise
-                raise TargetDeliveryError(f"{type(e).__name__}: {e}") from e
+                raise TargetDeliveryError(_describe(e, bridge_timeout_s)) from e
             if not isinstance(reply, dict):
                 raise TargetDeliveryError(
                     f"client_agent reply has no result object (got {type(reply).__name__})"
