@@ -399,3 +399,43 @@ def test_run_submits_trap_options_without_local(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     assert len(bodies) == 1
     assert bodies[0]["target"] == spec
+
+
+@pytest.mark.parametrize("trap, match", [
+    ({"trap_host": "0.0.0.0", "trap_port": 8765}, "set trap_public_url"),
+    ({"trap_public_url": "http://10.0.0.5:8765"}, "fixed trap_port"),
+    ({"trap_host": "localhost"}, "IPv4"),
+])
+def test_run_validates_browser_spec_before_submitting(tmp_path, trap, match):
+    p = tmp_path / "b.json"
+    p.write_text(json.dumps({"kind": "browser_use", "agent_url": "http://a", "scenario_kind": "dom_injection", **trap}))
+    with patch("argus.cli.api_client.post_run") as post_run:
+        result = CliRunner().invoke(cmd_run, [
+            "--target", str(p), "--probes", "p", "--out", str(tmp_path / "r.html"),
+            "--api-url", "https://argus.example", "--token", "t",
+        ])
+    assert result.exit_code == 2, result.output
+    assert match in result.output
+    post_run.assert_not_called()
+
+
+@pytest.mark.parametrize("detail, shown", [
+    ("trap_port must be an integer from 0 to 65535, got 70000", "trap_port must be an integer from 0 to 65535, got 70000"),
+    ([{"loc": ["body", "target"], "msg": "field required"}], "field required"),
+])
+def test_run_exits_2_on_server_422_without_traceback(tmp_path, detail, shown):
+    fake_response = MagicMock()
+    fake_response.status_code = 422
+    fake_response.json = lambda: {"detail": detail}
+
+    def fake_post_run_422(*args, **kwargs):
+        raise httpx.HTTPStatusError("422", request=MagicMock(), response=fake_response)
+
+    with patch("argus.cli.api_client.post_run", side_effect=fake_post_run_422):
+        result = CliRunner().invoke(cmd_run, [
+            "--target", str(_target_file(tmp_path)), "--probes", "p", "--out", str(tmp_path / "r.html"),
+            "--api-url", "https://argus.example", "--token", "t",
+        ])
+    assert result.exit_code == 2, result.output
+    assert isinstance(result.exception, SystemExit)
+    assert f"Error: server rejected the run: {shown}" in result.output

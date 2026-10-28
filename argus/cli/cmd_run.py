@@ -70,6 +70,8 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
             raise click.UsageError(f"--local runs in this process; do not pass {' or '.join(typed)}")
         _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, secret_values)
         return
+    if spec.get("kind") == "browser_use":
+        _check_browser_spec(spec)
     if report_format == "json":
         # The server's report endpoint has no json format yet.
         raise click.UsageError("--format json needs --local")
@@ -100,6 +102,9 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
                 detail = "cost cap exceeded"
             click.echo(f"Argus rejected run for cost: {detail}", file=sys.stderr)
             sys.exit(EXIT_COST_CAP)
+        if e.response.status_code == 422:
+            click.echo(f"Error: server rejected the run: {_detail_text(e.response)}", file=sys.stderr)
+            sys.exit(2)
         raise
     run_id = resp["run_id"]
     click.echo(f"  run_id: {run_id}")
@@ -134,6 +139,30 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
         _apply_fail_on([{"verdict": "fail", **i} for i in d["new"]], fail_on)
     else:
         _apply_fail_on(run.get("findings", []), fail_on)
+
+
+def _check_browser_spec(spec: dict) -> None:
+    """Apply BrowserUseSpec's rules before submitting; unknown keys are left to the server."""
+    from dataclasses import fields
+
+    from argus.targets.browser_use import BrowserUseSpec
+
+    known = {f.name for f in fields(BrowserUseSpec)}
+    try:
+        BrowserUseSpec(**{k: v for k, v in spec.items() if k in known})
+    except ValueError as e:
+        raise click.UsageError(f"invalid browser_use target: {e}") from None
+
+
+def _detail_text(response) -> str:
+    try:
+        detail = response.json().get("detail")
+    except Exception:
+        detail = None
+    if isinstance(detail, list):
+        # FastAPI request-validation errors are a list of {"loc", "msg", ...}.
+        detail = "; ".join(str(d.get("msg", d)) if isinstance(d, dict) else str(d) for d in detail)
+    return str(detail) if detail else f"HTTP {response.status_code}"
 
 
 def _apply_fail_on(findings: list[dict], fail_on: str | None) -> None:
