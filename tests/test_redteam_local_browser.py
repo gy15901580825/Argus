@@ -168,6 +168,8 @@ def test_trap_defaults_to_loopback_and_any_port():
 @pytest.mark.parametrize("kw, match", [
     ({"trap_host": "localhost"}, "IPv4"),
     ({"trap_host": "::1"}, "IPv4"),
+    # IPv4Address accepts an int; the spec must not.
+    ({"trap_host": 3232235777}, "IPv4 address string"),
     ({"trap_host": "0.0.0.0"}, "trap_public_url"),
     ({"trap_port": 70000}, "trap_port"),
     ({"trap_port": "8765"}, "trap_port"),

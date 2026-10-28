@@ -172,6 +172,21 @@ def test_preflight_rejects_invalid_browser_trap_options(trap, match):
     assert match in resp.json()["detail"]
 
 
+def test_run_rejects_invalid_browser_trap_options(monkeypatch):
+    from argus.cost_meter import CostMeter
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.delenv("REDTEAM_MODEL_PROVIDER", raising=False)
+    # Validation must stop the run before any cost check or probe.
+    monkeypatch.setattr(CostMeter, "check_or_abort_pre_run",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("reached cost check")))
+    resp = TestClient(app).post("/redteam/run", json={
+        "target": {**_BROWSER, "trap_host": "0.0.0.0", "trap_port": 8765},
+        "probe_ids": ["browser_dom_inject_html_comment"],
+    })
+    assert resp.status_code == 422, resp.text
+    assert "set trap_public_url" in resp.json()["detail"]
+
+
 def test_preflight_accepts_browser_trap_options():
     resp = TestClient(app).post("/redteam/run/preflight", json={
         "target": {**_BROWSER, "trap_host": "0.0.0.0", "trap_port": 8765,

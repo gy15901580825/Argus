@@ -150,7 +150,8 @@ def _check_browser_spec(spec: dict) -> None:
     known = {f.name for f in fields(BrowserUseSpec)}
     try:
         BrowserUseSpec(**{k: v for k, v in spec.items() if k in known})
-    except ValueError as e:
+    except (ValueError, TypeError) as e:
+        # A malformed field such as "extra_context": [1] raises TypeError.
         raise click.UsageError(f"invalid browser_use target: {e}") from None
 
 

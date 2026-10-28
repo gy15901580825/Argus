@@ -70,6 +70,9 @@ class BrowserUseSpec:
         self._validate_trap()
 
     def _validate_trap(self) -> None:
+        # IPv4Address also accepts an int, which would reach the wire as a number.
+        if not isinstance(self.trap_host, str):
+            raise ValueError(f"trap_host must be an IPv4 address string, got {self.trap_host!r}")
         try:
             host = ipaddress.IPv4Address(self.trap_host)
         except ValueError:

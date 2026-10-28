@@ -419,6 +419,21 @@ def test_run_validates_browser_spec_before_submitting(tmp_path, trap, match):
     post_run.assert_not_called()
 
 
+def test_run_rejects_malformed_browser_spec_without_traceback(tmp_path):
+    p = tmp_path / "b.json"
+    p.write_text(json.dumps({"kind": "browser_use", "agent_url": "http://a", "scenario_kind": "dom_injection",
+                             "extra_context": [1]}))
+    with patch("argus.cli.api_client.post_run") as post_run:
+        result = CliRunner().invoke(cmd_run, [
+            "--target", str(p), "--probes", "p", "--out", str(tmp_path / "r.html"),
+            "--api-url", "https://argus.example", "--token", "t",
+        ])
+    assert result.exit_code == 2, result.output
+    assert isinstance(result.exception, SystemExit)
+    assert "invalid browser_use target: 'int' object is not iterable" in result.output
+    post_run.assert_not_called()
+
+
 @pytest.mark.parametrize("detail, shown", [
     ("trap_port must be an integer from 0 to 65535, got 70000", "trap_port must be an integer from 0 to 65535, got 70000"),
     ([{"loc": ["body", "target"], "msg": "field required"}], "field required"),
