@@ -354,7 +354,9 @@ async def test_cancellation_still_propagates():
 @pytest.mark.asyncio
 async def test_server_mode_trap_settings_reach_the_client_agent():
     ws = MagicMock()
-    ws.send_and_wait = AsyncMock(return_value={"final_text": "ok", "latency_ms": 1.0})
+    ws.send_and_wait = AsyncMock(return_value={
+        "final_text": "ok", "latency_ms": 1.0, "trap_url": "http://127.0.0.1:8765/scenario",
+    })
     target = BrowserUseTarget(BrowserUseSpec(
         agent_url="https://t.example.com/agent", scenario_kind="dom_injection", trap_port=8765,
     ))
@@ -363,6 +365,23 @@ async def test_server_mode_trap_settings_reach_the_client_agent():
         findings = [f async for f in runner.run_probe(_probe("p"))]
     assert [f.verdict for f in findings] == ["pass"]
     assert ws.send_and_wait.call_args.args[0]["trap_port"] == 8765
+
+
+@pytest.mark.asyncio
+async def test_old_client_agent_ignoring_trap_settings_errors_the_probe():
+    # A client_agent without trap support replies with no trap_url.
+    ws = MagicMock()
+    ws.send_and_wait = AsyncMock(return_value={"final_text": "ok", "latency_ms": 1.0})
+    target = BrowserUseTarget(BrowserUseSpec(
+        agent_url="https://t.example.com/agent", scenario_kind="dom_injection", trap_port=8765,
+    ))
+    runner = Runner(target=target, judge=_judge(), rubrics_dir=ARGUS_DIR / "rubrics")
+    with patch("argus.targets.browser_use._get_client_agent_ws", return_value=ws):
+        findings = [f async for f in runner.run_probe(_probe("p"))]
+    assert [f.verdict for f in findings] == [VERDICT_ERROR]
+    assert findings[0].reasoning.startswith(
+        "target could not deliver the probe: client_agent did not use the trap settings (upgrade client_agent)"
+    )
 
 
 @pytest.mark.asyncio

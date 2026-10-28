@@ -200,10 +200,33 @@ class BrowserUseTarget(Target):
                 raise TargetDeliveryError(
                     f"client_agent reply has no result object (got {type(reply).__name__})"
                 )
+            self._check_trap_url(reply.get("trap_url"))
         wall_latency_ms = (time.monotonic() - start) * 1000.0
         reported = reply.get("latency_ms")
         latency_ms = float(reported) if isinstance(reported, (int, float)) else wall_latency_ms
         return reply.get("final_text", ""), latency_ms
+
+    def _check_trap_url(self, got) -> None:
+        """A client_agent without trap support serves on 127.0.0.1 and omits trap_url."""
+        s = self.spec
+        if not s.sets_trap:
+            return
+        if s.trap_public_url:
+            expected = s.trap_public_url.rstrip("/") + "/scenario"
+            ok = got == expected
+        else:
+            expected = f"http://{s.trap_host}:{s.trap_port or '<any port>'}/scenario"
+            try:
+                parts = urlsplit(got) if isinstance(got, str) else None
+                ok = parts is not None and parts.hostname == s.trap_host \
+                    and s.trap_port in (0, parts.port)
+            except ValueError:
+                ok = False
+        if not ok:
+            raise TargetDeliveryError(
+                "client_agent did not use the trap settings (upgrade client_agent): "
+                f"expected {expected}, got {got!r}"
+            )
 
     async def _run_in_process(self, msg: dict) -> dict:
         from argus.browser_runner.browser_probe import BrowserProbe

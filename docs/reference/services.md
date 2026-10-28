@@ -18,6 +18,8 @@ The `redteam_browser_probe` message carries two text fields. `prompt` is the use
 
 The message can also carry `trap_host`, `trap_port` and `trap_public_url`, copied from the target spec. Each key is present only when the spec sets a value other than the default, and is never null. The client agent binds the trap page to `trap_host` and `trap_port`, and sends the browser agent `trap_public_url` with `/scenario` appended. A missing key keeps the default: `127.0.0.1`, a free port, and a URL built from the bound address.
 
+The client agent's reply includes `trap_url`, the URL it sent the browser agent. When the spec sets any trap field, the orchestrator checks `trap_url` against those settings. If `trap_url` is missing or does not match, the probe gets an `error` finding that says "client_agent did not use the trap settings (upgrade client_agent)". A client agent older than this field causes that error.
+
 ## API Endpoints
 
 ### Orchestrator (`python -m argus.server`, port 8080)

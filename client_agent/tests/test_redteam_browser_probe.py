@@ -31,6 +31,7 @@ async def test_browser_probe_serves_scenario_url_and_drives_agent():
         probe = BrowserProbe()
         result = await probe.run(msg)
         assert result["final_text"] == "agent followed the link"
+        assert result["trap_url"] == "http://127.0.0.1:18080/scenario"
         assert "latency_ms" in result
         assert result["latency_ms"] > 0
         # Server got started and stopped
@@ -112,7 +113,8 @@ async def test_trap_options_in_message_set_bind_and_advertised_url():
     }
     with patch("redteam_runner.browser_probe._make_target_agent_driver",
                side_effect=lambda agent_url, scenario_url, prompt, timeout_s: FakeDriver(scenario_url)):
-        await BrowserProbe().run(msg)
+        result = await BrowserProbe().run(msg)
     assert seen["url"] == "http://trap.example.test:9999/scenario"
+    assert result["trap_url"] == "http://trap.example.test:9999/scenario"
     assert seen["status"] == 200
     assert "TRAP_MARKER_42" in seen["page"]

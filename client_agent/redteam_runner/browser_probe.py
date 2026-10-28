@@ -57,6 +57,8 @@ class BrowserProbe:
                 "final_text": result.get("final_text", ""),
                 "screenshots": result.get("screenshots", []),
                 "latency_ms": latency_ms,
+                # Lets the orchestrator check that the trap settings it sent were used.
+                "trap_url": scenario_url,
             }
         finally:
             await server.stop()
