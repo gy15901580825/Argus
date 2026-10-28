@@ -34,7 +34,7 @@ Never upload to either index by hand with `twine`. A manual upload creates the p
 
 ## Release
 
-1. Bump `version` in `pyproject.toml` at the repo root.
+1. Bump `version` in `pyproject.toml` at the repo root. It is the only place the version is set: `argus-probe --version` and run.json read it from the installed package metadata.
 2. Merge to `main`, then tag that commit with `v` plus the argus-probe version and push the tag:
 
 ```bash

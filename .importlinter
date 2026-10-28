@@ -34,9 +34,10 @@ forbidden_modules =
     argus.server
 
 [importlinter:contract:cli-not-server]
-name = The CLI must not import the HTTP server
+name = The CLI and the connection manager must not import the HTTP server
 type = forbidden
 source_modules =
     argus.cli
+    argus.connection_manager
 forbidden_modules =
     argus.server

@@ -18,6 +18,8 @@ Orchestrator red-team run (target kind browser_use)
 
 ### Orchestrator (`python -m argus.server`, port 8080)
 
+Install with `pip install "argus-probe[server]"`; the `server` extra adds the WebSocket library uvicorn needs for `/agent/connect`.
+
 | Method | Path | Role |
 |--------|------|------|
 | POST | `/redteam/run/preflight` | Cost-cap check without running probes (402 when over the cap) |

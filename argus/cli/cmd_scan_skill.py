@@ -21,10 +21,6 @@ _EVIDENCE_MAX = 100
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 
 
-def _tasks(n: int) -> str:
-    return f"{n} task" if n == 1 else f"{n} tasks"
-
-
 def _finite(v: float | None) -> float | None:
     if v is not None and not math.isfinite(v):
         raise click.BadParameter("must be a finite number of USD")
@@ -74,7 +70,8 @@ def cmd_scan_skill(source: str | None, sample: str | None, subpath: str | None, 
         sys.exit(2)
 
     from argus.skillscan.scan import (PRICED_MODEL_PREFIXES, SandboxError, SkillSourceError, is_priced_model,
-                                      list_samples, min_cap_usd, sample_path, scan_skill, url_secrets)
+                                      list_samples, min_cap_usd, sample_path, scan_skill, tasks_phrase,
+                                      url_secrets)
 
     if not is_priced_model(model):
         # The proxy would charge an unknown model at its top rate and cut a benign scan short.
@@ -152,7 +149,7 @@ def cmd_scan_skill(source: str | None, sample: str | None, subpath: str | None, 
         say("The result is inconclusive: monitoring was disrupted or the scan stopped early, so a missing finding "
             "does not mean the skill did nothing.")
     elif run.get("budget_exhausted_tasks"):
-        say(f"The scan stopped early at the cost cap in {_tasks(run['budget_exhausted_tasks'])}. The "
+        say(f"The scan stopped early at the cost cap in {tasks_phrase(run['budget_exhausted_tasks'])}. The "
             f"skill_spend_cap_reached or skill_stopped_at_cap finding explains why; raise --per-task-cap if the "
             f"agent needed more.")
     elif not findings:

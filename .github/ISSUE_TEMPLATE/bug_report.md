@@ -26,7 +26,7 @@ assignees: ''
 
 ## Component
 
-<!-- Which one: orchestrator / client_agent / cli / testbed / demo. If it is a probe or judge issue, give the probe id. -->
+<!-- Which one: argus engine / argus-probe CLI / argus.server / client_agent / testbed / demo. If it is a probe or judge issue, give the probe id. -->
 
 ## Environment
 

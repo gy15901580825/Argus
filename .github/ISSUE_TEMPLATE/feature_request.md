@@ -19,7 +19,7 @@ for the things a probe needs.
 
 ## Scope
 
-<!-- Which component: orchestrator / client_agent / cli / reports / docs. -->
+<!-- Which component: argus engine / argus-probe CLI / argus.server / client_agent / reports / docs. -->
 
 ## Alternatives considered
 

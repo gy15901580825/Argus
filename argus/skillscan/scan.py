@@ -24,7 +24,7 @@ from argus.skillscan.sandbox import (PRICED_MODEL_PREFIXES, SandboxError, check_
 from argus.skillscan.urls import safe_source, url_secrets
 
 __all__ = ["SandboxError", "SkillSourceError", "default_cap_usd", "fetch_skill", "list_samples", "make_tasks",
-           "min_cap_usd", "safe_source", "sample_path", "scan_skill", "url_secrets"]
+           "min_cap_usd", "safe_source", "sample_path", "scan_skill", "tasks_phrase", "url_secrets"]
 
 _GIT_PREFIXES = ("http://", "https://", "ssh://", "git://", "git@", "file://")
 _CLONE_TIMEOUT_S = 300
@@ -65,7 +65,8 @@ class SkillSourceError(ValueError):
         self.candidates = candidates or []
 
 
-def _tasks(n: int) -> str:
+def tasks_phrase(n: int) -> str:
+    """'1 task' or 'N tasks'."""
     return f"{n} task" if n == 1 else f"{n} tasks"
 
 
@@ -336,7 +337,7 @@ def scan_skill(source: str, *, subpath: str | None, n_tasks: int = 3, model: str
         tasks = make_tasks(skill_dir, n_tasks)
         # Read now: the temporary copy is gone by the time the rules run.
         skill_files = _read_skill_files(skill_dir)
-        echo(f"Running {_tasks(n_tasks)} with {model}. The sandbox proxy caps each task at "
+        echo(f"Running {tasks_phrase(n_tasks)} with {model}. The sandbox proxy caps each task at "
              f"${budget_usd_per_task:.2f}{f' (the default for {model})' if defaulted else ''}: it reserves each "
              f"API call's largest possible cost before sending it, and refuses a call that would take the task "
              f"past the cap. The scan cannot spend more than ${n_tasks * budget_usd_per_task:.2f} "
@@ -364,21 +365,21 @@ def scan_skill(source: str, *, subpath: str | None, n_tasks: int = 3, model: str
     disrupted = sum(1 for r in runs if no_successful_call(r)
                     or any(monitor_severity(e) != "info" for e in r.monitor_errors))
     notes = [
-        f"No behaviour seen in {_tasks(len(runs))} is not proof the skill is safe. "
+        f"No behaviour seen in {tasks_phrase(len(runs))} is not proof the skill is safe. "
         "A skill can wait for specific conditions.",
         "Checked in a Linux container; skills that only act on macOS were not triggered. "
         "For a static review of the skill text, also run NVIDIA SkillSpector or Cisco skill-scanner.",
     ]
     if disrupted:
-        notes.append(f"Monitoring was disrupted in {_tasks(disrupted)}; treat this result as incomplete.")
+        notes.append(f"Monitoring was disrupted in {tasks_phrase(disrupted)}; treat this result as incomplete.")
     # Not a monitoring failure: the rules give each such task a skill_spend_cap_reached or skill_stopped_at_cap
     # finding.
     exhausted = sum(1 for r in runs if r.budget_exhausted)
     if exhausted:
-        notes.append(f"{_tasks(exhausted)} stopped early at the ${budget_usd_per_task:.2f} cost cap or call limit: "
+        notes.append(f"{tasks_phrase(exhausted)} stopped early at the ${budget_usd_per_task:.2f} cost cap or call limit: "
                      f"the sandbox proxy refused API calls that would have passed it.")
     if stopped:
-        notes.append(f"Stopped after {len(runs)} of {_tasks(n_tasks)}: {stopped}; treat this result as incomplete.")
+        notes.append(f"Stopped after {len(runs)} of {tasks_phrase(n_tasks)}: {stopped}; treat this result as incomplete.")
     run = {
         "id": str(uuid.uuid4()),
         "status": "incomplete" if stopped else "completed",

@@ -161,7 +161,9 @@ templates and JSONPath response extractors), `grpc`, `http_upload`,
 
 Install the `argus-probe` CLI from PyPI (Python 3.11+). The package
 includes the probe engine, so probes run on your machine and judged
-probes only need a judge key:
+probes only need a judge key. The unrelated `argus` project on PyPI also
+installs a top-level `argus` package, so do not install it in the same
+environment as `argus-probe`. `pipx` keeps each tool in its own venv.
 
 ```bash
 pipx install argus-probe                 # or: pip install argus-probe

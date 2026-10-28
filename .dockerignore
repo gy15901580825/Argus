@@ -1,0 +1,27 @@
+# Build context for the root Dockerfile, which copies only pyproject.toml, LICENSE, NOTICE, docs/cli.md and argus/.
+.git
+.github
+.claude
+.superpowers
+.vscode
+.env
+.env.*
+**/.env
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+.import_linter_cache
+.venv
+venv
+**/.venv
+build
+dist
+*.egg-info
+client_agent
+demo
+demo_target
+mcp_testbed
+payment_testbed
+scripts
+tests
+docs/superpowers

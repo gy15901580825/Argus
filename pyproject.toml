@@ -25,9 +25,8 @@ dependencies = [
     "aiohttp>=3.9,<4",
     # Renders the visual_injection trap image; without it the page falls back to HTML.
     "Pillow>=10",
-    # argus.server (the /agent/connect bridge) loads .env and serves WebSockets.
+    # argus.server loads .env at import time.
     "python-dotenv>=1.0",
-    "websockets>=12",
 ]
 
 [project.scripts]
@@ -36,7 +35,10 @@ argus-probe = "argus.cli.__main__:main"
 [project.optional-dependencies]
 # Kept empty: the engine is always installed, and old pins of argus-probe[local] must still resolve.
 local = []
+# `python -m argus.server`: uvicorn needs a WebSocket library to serve /agent/connect.
+server = ["websockets>=12"]
 dev = [
+    "websockets>=12",
     "pytest>=8.3,<10",
     "pytest-asyncio>=0.23",
     "pytest-mock>=3.12",
@@ -75,6 +77,7 @@ minversion = "8.0"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 filterwarnings = [
     "ignore::DeprecationWarning:fastapi.*",
     "ignore::DeprecationWarning:starlette.*",

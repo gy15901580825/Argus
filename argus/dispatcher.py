@@ -1,12 +1,11 @@
-"""Probe dispatch — placeholder until Plan 2.
+"""Probe dispatch placeholder.
 
-DO NOT import from orchestrator.web_ui_test or orchestrator.web_ui_*.
-The CI import-linter rule enforces this — see ../.importlinter.
+Must not import argus.cli or argus.server; .importlinter at the repo root enforces this.
 """
 
 
 class Dispatcher:
-    """Placeholder. Plan 2 implements probe execution."""
+    """Placeholder. Probes run through argus.runner.Runner."""
 
     def __init__(self) -> None:
         pass

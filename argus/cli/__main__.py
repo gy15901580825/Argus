@@ -13,7 +13,8 @@ from argus.cli.cmd_scan_skill import cmd_scan_skill
 
 
 @click.group()
-@click.version_option()
+# The dist is argus-probe; click would otherwise look up "argus", which is not installed.
+@click.version_option(package_name="argus-probe")
 def main():
     """Argus red-team CLI."""
 

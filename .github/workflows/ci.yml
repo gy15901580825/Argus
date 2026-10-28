@@ -50,6 +50,8 @@ jobs:
           python-version: "3.11"
 
       - name: Install into a fresh venv with the empty [local] extra
+        # An explicit bash shell runs with pipefail, so a failed pip install fails the step despite tee.
+        shell: bash
         run: |
           python -m venv "$RUNNER_TEMP/venv"
           "$RUNNER_TEMP/venv/bin/pip" install --upgrade pip

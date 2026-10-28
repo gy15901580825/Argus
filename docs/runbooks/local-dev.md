@@ -3,7 +3,7 @@
 ## The argus package (engine, CLI and orchestrator server)
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[dev]"        # dev includes the server extra's websockets
 argus-probe quickstart
 python -m pytest -q           # from the repo root or from tests/
 lint-imports

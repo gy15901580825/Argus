@@ -11,6 +11,7 @@ from click.testing import CliRunner
 
 from argus.cli.__main__ import main
 from argus.skillscan import urls
+from argus.skillscan.scan import tasks_phrase
 
 FAKE_KEY = "sk-ant-api03-RECOGNISABLE-FAKE-KEY-0123456789"
 NOTES = [
@@ -63,6 +64,7 @@ def _install(monkeypatch, scan_skill):
     mod.SandboxError = SandboxError
     mod.SkillSourceError = SkillSourceError
     mod.url_secrets = urls.url_secrets  # the real helper, shared with the engine
+    mod.tasks_phrase = tasks_phrase
     mod.list_samples = lambda: ["benign-markdown", "key-grab"]
     mod.PRICED_MODEL_PREFIXES = ("claude-sonnet-4", "claude-haiku-4-5")
     mod.is_priced_model = lambda m: m.startswith(mod.PRICED_MODEL_PREFIXES)

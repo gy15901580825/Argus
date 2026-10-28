@@ -26,6 +26,8 @@ pip install argus-probe
 
 The package includes the probe engine, so `--local`, `quickstart`, `list-probes` and `scan-skill` work after a plain install. The `[local]` extra still exists for older pins but adds nothing.
 
+The unrelated `argus` project on PyPI also installs a top-level `argus` package. Do not install it in the same environment as `argus-probe`; `pipx` keeps each tool in its own venv.
+
 From a clone of the repo: `pip install .`.
 
 The engine is importable as `argus`, for example `from argus.targets import build_target`. Code written against `orchestrator.redteam` (the `argus-orchestrator` package, 0.3.x) needs one change: replace `orchestrator.redteam` with `argus` in its imports.

@@ -10,6 +10,7 @@ import click
 
 from argus.cli import reports, run_json
 
+
 def run_local_and_render(
     spec: dict, probe_ids: list[str], per_run_cap: float | None, report_format: str,
     secret_values: Iterable[str] = (),
