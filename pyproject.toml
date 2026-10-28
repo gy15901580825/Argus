@@ -37,6 +37,8 @@ argus-probe = "argus.cli.__main__:main"
 local = []
 # `python -m argus.server`: uvicorn needs a WebSocket library to serve /agent/connect.
 server = ["websockets>=12"]
+# `argus-probe mcp-trap`: kept out of base deps because mcp 2.3 needs pydantic>=2.12.
+mcp-trap = ["mcp>=2.3,<3"]
 dev = [
     "websockets>=12",
     "pytest>=8.3,<10",
@@ -49,6 +51,7 @@ dev = [
     "anyio>=4.4",
     "aiosqlite>=0.20",
     "import-linter>=2.0,<3.0",
+    "mcp>=2.3,<3",
 ]
 
 [build-system]

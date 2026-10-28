@@ -22,6 +22,7 @@ source_modules =
     argus.judge
     argus.llm
     argus.local
+    argus.mcp_trap
     argus.persona_loader
     argus.persona_strategy
     argus.probe
