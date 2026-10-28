@@ -88,7 +88,7 @@ async def scan_mcp(cfg: ScanConfig, *, mask: Callable[[str], str], echo: Callabl
         if isinstance(cfg.target, HttpServer):
             server = await http_server_findings(cfg.target.url, cfg.target.headers, cfg.timeout_s, mask)
         else:
-            server = stdio_server_findings(listed, server_info)
+            server = stdio_server_findings(listed, server_info, mask)
         chosen, reasons = policy.select(listed, cfg.call_tools)
         if chosen:
             echo(f"Calling {len(chosen)} tool(s)")

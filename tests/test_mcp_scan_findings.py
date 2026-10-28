@@ -556,6 +556,22 @@ def test_stdio_server_checks_run_two_and_skip_http_only():
     assert k["verdict"] == "fail"
 
 
+def test_stdio_server_checks_mask_before_the_cut():
+    from argus.mcp_scan.models import RESULT_KEEP, ServerInfo
+    from argus.mcp_scan.server_checks import DESCRIPTION_KEEP, stdio_server_findings
+
+    secret = "qz7Kp" + "2Lm9Xw4Rt8Yv"
+    # The version ends 5 characters past the target_response cut, the tool name 5 past the description cut.
+    head = json.dumps({"interaction_count": 1, "server_info": {"name": "s", "version": ""}}, sort_keys=True)
+    head = head[:head.index('"version": "') + len('"version": "')]
+    info = ServerInfo("s", "v" * (RESULT_KEEP - 5 - len(head)) + secret)
+    tools = [tool("n" * (DESCRIPTION_KEEP - 5) + secret)]
+    fs = stdio_server_findings(tools, info, mask=lambda t: t.replace(secret, "***"))
+    shown = json.dumps(fs)
+    assert [secret[i:i + 5] for i in range(len(secret) - 4) if secret[i:i + 5] in shown] == []
+    assert "***" in shown
+
+
 async def test_http_server_checks_build_findings_like_the_runner(monkeypatch):
     from argus.mcp_scan import server_checks
     from argus.targets.mcp_server import MCPServerTarget
