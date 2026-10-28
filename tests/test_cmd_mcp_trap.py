@@ -64,7 +64,7 @@ def _warm(status, detail=""):
     return fake
 
 
-def _fake_run(outcomes=None, evidence=None, calls=None, reply="agent reply"):
+def _fake_run(outcomes=None, evidence=None, calls=None, reply="agent reply", reason=None):
     """run_scenarios stand-in: `outcomes` maps scenario -> round outcomes (default: all passed)."""
     outcomes = outcomes or {}
 
@@ -76,7 +76,7 @@ def _fake_run(outcomes=None, evidence=None, calls=None, reply="agent reply"):
         for probe in probes:
             kinds = outcomes.get(probe.scenario_kind, ["passed"] * rounds)
             rounds_out = [
-                RoundOutcome(i + 1, kind, f"{kind} reason", probe.prompts[0], reply,
+                RoundOutcome(i + 1, kind, reason or f"{kind} reason", probe.prompts[0], reply,
                              evidence or {"interaction_count": 1})
                 for i, kind in enumerate(kinds)
             ]
@@ -288,13 +288,29 @@ def test_passing_run_writes_report_and_prints_rounds_and_notes(monkeypatch, tmp_
     assert result.output.index("round 2/2") < result.output.index(SCOPE_NOTE)
 
 
-def test_all_inconclusive_exits_1_and_repeats_config(monkeypatch, tmp_path):
-    _wired(monkeypatch, outcomes={s: ["inconclusive"] * 3 for s in driver.SCENARIO_NAMES})
+def test_all_inconclusive_without_traffic_exits_1_and_repeats_config(monkeypatch, tmp_path):
+    _wired(monkeypatch, outcomes={s: ["inconclusive"] * 3 for s in driver.SCENARIO_NAMES},
+           evidence={"interaction_count": 0}, reason=driver.NO_TRAFFIC)
     result = _invoke("--target", SPEC_ARG)
     assert result.exit_code == 1, result.output
     assert (tmp_path / OUT_FILE["html"]).is_file()
     assert "No round reached a verdict: the agent does not appear to be wired to the trap." in result.output
     assert '"mcpServers"' in result.output
+
+
+@pytest.mark.parametrize("reason, says", [
+    (driver.NOT_LISTED, "No round reached a verdict: your agent talked to the trap but did not re-fetch tools "
+                        "after notifications/tools/list_changed."),
+    (driver.NO_PAYLOAD_CALL, "No round reached a verdict: your agent talked to the trap, but "
+                             "the agent made no tool call that serves this scenario's payload."),
+])
+def test_all_inconclusive_with_traffic_says_why_not_wiring(monkeypatch, tmp_path, reason, says):
+    _wired(monkeypatch, outcomes={s: ["inconclusive"] * 3 for s in driver.SCENARIO_NAMES},
+           evidence={"interaction_count": 3}, reason=reason)
+    result = _invoke("--target", SPEC_ARG)
+    assert result.exit_code == 1, result.output
+    assert says in result.output
+    assert "does not appear to be wired" not in result.output and "mcpServers" not in result.output
 
 
 def test_rounds_that_saw_only_refused_requests_name_the_host_check(monkeypatch, tmp_path):

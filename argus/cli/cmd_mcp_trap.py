@@ -250,7 +250,14 @@ def cmd_mcp_trap(target: str, rounds: int, scenarios: list[str], out_file: str |
     if refused:
         say(_REFUSED.format(n=refused), err=True)
     if trap_run.all_inconclusive:
-        if refused:
+        # The not-wired message and config entry fit only a run where no round reached the trap.
+        talked = trap_run.talked_reason
+        if talked == driver.NOT_LISTED:
+            say("No round reached a verdict: your agent talked to the trap but did not re-fetch tools after "
+                "notifications/tools/list_changed.", err=True)
+        elif talked:
+            say(f"No round reached a verdict: your agent talked to the trap, but {talked}.", err=True)
+        elif refused:
             say("No round reached a verdict.", err=True)
         else:
             say("No round reached a verdict: the agent does not appear to be wired to the trap.\n\n"

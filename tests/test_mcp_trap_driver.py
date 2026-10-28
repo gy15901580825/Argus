@@ -566,6 +566,21 @@ async def test_latency_is_the_mean_of_the_rounds_chat_calls():
     assert driver.scenario_finding(probe, rounds, 3)["target_latency_ms"] == 20.0
 
 
+def test_talked_reason_is_the_commonest_reason_of_rounds_with_traffic():
+    def finding(scenario, *rounds):
+        outcomes = [driver.RoundOutcome(n, "inconclusive", reason, "p", "r", {"interaction_count": count})
+                    for n, (reason, count) in enumerate(rounds, 1)]
+        return driver.scenario_finding(load_trap_probes([scenario])[0], outcomes, 7)
+
+    quiet = finding("tool_poisoning", (driver.NO_TRAFFIC, 0), (driver.NO_TRAFFIC, 0), (driver.NO_TRAFFIC, 0))
+    run = driver.TrapRun([quiet], [], 7, ["tool_poisoning"])
+    assert run.talked_reason == ""
+    run = driver.TrapRun([quiet, finding("rug_pull", (driver.NOT_LISTED, 2), (driver.NO_PAYLOAD_CALL, 1)),
+                          finding("shadowing", (driver.NOT_LISTED, 4), (driver.NO_TRAFFIC, 0))],
+                         [], 7, ["tool_poisoning", "rug_pull", "shadowing"])
+    assert run.talked_reason == driver.NOT_LISTED
+
+
 def test_judge_round_rejects_an_empty_round_before_assertions():
     probe = load_trap_probes(["tool_poisoning"])[0]
     state = TrapState()

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -82,6 +83,13 @@ class TrapRun:
         """Requests refused in rounds where the trap got nothing else."""
         return sum(r["evidence"].get("refused_requests", 0) for r in self._round_evidence()
                    if r["evidence"].get("interaction_count", 0) == 0)
+
+    @property
+    def talked_reason(self) -> str:
+        """Commonest reason among inconclusive rounds where the agent did reach the trap; "" if none did."""
+        reasons = Counter(r["reason"] for r in self._round_evidence()
+                          if r["outcome"] == "inconclusive" and r["evidence"].get("interaction_count", 0) > 0)
+        return reasons.most_common(1)[0][0] if reasons else ""
 
 
 def load_trap_probes(scenarios: Sequence[str]) -> list[Probe]:
