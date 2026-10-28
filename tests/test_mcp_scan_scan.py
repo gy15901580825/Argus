@@ -118,6 +118,16 @@ async def test_notes_end_with_snyk_line():
     assert result.unjudged == 0 and [f["verdict"] for f in by(result, checks.INJECTION)] == ["pass"]
 
 
+async def test_judge_off_reason_ending_in_a_period_reads_cleanly():
+    # llm.credential_error ends its message with a period.
+    cfg = ScanConfig(target=StdioServer(argv=stdio_argv("basic"), env=host_env([])), transport="stdio-host",
+                     timeout_s=10.0, judge_off_reason="ANTHROPIC_API_KEY is not set.",
+                     call_tools=frozenset({"echo"}), args=AIMED_ARGS)
+    result, _ = await scan(cfg)
+    assert ("Judge skipped: ANTHROPIC_API_KEY is not set; 1 text(s) that looked aimed at a model were not judged:"
+            in result.notes)
+
+
 async def test_cost_cap_leaves_text_unjudged_and_counts_it():
     from argus import llm
 

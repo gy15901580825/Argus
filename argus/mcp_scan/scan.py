@@ -107,7 +107,8 @@ async def scan_mcp(cfg: ScanConfig, *, mask: Callable[[str], str], echo: Callabl
         f"not judged: {o.candidate.probe_id} {show_text(o.candidate.tool)}: {show_text(o.candidate.text)}"
         for o in outcomes if o.status == "off"))
     if off:
-        reason = cfg.judge_off_reason or "no judge is configured"
+        # The reason is often a full sentence; drop its period so the note does not read ".;".
+        reason = cfg.judge_off_reason.rstrip(".") or "no judge is configured"
         notes.append(f"Judge skipped: {reason}; {len(off)} text(s) that looked aimed at a model were not judged:")
         notes += off
     if not chosen:
