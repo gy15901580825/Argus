@@ -221,6 +221,18 @@ def test_unbindable_address_is_reported_cleanly(monkeypatch):
     assert "Traceback" not in result.output
 
 
+def test_terminal_masks_what_the_reports_mask(monkeypatch):
+    # A literal secret-named value and a ${VAR} value, both echoed back in a chat error.
+    monkeypatch.setenv("MY_KEY", SECRET)
+    literal = "lit-key-Q9Z8Y7X6"
+    monkeypatch.setattr(driver, "warm_up", _warm("chat_error", f"401 for {literal} and {SECRET}"))
+    spec = {**SPEC, "api_key": literal, "model": "${MY_KEY}"}
+    result = _invoke("--target", json.dumps(spec))
+    assert result.exit_code == 1, result.output
+    assert "401 for *** and ***" in result.output
+    assert literal not in result.output and SECRET not in result.output
+
+
 # --- warm-up ---
 
 def test_not_wired_warm_up_prints_config_and_exits_2(monkeypatch, tmp_path):
@@ -347,8 +359,20 @@ def test_runs_without_any_judge_key(monkeypatch):
     assert result.exit_code == 0, result.output
 
 
-def test_ctrl_c_stops_the_rounds_and_frees_the_port(monkeypatch, tmp_path, _isolated):
+@pytest.mark.parametrize("signum, code, message", [
+    (signal.SIGINT, 130, "Interrupted"),   # Ctrl-C
+    (signal.SIGTERM, 143, "Terminated"),   # a CI cancel
+])
+def test_stop_signal_stops_the_rounds_and_frees_the_port(monkeypatch, request, tmp_path, _isolated,
+                                                        signum, code, message):
     rounds_started, stopped_after = [], []
+    if signum == signal.SIGTERM:
+        # A SIGTERM that escapes the takeover must fail this test, not kill the test process.
+        def _escaped(*_):
+            raise RuntimeError("SIGTERM reached the previous handler")
+        previous = signal.signal(signal.SIGTERM, _escaped)
+        request.addfinalizer(lambda: signal.signal(signal.SIGTERM, previous))
+    handlers_before = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
 
     async def interrupted(trap, chat, probes, rounds, echo=lambda s: None):
         # An agent request still in flight makes uvicorn's own Ctrl-C path wait out its graceful shutdown.
@@ -362,7 +386,7 @@ def test_ctrl_c_stops_the_rounds_and_frees_the_port(monkeypatch, tmp_path, _isol
                 rounds_started.append(n)
                 echo(f"  round {n}")
                 if n == 1:
-                    os.kill(os.getpid(), signal.SIGINT)
+                    os.kill(os.getpid(), signum)
                     sent = time.monotonic()
                 try:
                     await asyncio.sleep(20)
@@ -371,31 +395,40 @@ def test_ctrl_c_stops_the_rounds_and_frees_the_port(monkeypatch, tmp_path, _isol
                     raise
         finally:
             writer.close()
-        raise AssertionError("the round loop kept going after Ctrl-C")
+        raise AssertionError("the round loop kept going after the signal")
 
     monkeypatch.setattr(driver, "warm_up", _warm("wired"))
     monkeypatch.setattr(driver, "run_scenarios", interrupted)
     started = time.monotonic()
     result = _invoke("--target", SPEC_ARG)
     elapsed = time.monotonic() - started
-    assert result.exit_code == 130, result.output
+    assert result.exit_code == code, result.output
     assert rounds_started == [1]
     # The round loop stops at once, not after the trap's shutdown grace period.
     assert stopped_after and stopped_after[0] < 1.0
     assert elapsed < 10
-    assert "Interrupted" in result.output
+    assert f"{message}: the run was stopped before it finished" in result.output
     assert "Traceback" not in result.output
     assert list(tmp_path.iterdir()) == []
-    assert signal.getsignal(signal.SIGINT) is signal.default_int_handler
+    assert {sig: signal.getsignal(sig) for sig in handlers_before} == handlers_before
     # The trap's listener is gone: the same port binds again at once.
     monkeypatch.undo()
     sock = wiring.bind_trap_socket(TrapAddress(port=_isolated[0]))
     sock.close()
 
 
-def test_help_does_not_import_the_sdk():
+def test_help_and_print_config_do_not_import_the_sdk():
     code = "import sys; from argus.cli.__main__ import main; assert 'mcp' not in sys.modules"
     subprocess.run([sys.executable, "-c", code], check=True)
+    # --print-config imports the driver, its trap state and scenarios; none may pull in the SDK.
+    code = ("import sys; from argus.cli.__main__ import main; "
+            f"main(['mcp-trap', '--print-config', '--target', {SPEC_ARG!r}], standalone_mode=False); "
+            "assert 'argus.mcp_trap.driver' in sys.modules; "
+            "bad = sorted(m for m in sys.modules if m == 'mcp' or m.startswith('mcp.')); "
+            "assert not bad, bad[:3]")
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    assert '"mcpServers"' in out.stdout
     result = CliRunner().invoke(main, ["mcp-trap", "--help"])
     assert result.exit_code == 0
     assert "--print-config" in result.output

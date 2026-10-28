@@ -8,6 +8,7 @@ import re
 import signal
 import sys
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -24,7 +25,14 @@ _EXTENSIONS = {"html": "html", "sarif": "sarif", "junit": "xml", "json": "json"}
 _SDK_HINT = "mcp-trap needs the MCP SDK 2.3 or newer: pip install 'argus-probe[mcp-trap]'"
 # Agent-chosen text (tool names, chat errors) must not be able to drive the user's terminal.
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
-EXIT_INTERRUPTED = 130
+# A CI cancel sends SIGTERM; Ctrl-C sends SIGINT. Both stop the run the same way.
+_STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM)
+_STOP_MESSAGES = {signal.SIGINT: "Interrupted", signal.SIGTERM: "Terminated"}
+
+
+@dataclass(frozen=True)
+class _Stopped:
+    signum: int
 
 
 def _parse_scenarios(ctx: click.Context, param: click.Parameter, value: str) -> list[str]:
@@ -57,8 +65,8 @@ def _sdk_problem() -> str | None:
 
 
 @contextlib.contextmanager
-def _cancel_on_sigint(task: asyncio.Task):
-    # uvicorn's SIGINT handler stops the trap first and re-raises only after its shutdown grace period,
+def _cancel_on_stop_signals(task: asyncio.Task):
+    # uvicorn's handlers stop the trap first and re-raise only after its shutdown grace period,
     # so rounds would run on against a dead trap; cancel them at once instead.
     loop = asyncio.get_running_loop()
     hits: list[int] = []
@@ -67,13 +75,14 @@ def _cancel_on_sigint(task: asyncio.Task):
         hits.append(signum)
         loop.call_soon_threadsafe(task.cancel)
 
-    previous = signal.signal(signal.SIGINT, handler)
+    previous = {sig: signal.signal(sig, handler) for sig in _STOP_SIGNALS}
     try:
         yield hits
     finally:
-        # If the server already exited, it restored the original handler; leave that in place.
-        if signal.getsignal(signal.SIGINT) is handler:
-            signal.signal(signal.SIGINT, previous)
+        for sig, old in previous.items():
+            # If the server already exited, it restored the original handler; leave that in place.
+            if signal.getsignal(sig) is handler:
+                signal.signal(sig, old)
 
 
 async def _drive(trap, chat, probes, rounds, say):
@@ -86,20 +95,20 @@ async def _drive(trap, chat, probes, rounds, say):
 
 
 async def _session(sock, address, chat, probes, rounds, say):
-    """Serve the trap on `sock` while driving the agent. Returns a Warmup, a TrapRun, or None on Ctrl-C."""
+    """Serve the trap on `sock` while driving the agent. Returns a Warmup, a TrapRun, or _Stopped."""
     from argus.mcp_trap.trap.server import TrapServer
     from argus.mcp_trap.trap.state import TrapState
 
     trap = TrapServer(TrapState(), allowed_hosts=address.allowed_hosts)
     async with trap.serving(sock):
         work = asyncio.create_task(_drive(trap, chat, probes, rounds, say))
-        with _cancel_on_sigint(work) as interrupted:
+        with _cancel_on_stop_signals(work) as stopped:
             try:
                 return await work
             except asyncio.CancelledError:
-                if not interrupted:
+                if not stopped:
                     raise
-                return None
+                return _Stopped(stopped[0])
 
 
 @click.command("mcp-trap")
@@ -150,13 +159,11 @@ def cmd_mcp_trap(target: str, rounds: int, scenarios: list[str], out_file: str |
         click.echo(problem, err=True)
         sys.exit(2)
 
-    secrets = sorted(set(secret_values), key=len, reverse=True)
+    # The same values, masked the same way, as in every report format.
+    secrets = run_json.run_secrets(spec, secret_values)
 
     def say(text: str, err: bool = False) -> None:
-        text = _CONTROL_RE.sub("", text)
-        for s in secrets:
-            text = text.replace(s, run_json.MASK)
-        click.echo(text, err=err)
+        click.echo(run_json.mask_text(_CONTROL_RE.sub("", text), secrets), err=err)
 
     import argus.targets as targets
 
@@ -180,16 +187,17 @@ def cmd_mcp_trap(target: str, rounds: int, scenarios: list[str], out_file: str |
     try:
         outcome = asyncio.run(_session(sock, address, chat, probes, rounds, say))
     except KeyboardInterrupt:
-        outcome = None
+        outcome = _Stopped(signal.SIGINT)
     except Exception as e:  # no traceback for the operator
         say(f"Error: {e}", err=True)
         sys.exit(1)
     finally:
         sock.close()
 
-    if outcome is None:
-        say("Interrupted: the run was stopped before it finished; no report was written.", err=True)
-        sys.exit(EXIT_INTERRUPTED)
+    if isinstance(outcome, _Stopped):
+        say(f"{_STOP_MESSAGES[outcome.signum]}: the run was stopped before it finished; no report was written.",
+            err=True)
+        sys.exit(128 + outcome.signum)
     if isinstance(outcome, driver.Warmup):
         if outcome.status == "chat_error":
             say(f"Error: could not reach the agent's chat API: {outcome.detail}", err=True)

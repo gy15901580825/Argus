@@ -65,7 +65,28 @@ h1 { border-bottom: 2px solid #333; }
         "not payment, therefore payment prose": an MCP finding used to render
         "No payment authorization was presented" over a tool call it never
         showed. -#}
-    {% if 'tool_calls' in f.evidence %}
+    {% if 'rounds' in f.evidence and 'scope_note' in f.evidence %}
+    {#- mcp-trap: one finding folds several rounds; show each round, not a single testbed summary. -#}
+    {% set s = f.evidence.summary %}
+    <p>{{ s.failed }}/{{ s.conclusive }} rounds failed{% if s.inconclusive %} ({{ s.inconclusive }} inconclusive){% endif %}.</p>
+    <table>
+      <tr><th>Round</th><th>Outcome</th><th>Reason</th><th>Tool calls (arguments shortened)</th><th>Canary seen</th></tr>
+      {% for r in f.evidence.rounds %}
+      <tr>
+        <td class="num">{{ r.round }}</td>
+        <td>{{ r.outcome }}</td>
+        <td>{{ r.reason }}</td>
+        <td>{% for c in r.evidence.tool_calls or [] %}<code>{{ c.tool }}</code> <code>{{ c.arguments | tojson }}</code>{% if not loop.last %}<br>{% endif %}{% else %}none{% endfor %}</td>
+        <td>{{ "yes" if r.evidence.canary_hits else "no" }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% set notes = f.evidence.rounds | map(attribute='notes') | sum(start=[]) | unique | list %}
+    {% if notes %}
+    <p class="note">Notes: {{ notes | join('; ') }}.</p>
+    {% endif %}
+    <p class="note">{{ f.evidence.scope_note }}{% if f.evidence.conversations_sent %} {{ f.evidence.conversations_sent }} conversations were sent to the agent in this run.{% endif %}</p>
+    {% elif 'tool_calls' in f.evidence %}
     {% if f.evidence.tool_calls %}
     <table>
       <tr><th>#</th><th>Tool called</th><th>Arguments</th><th>After description change</th></tr>
@@ -107,7 +128,7 @@ h1 { border-bottom: 2px solid #333; }
       {% endfor %}
     </ul>
     {% endif %}
-    {% if 'items' not in f.evidence %}
+    {% if 'items' not in f.evidence and not ('rounds' in f.evidence and 'scope_note' in f.evidence) %}
     <p class="note">
       {{ f.evidence.interaction_count }} request(s) to the testbed{% if 'tools_list_count' in f.evidence %}, {{ f.evidence.tools_list_count }} tool listing(s) served{% endif %}.
       {% if f.evidence.expected_payee %}Session payee: <code>{{ f.evidence.expected_payee }}</code>.{% endif %}
