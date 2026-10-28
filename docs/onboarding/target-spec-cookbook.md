@@ -70,6 +70,8 @@ Below are copy-paste templates for each supported agent shape, plus the gotchas 
 
 How the body is built: `request_body_template` is a Jinja2 template. `{{prompt|tojson}}` substitutes the adversarial prompt with proper JSON escaping, so embedded quotes / backslashes / newlines never break the JSON envelope.
 
+The template can also use `{{conversation_id}}`. It is a fresh id for each conversation and stays the same across the turns of one conversation. Use it for agents that keep chat state per session id. `mcp-trap` sends every round as a new conversation.
+
 How the response is parsed: `response_jsonpath` is a [JSONPath](https://goessner.net/articles/JsonPath/) expression that extracts the agent's reply text from the JSON response.
 
 **Notes:**
@@ -389,6 +391,18 @@ Set `ARGUS_API_URL` as a repository variable and `ARGUS_API_TOKEN` as a secret. 
 Keep both the `pull_request` and `push` triggers and pass `--compare-to` only on pull requests. A scheduled or push run on `main` would compare `main` with itself, and without a completed run on `main` every failure counts as new.
 
 Two limits: a severity increase on a probe that was already failing does not count as new. Branch detection reads GitHub Actions variables or git, so on other CI systems with a detached HEAD no branch is recorded and every failure counts as new.
+
+---
+
+## mcp-trap
+
+`argus-probe mcp-trap` takes a plain chat spec and needs no special kind. Use `openai_compat`, `custom_http` or `grpc`, whichever reaches your agent's chat endpoint.
+
+```bash
+argus-probe mcp-trap --target ./target.json --print-config
+```
+
+The agent must be able to reach the trap as an MCP server. Add the printed entry to the agent's MCP config, attach nothing else, and restart the agent if it reads config only at startup. For `custom_http`, put `{{conversation_id}}` in the request template if your agent keeps state per session. The full walkthrough, the exit codes and the other-host setup are in [cli.md](../cli.md#test-your-agent-against-a-hostile-mcp-server).
 
 ---
 

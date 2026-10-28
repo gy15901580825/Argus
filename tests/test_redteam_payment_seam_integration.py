@@ -163,4 +163,4 @@ async def test_two_probes_against_the_real_testbed_get_separate_worlds(tmp_path,
     assert second.evidence["authorizations"] == []
     assert second.evidence["quoted_payee"] != ATTACKER
     assert second.verdict == VERDICT_ERROR
-    assert "never contacted the payment testbed" in second.reasoning
+    assert "never reached its testbed" in second.reasoning

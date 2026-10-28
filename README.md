@@ -1,7 +1,7 @@
 # Argus
 
 **Black-box red-team testing for AI agents.** Point Argus at any HTTP, gRPC,
-MCP, payment-agent, or browser-using agent endpoint, run 214 adversarial
+MCP, payment-agent, or browser-using agent endpoint, run 219 adversarial
 probes (OWASP LLM Top 10, MITRE ATLAS, NIST AI RMF, garak wrappers), and get
 LLM-judged findings as SARIF 2.1.0 / JUnit XML / HTML — upload straight to
 GitHub Code Scanning.
@@ -31,12 +31,13 @@ AI RMF** controls without translation.
 
 What Argus does:
 
-- **214 probes** in the bundled library — 15 OWASP LLM Top 10 hand-authored,
+- **219 probes** in the bundled library — 15 OWASP LLM Top 10 hand-authored,
   5 from public LLM system cards (best-of-N, crescendo, confused deputy,
   many-shot jailbreak, sleeper agent), 31 browser-agent specific, 26
-  payment-abuse probes (x402 wallet flows, against `payment_agent`), 16
-  MCP-abuse probes (12 poisoned tool servers, against `mcp_agent`; 4 exposure
-  checks of an MCP server itself, against `mcp_server`), 16
+  payment-abuse probes (x402 wallet flows, against `payment_agent`), 21
+  MCP-abuse probes (12 poisoned tool servers, against `mcp_agent`; 5
+  hostile-server scenarios for `argus-probe mcp-trap`; 4 exposure checks of an
+  MCP server itself, against `mcp_server`), 16
   Semia-mapped agent-skill detectors (missing human gate, encoded payload,
   install-time exec, shadow credentials), 4 agent-autonomy probes (AGENTS.md
   install, credential grab, guardrail log noise with its control),
@@ -55,6 +56,11 @@ What Argus does:
   calls one), `vllm_server` (reads a vLLM server's `/version` and matches it
   against vLLM advisories), and `testbed_agent` (generic form of the two
   testbed adapters; `environment` picks the testbed).
+- **`argus-probe mcp-trap`**: your agent connects to a hostile MCP server that
+  Argus runs on your machine, and the report says what it did with five
+  attacks (tool poisoning, rug pull, shadowing, confused deputy, credential
+  lure). No LLM judge and no Argus-side model spend. See
+  [`docs/cli.md`](docs/cli.md#test-your-agent-against-a-hostile-mcp-server).
 - **Scan suites** — pass `suite` instead of enumerating `probe_ids` on
   `POST /api/v1/redteam/runs`: `owasp-llm-top10`, `mitre-atlas`,
   `nist-ai-rmf`, `eu-ai-act`, `payments`, `mcp`.
@@ -248,7 +254,7 @@ argus-probe scan-skill --sample key-grab
 │  argus  (engine; argus.server is the FastAPI app for server mode)       │
 │    probe loader  ──▶  target adapter  ──▶  judge harness                │
 │        │                  │                      │                      │
-│        └──── 214 YAML     │                      └──▶ fast model, then  │
+│        └──── 219 YAML     │                      └──▶ fast model, then  │
 │              probes       │                           strong model on   │
 │                           │                           high/critical,    │
 │                  ┌────────┴─────────┐                 confidence ≥ 0.7  │

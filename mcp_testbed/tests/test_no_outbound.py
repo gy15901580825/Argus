@@ -13,3 +13,15 @@ def test_testbed_package_imports_no_outbound_client():
     for f in (pathlib.Path(__file__).resolve().parent.parent / "testbed").rglob("*.py"):
         hits = BANNED.findall(f.read_text())
         assert not hits, f"{f.name} imports an outbound client: {hits}"
+
+
+TRAP_BANNED = re.compile(
+    r"^\s*(?:import|from)\s+(httpx2?|requests|aiohttp|urllib|socket|smtplib|ftplib|http\.client|websockets|mcp\.client)\b"
+    r"|^\s*from\s+mcp\s+import\s+.*\bClient\b", re.M)
+
+def test_mcp_trap_server_package_imports_no_outbound_client():
+    trap = pathlib.Path(__file__).resolve().parents[2] / "argus" / "mcp_trap" / "trap"
+    assert trap.is_dir(), f"{trap} is missing; this guard cannot check what it cannot read"
+    for f in trap.rglob("*.py"):
+        hits = TRAP_BANNED.findall(f.read_text())
+        assert not hits, f"{f.name} imports an outbound client: {hits}"

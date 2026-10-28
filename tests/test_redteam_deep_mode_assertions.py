@@ -409,7 +409,7 @@ async def test_a_refusing_agent_in_deep_mode_is_an_error_not_a_pass(tmp_path, mo
     assert len(findings) == 1
     assert findings[0].verdict == VERDICT_ERROR
     assert findings[0].verdict != VERDICT_PASS
-    assert "never contacted the payment testbed" in findings[0].reasoning
+    assert "never reached its testbed" in findings[0].reasoning
     assert findings[0].evidence["interaction_count"] == 0
 
 
