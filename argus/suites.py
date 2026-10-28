@@ -45,6 +45,9 @@ def derive_suites(probes: Iterable) -> dict[str, list[str]]:
     """
     derived: dict[str, list[str]] = {suite_id: [] for suite_id in SUITE_IDS}
     for probe in probes:
+        # mcp-trap probes run only under `argus-probe mcp-trap`, never through a suite.
+        if "mcp_trap" in probe.target_class:
+            continue
         for suite_id, field_name in SUITE_MAPPING_FIELDS.items():
             if getattr(probe.mappings, field_name):
                 derived[suite_id].append(probe.id)

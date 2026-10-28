@@ -173,3 +173,14 @@ def test_suite_resolves_to_that_suites_probe_ids(monkeypatch):
 
     expected = derive_suites(load_all_probes(PROBES_DIR))["eu-ai-act"]
     assert captured["probe_ids"] == expected
+
+
+def test_mcp_trap_probes_join_no_suite():
+    # They run only under `argus-probe mcp-trap`, never through a suite run.
+    trap = _probe("trap_only", atlas=("AML.T0010",), owasp_llm=("LLM03",))
+    trap = Probe(**{**trap.__dict__, "target_class": ("mcp_trap",), "attack_class": ("mcp-abuse",)})
+    assert derive_suites([trap]) == {}
+
+    suites = derive_suites(load_all_probes(PROBES_DIR))
+    assert not [pid for ids in suites.values() for pid in ids if pid.startswith("mcp_trap_")]
+    assert len(suites["mcp"]) == 16
