@@ -88,23 +88,23 @@ def _cancel_on_stop_signals(task: asyncio.Task):
                 signal.signal(sig, old)
 
 
-async def _drive(trap, chat, probes, rounds, say):
+async def _drive(trap, chat, probes, rounds, say, mask):
     from argus.mcp_trap import driver
 
-    warmup = await driver.warm_up(trap, chat)
+    warmup = await driver.warm_up(trap, chat, mask=mask)
     if warmup.status != "wired":
         return warmup
-    return await driver.run_scenarios(trap, chat, probes, rounds, echo=say)
+    return await driver.run_scenarios(trap, chat, probes, rounds, echo=say, mask=mask)
 
 
-async def _session(sock, address, chat, probes, rounds, say):
+async def _session(sock, address, chat, probes, rounds, say, mask):
     """Serve the trap on `sock` while driving the agent. Returns a Warmup, a TrapRun, or _Stopped."""
     from argus.mcp_trap.trap.server import TrapServer
     from argus.mcp_trap.trap.state import TrapState
 
     trap = TrapServer(TrapState(), allowed_hosts=address.allowed_hosts)
     async with trap.serving(sock):
-        work = asyncio.create_task(_drive(trap, chat, probes, rounds, say))
+        work = asyncio.create_task(_drive(trap, chat, probes, rounds, say, mask))
         with _cancel_on_stop_signals(work) as stopped:
             try:
                 return await work
@@ -165,8 +165,11 @@ def cmd_mcp_trap(target: str, rounds: int, scenarios: list[str], out_file: str |
     # The same values, masked the same way, as in every report format.
     secrets = run_json.run_secrets(spec, secret_values)
 
+    def mask(text: str) -> str:
+        return run_json.mask_text(text, secrets)
+
     def say(text: str, err: bool = False) -> None:
-        click.echo(run_json.mask_text(_CONTROL_RE.sub("", text), secrets), err=err)
+        click.echo(mask(_CONTROL_RE.sub("", text)), err=err)
 
     import argus.targets as targets
 
@@ -188,7 +191,7 @@ def cmd_mcp_trap(target: str, rounds: int, scenarios: list[str], out_file: str |
     say(f"Trap listening at {address.mcp_url}; sending the warm-up task to your agent ...")
     started_at = datetime.now(timezone.utc)
     try:
-        outcome = asyncio.run(_session(sock, address, chat, probes, rounds, say))
+        outcome = asyncio.run(_session(sock, address, chat, probes, rounds, say, mask))
     except KeyboardInterrupt:
         outcome = _Stopped(signal.SIGINT)
     except Exception as e:  # no traceback for the operator

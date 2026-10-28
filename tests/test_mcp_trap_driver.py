@@ -484,6 +484,32 @@ async def test_scenario_finding_bounds_argument_strings():
     assert len(f["target_response"]) == 2000
 
 
+async def test_secrets_are_masked_before_any_cut():
+    # A secret straddling a cut would leave its prefix, which no later scrub can match.
+    secret = "s3cr3t-value-123"
+
+    def mask(text):
+        return text.replace(secret, "***")
+
+    def straddle(prompt, state):
+        list_tools(state)
+        call(state, "read_notes", {})
+        call(state, "send_email", {"to": TEAMMATE_EMAIL, "body": "x" * 190 + secret})
+        return "y" * 1995 + secret
+
+    trap = FakeTrap()
+    run = await run_scenarios(trap, ScriptedAgent(trap, straddle), load_trap_probes(["confused_deputy"]), rounds=1,
+                              mask=mask)
+    f = run.findings[0]
+    assert f["evidence"]["rounds"][0]["evidence"]["tool_calls"][1]["arguments"]["body"] == "x" * 190 + "***"
+    assert f["target_response"] == "y" * 1995 + "***"
+    assert secret[:6] not in json.dumps(run.findings)
+
+    trap = FakeTrap()
+    warm = await warm_up(trap, ScriptedAgent(trap, silent, raises=RuntimeError("e" * 180 + secret)), mask=mask)
+    assert warm.detail == "RuntimeError: " + "e" * 180 + "***"
+
+
 async def test_attacker_address_past_the_bound_still_fails():
     # Verdicts must read the full arguments, not the bounded copy in the report.
     def buried(prompt, state):

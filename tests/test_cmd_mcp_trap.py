@@ -59,7 +59,7 @@ def _invoke(*args):
 
 
 def _warm(status, detail=""):
-    async def fake(trap, chat):
+    async def fake(trap, chat, mask=None):
         return Warmup(status, detail)
     return fake
 
@@ -68,7 +68,7 @@ def _fake_run(outcomes=None, evidence=None, calls=None, reply="agent reply"):
     """run_scenarios stand-in: `outcomes` maps scenario -> round outcomes (default: all passed)."""
     outcomes = outcomes or {}
 
-    async def fake(trap, chat, probes, rounds, echo=lambda s: None):
+    async def fake(trap, chat, probes, rounds, echo=lambda s: None, mask=lambda s: s):
         if calls is not None:
             calls.append([p.scenario_kind for p in probes])
         conversations = 1 + len(probes) * rounds
@@ -82,7 +82,7 @@ def _fake_run(outcomes=None, evidence=None, calls=None, reply="agent reply"):
             ]
             for r in rounds_out:
                 echo(f"  {probe.scenario_kind:<16} round {r.round}/{rounds}: {r.outcome} ({r.reason})")
-            finding = driver.scenario_finding(probe, rounds_out, conversations)
+            finding = driver.scenario_finding(probe, rounds_out, conversations, mask=mask)
             findings.append(finding)
             if finding["verdict"] == "error":
                 inconclusive.append(probe.scenario_kind)
@@ -333,10 +333,13 @@ def test_failures_without_fail_on_exit_0(monkeypatch):
 @pytest.mark.parametrize("fmt", ["html", "sarif", "junit", "json"])
 def test_spec_secret_masked_in_every_format(monkeypatch, tmp_path, fmt, field):
     monkeypatch.setenv("MY_KEY", SECRET)
+    # Two more copies straddle the 200-char argument bound and the 2000-char reply bound.
     evidence = {"interaction_count": 1,
-                "tool_calls": [{"tool": "send_email", "arguments": {"body": f"key is {SECRET}"}}]}
+                "tool_calls": [{"tool": "send_email", "arguments": {"body": f"key is {SECRET}",
+                                                                    "cc": "x" * 190 + SECRET}}]}
+    head = f"I sent {SECRET}. "
     _wired(monkeypatch, outcomes={"tool_poisoning": ["failed"] * 3}, evidence=evidence,
-           reply=f"I sent {SECRET}")
+           reply=head + "y" * (1994 - len(head)) + SECRET)
     spec = {**SPEC, field: "${MY_KEY}"}
     result = _invoke("--target", json.dumps(spec), "--scenarios", "tool_poisoning", "--format", fmt)
     assert result.exit_code == 0, result.output
@@ -345,7 +348,7 @@ def test_spec_secret_masked_in_every_format(monkeypatch, tmp_path, fmt, field):
     assert "I sent ***" in text
     if fmt == "json":
         assert "key is ***" in text
-    assert SECRET not in text
+    assert SECRET[:6] not in text
     assert SECRET not in result.output
 
 
@@ -394,7 +397,7 @@ def test_stop_signal_stops_the_rounds_and_frees_the_port(monkeypatch, request, t
         request.addfinalizer(lambda: signal.signal(signal.SIGTERM, previous))
     handlers_before = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
 
-    async def interrupted(trap, chat, probes, rounds, echo=lambda s: None):
+    async def interrupted(trap, chat, probes, rounds, echo=lambda s: None, mask=None):
         # An agent request still in flight makes uvicorn's own Ctrl-C path wait out its graceful shutdown.
         _, writer = await asyncio.open_connection("127.0.0.1", _isolated[0])
         writer.write(b"POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n"
