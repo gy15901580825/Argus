@@ -1,6 +1,7 @@
 """Which listed tools scan-mcp calls: read-only by default, others only by opt-in, env-like ones only by name."""
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from argus.assertions import SENSITIVE_TOOL_PATTERNS
@@ -14,7 +15,14 @@ REASON_ENV_LIKE = "listed, not called: looks like it returns environment or secr
 REASON_CAP = "not tested: call cap reached"
 
 
+# The shared pattern misses `read_env`: `_` is a word character, so `\benv` never matches inside a snake_case name.
+_NAME_SPLIT = re.compile(r"[\s_.\-]+|(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+_ENV_TOKENS = frozenset({"env", "environ", "environment", "envvars", "dotenv"})
+
+
 def env_like(tool: ToolInfo) -> bool:
+    if any(token.lower() in _ENV_TOKENS for token in _NAME_SPLIT.split(tool.name)):
+        return True
     return SENSITIVE_TOOL_PATTERNS["env"].search(f"{tool.name} {tool.description}") is not None
 
 
