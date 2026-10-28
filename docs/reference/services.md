@@ -14,6 +14,8 @@ Orchestrator red-team run (target kind browser_use)
   → Orchestrator judges the result and records the finding
 ```
 
+The `redteam_browser_probe` message carries two text fields. `prompt` is the user's instruction and is what the client agent sends to the browser agent; `payload` is the hostile scenario planted in the trap page and must never be treated as the instruction. A probe without a `scenario` block sends its prompt in both fields.
+
 ## API Endpoints
 
 ### Orchestrator (`python -m argus.server`, port 8080)
