@@ -39,6 +39,8 @@ class StdioProcess:
         if self._cut_mid_line:
             # The cut may fall inside a secret or a token's prefix, which no mask or redaction then matches.
             tail = tail.partition(b"\n")[2]
+            if not tail:
+                return f"(the last line was over {STDERR_KEEP} bytes and is not shown)"
         return tail.decode("utf-8", "replace")
 
     def _keep_stderr(self, chunk: bytes) -> None:
