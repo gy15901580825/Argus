@@ -99,11 +99,11 @@ def build_findings(*, probes: Mapping[str, Probe], hits: list[Hit], outcomes: li
     return out
 
 
-def unjudged_count(findings: list[dict]) -> int:
+def unjudged_count(findings: list[dict], reasons: Sequence[str] = (CAP_REASON, ERROR_REASON)) -> int:
     """(probe, tool) pairs the judge left undecided (cost cap or unusable reply); each makes the run inconclusive.
 
     A judge that is off is not counted: the spec keeps that case out of the exit code."""
-    return sum(f["verdict"] == VERDICT_ERROR and f["reasoning"] in (CAP_REASON, ERROR_REASON) for f in findings)
+    return sum(f["verdict"] == VERDICT_ERROR and f["reasoning"] in reasons for f in findings)
 
 
 def all_selected_unexercised(calls: CallRun | None) -> bool:

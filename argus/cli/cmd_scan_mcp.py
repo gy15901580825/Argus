@@ -330,8 +330,17 @@ def cmd_scan_mcp(argv: tuple[str, ...], call_tools, tool_args: dict, headers: tu
             "why.", err=True)
         sys.exit(1)
     if result.unjudged:
+        from argus.mcp_scan.findings import unjudged_count
+        from argus.mcp_scan.judging import CAP_REASON, ERROR_REASON
+
         _count_fail_on(result.findings, fail_on)
-        say(f"{result.unjudged} probe result(s) were left unjudged (cost cap or an unusable judge reply), so the "
-            "scan is inconclusive; raise --per-run-cap to judge them.", err=True)
+        # Raising the cap does not help when the provider failed, so each cause gets its own hint.
+        if capped := unjudged_count(result.findings, (CAP_REASON,)):
+            say(f"{capped} probe result(s) were left unjudged by the cost cap, so the scan is inconclusive; raise "
+                "--per-run-cap to judge them.", err=True)
+        if failed := unjudged_count(result.findings, (ERROR_REASON,)):
+            say(f"{failed} probe result(s) were left unjudged because the judge's reply could not be used (a "
+                "provider error or a malformed reply), so the scan is inconclusive; check the judge provider and "
+                "its key, then run again.", err=True)
         sys.exit(1)
     _apply_fail_on(result.findings, fail_on)

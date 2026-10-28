@@ -15,7 +15,7 @@ from argus.cli.__main__ import main
 from argus.mcp_scan import checks, scan
 from argus.mcp_scan.client import ConnectError, HttpServer, StdioServer
 from argus.mcp_scan.findings import SNYK_LINE, finding
-from argus.mcp_scan.judging import CAP_REASON
+from argus.mcp_scan.judging import CAP_REASON, ERROR_REASON
 from argus.mcp_scan.scan import ScanResult, UnknownTools
 from argus.mcp_scan.server_checks import server_probes
 from argus.probe import load_all_probes
@@ -699,3 +699,18 @@ def test_run_time_limit_exits_1_with_report_after_counting_fail_on(monkeypatch, 
                "incomplete; raise --max-runtime to finish it.")
     assert f"1 finding(s) at or above high: {checks.COMMAND}" in result.stderr and message in result.stderr
     assert result.stderr.index("at or above high") < result.stderr.index(message)
+
+
+@pytest.mark.parametrize("reasons, says, never", [
+    ([CAP_REASON], ["1 probe result(s) were left unjudged by the cost cap", "raise --per-run-cap"], ["provider"]),
+    ([ERROR_REASON], ["1 probe result(s) were left unjudged because the judge's reply could not be used",
+                      "check the judge provider and its key"], ["--per-run-cap"]),
+    ([CAP_REASON, ERROR_REASON], ["raise --per-run-cap", "check the judge provider"], []),
+])
+def test_unjudged_hint_names_the_cause(monkeypatch, reasons, says, never):
+    found = [_f(checks.INJECTION, "error", "info", reasoning=r, tool=f"t{i}") for i, r in enumerate(reasons)]
+    _fake(monkeypatch, _result(found, unjudged=len(found)))
+    result = _invoke(URL)
+    assert result.exit_code == 1, result.output
+    assert all(s in result.stderr for s in says), result.stderr
+    assert not any(s in result.stderr for s in never), result.stderr
