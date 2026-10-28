@@ -236,3 +236,13 @@ async def test_begin_probe_accepts_every_shipped_browser_compatible_probe():
         probe = load_probe(path)
         assert "browser-using" in probe.target_class or "browser_using_agent" in probe.target_class, path
         await target.begin_probe(probe)  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_spec_timeout_reaches_the_bridge_wait():
+    # The bridge's own wait defaults to 60 s, which capped longer specs.
+    spec = BrowserUseSpec(agent_url="https://x", scenario_kind="dom_injection", timeout_s=120)
+    ws = _mock_ws()
+    with patch("argus.targets.browser_use._get_client_agent_ws", return_value=ws):
+        await BrowserUseTarget(spec).send_prompt("hi")
+    assert ws.send_and_wait.await_args.kwargs["timeout_s"] == 120

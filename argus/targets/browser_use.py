@@ -165,8 +165,9 @@ class BrowserUseTarget(Target):
                 raise ValueError("trap_host, trap_port and trap_public_url only apply to --local runs")
             ws = _get_client_agent_ws()
             try:
+                # The bridge's own 60 s default would cap any longer spec timeout.
                 reply = await asyncio.wait_for(
-                    ws.send_and_wait(msg),
+                    ws.send_and_wait(msg, timeout_s=self.spec.timeout_s),
                     timeout=self.spec.timeout_s + 5.0,
                 )
             except Exception as e:
