@@ -714,3 +714,19 @@ def test_unjudged_hint_names_the_cause(monkeypatch, reasons, says, never):
     assert result.exit_code == 1, result.output
     assert all(s in result.stderr for s in says), result.stderr
     assert not any(s in result.stderr for s in never), result.stderr
+
+
+def test_args_file_values_are_known_secrets(monkeypatch, tmp_path):
+    top, deep = "args-" + "secret-73c1", "deep-" + "secret-19f4"
+    args = _args_file(tmp_path, json.dumps({"get": {"token": top, "n": 12345, "short": "ab1",
+                                                    "nested": {"list": [deep]}}}))
+
+    async def during(cfg, mask, echo):
+        assert mask(f"<{top}> <{deep}>") == "<***> <***>"
+        assert mask("ab1 12345") == "ab1 12345"  # below the floor, and not a string
+
+    _fake(monkeypatch, _result(_leaky(top, deep), notes=[f"note {top} {deep}", SNYK_LINE]), during=during)
+    result = _invoke("--format", "json", "--args", args, URL)
+    assert result.exit_code == 0, result.output
+    report = (tmp_path / OUT_FILE["json"]).read_text(encoding="utf-8")
+    assert top not in report + result.output and deep not in report + result.output

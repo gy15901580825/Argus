@@ -77,6 +77,14 @@ def command_secrets(argv: Sequence[str]) -> list[str]:
     return _keep(found)
 
 
+def args_secrets(value) -> list[str]:
+    """Every string value in an --args object, at any depth: a baseline argument is often a real id or key."""
+    if isinstance(value, str):
+        return _keep([value])
+    items = value.values() if isinstance(value, dict) else value if isinstance(value, list) else ()
+    return _keep(s for v in items for s in args_secrets(v))
+
+
 def mask_argv(argv: Sequence[str], secrets: Sequence[str]) -> list[str]:
     """argv with every secret replaced by ***, longest first so a secret containing another is masked whole."""
     ordered = sorted({s for s in secrets if s}, key=len, reverse=True)

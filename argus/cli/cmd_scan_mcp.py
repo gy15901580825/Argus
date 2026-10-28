@@ -223,6 +223,7 @@ def cmd_scan_mcp(argv: tuple[str, ...], call_tools, tool_args: dict, headers: tu
     # Header values are masked at any length; --env values share known_secrets' floor, so DEBUG=1 masks no "1".
     found = [v for _, v in headers] + [env[n] for n in env_names if len(env[n]) >= known_secrets.VALUE_MIN]
     found += known_secrets.url_secrets(url) if url is not None else known_secrets.command_secrets(argv)
+    found += known_secrets.args_secrets(tool_args)
     # Printed text has control bytes stripped, so a secret holding one must match in stripped form too.
     found += [CONTROL_RE.sub("", v) for v in found if CONTROL_RE.search(v)]
     secret_values = [v for v in dict.fromkeys(found) if v]

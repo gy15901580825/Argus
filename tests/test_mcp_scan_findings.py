@@ -451,6 +451,16 @@ def test_inventory_lists_every_tool_with_annotations():
         "rw [no annotations]: not called by policy: not annotated read-only"]
 
 
+def test_call_prompt_is_masked_before_it_is_cut():
+    secret = "argv-" + "secret-5d2e" * 3
+    arguments = {"q": "x" * (findings.PROMPT_MAX - 30) + secret}
+    run = call_run([rec(1, "a", "baseline", text="<IMPORTANT>x</IMPORTANT>", arguments=arguments)], {"a": called(1)})
+    fs = build(hits=[hit(checks.INJECTION, "a", seq=1, family="baseline")], calls=run, listed=[tool("a")],
+               mask=lambda s: s.replace(secret, "***"))
+    [f] = by(fs, checks.INJECTION, "fail")
+    assert f["attack_prompt"].endswith('***"}') and "argv-" not in f["attack_prompt"]
+
+
 def test_listing_findings_say_whether_the_listing_was_cut():
     listed, run = two_tools_called()
     listing_probes = (*STATIC, checks.HIDDEN)
