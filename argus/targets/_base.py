@@ -8,6 +8,10 @@ from typing import ClassVar
 _VALID_ROLES = frozenset({"user", "assistant"})
 
 
+class TargetDeliveryError(Exception):
+    """The prompt never reached the target, so this probe has no result."""
+
+
 @dataclass(frozen=True)
 class Turn:
     """One exchange in a conversation transcript.

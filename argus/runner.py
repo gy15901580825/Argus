@@ -304,7 +304,7 @@ class Runner:
         conversation, so prompt N is sent with turns 1..N-1 as history.
         """
         import httpx
-        from argus.targets._base import Turn
+        from argus.targets._base import TargetDeliveryError, Turn
 
         conversation = getattr(probe, "conversation", False)
         transcript: list[Turn] = []
@@ -331,6 +331,15 @@ class Runner:
                     )
                     continue
                 raise
+            except TargetDeliveryError as e:
+                # One undelivered prompt errors this probe, not the whole run.
+                yield self._finding(
+                    probe, prompt, "", 0.0, probed_at,
+                    verdict=VERDICT_ERROR, severity="info", confidence=1.0,
+                    reasoning=f"target could not deliver the probe: {_short(e)}",
+                    evidence=None,
+                )
+                continue
             except Exception as e:
                 if hasattr(e, "status_code") and isinstance(getattr(e, "status_code", None), int):
                     if 400 <= e.status_code < 500:
@@ -408,7 +417,7 @@ class Runner:
         from argus.cost_meter import CostExceededError
         from argus.iterative import IterationContext
         from argus.judge import Verdict
-        from argus.targets._base import Turn
+        from argus.targets._base import TargetDeliveryError, Turn
         prior_prompts: list[str] = []
         prior_responses: list[str] = []
         prior_verdicts = []
@@ -466,6 +475,15 @@ class Runner:
                         )
                         return  # iterative attacks abort on 4xx — target won't engage
                     raise
+                except TargetDeliveryError as e:
+                    # The next round needs this round's reply, so the attack ends here.
+                    yield self._finding(
+                        probe, prompt, "", 0.0, probed_at,
+                        verdict=VERDICT_ERROR, severity="info", confidence=1.0,
+                        reasoning=f"target could not deliver round {round_n} prompt: {_short(e)}",
+                        evidence=None,
+                    )
+                    return
                 except Exception as e:
                     if hasattr(e, "status_code") and isinstance(getattr(e, "status_code", None), int):
                         if 400 <= e.status_code < 500:

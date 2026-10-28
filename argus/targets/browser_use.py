@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import ClassVar
 from urllib.parse import urlsplit
 
-from argus.targets._base import Target, Turn
+from argus.targets._base import Target, TargetDeliveryError, Turn
 
 _SCENARIO_KINDS = frozenset({"dom_injection", "ui_phishing", "visual_injection", "os_cmd"})
 
@@ -164,10 +164,15 @@ class BrowserUseTarget(Target):
                 # An older client_agent would ignore these and serve on 127.0.0.1.
                 raise ValueError("trap_host, trap_port and trap_public_url only apply to --local runs")
             ws = _get_client_agent_ws()
-            reply = await asyncio.wait_for(
-                ws.send_and_wait(msg),
-                timeout=self.spec.timeout_s + 5.0,
-            )
+            try:
+                reply = await asyncio.wait_for(
+                    ws.send_and_wait(msg),
+                    timeout=self.spec.timeout_s + 5.0,
+                )
+            except Exception as e:
+                # A JSON-RPC error reply is a bare Exception, so the bridge's
+                # failures can only be told apart from spec mistakes here.
+                raise TargetDeliveryError(f"{type(e).__name__}: {e}") from e
         wall_latency_ms = (time.monotonic() - start) * 1000.0
         reported = reply.get("latency_ms")
         latency_ms = float(reported) if isinstance(reported, (int, float)) else wall_latency_ms
