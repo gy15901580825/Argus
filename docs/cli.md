@@ -184,8 +184,8 @@ Exit codes:
 | Code | Meaning |
 |---|---|
 | 0 | The run finished and every scenario reached a verdict. Failing findings still exit 0 unless you set `--fail-on`. |
-| 1 | The target spec could not be loaded, the chat API was unreachable, or at least one scenario had no conclusive round. The report is still written when the run got that far. |
-| 2 | Setup problem. The MCP SDK is missing or too old, the trap port is taken, or the warm-up saw no MCP request. A stale-session warm-up (an agent holding a session from an earlier run) tells you to restart the agent. |
+| 1 | The target spec could not be loaded or built, the chat API was unreachable, the run hit an error, or at least one scenario had no conclusive round. An inconclusive scenario exits 1 even when `--fail-on` would have exited 3. The report is still written when the run got that far. |
+| 2 | Setup or usage problem. The MCP SDK is missing or too old, the trap port is taken, or the warm-up saw no MCP request. Invalid options also exit 2: a bad `--scenarios` value, an invalid `--trap-host` or `--trap-public-url`, a target kind that is not a chat kind, or `--rounds` out of range. A stale-session warm-up (an agent holding a session from an earlier run) tells you to restart the agent. |
 | 3 | `--fail-on <severity>` is set and a finding with verdict `fail` is at or above that severity. |
 | 130 | Ctrl-C. No report is written. |
 | 143 | SIGTERM, for example a CI cancel. It stops the run the same way as Ctrl-C. |

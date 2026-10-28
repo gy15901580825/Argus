@@ -400,7 +400,7 @@ Two limits: a severity increase on a probe that was already failing does not cou
 argus-probe mcp-trap --target ./target.json --print-config
 ```
 
-The agent must be able to reach the trap as an MCP server. Add the printed entry to the agent's MCP config, attach nothing else, and restart the agent if it reads config only at startup. For `custom_http`, put `{{conversation_id}}` in the request template if your agent keeps state per session,. The full walkthrough, the exit codes and the other-host setup are in [cli.md](../cli.md#test-your-agent-against-a-hostile-mcp-server).
+The agent must be able to reach the trap as an MCP server. Add the printed entry to the agent's MCP config, attach nothing else, and restart the agent if it reads config only at startup. For `custom_http`, put `{{conversation_id}}` in the request template if your agent keeps state per session. The full walkthrough, the exit codes and the other-host setup are in [cli.md](../cli.md#test-your-agent-against-a-hostile-mcp-server).
 
 ---
 
