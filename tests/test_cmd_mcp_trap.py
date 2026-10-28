@@ -254,6 +254,16 @@ def test_stale_only_warm_up_prints_restart_not_config(monkeypatch):
     assert "mcpServers" not in result.output
 
 
+def test_refused_only_warm_up_names_the_host_check_not_the_config(monkeypatch, tmp_path):
+    monkeypatch.setattr(driver, "warm_up", _warm("refused_only", "2"))
+    result = _invoke("--target", SPEC_ARG)
+    assert result.exit_code == 2, result.output
+    assert "The trap refused 2 requests (Host/Origin check): " in result.output
+    assert "--trap-public-url" in result.output
+    assert "mcpServers" not in result.output and "got no MCP request" not in result.output
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_chat_error_exits_1(monkeypatch, tmp_path):
     monkeypatch.setattr(driver, "warm_up", _warm("chat_error", "ConnectError: refused"))
     result = _invoke("--target", SPEC_ARG)
@@ -285,6 +295,16 @@ def test_all_inconclusive_exits_1_and_repeats_config(monkeypatch, tmp_path):
     assert (tmp_path / OUT_FILE["html"]).is_file()
     assert "No round reached a verdict: the agent does not appear to be wired to the trap." in result.output
     assert '"mcpServers"' in result.output
+
+
+def test_rounds_that_saw_only_refused_requests_name_the_host_check(monkeypatch, tmp_path):
+    _wired(monkeypatch, outcomes={s: ["inconclusive"] * 3 for s in driver.SCENARIO_NAMES},
+           evidence={"interaction_count": 0, "refused_requests": 2})
+    result = _invoke("--target", SPEC_ARG)
+    assert result.exit_code == 1, result.output
+    assert "The trap refused 30 requests (Host/Origin check): " in result.output
+    assert "mcpServers" not in result.output and "does not appear to be wired" not in result.output
+    assert (tmp_path / OUT_FILE["html"]).is_file()
 
 
 def test_one_scenario_all_inconclusive_exits_1_even_with_failures_below_fail_on(monkeypatch, tmp_path):

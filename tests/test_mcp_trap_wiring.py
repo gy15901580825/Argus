@@ -119,3 +119,17 @@ def test_reuseaddr_only_off_windows(monkeypatch, os_name, reuse):
         assert bool(sock.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR)) == bool(reuse)
     finally:
         sock.close()
+
+
+def test_lan_bind_allows_its_own_host_header():
+    # The agent is told http://192.168.1.20:8765/mcp, so it sends Host: 192.168.1.20:8765.
+    address = TrapAddress("192.168.1.20", 8765, "")
+    assert address.mcp_url == "http://192.168.1.20:8765/mcp"
+    assert address.allowed_hosts == ["127.0.0.1", "127.0.0.1:*", "localhost", "localhost:*",
+                                     "192.168.1.20", "192.168.1.20:*"]
+
+
+def test_unspecified_bind_adds_only_the_public_host():
+    hosts = TrapAddress("0.0.0.0", 8765, "http://10.0.0.5:8765").allowed_hosts
+    assert "0.0.0.0" not in hosts and "0.0.0.0:*" not in hosts
+    assert hosts[-2:] == ["10.0.0.5", "10.0.0.5:*"]

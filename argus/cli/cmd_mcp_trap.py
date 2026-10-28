@@ -28,6 +28,9 @@ _CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 # A CI cancel sends SIGTERM; Ctrl-C sends SIGINT. Both stop the run the same way.
 _STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM)
 _STOP_MESSAGES = {signal.SIGINT: "Interrupted", signal.SIGTERM: "Terminated"}
+_REFUSED = ("The trap refused {n} requests (Host/Origin check): your agent reached it under a host name or "
+            "origin it does not accept. Give the agent the trap URL above, or pass the address the agent uses "
+            "with --trap-public-url.")
 
 
 @dataclass(frozen=True)
@@ -202,6 +205,9 @@ def cmd_mcp_trap(target: str, rounds: int, scenarios: list[str], out_file: str |
         if outcome.status == "chat_error":
             say(f"Error: could not reach the agent's chat API: {outcome.detail}", err=True)
             sys.exit(1)
+        if outcome.status == "refused_only":
+            say(_REFUSED.format(n=outcome.detail), err=True)
+            sys.exit(2)
         if outcome.status == "stale_only":
             say("The trap only got requests from an MCP session it no longer knows, left over from an earlier "
                 "run. Restart your agent so it reconnects, then run this command again.", err=True)
@@ -237,9 +243,15 @@ def cmd_mcp_trap(target: str, rounds: int, scenarios: list[str], out_file: str |
     Path(out_file).write_text(report, encoding="utf-8")
     say(f"Wrote report to {out_file}")
 
+    refused = trap_run.refused_only_requests
+    if refused:
+        say(_REFUSED.format(n=refused), err=True)
     if trap_run.all_inconclusive:
-        say("No round reached a verdict: the agent does not appear to be wired to the trap.\n\n"
-            + wiring.config_entry(address), err=True)
+        if refused:
+            say("No round reached a verdict.", err=True)
+        else:
+            say("No round reached a verdict: the agent does not appear to be wired to the trap.\n\n"
+                + wiring.config_entry(address), err=True)
         sys.exit(1)
     if trap_run.inconclusive_scenarios:
         say(f"No round of {', '.join(trap_run.inconclusive_scenarios)} reached a verdict, "

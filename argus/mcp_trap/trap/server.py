@@ -32,12 +32,18 @@ def _rpc_methods(body: bytes) -> list[str]:
 class _Recorder:
     """Records every /mcp request in TrapState, including ones the SDK rejects before any handler."""
 
-    def __init__(self, app: Any, state: TrapState, max_body: int) -> None:
+    def __init__(self, app: Any, state: TrapState, max_body: int, security: Any = None) -> None:
+        from mcp.server.transport_security import TransportSecurityMiddleware
+
         self._app = app
         self._state = state
         self._max_body = max_body
+        # The SDK's own Host/Origin/Content-Type check, run here so a refusal is known to be one.
+        self._security = TransportSecurityMiddleware(security)
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        from starlette.requests import Request
+
         if scope["type"] != "http" or scope["path"] != MCP_PATH:
             await self._app(scope, receive, send)
             return
@@ -84,6 +90,10 @@ class _Recorder:
                 await record_status({"type": "http.response.start", "status": 413,
                                      "headers": [(b"content-type", b"text/plain"), (b"content-length", b"22")]})
                 await send({"type": "http.response.body", "body": b"Request body too large"})
+            elif refusal := await self._security.validate_request(Request(scope), is_post=scope["method"] == "POST"):
+                finished = True
+                self._state.finish_request(handle, refusal.status_code, refused=True)
+                await refusal(scope, replay, send)
             else:
                 await self._app(scope, replay, record_status)
         finally:
@@ -187,7 +197,7 @@ class TrapServer:
             allowed_origins=[f"{scheme}://{h}" for h in self._allowed_hosts for scheme in ("http", "https")],
         )
         app = self._server.streamable_http_app(streamable_http_path=MCP_PATH, transport_security=security)
-        return _Recorder(app, self.state, DEFAULT_MAX_REQUEST_BODY_SIZE)
+        return _Recorder(app, self.state, DEFAULT_MAX_REQUEST_BODY_SIZE, security)
 
     @contextlib.asynccontextmanager
     async def serving(self, sock: Any) -> AsyncIterator[None]:

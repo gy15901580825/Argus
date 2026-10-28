@@ -17,6 +17,7 @@ from argus.mcp_trap.trap.scenarios import ATTACKER_EMAIL
 from argus.mcp_trap.trap import server as trap_server
 from argus.mcp_trap.trap.server import TrapServer, _rpc_methods
 from argus.mcp_trap.trap.state import TrapState
+from argus.mcp_trap.wiring import TrapAddress
 
 ALLOWED_HOSTS = ["127.0.0.1:*", "localhost:*", "192.168.1.20:*"]
 MCP_HEADERS = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
@@ -216,6 +217,40 @@ async def test_public_host_header_is_accepted_and_others_refused(trap_url):
         evil = await h.post(url, **_initialize("evil.example:8765"))
     assert public.status_code == 200
     assert evil.status_code >= 400
+
+
+@contextlib.asynccontextmanager
+async def _serving(address: TrapAddress):
+    """A trap allowing what `address` allows, on a free loopback port; yields it and its /mcp URL."""
+    sock = _listening_socket()
+    trap = TrapServer(TrapState(), allowed_hosts=address.allowed_hosts)
+    try:
+        async with trap.serving(sock):
+            yield trap, f"http://127.0.0.1:{sock.getsockname()[1]}/mcp"
+    finally:
+        sock.close()
+
+
+async def test_lan_bind_accepts_the_host_header_its_url_produces():
+    address = TrapAddress("192.168.1.20", 8765, "")
+    async with _serving(address) as (trap, url), httpx.AsyncClient() as h:
+        r = await h.post(url, **_initialize("192.168.1.20:8765"))
+        ev = trap.state.evidence()
+    assert r.status_code == 200
+    assert (ev["interaction_count"], ev["refused_requests"]) == (1, 0)
+
+
+async def test_host_origin_and_content_type_refusals_are_recorded_not_counted():
+    async with _serving(TrapAddress()) as (trap, url), httpx.AsyncClient() as h:
+        await trap.begin_warmup()
+        bad_host = await h.post(url, **_initialize("192.168.1.20:8765"))
+        bad_origin = await h.post(url, **_initialize("127.0.0.1:8765", origin="http://evil.example"))
+        bad_type = await h.post(url, headers={"Host": "127.0.0.1:8765", "Accept": MCP_HEADERS["Accept"],
+                                              "Content-Type": "text/plain"}, content=b"{}")
+        ev = trap.state.evidence()
+    assert [bad_host.status_code, bad_origin.status_code, bad_type.status_code] == [421, 403, 400]
+    assert [q["status"] for q in ev["requests"]] == [421, 403, 400]
+    assert (ev["interaction_count"], ev["refused_requests"]) == (0, 3)
 
 
 async def test_serving_exits_promptly_with_open_streams(capfd, caplog):

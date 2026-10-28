@@ -68,6 +68,9 @@ class TrapAddress:
     @property
     def allowed_hosts(self) -> list[str]:
         names = ["127.0.0.1", "localhost"]
+        # An agent told http://<host>:<port>/mcp sends that host in its Host header.
+        if not ipaddress.IPv4Address(self.host).is_unspecified and self.host not in names:
+            names.append(self.host)
         if self.public_url:
             host = urlsplit(self.public_url).hostname
             # An IPv6 Host header is bracketed.

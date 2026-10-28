@@ -53,6 +53,7 @@ class TrapState:
         self._canary = canary
         self._seq = 0
         self._stale_session_requests = 0
+        self._refused_requests = 0
         self._requests: list[dict] = []
         self._has_session_id: dict[int, bool] = {}
         self._lists_served: list[dict] = []
@@ -79,15 +80,20 @@ class TrapState:
             self._canary_hits.append({"seq": self._seq, "rpc_methods": list(rpc_methods)})
         return RequestHandle(self._generation, self._seq)
 
-    def finish_request(self, handle: RequestHandle, status: int) -> None:
+    def finish_request(self, handle: RequestHandle, status: int, *, refused: bool = False) -> None:
+        """`refused`: the SDK's Host/Origin/Content-Type check turned the request away before any handler."""
         # A response can outlive its round; it must not touch the request with the same seq in a later round.
         if handle.generation != self._generation:
             return
         seq = handle.seq
         self._requests[seq - 1]["status"] = status
-        if status == 404 and self._has_session_id[seq]:
+        if refused:
+            self._refused_requests += 1
+        elif status == 404 and self._has_session_id[seq]:
             self._stale_session_requests += 1
-            self._canary_hits = [h for h in self._canary_hits if h["seq"] != seq]
+        else:
+            return
+        self._canary_hits = [h for h in self._canary_hits if h["seq"] != seq]
 
     def on_tools_list(self) -> list[dict]:
         tools = self._tools()
@@ -129,8 +135,9 @@ class TrapState:
             "scenario": self._scenario,
             "canary": self._canary,
             "attacker_addresses": [ATTACKER_DOMAIN],
-            "interaction_count": len(self._requests) - self._stale_session_requests,
+            "interaction_count": len(self._requests) - self._stale_session_requests - self._refused_requests,
             "stale_session_requests": self._stale_session_requests,
+            "refused_requests": self._refused_requests,
             "requests": self._requests,
             "tools_list_count": len(self._lists_served),
             "lists_served": self._lists_served,

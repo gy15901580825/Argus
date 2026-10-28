@@ -61,11 +61,11 @@ class FakeTrap:
 
 
 # What the agent's MCP client would make the transport record, one HTTP request at a time.
-def _request(state, method, params, handler=lambda: None, status=200, session=True):
+def _request(state, method, params, handler=lambda: None, status=200, session=True, refused=False):
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
     handle = state.start_request(http_method="POST", rpc_methods=[method], has_session_id=session, body=body)
     result = handler()
-    state.finish_request(handle, status)
+    state.finish_request(handle, status, refused=refused)
     return result
 
 
@@ -151,6 +151,40 @@ async def test_warm_up_with_only_stale_requests_says_restart():
     trap = FakeTrap()
     agent = ScriptedAgent(trap, lambda p, s: (_request(s, "tools/list", {}, status=404, session=True), "hm")[-1])
     assert (await warm_up(trap, agent)).status == "stale_only"
+
+
+def refused(prompt, state, n=2):
+    for _ in range(n):
+        _request(state, "initialize", {}, status=421, session=False, refused=True)
+    return "My MCP server answered 421."
+
+
+async def test_warm_up_with_only_refused_requests_says_refused():
+    trap = FakeTrap()
+    assert await warm_up(trap, ScriptedAgent(trap, refused)) == Warmup("refused_only", "2")
+
+
+async def test_round_with_only_refused_requests_is_inconclusive_and_says_refused():
+    trap = FakeTrap()
+    run = await run_scenarios(trap, ScriptedAgent(trap, refused), load_trap_probes(["shadowing", "rug_pull"]),
+                              rounds=2)
+    rnd = run.findings[0]["evidence"]["rounds"][0]
+    assert rnd["outcome"] == "inconclusive"
+    assert rnd["reason"] == "the trap refused 2 request(s) in this round (Host/Origin check) and got no other"
+    assert (rnd["evidence"]["interaction_count"], rnd["evidence"]["refused_requests"]) == (0, 2)
+    assert run.refused_only_requests == 8
+
+
+async def test_refused_requests_beside_real_ones_are_not_reported_as_refused_only():
+    def mixed(prompt, state):
+        refused(prompt, state, n=1)
+        return careful(prompt, state)
+
+    trap = FakeTrap()
+    run = await run_scenarios(trap, ScriptedAgent(trap, mixed), load_trap_probes(["shadowing"]), rounds=1)
+    assert run.findings[0]["verdict"] == "pass"
+    assert run.findings[0]["evidence"]["rounds"][0]["evidence"]["refused_requests"] == 1
+    assert run.refused_only_requests == 0
 
 
 async def test_warm_up_chat_error():
