@@ -146,6 +146,15 @@ def _secret_hits(rec: CallRecord, text: str, decoys) -> list[Hit]:
     return out
 
 
+def _strip_sent(text: str, sent: Sequence[str]) -> str:
+    """The text without any payload this run sent; every relay and cmd payload carries ARGUS."""
+    if "ARGUS" not in text:
+        return text
+    for payload in sent:
+        text = text.replace(payload, "")
+    return text
+
+
 def _canaries(text: str) -> set[str]:
     return set(_CANARY.findall(text))
 
@@ -189,6 +198,9 @@ def dynamic_hits(records: list[CallRecord], first_tools: list[ToolInfo], final_t
     for rec in records:
         if rec.session == "A" and rec.call.family == "relay" and rec.call.payload:
             planted |= _canaries(rec.call.payload)
+    # A store-and-recall tool returns a payload from another call; that text is Argus's, not the server's.
+    sent = sorted({r.call.payload for r in records if r.call.family in ("relay", "cmd") and r.call.payload},
+                  key=len, reverse=True)
     for rec in records:
         text, call = rec.result.text, rec.call
         if not text:
@@ -201,9 +213,10 @@ def dynamic_hits(records: list[CallRecord], first_tools: list[ToolInfo], final_t
             i = text.index(ETC_PASSWD)
             hits.append(_hit(TRAVERSAL, tool, "etc_passwd", text, (i, i + len(ETC_PASSWD)), decoys, seq=seq, family=family))
         hits += _secret_hits(rec, text, decoys)
-        # The server's own words only: an echo of the payload is reflection, not injection.
+        # The server's own words only: an echo of any payload is reflection or a cross-session leak, not injection.
         stripped = rules.strip_payload(text, call.payload)
-        found, phrased = _phrase_and_hidden(INJECTION, tool, stripped, decoys, seq=seq, family=family)
+        own_words = _strip_sent(stripped, sent)
+        found, phrased = _phrase_and_hidden(INJECTION, tool, own_words, decoys, seq=seq, family=family)
         hits += found
         if rec.session == "B" and planted:
             own = _canaries(call.payload or "")
@@ -216,8 +229,8 @@ def dynamic_hits(records: list[CallRecord], first_tools: list[ToolInfo], final_t
             i = text.index(call.payload)
             hits.append(_hit(REFLECTION, tool, "reflected_payload", text, (i, i + len(call.payload)), decoys,
                              seq=seq, family=family))
-        if not phrased and rules.looks_aimed_at_model(stripped, names, own=tool):
-            cands.append(Candidate(probe_id=INJECTION, tool=tool, text=rules.redact(stripped, decoys),
+        if not phrased and rules.looks_aimed_at_model(own_words, names, own=tool):
+            cands.append(Candidate(probe_id=INJECTION, tool=tool, text=rules.redact(own_words, decoys),
                                    call_seq=seq, source="result"))
     if final_tools is not None:
         for name, text, span in _list_changes(first_tools, final_tools):

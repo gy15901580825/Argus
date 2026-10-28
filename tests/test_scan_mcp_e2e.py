@@ -26,7 +26,8 @@ OUT = {"html": "argus-mcp-scan-report.html", "sarif": "argus-mcp-scan-report.sar
 API_KEY = ("X-Api-Key", "fixture-key-1")
 DYNAMIC = (checks.COMMAND, checks.TRAVERSAL, checks.SECRET, checks.INJECTION, checks.CROSS_SESSION,
            checks.REFLECTION, checks.LIST_CHANGED)
-# The vulnerable fixture's (probe, tool) fails; recall also replays the stored relay text, so it is injection too.
+# The vulnerable fixture's (probe, tool) fails. recall returns the stored relay text, which is Argus's own words:
+# it is a cross-session leak, not injection.
 VULNERABLE_FAILS = {
     (checks.DESCRIPTION, "get_config"),
     (checks.SCHEMA, "status"),
@@ -35,7 +36,6 @@ VULNERABLE_FAILS = {
     (checks.TRAVERSAL, "read_doc"),
     (checks.SECRET, "get_config"),
     (checks.INJECTION, "fetch_page"),
-    (checks.INJECTION, "recall"),
     (checks.CROSS_SESSION, "recall"),
     (checks.REFLECTION, "echo"),
     (checks.REFLECTION, "run_report"),
