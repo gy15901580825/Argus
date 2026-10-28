@@ -183,6 +183,7 @@ def _vals(text):
     (lambda: "client_secret=" + V, "assignment", V),
     (lambda: "pwd=" + V, "assignment", V),
     (lambda: "apiKey: " + V, "assignment", V),
+    (lambda: "clientSecret: " + V, "assignment", V),
     (lambda: "X-Api-Key: " + V, "assignment", V),
     (lambda: "{\\\"token\\\": \\\"" + V + "\\\"}", "assignment", V),
     (lambda: 'password="correct horse battery staple"', "assignment", "correct horse battery staple"),
@@ -243,6 +244,16 @@ def test_more_secret_near_misses(text):
     assert secret_hits(text) == []
 
 
+def test_unclosed_quote_on_the_line_reads_a_bare_value():
+    assert _vals('password="' + V + '\nnote: "x"') == [("assignment", V)]
+
+
+def test_overlapping_decoy_markers_keep_the_longer_one():
+    a, b_right, b_left = "abcdefgh12", "gh12XYZW", "WXYZabcd"
+    assert redact("abcdefgh12XYZW", [("A", a), ("B", b_right)]) == "[DECOY:A]XYZW"
+    assert redact("WXYZabcdefgh12", [("A", a), ("B", b_left)]) == "WXYZ[DECOY:A]"
+
+
 def test_private_key_without_end_is_redacted_to_the_blank_line():
     body = "\n".join(["Q" * 64] * 102)  # about the size of an 8192-bit RSA key
     text = "-----BEGIN " + "RSA PRIVATE KEY-----\n" + body + "\n\nafter"
@@ -254,8 +265,10 @@ def test_private_key_without_end_or_blank_line_is_redacted_to_the_end():
     assert redact(text) == "[REDACTED:private_key]"
 
 
-def test_many_unterminated_private_keys_are_fast():
-    text = ("-----BEGIN " + "RSA PRIVATE KEY-----\nQQQQ\n\n") * (TEXT_KEEP // 40)
+@pytest.mark.parametrize("unit", ["-----BEGIN " + "RSA PRIVATE KEY-----\nQQQQ\n\n",
+                                  "-----BEGIN " + "RSA PRIVATE KEY-----\nQQQQ\n"])
+def test_many_unterminated_private_keys_are_fast(unit):
+    text = unit * (TEXT_KEEP // len(unit))
     _fast(lambda: secret_hits(text))
 
 
@@ -411,7 +424,7 @@ def test_prefilter_bullet_and_quote_starts(text):
     assert looks_aimed_at_model(text, [])
 
 
-@pytest.mark.parametrize("text", ["Score - always positive", "a*never b", "x > you must"])
+@pytest.mark.parametrize("text", ["Score - always positive", "a*never b", "x > you must", "See x.never mind"])
 def test_prefilter_bullet_mark_must_start_a_line(text):
     assert not looks_aimed_at_model(text, [])
 
@@ -419,6 +432,7 @@ def test_prefilter_bullet_mark_must_start_a_line(text):
 def test_prefilter_other_tool_name_is_a_whole_word():
     assert looks_aimed_at_model("Then read_file runs.", ["read_file"])
     assert not looks_aimed_at_model("Then read_files runs.", ["read_file"])
+    assert not looks_aimed_at_model("Then my_read_file runs.", ["read_file"])
     assert not looks_aimed_at_model("Nothing here.", [""])
 
 
