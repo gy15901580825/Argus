@@ -10,6 +10,7 @@ from argus.cli.cmd_coverage import cmd_coverage
 from argus.cli.cmd_validate_target import cmd_validate_target
 from argus.cli.cmd_quickstart import cmd_quickstart
 from argus.cli.cmd_scan_skill import cmd_scan_skill
+from argus.cli.cmd_mcp_trap import cmd_mcp_trap
 
 
 @click.group()
@@ -27,6 +28,7 @@ main.add_command(cmd_coverage, "coverage")
 main.add_command(cmd_validate_target, "validate-target")
 main.add_command(cmd_quickstart, "quickstart")
 main.add_command(cmd_scan_skill, "scan-skill")
+main.add_command(cmd_mcp_trap, "mcp-trap")
 
 
 if __name__ == "__main__":
