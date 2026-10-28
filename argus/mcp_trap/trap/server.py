@@ -215,7 +215,7 @@ class TrapServer:
             try:
                 server.should_exit = True
                 # Open SSE streams can outlast uvicorn's graceful timeout; never hang the caller on them.
-                done, _ = await asyncio.wait({task}, timeout=SHUTDOWN_GRACE_S + 3)
+                done, _ = await asyncio.wait({task}, timeout=SHUTDOWN_GRACE_S + 2)
                 if not done:
                     task.cancel()
                 await asyncio.gather(task, return_exceptions=True)

@@ -105,3 +105,17 @@ def test_second_bind_on_same_port_is_port_in_use():
         assert "--trap-port" in str(exc.value)
     finally:
         first.close()
+
+
+@pytest.mark.parametrize("os_name, reuse", [("posix", 1), ("nt", 0)])
+def test_reuseaddr_only_off_windows(monkeypatch, os_name, reuse):
+    # On Windows SO_REUSEADDR lets a second socket take a bound port, so it stays off there.
+    import argus.mcp_trap.wiring as wiring
+
+    monkeypatch.setattr(wiring.os, "name", os_name)
+    sock = bind_trap_socket(TrapAddress(port=_free_port()))
+    monkeypatch.undo()
+    try:
+        assert bool(sock.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR)) == bool(reuse)
+    finally:
+        sock.close()

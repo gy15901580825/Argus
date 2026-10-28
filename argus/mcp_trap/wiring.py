@@ -5,6 +5,7 @@ from __future__ import annotations
 import errno
 import ipaddress
 import json
+import os
 import socket
 from dataclasses import dataclass
 from urllib.parse import urlsplit
@@ -92,7 +93,9 @@ def config_entry(address: TrapAddress) -> str:
 def bind_trap_socket(address: TrapAddress) -> socket.socket:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # asyncio's rule: on Windows SO_REUSEADDR lets a second process bind a port already in use.
+        if os.name != "nt":
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind((address.host, address.port))
         sock.listen()
     except OSError as exc:
