@@ -17,7 +17,7 @@ REASON_CAP = "not tested: call cap reached"
 
 # The shared pattern misses `read_env`: `_` is a word character, so `\benv` never matches inside a snake_case name.
 _NAME_SPLIT = re.compile(r"[\s_.\-]+|(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
-_ENV_TOKENS = frozenset({"env", "environ", "environment", "envvars", "dotenv"})
+_ENV_TOKENS = frozenset({"env", "envs", "environ", "environment", "envvars", "dotenv", "printenv"})
 
 
 def env_like(tool: ToolInfo) -> bool:
