@@ -66,12 +66,13 @@ class TrapAddress:
 
     @property
     def allowed_hosts(self) -> list[str]:
-        hosts = ["127.0.0.1:*", "localhost:*"]
+        names = ["127.0.0.1", "localhost"]
         if self.public_url:
             host = urlsplit(self.public_url).hostname
-            # The SDK matches the Host header by prefix, and an IPv6 Host header is bracketed.
-            hosts.append(f"[{host}]:*" if ":" in host else f"{host}:*")
-        return hosts
+            # An IPv6 Host header is bracketed.
+            names.append(f"[{host}]" if ":" in host else host)
+        # Bare form for a Host header without a port (default 80/443, e.g. behind a proxy).
+        return [form for name in names for form in (name, f"{name}:*")]
 
 
 def config_entry(address: TrapAddress) -> str:

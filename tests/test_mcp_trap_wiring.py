@@ -15,7 +15,7 @@ from argus.targets.browser_use import BrowserUseSpec
 
 def test_defaults():
     assert TrapAddress().mcp_url == "http://127.0.0.1:8765/mcp"
-    assert TrapAddress().allowed_hosts == ["127.0.0.1:*", "localhost:*"]
+    assert TrapAddress().allowed_hosts == ["127.0.0.1", "127.0.0.1:*", "localhost", "localhost:*"]
 
 
 def test_public_url_is_what_the_agent_is_told():
@@ -27,7 +27,13 @@ def test_public_url_is_what_the_agent_is_told():
 def test_ipv6_public_host_is_bracketed_like_the_host_header():
     address = TrapAddress("0.0.0.0", 8765, "http://[fe80::1]:8765")
     assert address.mcp_url == "http://[fe80::1]:8765/mcp"
-    assert address.allowed_hosts[-1] == "[fe80::1]:*"
+    assert address.allowed_hosts[-2:] == ["[fe80::1]", "[fe80::1]:*"]
+
+
+def test_portless_public_url_allows_the_bare_host():
+    # Behind a proxy on 443 the agent sends `Host: trap.example`, which no `:*` pattern matches.
+    hosts = TrapAddress("127.0.0.1", 8765, "https://trap.example/").allowed_hosts
+    assert "trap.example" in hosts and "trap.example:*" in hosts
 
 
 @pytest.mark.parametrize("public_url", ["https://trap.example/", "https://trap.example/mcp"])
