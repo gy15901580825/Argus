@@ -454,3 +454,48 @@ def test_run_exits_2_on_server_422_without_traceback(tmp_path, detail, shown):
     assert result.exit_code == 2, result.output
     assert isinstance(result.exception, SystemExit)
     assert f"Error: server rejected the run: {shown}" in result.output
+
+
+def _local_args(tmp_path, out):
+    target = tmp_path / "t.json"
+    target.write_text(json.dumps({"kind": "openai_compat", "endpoint_url": "http://127.0.0.1:9/v1", "model": "m"}))
+    return ["run", "--target", str(target), "--probes", "p", "--out", str(out), "--local"]
+
+
+@pytest.mark.parametrize("local", [True, False])
+def test_out_in_a_missing_directory_is_a_usage_error_before_any_work(tmp_path, monkeypatch, local):
+    calls = []
+    monkeypatch.setattr("argus.cli.cmd_run.run_local_and_render", lambda *a, **k: calls.append(1))
+    monkeypatch.setattr(api_client, "post_run", lambda *a, **k: calls.append(1))
+    args = _local_args(tmp_path, tmp_path / "nodir" / "r.html")
+    if not local:
+        args = args[:-1] + ["--token", "t", "--api-url", "http://127.0.0.1:9"]
+    result = CliRunner().invoke(main, args)
+    assert result.exit_code == 2, result.output
+    assert "does not exist" in result.output
+    assert calls == []
+
+
+@pytest.mark.parametrize("local", [True, False])
+def test_report_write_failure_exits_1_without_traceback(tmp_path, monkeypatch, local):
+    from pathlib import Path
+
+    monkeypatch.setattr("argus.cli.cmd_run.run_local_and_render", lambda *a, **k: ("<html></html>", []))
+    monkeypatch.setattr(api_client, "post_run", lambda *a, **k: {"run_id": "r1"})
+    monkeypatch.setattr(api_client, "poll_until_complete", lambda *a, **k: {"status": "completed", "findings": []})
+    monkeypatch.setattr(api_client, "get_report", lambda *a, **k: "<html></html>")
+    real = Path.write_text
+
+    def write_text(self, *a, **k):
+        if self.name == "r.html":
+            raise OSError(28, "No space left on device")
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(Path, "write_text", write_text)
+    args = _local_args(tmp_path, tmp_path / "r.html")
+    if not local:
+        args = args[:-1] + ["--token", "t", "--api-url", "http://127.0.0.1:9"]
+    result = CliRunner().invoke(main, args)
+    assert result.exit_code == 1, result.output
+    assert f"Error: cannot write {tmp_path / 'r.html'}: [Errno 28] No space left on device" in result.output
+    assert "Traceback" not in result.output and "Wrote report" not in result.output

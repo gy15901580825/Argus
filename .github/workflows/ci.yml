@@ -70,6 +70,7 @@ jobs:
           "$PY" -c "import argus, pathlib; assert (pathlib.Path(argus.__file__).parent / 'skillscan/docker/proxy_addon.py').is_file()"
           "$RUNNER_TEMP/venv/bin/argus-probe" --help
           "$RUNNER_TEMP/venv/bin/argus-probe" mcp-trap --print-config --target '{"kind":"openai_compat","endpoint_url":"http://127.0.0.1:9/v1/chat/completions","model":"m"}'
+          "$RUNNER_TEMP/venv/bin/argus-probe" scan-mcp --help
           "$RUNNER_TEMP/venv/bin/argus-probe" quickstart --out "$RUNNER_TEMP/qs.html"
           test -s "$RUNNER_TEMP/qs.html"
 

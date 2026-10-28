@@ -57,6 +57,7 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
             raise click.UsageError("'all' cannot be combined with specific probe ids")
         # Empty probe_ids means "all" per orchestrator convention.
         tokens = []
+    _check_out_dir(out_file)
 
     if local:
         if compare_to:
@@ -115,7 +116,7 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
 
     click.echo(f"Fetching {report_format} report...")
     report = api_client.get_report(api_url, token, run_id, report_format)
-    Path(out_file).write_text(report)
+    _write_report(out_file, report)
     click.echo(f"Wrote report to {out_file}")
     if run["status"] != "completed":
         click.echo(f"Error: run {run_id} ended with status {run['status']}", file=sys.stderr)
@@ -166,10 +167,10 @@ def _detail_text(response) -> str:
     return str(detail) if detail else f"HTTP {response.status_code}"
 
 
-def _apply_fail_on(findings: list[dict], fail_on: str | None) -> None:
-    """Exit 3 when findings cross the --fail-on threshold. Report is already on disk."""
+def _count_fail_on(findings: list[dict], fail_on: str | None) -> bool:
+    """Print the --fail-on summary to stderr; True when findings cross the threshold."""
     if fail_on is None:
-        return
+        return False
     hits = findings_at_or_above(findings, fail_on)
     if hits:
         ids = ", ".join(sorted({h.get("probe_id", "?") for h in hits}))
@@ -177,7 +178,32 @@ def _apply_fail_on(findings: list[dict], fail_on: str | None) -> None:
             f"{len(hits)} finding(s) at or above {fail_on}: {ids}",
             file=sys.stderr,
         )
+    return bool(hits)
+
+
+def _apply_fail_on(findings: list[dict], fail_on: str | None) -> None:
+    """Exit 3 when findings cross the --fail-on threshold. Report is already on disk."""
+    if _count_fail_on(findings, fail_on):
         sys.exit(3)
+
+
+def _check_out_dir(out_file: str | None) -> None:
+    """Usage error when --out names a file in a directory that does not exist, before any work is done."""
+    if out_file is not None and not Path(out_file).parent.is_dir():
+        raise click.UsageError(f"--out {out_file}: the directory {Path(out_file).parent} does not exist")
+
+
+def _write_report(out_file: str, report: str, encoding: str | None = None, echo=None) -> None:
+    """Write the report, or exit 1 with the reason; no traceback for the operator."""
+    try:
+        Path(out_file).write_text(report, encoding=encoding)
+    except OSError as e:
+        message = f"Error: cannot write {out_file}: {e}"
+        if echo is not None:
+            echo(message, err=True)
+        else:
+            click.echo(message, file=sys.stderr)
+        sys.exit(1)
 
 
 def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, secret_values=()) -> None:
@@ -191,6 +217,6 @@ def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, se
             sys.exit(EXIT_COST_CAP)
         click.echo(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
-    Path(out_file).write_text(report)
+    _write_report(out_file, report)
     click.echo(f"Wrote report to {out_file}")
     _apply_fail_on(findings, fail_on)

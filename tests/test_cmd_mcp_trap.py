@@ -564,3 +564,29 @@ def test_help_and_print_config_do_not_import_the_sdk():
     result = CliRunner().invoke(main, ["mcp-trap", "--help"])
     assert result.exit_code == 0
     assert "--print-config" in result.output
+
+
+def test_out_in_a_missing_directory_is_a_usage_error(monkeypatch, tmp_path, _isolated):
+    _wired(monkeypatch)
+    result = _invoke("--target", SPEC_ARG, "--out", str(tmp_path / "nodir" / "r.html"))
+    assert result.exit_code == 2, result.output
+    assert "does not exist" in result.output
+    assert _isolated == []  # the trap never started
+
+
+def test_report_write_failure_exits_1_without_traceback(monkeypatch, tmp_path):
+    from pathlib import Path
+
+    _wired(monkeypatch)
+    real = Path.write_text
+
+    def write_text(self, *a, **k):
+        if self.name == "r.html":
+            raise OSError(28, "No space left on device")
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(Path, "write_text", write_text)
+    result = _invoke("--target", SPEC_ARG, "--out", "r.html")
+    assert result.exit_code == 1, result.output
+    assert "Error: cannot write r.html: [Errno 28] No space left on device" in result.output
+    assert "Traceback" not in result.output and "Wrote report" not in result.output

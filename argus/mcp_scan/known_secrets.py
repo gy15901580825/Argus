@@ -17,11 +17,11 @@ _AUTH_HEADERS = {"authorization", "proxy-authorization", "cookie"}
 _URL_IN_ARG = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://\S+")
 _PATH_PARAM = re.compile(r";([^;/=?#]+)=([^;/?#]*)")
 # Every known value is replaced in all output; a value this short would blank out ordinary words.
-_VALUE_MIN = 4
+VALUE_MIN = 4
 
 
 def _keep(values) -> list[str]:
-    return list(dict.fromkeys(v for v in values if len(v) >= _VALUE_MIN))
+    return list(dict.fromkeys(v for v in values if len(v) >= VALUE_MIN))
 
 
 def _pairs(params: str) -> list[tuple[str, str]]:
