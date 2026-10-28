@@ -691,14 +691,17 @@ def test_sdk_error_lines_are_redacted(monkeypatch):
 
 def test_run_time_limit_exits_1_with_report_after_counting_fail_on(monkeypatch, tmp_path):
     fails = [_f(checks.COMMAND, "fail", "high", tool="run")]
-    _fake(monkeypatch, _result(fails, out_of_time=True))
+    # Every tool was called; the limit passed before the relist and the replays.
+    _fake(monkeypatch, _result(fails, out_of_time=True,
+                               notes=["The second tools/list did not run: the run time limit was reached."]))
     result = _invoke(URL, "--fail-on", "high", "--max-runtime", "60")
     assert result.exit_code == 1, result.output
     assert (tmp_path / OUT_FILE["html"]).is_file()
-    message = ("The run time limit (--max-runtime 60 s) was reached before every tool was called, so the scan is "
-               "incomplete; raise --max-runtime to finish it.")
+    message = ("The run time limit (--max-runtime 60 s) was reached before the scan finished, so it is incomplete; "
+               "raise --max-runtime to finish it.")
     assert f"1 finding(s) at or above high: {checks.COMMAND}" in result.stderr and message in result.stderr
     assert result.stderr.index("at or above high") < result.stderr.index(message)
+    assert "before every tool was called" not in result.output
 
 
 @pytest.mark.parametrize("reasons, says, never", [

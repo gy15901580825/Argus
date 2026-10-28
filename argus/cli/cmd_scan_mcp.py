@@ -325,8 +325,9 @@ def cmd_scan_mcp(argv: tuple[str, ...], call_tools, tool_args: dict, headers: tu
 
     if result.out_of_time:
         _count_fail_on(result.findings, fail_on)
-        say(f"The run time limit (--max-runtime {max_runtime_s:g} s) was reached before every tool was called, so "
-            "the scan is incomplete; raise --max-runtime to finish it.", err=True)
+        # The limit can pass after the last tool's calls, during the relist or the replays.
+        say(f"The run time limit (--max-runtime {max_runtime_s:g} s) was reached before the scan finished, so it is "
+            "incomplete; raise --max-runtime to finish it.", err=True)
         sys.exit(1)
     if result.all_selected_unexercised:
         _count_fail_on(result.findings, fail_on)

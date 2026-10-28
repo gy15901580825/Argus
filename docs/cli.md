@@ -274,7 +274,7 @@ Exit codes:
 | Code | Meaning |
 |---|---|
 | 0 | The scan finished. Failing findings still exit 0 unless you set `--fail-on`. |
-| 1 | The scan could not connect, or `initialize` or `tools/list` failed or timed out, or the server process died before `tools/list`. Also when the report cannot be written, for example when the `--out` file is not writable. Also when no tool selected for calling could be exercised, the judge left a text unjudged, or `--max-runtime` passed before every tool was called. In those cases the report is written first, and they exit 1 even when `--fail-on` would have exited 3. |
+| 1 | The scan could not connect, or `initialize` or `tools/list` failed or timed out, or the server process died before `tools/list`. Also when the report cannot be written, for example when the `--out` file is not writable. Also when no tool selected for calling could be exercised, the judge left a text unjudged, or `--max-runtime` passed before the scan finished. In those cases the report is written first, and they exit 1 even when `--fail-on` would have exited 3. |
 | 2 | Setup or usage problem. The MCP SDK is missing or too old, there is no URL or `--` command, a stdio scan has no `--on-host`, the server answered 401 or 403, `--call-tools` names a tool the server does not list, `--out` is a directory or is in a directory that does not exist, or an option does not fit the transport (`--header` with stdio, `--env` or `--on-host` with a URL). |
 | 3 | `--fail-on <severity>` is set and a finding with verdict `fail` is at or above that severity. |
 | 130 | Ctrl-C. No report is written. |
