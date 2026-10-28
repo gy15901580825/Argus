@@ -142,7 +142,8 @@ def test_env_like_tool_called_when_named():
 
 
 @pytest.mark.parametrize("name", ["read_env", "dump_environment", "getEnvVars", "env.dump", "load-dotenv",
-                                  "print_environ", "ENV_DUMP", "list envvars",
+                                  "print_environ", "ENV_DUMP", "list envvars", "printenv", "envs", "get_envs",
+                                  "print_envs",
                                   # Any exact token counts, even in a name that reads as something else.
                                   "environment_map_tiles"])
 def test_env_named_tool_is_excluded_by_default_and_by_all(name):
@@ -154,7 +155,7 @@ def test_env_named_tool_is_excluded_by_default_and_by_all(name):
 
 
 @pytest.mark.parametrize("name", ["inventory", "development", "environmental_data", "envoy_status", "seven",
-                                  "get_events"])
+                                  "get_events", "venv_info"])
 def test_names_containing_env_letters_are_not_env_like(name):
     t = tool(name, description="Returns data.")
     assert not policy.env_like(t)

@@ -51,21 +51,21 @@ class CallRun:
     notes: list[str]
 
 
-def _show(text: str) -> str:
+def show_text(text: str) -> str:
     """Server text made safe to keep or print: redacted, then bounded, hidden characters shown, on one line."""
     return " ".join(rules.excerpt(text, 0, len(text)).split())
 
 
-def _good(result: CallResult) -> bool:
+def good_result(result: CallResult) -> bool:
     return result.status == "ok" and not result.is_error
 
 
 def _error_detail(result: CallResult, hint: str) -> str:
     if result.status == "ok":
-        shown = _show(result.text)
+        shown = show_text(result.text)
         detail = f"the tool returned an error: {shown}" if shown else "the tool returned an error with no text"
     else:
-        detail = f"{result.status}: {_show(result.detail)}"
+        detail = f"{result.status}: {show_text(result.detail)}"
     if hint or (result.status == "rpc_error" and result.detail.startswith(_INVALID_PARAMS)):
         detail += _ARGS_HINT
     return detail
@@ -120,7 +120,7 @@ class _Runner:
 
 
 def _reason(exc: Exception) -> str:
-    return _show(str(exc)) if isinstance(exc, ConnectError) else type(exc).__name__
+    return show_text(str(exc)) if isinstance(exc, ConnectError) else type(exc).__name__
 
 
 async def run_calls(session_a: McpSession, open_session: Callable[[], AbstractAsyncContextManager[McpSession]],
@@ -170,7 +170,7 @@ async def run_calls(session_a: McpSession, open_session: Callable[[], AbstractAs
                     break
             next_seq += len(plan)
             called += 1
-            echo(f"  {_show(tool.name)}: {made} call(s)")
+            echo(f"  {show_text(tool.name)}: {made} call(s)")
             if hooks is not None and tool.read_only:
                 hook_hits.extend(await hooks.after_tool(tool))
             # A server that times out on several tools in a row would otherwise cost every tool its timeouts.
@@ -193,7 +193,7 @@ async def run_calls(session_a: McpSession, open_session: Callable[[], AbstractAs
         else:
             run.notes.append("The second tools/list did not run: the session had closed and no restart was left.")
 
-        good = {r.call.tool for r in records if _good(r.result)}
+        good = {r.call.tool for r in records if good_result(r.result)}
         replay = [t for t in tools if t.name in good]
         if replay:
             echo(f"  replaying {len(replay)} tool(s) in a second session")
@@ -254,7 +254,7 @@ def _outcomes(tools: list[ToolInfo], records: list[CallRecord], bases: dict[str,
             outcomes[tool.name] = skipped[tool.name]
             continue
         recs = by_tool.get(tool.name, [])
-        if any(_good(r.result) for r in recs):
+        if any(good_result(r.result) for r in recs):
             outcomes[tool.name] = ToolOutcome("called", len(recs), stopped.get(tool.name, ""))
         else:
             outcomes[tool.name] = ToolOutcome("not_exercised", len(recs),
