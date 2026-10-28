@@ -22,8 +22,8 @@ A pending publisher does not reserve the project name. Someone else can still re
 
 ```bash
 python3.11 -m venv /tmp/argus-rc && . /tmp/argus-rc/bin/activate
-pip install --no-deps --index-url https://test.pypi.org/simple/ argus-probe==0.5.0
-pip install "argus-probe[local]==0.5.0"   # the empty extra must install without a warning
+pip install --no-deps --index-url https://test.pypi.org/simple/ argus-probe==0.6.0
+pip install "argus-probe[local]==0.6.0"   # the empty extra must install without a warning
 pip check
 argus-probe --version
 ```
@@ -38,8 +38,8 @@ Never upload to either index by hand with `twine`. A manual upload creates the p
 2. Merge to `main`, then tag that commit with `v` plus the argus-probe version and push the tag:
 
 ```bash
-git tag v0.5.0
-git push origin v0.5.0
+git tag v0.6.0
+git push origin v0.6.0
 ```
 
 The build job fails if the tag does not match the version in `pyproject.toml`.
