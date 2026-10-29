@@ -194,7 +194,9 @@ templates and JSONPath response extractors), `grpc`, `http_upload`,
 
 Install the `argus-probe` CLI from PyPI (Python 3.11+). The package
 includes the probe engine, so probes run on your machine and judged
-probes only need a judge key. The unrelated `argus` project on PyPI also
+probes need a judge key. Without one, `run --local` skips the judged
+probes and still runs the MCP and payment probes, which are decided from
+what the agent did. The unrelated `argus` project on PyPI also
 installs a top-level `argus` package, so do not install it in the same
 environment as `argus-probe`. `pipx` keeps each tool in its own venv.
 
@@ -245,7 +247,8 @@ will not start without both. The Docker image binds to `0.0.0.0`, so it
 needs both too. Details are in
 [`docs/reference/services.md`](docs/reference/services.md).
 
-`--probes all` runs the whole library. `--format` is `html` (default),
+`--probes all` runs every probe that fits the target kind;
+`argus-probe list-probes --target <spec>` shows them. `--format` is `html` (default),
 `sarif` (SARIF 2.1.0, uploads to GitHub Code Scanning) or `junit`.
 `--per-run-cap` sets a USD ceiling for the run.
 

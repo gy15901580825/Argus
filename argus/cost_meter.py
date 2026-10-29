@@ -78,8 +78,15 @@ _BUDGET_EPSILON_USD = 0.005
 
 
 class CostExceededError(RuntimeError):
-    """Raised when a daily or per-run cap would be exceeded."""
-    pass
+    """Raised when a daily or per-run cap would be exceeded.
+
+    `estimated_usd` is set only when the pre-run estimate exceeds the per-run cap,
+    so a caller can name the cap that would fit.
+    """
+
+    def __init__(self, message: str, estimated_usd: float | None = None) -> None:
+        super().__init__(message)
+        self.estimated_usd = estimated_usd
 
 
 # Backward-compat alias — remove after all callers are updated.
@@ -250,9 +257,10 @@ class CostMeter:
         LLM that drives every deep round.
         """
         self._maybe_reset_day()
-        # Per-exchange: target send + judge call ≈ 2 LLM calls; an attacker/planner
-        # LLM adds ≈ 1 more — always in deep mode, and assumed for the chat kinds.
-        calls_per_round = 3 if (deep or target_kind in {"openai_compat", "anthropic_native"}) else 2
+        # Only Argus's own LLM calls cost Argus money: one judge call per judged
+        # exchange, plus the attacker in deep mode. Sends to the target are the
+        # target's bill. Strong-model escalation is conditional and not counted.
+        calls_per_round = 2 if deep else 1
         # Char-based heuristic with safety margin
         est_input_tokens = (_AVG_PROMPT_CHARS / _CHARS_PER_TOKEN) * _SAFETY_MARGIN
         est_output_tokens = (_AVG_RESPONSE_CHARS / _CHARS_PER_TOKEN) * _SAFETY_MARGIN
@@ -273,7 +281,8 @@ class CostMeter:
         cap = per_run_cap_override if per_run_cap_override is not None else default_cap
         if estimated > cap:
             raise CostExceededError(
-                f"estimated cost ${estimated:.4f} > per_run_cap ${cap:.2f}"
+                f"estimated cost ${estimated:.4f} > per_run_cap ${cap:.2f}",
+                estimated_usd=estimated,
             )
         remaining = self.daily_cap_usd - self._spent_today
         label = "daily"

@@ -47,6 +47,22 @@ def incomplete_lines(findings: list[dict], stopped_by: str | None = None) -> lis
     return lines
 
 
+def judge_skip_line(findings: list[dict]) -> str | None:
+    """How many probes were skipped for want of a judge key, and how to run them; None if none were.
+
+    A note, not an incomplete-run reason: the run did what it could without a key.
+    """
+    from argus.runner import NO_JUDGE_KEY
+
+    skipped = {f.get("probe_id") for f in findings
+               if f.get("verdict") == "skipped" and str(f.get("reasoning") or "").startswith(NO_JUDGE_KEY)}
+    if not skipped:
+        return None
+    total = len({f.get("probe_id") for f in findings})
+    return (f"{len(skipped)} of {total} probes skipped: no judge key. To run them, set ANTHROPIC_API_KEY "
+            "or OPENAI_API_KEY, or set REDTEAM_MODEL_PROVIDER to azure or litellm.")
+
+
 def hit_cost_cap(findings: list[dict]) -> bool:
     """An iterative probe that hit the cap records `aborted_cost` and the run goes on; it still exits 4."""
     return any(f.get("verdict") == "aborted_cost" for f in findings)

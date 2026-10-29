@@ -13,7 +13,7 @@ from argus.cli import api_client, git_context, run_json
 from argus.cli.baseline_key import baseline_key
 from argus.cli.local_run import run_local_and_render
 from argus.cli.severity import (
-    SEVERITY_ORDER, blocked_warning, findings_at_or_above, hit_cost_cap, incomplete_lines,
+    SEVERITY_ORDER, blocked_warning, findings_at_or_above, hit_cost_cap, incomplete_lines, judge_skip_line,
 )
 from argus.cli.target_loader import load_target_spec_with_secrets, TargetLoadError
 
@@ -23,7 +23,9 @@ EXIT_COST_CAP = 4
 
 @click.command()
 @click.option("--target", required=True, help="Target spec: JSON object (inline) or path to JSON file.")
-@click.option("--probes", "probe_ids", required=True, help="Comma-separated probe ids OR 'all'.")
+@click.option("--probes", "probe_ids", required=True,
+              help="Comma-separated probe ids OR 'all' (every probe that fits the target kind; "
+                   "`list-probes --target` shows them).")
 @click.option("--format", "report_format", type=click.Choice(["html", "sarif", "junit", "json"]), default="html",
               help="Report format. json writes run.json and needs --local.")
 @click.option("--out", "out_file", type=click.Path(), required=True, help="Output report file path.")
@@ -34,7 +36,9 @@ EXIT_COST_CAP = 4
 @click.option("--fail-on", "fail_on", type=click.Choice(SEVERITY_ORDER), default=None,
               help="Exit 3 when any finding has verdict=fail and severity at or above this level.")
 @click.option("--local", "local", is_flag=True, default=False,
-              help="Run probes in this process instead of submitting to a server implementing the /api/v1/redteam API. Needs a judge API key in the environment.")
+              help="Run probes in this process instead of submitting to a server implementing the /api/v1/redteam API. "
+                   "Judged probes need a judge API key in the environment; without one they are skipped "
+                   "and the deterministic probes still run.")
 @click.option("--compare-to", "compare_to", default=None,
               help="Base branch: report and gate only on failures that are new relative to the latest run on it. Needs run history on a server implementing the /api/v1/redteam API.")
 def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, token: str | None, api_url: str | None, max_wait: float, per_run_cap: float | None, fail_on: str | None, local: bool, compare_to: str | None):
@@ -231,7 +235,7 @@ def _write_report(out_file: str, report: str, encoding: str | None = None, echo=
 
 
 def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, secret_values=()) -> None:
-    click.echo(f"Running {('all probes' if not tokens else f'{len(tokens)} probe(s)')} locally ...")
+    click.echo(f"Running {('all probes that fit this target' if not tokens else f'{len(tokens)} probe(s)')} locally ...")
     try:
         result = run_local_and_render(spec, tokens, per_run_cap, report_format, secret_values, fail_on)
     except KeyboardInterrupt:
@@ -250,6 +254,8 @@ def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, se
     incomplete = incomplete_lines(result.findings, result.stop_reason)
     _echo_masked(incomplete, spec, secret_values)
     _warn_if_all_blocked(result.findings)
+    if skip_note := judge_skip_line(result.findings):
+        click.echo(skip_note, file=sys.stderr)  # a note: skipped probes leave the exit code alone
     _count_fail_on(result.findings, fail_on)  # prints the hits even when another code wins
     # run_exit_code: the cost cap (4) beats incomplete (1), which beats --fail-on (3).
     if result.exit_code:

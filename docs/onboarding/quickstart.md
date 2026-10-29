@@ -90,7 +90,7 @@ The CLI submits the run to that server, polls for completion (typically ~10–30
 
 Add `--per-run-cap 0.50` to enforce a hard cost ceiling (checked before any LLM call in both modes; an over-cap run exits with code 4).
 
-The pre-run estimate is a worst case: it counts every prompt of every selected probe (and, in deep mode, which the CLI and API do not expose yet, every persona × strategy thread at its full round budget). Runs usually cost a fraction of it, but the cap is compared against the ceiling — so a full-library sweep needs `--per-run-cap 6.00` even though it typically bills well under $1.
+The pre-run estimate counts one judge call for every prompt of every selected probe that needs the judge (and, in deep mode, which the CLI and API do not expose yet, every persona × strategy thread at its full round budget). Requests to your agent are not counted. `--probes all` against a chat target is estimated at about $1.71 with the default Anthropic judge, so it needs `--per-run-cap 2.00`; when a run is over the cap, the error names the value that would fit.
 
 ## 6. Read the report
 
@@ -113,7 +113,7 @@ argus-probe run --target argus-target.json --probes owasp_07_system_prompt_leaka
 | Use case | `--probes` value |
 |---|---|
 | Quick smoke (1 probe, 3 prompts) | `owasp_07_system_prompt_leakage` |
-| Full sweep (needs `--per-run-cap 6.00`, see step 5) | `all` |
+| Full sweep: every probe that fits the target kind (a chat target needs `--per-run-cap 2.00`, see step 5) | `all` |
 
 See [Threat coverage overview](./probe-id-cheatsheet.md) for the categories the library covers and recommended use-case → probe-set mappings.
 
@@ -135,7 +135,7 @@ argus-probe scan-skill --sample key-grab
   - `pass` — agent resisted the attack
   - `fail` — agent fell for the attack (look at `severity`: critical/high/medium/low)
   - `blocked_by_target` — the target answered the attack prompt with a 4xx such as a content filter's 400 or 403, or its content filter withheld the reply; counted as blocked
-  - `skipped` — probe target_class incompatible with adapter (no LLM cost incurred)
+  - `skipped` — probe target_class incompatible with adapter, or, in local mode, the probe needs the judge and no judge key is set (no LLM cost incurred; the exit code does not change)
   - `error` — the probe reached no verdict: 401/404/422/429, 5xx, timeout, connection error, an empty reply or a missing rubric. The run continues, the report is marked incomplete, and `run` exits 1
   - `aborted_cost` — an iterative attack (TAP, PAIR or deep mode) stopped at the cost cap; `run` exits 4
 
@@ -145,7 +145,7 @@ argus-probe scan-skill --sample key-grab
 argus-probe quickstart                Run the MCP probes against a built-in demo agent, no key
 argus-probe init --kind <X>           Interactive target.json generator
 argus-probe validate-target           Sanity-check target reachability
-argus-probe list-probes               List probe ids (local library, or a server with --api-url)
+argus-probe list-probes               List probe ids (local library, or a server with --api-url); --target / --target-class filter them
 argus-probe run                       Submit a run + write the report
 argus-probe report                    Re-render an existing run's report
 argus-probe coverage                  Show what the probe library covers, offline
@@ -160,7 +160,7 @@ Each command's `--help` lists its flags. The most common flags on `run`:
 | `--format` | `html` / `sarif` / `junit` |
 | `--out` | output report file path |
 | `--per-run-cap` | USD cap; over-budget runs exit with code 4 (default $0.50) |
-| `--local` | run probes in this process; needs a judge key, no `--api-url`/`--token` |
+| `--local` | run probes in this process, no `--api-url`/`--token`; without a judge key, judged probes are skipped |
 | `--fail-on` | `info` / `low` / `medium` / `high` / `critical`; exit 3 when a failing finding is at or above it |
 | `--token` | API token (or set `ARGUS_API_TOKEN`) |
 | `--max-wait` | how long to poll for run completion (default 1800 s) |

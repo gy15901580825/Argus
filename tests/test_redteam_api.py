@@ -6,6 +6,9 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
 from argus.server import app
+from argus.api import PROBES_DIR
+from argus.cost_meter import CostExceededError
+from argus.probe import load_probe_library
 
 
 def test_redteam_run_endpoint_streams_findings(monkeypatch):
@@ -261,11 +264,40 @@ def test_preflight_with_empty_probe_ids_estimates_full_library_cost(monkeypatch)
     }
     resp = client.post("/redteam/run/preflight", json=body)
     assert resp.status_code == 200
-    # Cost meter must have been called with the resolved full list, not []
-    assert len(captured["probe_ids"]) > 100, (
-        f"cost estimator received {len(captured['probe_ids'])} probes, "
-        "expected the full library"
-    )
+    # Cost meter must have been called with the resolved list, not [] — and only
+    # the probes an openai_compat target can run.
+    from argus.targets.openai_compat import OpenAICompatTarget
+    expected = [p.id for p in load_probe_library(PROBES_DIR)
+                if set(p.target_class) & OpenAICompatTarget.compatible_classes]
+    assert len(expected) > 100
+    assert captured["probe_ids"] == expected
+
+
+@pytest.mark.parametrize("route", ["/redteam/run", "/redteam/run/preflight"])
+def test_all_on_the_server_selects_only_compatible_probes(monkeypatch, route):
+    """An mcp_agent target runs only the MCP probes; "all" must not estimate (or send) the whole library."""
+    from argus.cost_meter import CostMeter
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    captured = {}
+
+    def fake_pre_run(self, probe_ids, target_kind, **kwargs):
+        captured["probe_ids"] = probe_ids
+        captured["total_exchanges"] = kwargs["total_exchanges"]
+        raise CostExceededError("stop here")
+
+    monkeypatch.setattr(CostMeter, "check_or_abort_pre_run", fake_pre_run)
+    body = {
+        "target": {"kind": "mcp_agent", "testbed_url": "http://127.0.0.1:1", "sandbox": True,
+                   "inner": {"kind": "openai_compat", "endpoint_url": "http://127.0.0.1:2/v1", "model": "m"}},
+        "probe_ids": [],
+    }
+    resp = TestClient(app).post(route, json=body)
+    assert resp.status_code == 402
+    assert sorted(captured["probe_ids"]) == sorted(
+        p.id for p in load_probe_library(PROBES_DIR) if "mcp_agent" in p.target_class)
+    assert 0 < len(captured["probe_ids"]) < len(load_probe_library(PROBES_DIR))
+    assert captured["total_exchanges"] == 0  # every MCP probe is assertion-judged
 
 
 def test_per_run_cap_usd_is_honored_at_preflight(monkeypatch):

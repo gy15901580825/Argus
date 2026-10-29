@@ -108,9 +108,9 @@ def test_deep_preflight_is_capped_by_the_deep_per_run_cap():
     $0.50 static cap — otherwise a single-probe deep run could never start."""
     m = CostMeter(daily_cap_usd=13.50, per_run_cap_usd=0.50, deep_per_run_cap_usd=5.00)
     with pytest.raises(CostExceededError, match="per_run_cap"):
-        m.check_or_abort_pre_run(probe_ids=["p1"], target_kind="openai_compat", total_exchanges=60)
+        m.check_or_abort_pre_run(probe_ids=["p1"], target_kind="openai_compat", total_exchanges=200)
     estimated = m.check_or_abort_pre_run(
-        probe_ids=["p1"], target_kind="openai_compat", total_exchanges=60, deep=True
+        probe_ids=["p1"], target_kind="openai_compat", total_exchanges=200, deep=True
     )
     assert 0.50 < estimated < 5.00
 
@@ -122,7 +122,7 @@ def test_deep_preflight_respects_the_deep_daily_slice():
     # ~$9 of estimated spend fits the day ($13.50) but not the deep slice ($8.10).
     with pytest.raises(CostExceededError, match="deep"):
         m.check_or_abort_pre_run(
-            probe_ids=["p1"], target_kind="openai_compat", total_exchanges=910, deep=True
+            probe_ids=["p1"], target_kind="openai_compat", total_exchanges=1364, deep=True
         )
 
 
@@ -136,8 +136,8 @@ def _big_run(m, **kw):
 
 def test_preflight_default_estimate_is_haiku_rated(monkeypatch):
     m = CostMeter(daily_cap_usd=13.50, per_run_cap_usd=0.50)
-    # 1000/4*1.2=300 in, 2000/4*1.2=600 out tokens per call at $1/$5 per M, 2 calls per exchange.
-    expected = (300 / 1e6 * 1.0 + 600 / 1e6 * 5.0) * 10 * 2
+    # 1000/4*1.2=300 in, 2000/4*1.2=600 out tokens per call at $1/$5 per M, one judge call per exchange.
+    expected = (300 / 1e6 * 1.0 + 600 / 1e6 * 5.0) * 10
     assert m.check_or_abort_pre_run(
         probe_ids=["p"], target_kind="custom_http", total_exchanges=10
     ) == pytest.approx(expected)
@@ -153,7 +153,7 @@ def test_preflight_ollama_fast_model_is_free(monkeypatch):
 def test_preflight_openai_default_uses_luna_rates(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-fake")
     m = CostMeter(daily_cap_usd=13.50, per_run_cap_usd=0.50)
-    expected = (300 / 1e6 * 0.20 + 600 / 1e6 * 1.20) * 10 * 2
+    expected = (300 / 1e6 * 0.20 + 600 / 1e6 * 1.20) * 10
     assert m.check_or_abort_pre_run(
         probe_ids=["p"], target_kind="custom_http", total_exchanges=10
     ) == pytest.approx(expected)
@@ -174,3 +174,33 @@ def test_estimate_call_usd_uses_price_table_with_margin():
     assert estimate_call_usd("claude-sonnet-4-6", 4000, 400) == pytest.approx(0.0036 + 0.006)
     # An unknown model is billed at the dearest known rate, as record() does.
     assert estimate_call_usd("no-such-model", 4000, 400) == pytest.approx(1200 * 15 / 1e6 + 400 * 75 / 1e6)
+
+
+@pytest.mark.parametrize("kind", ["openai_compat", "anthropic_native", "custom_http", "mcp_agent"])
+def test_estimate_counts_only_argus_llm_calls(kind):
+    """Sends to the target are not Argus's spend: one judge call per exchange,
+    whatever the target kind, and judge plus attacker in deep mode."""
+    m = CostMeter(daily_cap_usd=13.50, per_run_cap_usd=0.50, deep_per_run_cap_usd=5.00)
+    per_call = 300 / 1e6 * 1.0 + 600 / 1e6 * 5.0
+    assert m.check_or_abort_pre_run(
+        probe_ids=["p"], target_kind=kind, total_exchanges=10
+    ) == pytest.approx(per_call * 10)
+    assert m.check_or_abort_pre_run(
+        probe_ids=["p"], target_kind=kind, total_exchanges=10, deep=True
+    ) == pytest.approx(per_call * 10 * 2)
+
+
+def test_per_run_cap_error_carries_the_estimate():
+    m = CostMeter(daily_cap_usd=13.50, per_run_cap_usd=0.50)
+    with pytest.raises(CostExceededError) as exc:
+        m.check_or_abort_pre_run(probe_ids=["p"], target_kind="custom_http", total_exchanges=518)
+    assert exc.value.estimated_usd == pytest.approx((300 / 1e6 * 1.0 + 600 / 1e6 * 5.0) * 518)
+    assert str(exc.value) == f"estimated cost ${exc.value.estimated_usd:.4f} > per_run_cap $0.50"
+
+
+def test_daily_budget_error_carries_no_estimate():
+    # A bigger per-run cap cannot fix an exhausted day, so no cap is suggested.
+    m = CostMeter(daily_cap_usd=0.01, per_run_cap_usd=10.0)
+    with pytest.raises(CostExceededError, match="daily") as exc:
+        m.check_or_abort_pre_run(probe_ids=["p"], target_kind="custom_http", total_exchanges=10)
+    assert exc.value.estimated_usd is None

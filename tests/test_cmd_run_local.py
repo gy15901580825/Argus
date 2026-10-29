@@ -512,3 +512,55 @@ def test_run_exit_code_precedence():
     assert run_exit_code([fail, err, aborted], None, "high") == 4
     assert run_exit_code([fail], Stop("cost"), None) == 4
     assert run_exit_code([fail], Stop("unreachable"), None) == 1
+
+
+# --- no judge key: skipped, not incomplete -------------------------------------------------------
+
+_NO_KEY = "no judge key: ANTHROPIC_API_KEY is not set; this probe needs an LLM judge"
+_SKIP_LINE = ("2 of 3 probes skipped: no judge key. To run them, set ANTHROPIC_API_KEY or OPENAI_API_KEY, "
+              "or set REDTEAM_MODEL_PROVIDER to azure or litellm.")
+
+
+def _no_key_engine(*extra):
+    return _engine(_finding("j1", "skipped", reasoning=_NO_KEY), _finding("j2", "skipped", reasoning=_NO_KEY),
+                   _finding("a1", "pass"), *extra)
+
+
+def test_no_judge_key_skips_are_noted_and_keep_exit_0(tmp_path, monkeypatch):
+    _install_fake_engine(monkeypatch, _no_key_engine())
+    out = tmp_path / "r.json"
+    result = _invoke(tmp_path, "--format", "json", "--out", str(out), "--fail-on", "low")
+    assert result.exit_code == 0, result.output
+    assert _SKIP_LINE in result.output
+    assert "incomplete" not in result.output
+    record = json.loads(out.read_text())
+    assert record["status"] == "completed"
+    assert record["notes"] == [_SKIP_LINE]
+
+
+def test_no_judge_key_skips_do_not_hide_a_fail_on_hit(tmp_path, monkeypatch):
+    _install_fake_engine(monkeypatch, _no_key_engine(FAIL_FINDING))
+    out = tmp_path / "r.sarif"
+    result = _invoke(tmp_path, "--format", "sarif", "--out", str(out), "--fail-on", "high")
+    assert result.exit_code == 3, result.output
+    sarif = json.loads(out.read_text())
+    assert sarif["runs"][0]["invocations"][0]["exitCode"] == 3
+    assert "2 of 4 probes skipped: no judge key" in result.output
+
+
+def test_other_skips_print_no_judge_key_line(tmp_path, monkeypatch):
+    _install_fake_engine(monkeypatch, _engine(
+        _finding("p1", "skipped", reasoning="probe.target_class ['x'] disjoint from target.compatible_classes ['y']"),
+        _finding("p2", "pass"),
+    ))
+    out = tmp_path / "r.json"
+    result = _invoke(tmp_path, "--format", "json", "--out", str(out))
+    assert result.exit_code == 0
+    assert "no judge key" not in result.output
+    assert "notes" not in json.loads(out.read_text())
+
+
+def test_local_help_no_longer_says_a_key_is_required():
+    result = CliRunner().invoke(cmd_run, ["--help"])
+    assert "Needs a judge API key" not in result.output
+    assert "skipped" in result.output

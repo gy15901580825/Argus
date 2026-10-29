@@ -43,7 +43,7 @@ The server refuses to start, with exit code 1, when `ARGUS_SERVER_HOST` is not a
 | Method | Path | Role |
 |--------|------|------|
 | POST | `/redteam/run/preflight` | Cost-cap check without running probes (402 when over the cap) |
-| POST | `/redteam/run` | Execute a red-team run |
+| POST | `/redteam/run` | Execute a red-team run. An empty `probe_ids` selects every probe the target kind can run |
 | GET  | `/redteam/probes` | Probe library |
 | GET  | `/redteam/suites` | Probe suites |
 | GET  | `/redteam/coverage` | Standards coverage |

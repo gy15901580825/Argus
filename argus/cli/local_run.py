@@ -9,7 +9,7 @@ from typing import Iterable, NamedTuple
 import click
 
 from argus.cli import reports, run_json
-from argus.cli.severity import blocked_warning, incomplete_lines, run_exit_code
+from argus.cli.severity import blocked_warning, incomplete_lines, judge_skip_line, run_exit_code
 
 
 class LocalRunResult(NamedTuple):
@@ -68,6 +68,8 @@ def run_local_and_render(
     notes = list(incomplete)
     if warning := blocked_warning(findings):
         notes.append(warning)
+    if skip_note := judge_skip_line(findings):
+        notes.append(skip_note)
     run = {
         "id": str(uuid.uuid4()),
         "status": "incomplete" if incomplete else "completed",

@@ -70,16 +70,32 @@ def _resolve_target_kind(target: Any) -> str:
     return "openai_compat"
 
 
-def _resolve_probe_ids(probe_ids: list[str]) -> list[str]:
+def compatible_probe_ids(target_obj: Any) -> list[str]:
+    """Library probes this built target can run; the runner would skip the rest.
+
+    Same rule as Runner.run_probe: no declared classes on either side means compatible.
+    Reads the instance, because testbed_agent sets its classes per spec.
+    """
+    classes = getattr(target_obj, "compatible_classes", frozenset())
+    return [
+        p.id for p in load_probe_library(PROBES_DIR)
+        if not classes or not p.target_class or set(p.target_class) & classes
+    ]
+
+
+def _resolve_probe_ids(probe_ids: list[str], target_obj: Any = None) -> list[str]:
     """Empty probe_ids list means 'run every probe in the library'.
 
     The CLI sends [] when the user passes --probes all, by historical
     convention. Without this resolution every loaded probe would be
     filtered out by the `not in requested` check below, causing the run
-    to silently complete with zero findings.
+    to silently complete with zero findings. With the built target, "all"
+    means every probe that target can run.
     """
     if probe_ids:
         return probe_ids
+    if target_obj is not None:
+        return compatible_probe_ids(target_obj)
     return [p.id for p in load_probe_library(PROBES_DIR)]
 
 
@@ -107,11 +123,12 @@ def _resolve_suite(suite: str) -> list[str]:
     return suites[suite]
 
 
-def _resolve_request_probe_ids(req: RunRequest) -> list[str]:
+def _resolve_request_probe_ids(req: RunRequest, target_obj: Any = None) -> list[str]:
     """Resolve `suite` / `probe_ids` to a concrete probe id list.
 
     The two are mutually exclusive: an empty probe_ids means "the whole
     library" (CLI convention), so a suite request must not carry one.
+    `target_obj` narrows "the whole library" to the probes that target can run.
     """
     if req.mode not in _VALID_MODES:
         raise HTTPException(
@@ -138,7 +155,14 @@ def _resolve_request_probe_ids(req: RunRequest) -> list[str]:
                 detail="probe_ids and suite are mutually exclusive — supply exactly one",
             )
         return _resolve_suite(req.suite)
-    return _resolve_probe_ids(req.probe_ids)
+    ids = _resolve_probe_ids(req.probe_ids, target_obj)
+    if not ids:
+        # Never hand [] on: it means "all" again downstream.
+        raise HTTPException(
+            status_code=422,
+            detail=f"no probe in the library fits target kind {_resolve_target_kind(req.target)}",
+        )
+    return ids
 
 
 def _estimate_exchanges(req: RunRequest, probe_ids: list[str]) -> int:
@@ -184,7 +208,7 @@ async def _run_probes(req: RunRequest, anthropic_api_key: str) -> AsyncIterator[
     judge = Judge(api_key=anthropic_api_key, cost_meter=_COST_METER)
     runner = Runner(target=target, judge=judge, rubrics_dir=RUBRICS_DIR)
 
-    requested = set(_resolve_request_probe_ids(req))
+    requested = set(_resolve_request_probe_ids(req, target))
     selected = [p for p in load_probe_library(PROBES_DIR) if p.id in requested]
 
     if req.mode == "deep":
@@ -201,13 +225,18 @@ async def _run_probes(req: RunRequest, anthropic_api_key: str) -> AsyncIterator[
 
     for probe in to_run:
         async for finding in runner.run_probe(probe):
-            # asdict() recurses dataclasses but does NOT convert UUIDs/datetimes.
-            # When adding Finding fields, ensure they're JSON-serializable here.
-            d = asdict(finding)
-            d["id"] = str(finding.id)
-            d["probed_at"] = finding.probed_at.isoformat()
-            d["created_at"] = finding.created_at.isoformat()
-            yield d
+            yield finding_dict(finding)
+
+
+def finding_dict(finding) -> dict:
+    """A Finding as the JSON-ready dict every run path emits."""
+    # asdict() recurses dataclasses but does NOT convert UUIDs/datetimes.
+    # When adding Finding fields, ensure they're JSON-serializable here.
+    d = asdict(finding)
+    d["id"] = str(finding.id)
+    d["probed_at"] = finding.probed_at.isoformat()
+    d["created_at"] = finding.created_at.isoformat()
+    return d
 
 
 @router.post("/run/preflight", status_code=200)
@@ -222,12 +251,12 @@ async def preflight(req: RunRequest):
     try:
         # Validate target dict is buildable before we run cost math — C1 fix.
         # Off the event loop: building renders the spec's templates once.
-        await asyncio.to_thread(build_target, req.target)
+        target_obj = await asyncio.to_thread(build_target, req.target)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
     # 422s on suite/probe_ids conflict or unknown suite id, before any cost math.
-    requested = _resolve_request_probe_ids(req)
+    requested = _resolve_request_probe_ids(req, target_obj)
     if (unknown := unknown_probe_ids(requested)):
         raise HTTPException(status_code=422, detail=unknown)
 
@@ -271,12 +300,12 @@ async def run(req: RunRequest):
     try:
         # Validate early, off the event loop (building renders the spec's templates once);
         # the actual target is rebuilt inside _run_probes.
-        await asyncio.to_thread(build_target, req.target)
+        target_obj = await asyncio.to_thread(build_target, req.target)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
     # 422s on suite/probe_ids conflict or unknown suite id, before SSE streaming starts.
-    requested = _resolve_request_probe_ids(req)
+    requested = _resolve_request_probe_ids(req, target_obj)
 
     # Pre-run cost check (Plan 4 T7) — happens before SSE streaming starts.
     try:

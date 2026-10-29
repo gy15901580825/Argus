@@ -8,6 +8,7 @@ patches keep applying.
 """
 from __future__ import annotations
 
+import math
 import os
 from typing import AsyncIterator, Mapping
 
@@ -17,7 +18,7 @@ from argus import api, llm
 from argus.cost_meter import CostExceededError
 from argus.coverage import build_coverage
 from argus.probe import load_probe_library
-from argus.runner import TargetUnreachableError
+from argus.runner import NO_JUDGE_KEY, TargetUnreachableError, skipped_finding
 from argus.targets import build_target
 from argus.targets.browser_use import local_browser_mode
 
@@ -55,7 +56,7 @@ async def run_local(
     if not isinstance(target, dict):
         raise LocalRunError("target must be a JSON object", code="input")
     try:
-        build_target(target)
+        target_obj = build_target(target)
     except (ValueError, TypeError) as e:
         # TypeError: SpecClass(**spec) rejects unexpected or missing fields.
         raise LocalRunError(str(e), code="input") from e
@@ -67,19 +68,30 @@ async def run_local(
     except ValueError as e:  # pydantic ValidationError is a ValueError subclass
         raise LocalRunError(str(e), code="input") from e
     try:
-        requested = api._resolve_request_probe_ids(req)
+        # "all" narrows to the probes this target can run, before any key or cost check.
+        requested = api._resolve_request_probe_ids(req, target_obj)
     except HTTPException as e:
         raise LocalRunError(str(e.detail), code="input") from e
     if (unknown := api.unknown_probe_ids(requested)):
         raise LocalRunError(unknown, code="usage")
 
-    # Assertion-backed probes are decided from evidence and never call the judge,
-    # so a static run of only those needs no judge credential.
-    needs_judge = mode == "deep" or api._judged_exchanges(req, requested) > 0
-    if needs_judge:
-        err = llm.credential_error(cfg)
-        if err:
-            raise LocalRunError(err, code="config")
+    # Assertion-backed probes are decided from evidence and never call the judge.
+    # Without a judge key the judged ones are reported as skipped and the rest run.
+    by_id = {p.id: p for p in load_probe_library(api.PROBES_DIR)}
+    judged = requested if mode == "deep" else [pid for pid in requested if not by_id[pid].assertions]
+    skipped: list[dict] = []
+    err = llm.credential_error(cfg) if judged else None
+    if err:
+        runnable = [pid for pid in requested if pid not in set(judged)]
+        # Deep mode needs the attacker LLM for every probe; an all-skipped run would exit 0 untested.
+        if mode == "deep" or not runnable:
+            n = len(requested)
+            head = "the selected probe needs" if n == 1 else f"all {n} selected probes need"
+            raise LocalRunError(f"{head} an LLM judge: {err}", code="config")
+        reason = f"{NO_JUDGE_KEY}: {cfg.missing_credential()} is not set; this probe needs an LLM judge"
+        skipped = [api.finding_dict(skipped_finding(by_id[pid], reason)) for pid in judged]
+        requested, judged = runnable, []
+    req = req.model_copy(update={"probe_ids": requested})
 
     try:
         api._COST_METER.check_or_abort_pre_run(
@@ -90,9 +102,9 @@ async def run_local(
             per_run_cap_override=per_run_cap_usd,
         )
     except CostExceededError as e:
-        raise LocalRunError(str(e), code="cost") from e
+        raise LocalRunError(_cost_message(e), code="cost") from e
 
-    if needs_judge and cfg.provider == llm.PROVIDER_LITELLM:
+    if judged and cfg.provider == llm.PROVIDER_LITELLM:
         yield {
             "type": "warning",
             "message": (
@@ -103,6 +115,9 @@ async def run_local(
         }
 
     emitted: list[dict] = []
+    for finding in skipped:
+        emitted.append(finding)
+        yield finding
     probes = api._run_probes(req, anthropic_api_key)
     try:
         while True:
@@ -127,3 +142,12 @@ async def run_local(
         "type": "coverage",
         "coverage": build_coverage(load_probe_library(api.PROBES_DIR), emitted),
     }
+
+
+def _cost_message(e: CostExceededError) -> str:
+    """The meter's reason, plus the --per-run-cap value that would let the run start."""
+    estimate = getattr(e, "estimated_usd", None)
+    if estimate is None:
+        return str(e)
+    fit = math.ceil(estimate * 100) / 100  # next cent up, so the suggested cap is never short
+    return f"{e}; rerun with --per-run-cap {fit:.2f} or select fewer probes"
