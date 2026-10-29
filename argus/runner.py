@@ -40,6 +40,8 @@ VERDICT_SKIPPED = "skipped"                       # probe.target_class disjoint 
 VERDICT_ABORTED = "aborted_cost"                  # mid-run CostExceededError (daily cap crossed)
 # Reason prefix of a judged probe skipped because no judge credential is set.
 NO_JUDGE_KEY = "no judge key"
+# Reason prefix of a probe the run never started because it had already hit a cost cap.
+NOT_STARTED_AT_CAP = "not started"
 
 
 def _short(exc: Exception) -> str:

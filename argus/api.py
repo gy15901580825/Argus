@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -30,7 +31,7 @@ from argus.persona_strategy import (
     build_deep_probes,
 )
 from argus.persona_loader import default_personas, default_strategies
-from argus.runner import VERDICT_ABORTED, Runner, aborted_finding
+from argus.runner import NOT_STARTED_AT_CAP, VERDICT_ABORTED, Runner, aborted_finding
 from argus.suites import derive_suites
 from argus.targets import build_target
 
@@ -231,14 +232,16 @@ async def _run_probes(req: RunRequest, anthropic_api_key: str) -> AsyncIterator[
     cap_hit: CostExceededError | None = None
     for probe in to_run:
         if cap_hit is not None:
-            yield finding_dict(aborted_finding(probe, f"cost cap reached: {cap_hit}"))
+            yield finding_dict(aborted_finding(
+                probe, f"{NOT_STARTED_AT_CAP}: the run had stopped at the cost cap ({cap_hit})"))
             continue
         try:
             async for finding in runner.run_probe(probe):
                 yield finding_dict(finding)
                 # An iterative thread reports the cap as aborted_cost instead of raising.
                 if finding.verdict == VERDICT_ABORTED and cap_hit is None:
-                    cap_hit = CostExceededError(finding.reasoning)
+                    m = re.match(r"cost cap hit at round \d+: (.*)", finding.reasoning, re.S)
+                    cap_hit = CostExceededError(m.group(1) if m else finding.reasoning)
         except CostExceededError as e:
             yield finding_dict(aborted_finding(probe, f"cost cap reached: {e}"))
             cap_hit = e

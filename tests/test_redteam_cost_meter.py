@@ -268,3 +268,78 @@ def test_run_scope_resumes_from_spent_usd():
         with pytest.raises(CostExceededError, match=r"spent \$0\.1000"):
             m.record("claude-haiku-4-5-20251001", 0, 10_000)
     assert m._spent_in_run is None
+
+
+def test_run_scope_resume_skips_the_deep_budget_check():
+    m = CostMeter(daily_cap_usd=1.0, deep_per_run_cap_usd=100.0)  # deep slice $0.60
+    with m.run_scope("r", deep=True):
+        with pytest.raises(CostExceededError):
+            m.record("claude-haiku-4-5-20251001", 0, 130_000)  # $0.65
+    with pytest.raises(CostExceededError, match="deep budget"):
+        with m.run_scope("r2", deep=True):
+            pass
+    with m.run_scope("r", deep=True, spent_usd=0.65, resume=True):
+        assert m.spent_in_current_run() == pytest.approx(0.65)
+
+
+def test_record_many_counts_every_attempt_before_one_cap_check():
+    m = CostMeter(daily_cap_usd=100.0, per_run_cap_usd=0.04)
+    with m.run_scope("r"):
+        with pytest.raises(CostExceededError, match=r"spent \$0\.1000"):
+            m.record_many([("claude-haiku-4-5-20251001", 0, 10_000)] * 2)
+        assert m.spent_in_current_run() == pytest.approx(0.10)
+    assert m.spent_today() == pytest.approx(0.10)
+
+
+import json as _json
+
+from argus import llm as _llm
+
+_H = "claude-haiku-4-5-20251001"
+
+
+def _refused_then_answered(text: str):
+    # The primary refuses and the fallback answers: two paid calls of $0.05 each.
+    async def fake(cfg, *, role, system, user, max_tokens):
+        refused = _llm.ModelRefused("refused", model=_H, input_tokens=0, output_tokens=10_000)
+        return _llm.Completion(text=text, input_tokens=0, output_tokens=10_000, model=_H, refusals=(refused,))
+    return fake
+
+
+@pytest.mark.parametrize("cap, raises", [(0.12, False), (0.06, True), (0.04, True)])
+async def test_judge_meters_the_refusal_and_the_answer_even_when_the_refusal_crosses_the_cap(
+        monkeypatch, cap, raises):
+    from argus.judge import Judge
+
+    monkeypatch.delenv("REDTEAM_MODEL_PROVIDER", raising=False)
+    reply = _json.dumps({"verdict": "pass", "severity": "info", "confidence": 0.9, "reasoning": "r"})
+    monkeypatch.setattr(_llm, "complete", _refused_then_answered(reply))
+    m = CostMeter(daily_cap_usd=100.0, per_run_cap_usd=cap)
+    judge = Judge("", m, _llm.resolve_config({"ANTHROPIC_API_KEY": "k"}))
+    judge._decider = None
+    with m.run_scope("r"):
+        if raises:
+            with pytest.raises(CostExceededError):
+                await judge.judge("p", "a", "r", "rubric")
+        else:
+            await judge.judge("p", "a", "r", "rubric")
+        assert m.spent_in_current_run() == pytest.approx(0.10)
+    assert m.spent_today() == pytest.approx(0.10)
+
+
+@pytest.mark.parametrize("module, fn", [
+    ("argus.iterative_pair", "_call_attacker_llm"),
+    ("argus.iterative_tap", "_call_planner_llm"),
+    ("argus.persona_strategy", "_call_attacker_llm"),
+])
+async def test_attackers_meter_the_refusal_and_the_answer_before_the_cap_check(monkeypatch, module, fn):
+    import importlib
+
+    mod = importlib.import_module(module)
+    monkeypatch.setattr(_llm, "complete", _refused_then_answered("next prompt"))
+    m = CostMeter(daily_cap_usd=100.0, per_run_cap_usd=0.04)
+    monkeypatch.setattr(mod, "_cost_meter", m)
+    with m.run_scope("r"):
+        with pytest.raises(CostExceededError):
+            await getattr(mod, fn)("s", "u")
+        assert m.spent_in_current_run() == pytest.approx(0.10)

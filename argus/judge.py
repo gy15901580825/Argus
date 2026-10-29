@@ -198,14 +198,9 @@ class Judge:
         except llm.AllProvidersFailed as e:
             llm.record_refusals(self._cost_meter, e.refusals)
             raise
-        llm.record_refusals(self._cost_meter, out.refusals)
-        # Bill the model that actually answered — a fallback may have changed it.
+        # Bill the model that actually answered (a fallback may have changed it) with the refusals.
         model = out.model
-        self._cost_meter.record(
-            model=model,
-            input_tokens=out.input_tokens,
-            output_tokens=out.output_tokens,
-        )
+        llm.record_completion(self._cost_meter, out)
         text = out.text
         if text.startswith("```"):
             text = text.strip("`").lstrip("json").strip()

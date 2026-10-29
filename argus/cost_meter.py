@@ -171,15 +171,16 @@ class CostMeter:
 
     @contextlib.contextmanager
     def run_scope(self, run_id: str, deep: bool = False, per_run_cap_usd: float | None = None,
-                  spent_usd: float = 0.0):
+                  spent_usd: float = 0.0, resume: bool = False):
         """Meter one run: record() raises once a call takes the run's spend past the cap.
 
         per_run_cap_usd overrides the applicable per-run cap for this run (the CLI's --per-run-cap).
-        spent_usd resumes a run metered in steps, so a scope never has to stay open across a yield.
+        spent_usd and resume=True continue a run metered in steps, so a scope never has to stay
+        open across a yield. The deep budget is checked only when a run starts, not when it resumes.
         """
         if self._spent_in_run is not None:
             raise RuntimeError(f"run_scope is non-reentrant; another run is active")
-        if deep and not self.can_start_deep_run():
+        if deep and not resume and not self.can_start_deep_run():
             raise CostExceededError(
                 f"deep budget ${self.deep_daily_cap_usd:.2f}/day "
                 f"(={self.deep_budget_fraction:.0%} of the ${self.daily_cap_usd:.2f} daily cap) "
@@ -197,14 +198,22 @@ class CostMeter:
             self._run_cap = None
 
     def record(self, model: str, input_tokens: int, output_tokens: int) -> float:
-        """Count one finished call, then raise if it took spend past a cap.
+        """Count one finished call, then raise if it took spend past a cap."""
+        return self.record_many([(model, input_tokens, output_tokens)])
 
-        Callers record after the call has returned, so its cost is real: it is
-        counted even when it crosses a cap, and the error stops the next call.
+    def record_many(self, calls) -> float:
+        """Count finished calls, then check the caps once; returns their cost.
+
+        `calls` is (model, input_tokens, output_tokens) for each attempt of one
+        completion: refused attempts and the answer. Callers record after the
+        calls have returned, so their cost is real: all of it is counted, even
+        when it crosses a cap, and the error stops the next call.
         """
         self._maybe_reset_day()
-        prices = _price_for(model)
-        cost = (input_tokens / 1_000_000) * prices["input"] + (output_tokens / 1_000_000) * prices["output"]
+        cost = 0.0
+        for model, input_tokens, output_tokens in calls:
+            prices = _price_for(model)
+            cost += (input_tokens / 1_000_000) * prices["input"] + (output_tokens / 1_000_000) * prices["output"]
         was_over_daily = self._spent_today >= self.daily_cap_usd
         self._spent_today += cost
         over: str | None = None

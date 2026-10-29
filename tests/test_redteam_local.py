@@ -565,7 +565,10 @@ async def test_run_probes_reports_every_remaining_probe_as_aborted(library):
                     events.append(e)
     assert [(e["probe_id"], e["verdict"]) for e in events] == [
         ("chat_j1", "pass"), ("chat_j2", "aborted_cost"), ("chat_a1", "aborted_cost")]
-    assert events[2]["reasoning"].startswith("cost cap reached: cost cap hit at round 0: per_run cap $0.08")
+    assert events[1]["reasoning"].startswith("cost cap hit at round 0: per_run cap $0.08")
+    # The never-started probe names the cap once, without the iterative "round 0" wrapper.
+    assert events[2]["reasoning"] == (
+        "not started: the run had stopped at the cost cap (per_run cap $0.08 exceeded: this run has spent $0.1000)")
 
 
 async def test_run_probes_names_the_probe_the_cap_stopped(library):
@@ -592,3 +595,28 @@ async def test_run_probes_names_the_probe_the_cap_stopped(library):
     assert [(e["probe_id"], e["verdict"]) for e in events] == [
         ("chat_j1", "aborted_cost"), ("chat_j2", "aborted_cost")]
     assert events[0]["reasoning"] == "cost cap reached: per_run cap $0.01 exceeded: this run has spent $0.0500"
+    assert events[1]["reasoning"] == (
+        "not started: the run had stopped at the cost cap (per_run cap $0.01 exceeded: this run has spent $0.0500)")
+
+
+async def test_a_deep_run_that_drains_the_deep_slice_still_reports_later_threads(library, monkeypatch):
+    # The deep budget is checked when the run starts, not each time a step resumes: a step
+    # after the slice is drained must still deliver the threads the run reports as not started.
+    from argus.cost_meter import CostMeter
+
+    meter = CostMeter(daily_cap_usd=1.0, deep_per_run_cap_usd=100.0)  # deep slice $0.60
+    monkeypatch.setattr(api, "_COST_METER", meter)
+    monkeypatch.setattr(meter, "check_or_abort_pre_run", lambda **kw: 0.0)
+
+    async def _deep(req, key):
+        try:
+            meter.record("claude-haiku-4-5-20251001", 0, 130_000)  # $0.65, past the slice
+        except CostExceededError:
+            yield {**FAKE_FINDING, "probe_id": "t1", "verdict": "aborted_cost"}
+        yield {**FAKE_FINDING, "probe_id": "t2", "verdict": "aborted_cost",
+               "reasoning": "not started: the run had stopped at the cost cap (x)"}
+
+    with patch("argus.api._run_probes", _deep):
+        events = await _collect(run_local(TARGET, ["chat_j1"], mode="deep", env=KEY))
+    assert [e.get("probe_id") for e in events if e.get("verdict")] == ["t1", "t2"]
+    assert meter._spent_in_run is None

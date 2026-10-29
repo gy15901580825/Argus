@@ -64,10 +64,17 @@ class AllProvidersFailed(RuntimeError):
 
 def record_refusals(meter, refusals) -> None:
     """Meter refused calls; they are billed like answered ones."""
+    if meter is None or not refusals:
+        return
+    meter.record_many([(r.model, r.input_tokens, r.output_tokens) for r in refusals])
+
+
+def record_completion(meter, out) -> None:
+    """Meter every attempt of one completion, refused ones and the answer, before any cap check."""
     if meter is None:
         return
-    for r in refusals:
-        meter.record(model=r.model, input_tokens=r.input_tokens, output_tokens=r.output_tokens)
+    meter.record_many([*((r.model, r.input_tokens, r.output_tokens) for r in out.refusals),
+                       (out.model, out.input_tokens, out.output_tokens)])
 
 
 class ModelRefused(RuntimeError):

@@ -142,15 +142,16 @@ async def run_local(
         emitted.append(finding)
         yield finding
     probes = api._run_probes(req, anthropic_api_key)
-    spent = 0.0
+    spent, started = 0.0, False
     try:
         while True:
             # browser_use targets serve their trap page from this process, and the per-run
             # cap holds during the run (issue #15). Both are entered per step, so neither
             # stays set in the caller across our yield, even if the caller stops iterating.
             with local_browser_mode(), api._COST_METER.run_scope(
-                "local", deep=mode == "deep", per_run_cap_usd=per_run_cap_usd, spent_usd=spent,
+                "local", deep=mode == "deep", per_run_cap_usd=per_run_cap_usd, spent_usd=spent, resume=started,
             ):
+                started = True
                 try:
                     finding = await probes.__anext__()
                 except StopAsyncIteration:

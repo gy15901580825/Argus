@@ -31,10 +31,21 @@ def incomplete_lines(findings: list[dict], stopped_by: str | None = None) -> lis
     Keys off `error` and `aborted_cost` findings and an early stop only: blocked
     and skipped probes are outcomes, not probes that failed to run.
     """
+    from argus.runner import NOT_STARTED_AT_CAP
+
     lines: list[str] = []
-    aborted = {f.get("probe_id") for f in findings if f.get("verdict") == "aborted_cost"}
+    aborted = [f for f in findings if f.get("verdict") == "aborted_cost"]
     if aborted:
-        lines.append(f"{len(aborted)} probe(s) stopped at the cost cap; run incomplete")
+        never = {f.get("probe_id") for f in aborted
+                 if str(f.get("reasoning") or "").startswith(NOT_STARTED_AT_CAP)}
+        stopped = {f.get("probe_id") for f in aborted} - never
+        if stopped and never:
+            lines.append(f"{len(stopped)} probe(s) stopped at the cost cap and {len(never)} not started; "
+                         "run incomplete")
+        elif stopped:
+            lines.append(f"{len(stopped)} probe(s) stopped at the cost cap; run incomplete")
+        else:
+            lines.append(f"{len(never)} probe(s) not started because of the cost cap; run incomplete")
     errors = [f for f in findings if f.get("verdict") == "error"]
     if errors:
         probes = {f.get("probe_id") for f in findings}
