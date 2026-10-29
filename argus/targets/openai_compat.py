@@ -73,7 +73,11 @@ class OpenAICompatTarget(Target):
         message = first.get("message") if isinstance(first, dict) else None
         text = ""
         if isinstance(message, dict):
-            text = _content_text(message.get("content")) or _content_text(message.get("refusal"))
+            # First of content / refusal that has real text: whitespace content must not hide a refusal.
+            text = next(
+                (t for t in (_content_text(message.get("content")), _content_text(message.get("refusal"))) if t.strip()),
+                "",
+            )
             if not text.strip():
                 text = _tool_calls_text(message)
         if not text.strip() and isinstance(first, dict) and first.get("finish_reason") == "content_filter":
