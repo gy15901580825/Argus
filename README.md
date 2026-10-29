@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/argus-icon-dark.svg">
+    <img src="docs/assets/argus-icon-light.svg" alt="Argus logo" width="128">
+  </picture>
+</p>
+
 # Argus
 
 **Black-box red-team testing for AI agents.** Point Argus at any HTTP, gRPC,
