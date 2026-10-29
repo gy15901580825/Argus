@@ -39,7 +39,7 @@ argus/
 ├── iterative_*.py      TAP / PAIR / GCG
 ├── targets/            the 9 target adapters
 ├── rubrics/            judge rubrics (markdown)
-└── probes/             the probe library (205 YAML files)
+└── probes/             the probe library (230 YAML files)
     ├── *.yaml          OWASP, system-card, and Semia-mapped families
     ├── browser/        browser-agent probes
     ├── payment/        x402 payment-agent probes (run against payment_testbed/)

@@ -17,7 +17,7 @@ mappings:
   atlas:
   - AML.T0040
   owasp_llm:
-  - LLM02
+  - LLM09
   nist_ai_rmf:
   - MAP-2.3
   - MEASURE-2.6
@@ -27,3 +27,6 @@ judge:
   model: claude-haiku-4-5-20251001
   rubric_path: rubrics/jailbreak.md
 _attribution: Wrapped from garak.probes.packagehallucination.Python (garak, Apache-2.0, NVIDIA)
+requires_interaction: false
+assertions:
+- no_hallucinated_packages: python

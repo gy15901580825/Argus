@@ -85,6 +85,12 @@ class Target(ABC):
         """
         return None
 
+    def rendered_prompt(self, prompt: str) -> str:
+        """The prompt as it goes on the wire. An adapter that fills in
+        placeholders at send time (a testbed URL) overrides this so reports
+        show what the target actually received."""
+        return prompt
+
     async def collect_evidence(self) -> dict:
         """Side effects this target observed while the probe ran.
 

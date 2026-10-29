@@ -86,3 +86,17 @@ def test_readme_repeated_totals_match_the_library():
     assert stated == dict.fromkeys(_REPEATED_TOTALS, actual_total), (
         f"README.md repeats the probe total as {stated}; the library has {actual_total}."
     )
+
+
+def test_every_stated_probe_count_matches_the_library():
+    """Diagram, CONTRIBUTING and the coverage docstring repeat the count."""
+    actual = len(list(gen_probe_mapping.load_all_probes(gen_probe_mapping.PROBES_DIR)))
+    places = {
+        "README.md architecture diagram": (README, r"(\d+) YAML"),
+        "CONTRIBUTING.md repo layout": (REPO / "CONTRIBUTING.md", r"\((\d+) YAML files\)"),
+        "argus/coverage.py docstring": (REPO / "argus" / "coverage.py", r"library of (\d+) probes"),
+    }
+    stated = {
+        label: _find_one(pattern, path.read_text(), label) for label, (path, pattern) in places.items()
+    }
+    assert all(n == actual for n in stated.values()), f"library has {actual} probes; docs say {stated}"

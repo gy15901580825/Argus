@@ -134,6 +134,11 @@ class TestbedAgentTarget(Target):
         self._script = script
         await self._open_session()
 
+    def rendered_prompt(self, prompt: str) -> str:
+        if self._session is None:
+            return prompt
+        return prompt.replace("{" + self.url_key + "}", self._session[self.url_key])
+
     async def send_prompt(
         self, prompt: str, history: tuple[Turn, ...] = ()
     ) -> tuple[str, float]:
@@ -141,7 +146,7 @@ class TestbedAgentTarget(Target):
         # The probe writes {<url_key>}; only the session knows the real one.
         # History holds earlier turns as the probe wrote them, so render it too.
         placeholder, url = "{" + self.url_key + "}", session[self.url_key]
-        rendered = prompt.replace(placeholder, url)
+        rendered = self.rendered_prompt(prompt)
         history = tuple(replace(t, content=t.content.replace(placeholder, url)) for t in history)
         return await self._inner.send_prompt(rendered, history=history)
 
