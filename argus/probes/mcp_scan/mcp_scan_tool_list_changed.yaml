@@ -18,6 +18,6 @@ judge:
   rubric_path: "rubrics/mcp_tool_output_injection.md"
 # How to fix it, for the server owner (overrides the attack_class text).
 remediation: >-
-  Keep the tool list stable within a session. If a tool must change, send a tools/list_changed
-  notification, and never change a tool's description or behavior after a client has approved
-  it.
+  Keep the tool list stable within a session: never add, remove or change a tool's name,
+  description, schema or behavior after a client has listed it. Ship tool changes as a new server
+  version that clients review again.

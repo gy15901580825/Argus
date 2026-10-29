@@ -102,18 +102,31 @@ def _serve(app, sock: socket.socket, name: str = "local server") -> Iterator[str
         sock.close()
 
 
+# Per testbed module: [runs serving it, PUBLIC_BASE_URL before the first]. Runs can overlap in one process.
+_PUBLIC_URL_LOCK = threading.Lock()
+_PUBLIC_URL_USERS: dict[str, list] = {}
+
+
 @contextmanager
 def _serve_testbed(mod, sock: socket.socket, name: str) -> Iterator[str]:
     """Serve a bundled testbed module so it hands out its own address.
 
-    The testbed reads TESTBED_PUBLIC_URL once at import; an exported value would send the agent elsewhere."""
-    saved = mod.PUBLIC_BASE_URL
-    mod.PUBLIC_BASE_URL = ""
+    The testbed reads TESTBED_PUBLIC_URL once at import; an exported value would send the agent elsewhere.
+    The first run to enter saves the value and the last to leave restores it."""
+    with _PUBLIC_URL_LOCK:
+        users = _PUBLIC_URL_USERS.setdefault(mod.__name__, [0, None])
+        if users[0] == 0:
+            users[1] = mod.PUBLIC_BASE_URL
+        users[0] += 1
+        mod.PUBLIC_BASE_URL = ""
     try:
         with _serve(mod.app, sock, name) as url:
             yield url
     finally:
-        mod.PUBLIC_BASE_URL = saved
+        with _PUBLIC_URL_LOCK:
+            users[0] -= 1
+            if users[0] == 0:
+                mod.PUBLIC_BASE_URL = users[1]
 
 
 @contextmanager

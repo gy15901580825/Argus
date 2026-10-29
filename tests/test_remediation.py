@@ -133,3 +133,13 @@ def test_scan_skill_findings_carry_an_empty_remediation():
 
     assert _normalise({"probe_id": "skill_exfiltration"}, "t")["remediation"] == ""
     assert _normalise({"probe_id": "x", "remediation": "keep"}, "t")["remediation"] == "keep"
+
+
+def test_deep_mode_wrapper_keeps_the_probe_remediation():
+    from argus.persona_loader import default_personas, default_strategies
+    from argus.persona_strategy import build_deep_probes
+
+    base = next(p for p in load_probe_library(PROBES_DIR) if p.id == "mcp_server_no_auth")
+    wrapped = build_deep_probes(base, default_personas(), default_strategies(), deep_pairs=2)
+    assert wrapped
+    assert all(remediation.for_probe(w) == remediation.for_probe(base) == base.remediation.strip() for w in wrapped)

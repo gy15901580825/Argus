@@ -247,3 +247,19 @@ def test_a_testbed_that_fails_to_start_says_why_fast(no_leftover_threads):
             pass
     assert time.monotonic() - start < 3
     assert _closed(port)
+
+
+def test_overlapping_runs_keep_the_local_url_and_restore_the_original(monkeypatch):
+    """A starts, B starts, A ends, B ends: B still hands out its own URL, and the original comes back."""
+    from argus.demo.mcp_testbed.testbed import app as mod
+
+    monkeypatch.setattr(mod, "PUBLIC_BASE_URL", "http://public.example:9")
+    a = servers.local_testbed(SPECS["mcp"][0])
+    b = servers.local_testbed(SPECS["mcp"][0])
+    a.__enter__()
+    resolved_b = b.__enter__()
+    a.__exit__(None, None, None)
+    session = httpx.post(f"{resolved_b['testbed_url']}/sessions", json={}).json()
+    assert session["mcp_url"].startswith(resolved_b["testbed_url"] + "/s/")
+    b.__exit__(None, None, None)
+    assert mod.PUBLIC_BASE_URL == "http://public.example:9"
