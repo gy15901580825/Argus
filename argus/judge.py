@@ -140,6 +140,15 @@ class Judge:
             strong_error: Optional[str] = None
             try:
                 strong_v = await self._call("strong", probe_name, attack_prompt, target_response, rubric_text)
+            except llm.AllProvidersFailed as e:
+                # A refusal to review is not a judgement; keep the fast verdict rather
+                # than turning a real finding into an error.
+                if not e.refused:
+                    raise
+                return replace(
+                    fast_v,
+                    reasoning=f"{fast_v.reasoning} | strong judge {self._cfg.strong_model} declined to review; fast verdict kept",
+                )
             except ValueError as e:
                 # Without a decider this is today's path: the error propagates.
                 if self._decider is None:

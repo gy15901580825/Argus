@@ -99,6 +99,38 @@ async def test_anthropic_path_returns_text_and_token_counts():
 
 
 @pytest.mark.asyncio
+async def test_anthropic_reply_with_no_text_names_the_stop_reason():
+    # Seen live: Sonnet 4.6 returned an empty content list on attack-laden judge
+    # prompts, which used to surface as a bare IndexError.
+    cfg = llm.resolve_config(env={"ANTHROPIC_API_KEY": "sk-ant-x", "REDTEAM_LLM_FALLBACK": "off"})
+    resp = _anthropic_response("")
+    resp.content = []
+    resp.stop_reason = "refusal"
+    client = MagicMock()
+    client.messages.create = AsyncMock(return_value=resp)
+    with patch.object(llm, "_anthropic_client", return_value=client):
+        with pytest.raises(llm.AllProvidersFailed) as exc:
+            await llm.complete(cfg, role="strong", system="s", user="u", max_tokens=50)
+    assert "no text" in str(exc.value)
+    assert "refusal" in str(exc.value)
+    assert "IndexError" not in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_anthropic_text_blocks_are_joined_and_non_text_blocks_skipped():
+    cfg = llm.resolve_config(env={"ANTHROPIC_API_KEY": "sk-ant-x", "REDTEAM_LLM_FALLBACK": "off"})
+    resp = _anthropic_response("first")
+    second, other = MagicMock(), MagicMock(spec=[])
+    second.text = "second"
+    resp.content = [other, resp.content[0], second]
+    client = MagicMock()
+    client.messages.create = AsyncMock(return_value=resp)
+    with patch.object(llm, "_anthropic_client", return_value=client):
+        out = await llm.complete(cfg, role="fast", system="s", user="u", max_tokens=50)
+    assert out.text == "first\nsecond"
+
+
+@pytest.mark.asyncio
 async def test_azure_path_goes_through_litellm_and_maps_token_fields():
     cfg = llm.resolve_config(env={"REDTEAM_MODEL_PROVIDER": "azure"})
     with patch.object(llm, "_acompletion", new=AsyncMock(return_value=_litellm_response("hi", 33, 44))) as m:
