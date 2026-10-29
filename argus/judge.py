@@ -145,7 +145,7 @@ class Judge:
                 # than turning a real finding into an error.
                 if not e.refused:
                     raise
-                note = f"strong judge {self._cfg.strong_model} declined to review"
+                note = f"strong judge {e.refusals[0].model} declined to review"
                 if fast_v.verdict == "pass":
                     # Escalation keys on severity, so a fast pass can get here; a refusal
                     # is no evidence for pass, so hand it to a human instead.
@@ -196,9 +196,9 @@ class Judge:
                 self._cfg, role=role, system=system_prompt, user=user_prompt, max_tokens=400
             )
         except llm.AllProvidersFailed as e:
-            for r in e.refusals:  # a refusal is still billed
-                self._cost_meter.record(model=r.model, input_tokens=r.input_tokens, output_tokens=r.output_tokens)
+            llm.record_refusals(self._cost_meter, e.refusals)
             raise
+        llm.record_refusals(self._cost_meter, out.refusals)
         # Bill the model that actually answered — a fallback may have changed it.
         model = out.model
         self._cost_meter.record(

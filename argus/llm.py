@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Mapping, Optional
 
 logger = logging.getLogger(__name__)
@@ -60,6 +60,14 @@ class AllProvidersFailed(RuntimeError):
         # They are billed, so callers meter them.
         self.refusals = list(refusals or [])
         self.refused = bool(self.refusals)
+
+
+def record_refusals(meter, refusals) -> None:
+    """Meter refused calls; they are billed like answered ones."""
+    if meter is None:
+        return
+    for r in refusals:
+        meter.record(model=r.model, input_tokens=r.input_tokens, output_tokens=r.output_tokens)
 
 
 class ModelRefused(RuntimeError):
@@ -123,6 +131,8 @@ class Completion:
     input_tokens: int
     output_tokens: int
     model: str  # the model that actually served the request, post-fallback
+    # Earlier attempts in this call that the model refused. They are billed too.
+    refusals: tuple = ()
 
 
 def credential_error(cfg: LLMConfig) -> Optional[str]:
@@ -286,7 +296,8 @@ async def complete(cfg: LLMConfig, *, role: str, system: str, user: str, max_tok
 
     for provider, model in attempts:
         try:
-            return await _DISPATCH[provider](cfg, model, system, user, max_tokens)
+            out = await _DISPATCH[provider](cfg, model, system, user, max_tokens)
+            return replace(out, refusals=tuple(refusals)) if refusals else out
         except Exception as e:  # noqa: BLE001 — any provider error is a fallback trigger
             if isinstance(e, ModelRefused):
                 refusals.append(e)

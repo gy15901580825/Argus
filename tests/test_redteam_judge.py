@@ -122,9 +122,9 @@ async def test_refused_strong_call_is_still_metered(monkeypatch):
         MockClient.return_value = client
         judge = Judge(api_key="sk-ant-test", cost_meter=meter)
         await judge.judge(probe_name="t", attack_prompt="a", target_response="b", rubric_text="r")
-    sonnet_only = CostMeter(daily_cap_usd=10.0)
-    sonnet_only.record(model="claude-haiku-4-5-20251001", input_tokens=100, output_tokens=20)
-    assert meter.spent_today() > sonnet_only.spent_today()
+    haiku_only = CostMeter(daily_cap_usd=10.0)
+    haiku_only.record(model="claude-haiku-4-5-20251001", input_tokens=100, output_tokens=20)
+    assert meter.spent_today() > haiku_only.spent_today()
 
 
 @pytest.mark.asyncio

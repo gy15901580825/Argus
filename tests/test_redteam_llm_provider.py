@@ -407,3 +407,30 @@ async def test_refusal_then_fallback_error_is_still_marked_refused():
             await llm.complete(cfg, role="strong", system="s", user="u", max_tokens=50)
     assert exc.value.refused is True
     assert "no endpoint" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_refusal_before_a_successful_fallback_is_carried_on_the_completion():
+    # The refused call is billed even though the fallback answered.
+    cfg = llm.resolve_config(env={"ANTHROPIC_API_KEY": "sk-ant-x"})
+    resp = _anthropic_response("")
+    resp.content = []
+    resp.stop_reason = "refusal"
+    client = MagicMock()
+    client.messages.create = AsyncMock(return_value=resp)
+    with patch.object(llm, "_anthropic_client", return_value=client), \
+         patch.object(llm, "_acompletion", AsyncMock(return_value=_litellm_response("ok", 7, 3))):
+        out = await llm.complete(cfg, role="strong", system="s", user="u", max_tokens=50)
+    assert out.text == "ok"
+    assert [(r.model, r.input_tokens, r.output_tokens) for r in out.refusals] == [("claude-sonnet-4-6", 100, 20)]
+
+
+def test_record_refusals_meters_each_refused_call():
+    from argus.cost_meter import CostMeter
+
+    meter, baseline = CostMeter(daily_cap_usd=10.0), CostMeter(daily_cap_usd=10.0)
+    r = llm.ModelRefused("x", model="claude-sonnet-4-6", input_tokens=1000, output_tokens=0)
+    llm.record_refusals(meter, [r, r])
+    baseline.record(model="claude-sonnet-4-6", input_tokens=2000, output_tokens=0)
+    assert meter.spent_today() == pytest.approx(baseline.spent_today())
+    llm.record_refusals(None, [r])  # no meter configured: nothing to do
