@@ -85,7 +85,7 @@ What the numbers say:
   unicode-smuggling or jailbreak probe the target failed. Five runs before the fix scored
   87.7 to 89.0% with 7 or 8 errors each.
 - The remaining errors (one in two of the five runs) were judge replies with a usable
-  verdict but a missing field: in one, the fast model wrote `reason` instead of
+  verdict but a missing or invalid field: in one, the fast model wrote `reason` instead of
   `reasoning`. They are reported as errors, never as passes.
 
 Limits: the cases are written by us, so the accuracy is agreement with our labels, not a
