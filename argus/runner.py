@@ -59,7 +59,22 @@ _STATUS_HINTS = {
     429: "rate limited; slow down or retry later",
 }
 
-NO_TEXT_REASON = "target returned no text; check response_jsonpath or the endpoint"
+# The empty-reply hint names the field that produced the text, per adapter kind.
+_NO_TEXT_HINTS = {
+    "custom_http": "check response_jsonpath or the endpoint",
+    "openai_compat": "the endpoint returned no message content",
+    "anthropic_native": "the endpoint returned no message content",
+}
+
+
+def _no_text_reason(target) -> str:
+    hint = _NO_TEXT_HINTS.get(getattr(getattr(target, "spec", None), "kind", None), "check the endpoint")
+    return f"target returned no text; {hint}"
+
+
+def _blank(text) -> bool:
+    # Adapters may hand back a non-string (a list of parts); only real emptiness is "no text".
+    return text is None or (isinstance(text, str) and not text.strip()) or text in ([], {})
 
 _GRPC_HINTS = {
     "UNAUTHENTICATED": "check credentials",
@@ -188,7 +203,6 @@ class Runner:
         self._failed_streak = 0
         self._last_send_failure = ""
         self._sends_ok = self._sends_failed = 0
-        self._missing_rubric = ""
         # Inject the meter into iterative modules so their planner LLM calls record cost.
         # The meter is extracted from judge, which was passed in from api.py.
         if hasattr(judge, "_cost_meter") and judge._cost_meter is not None:
@@ -233,9 +247,7 @@ class Runner:
             rubric_text = candidate.read_text()
         else:
             logger.warning("rubric not found for probe %s: resolved=%s", probe.id, candidate)
-            # Judged probes turn this into an error finding; never judge against no rubric.
             rubric_text = None
-            self._missing_rubric = str(candidate)
 
         # Plan 5 D2: target_class compat check — skip probes that don't match the target adapter
         target_compat = getattr(self._target, "compatible_classes", frozenset())
@@ -278,6 +290,16 @@ class Runner:
                 probe,
                 f"probe requires conversation history but target adapter "
                 f"{type(self._target).__name__} declares supports_history=False",
+            )
+            return
+
+        # A judged probe with no rubric file would be judged against nothing. Error
+        # before any send or attacker call; evidence-judged probes need no rubric.
+        if rubric_text is None and not getattr(probe, "assertions", ()):
+            yield self._finding(
+                probe, "", "", 0.0, datetime.now(timezone.utc),
+                verdict=VERDICT_ERROR, severity="info", confidence=1.0,
+                reasoning=f"rubric file not found: {candidate}", evidence=None,
             )
             return
 
@@ -379,12 +401,6 @@ class Runner:
                 f"target unreachable: {self._failed_streak} probes in a row failed ({self._last_send_failure})"
             )
 
-    def _no_rubric(self, probe, prompt, response_text, latency_ms, probed_at) -> Finding:
-        return self._finding(
-            probe, prompt, response_text, latency_ms, probed_at,
-            verdict=VERDICT_ERROR, severity="info", confidence=1.0,
-            reasoning=f"rubric file not found: {self._missing_rubric}", evidence=None,
-        )
 
     async def _assertion_finding(self, probe, prompt, response_text, latency_ms, probed_at) -> Finding:
         """Build a Finding whose verdict comes from captured evidence."""
@@ -485,11 +501,11 @@ class Runner:
                 continue
             self._note_send(None)
             # An empty reply is a broken response path, not a refusal; a judge would read it as a pass.
-            if not probe.assertions and not (response_text or "").strip():
+            if not probe.assertions and _blank(response_text):
                 yield self._finding(
                     probe, prompt, response_text or "", latency_ms, probed_at,
                     verdict=VERDICT_ERROR, severity="info", confidence=1.0,
-                    reasoning=NO_TEXT_REASON, evidence=None,
+                    reasoning=_no_text_reason(self._target), evidence=None,
                 )
                 if conversation:
                     return
@@ -515,11 +531,6 @@ class Runner:
                 yield await self._assertion_finding(probe, prompt, response_text, latency_ms, probed_at)
                 continue
 
-            if rubric_text is None:
-                yield self._no_rubric(probe, prompt, response_text, latency_ms, probed_at)
-                if conversation:
-                    return
-                continue
             try:
                 verdict = await self._judge.judge(
                     probe_name=probe.name,
@@ -616,11 +627,11 @@ class Runner:
                     )
                     return
                 self._note_send(None)
-                if not assertions and not (response_text or "").strip():
+                if not assertions and _blank(response_text):
                     yield self._finding(
                         probe, prompt, response_text or "", latency_ms, probed_at,
                         verdict=VERDICT_ERROR, severity="info", confidence=1.0,
-                        reasoning=f"round {round_n}: {NO_TEXT_REASON}", evidence=None,
+                        reasoning=f"round {round_n}: {_no_text_reason(self._target)}", evidence=None,
                     )
                     return
                 if assertions:
@@ -635,9 +646,6 @@ class Runner:
                         judge_model="", escalated_model=None,
                     )
                 else:
-                    if rubric_text is None:
-                        yield self._no_rubric(probe, prompt, response_text, latency_ms, probed_at)
-                        return
                     try:
                         verdict = await self._judge.judge(
                             probe_name=probe.name,

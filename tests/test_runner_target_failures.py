@@ -169,7 +169,7 @@ async def test_conversation_probe_stops_at_the_first_failed_turn():
 async def test_empty_text_is_an_error_and_never_judged(text):
     findings, judge = await _run(_mock_target([(text, 3.0)]), [_probe()])
     assert [f.verdict for f in findings] == ["error"]
-    assert findings[0].reasoning == "target returned no text; check response_jsonpath or the endpoint"
+    assert findings[0].reasoning == "target returned no text; check the endpoint"  # adapter kind unknown
     assert judge.seen == []
 
 
@@ -556,3 +556,81 @@ async def test_anthropic_refusal_without_text_is_blocked(monkeypatch):
     findings, judge = await _run(target, [_probe()])
     assert [f.verdict for f in findings] == ["blocked_by_target"]
     assert findings[0].reasoning == "target refused to answer (stop_reason: refusal); counted as blocked"
+
+
+# --- fix round 2 -------------------------------------------------------------------------------
+
+def _oc_reply(message, finish_reason="stop"):
+    return httpx.Response(200, json={"choices": [{"finish_reason": finish_reason, "message": message}]})
+
+
+@pytest.mark.asyncio
+@respx.mock
+@pytest.mark.parametrize("content, seen", [
+    ([{"type": "text", "text": "I can't"}, {"type": "image_url", "image_url": {"url": "x"}},
+      {"type": "text", "text": " help."}], "I can't help."),
+    ({"answer": "no"}, '{"answer": "no"}'),
+    (42, "42"),
+])
+async def test_openai_non_string_content_is_judged_as_text(content, seen):
+    # Some OpenAI-compatible servers return content as a list of parts; base judged it, so must we.
+    respx.post(URL).mock(side_effect=[_oc_reply({"role": "assistant", "content": content}),
+                                      httpx.Response(200, json=OK_BODY)])
+    target = OpenAICompatTarget(OpenAICompatSpec(endpoint_url=URL, model="m"))
+    findings, judge = await _run(target, [_probe("a"), _probe("b")])
+    assert [(f.probe_id, f.verdict) for f in findings] == [("a", "pass"), ("b", "pass")]
+    assert judge.seen[0] == seen
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_openai_parts_without_text_are_no_text():
+    respx.post(URL).mock(return_value=_oc_reply({"role": "assistant", "content": [{"type": "image_url"}]}))
+    target = OpenAICompatTarget(OpenAICompatSpec(endpoint_url=URL, model="m"))
+    findings, judge = await _run(target, [_probe()])
+    assert [f.verdict for f in findings] == ["error"] and judge.seen == []
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_openai_whitespace_content_with_tool_calls_is_judged_on_the_calls():
+    respx.post(URL).mock(return_value=_oc_reply({"role": "assistant", "content": "\n", "tool_calls": [
+        {"id": "1", "type": "function", "function": {"name": "send_email", "arguments": "{}"}}]}, "tool_calls"))
+    target = OpenAICompatTarget(OpenAICompatSpec(endpoint_url=URL, model="m"))
+    findings, judge = await _run(target, [_probe()])
+    assert judge.seen == ["[tool_call] send_email({})"]
+
+
+@pytest.mark.asyncio
+async def test_runner_tolerates_a_non_string_reply_from_any_adapter():
+    findings, judge = await _run(_mock_target([(["part"], 1.0)]), [_probe()])
+    assert findings[0].verdict == "pass"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_empty_reply_hint_names_the_adapter_field():
+    respx.post(URL).mock(return_value=_oc_reply({"role": "assistant", "content": None}))
+    target = OpenAICompatTarget(OpenAICompatSpec(endpoint_url=URL, model="m"))
+    findings, _ = await _run(target, [_probe()])
+    assert findings[0].reasoning == "target returned no text; the endpoint returned no message content"
+
+    respx.post("https://agent.example/chat").mock(return_value=httpx.Response(200, json={"x": 1}))
+    target = CustomHTTPTarget(CustomHTTPSpec(
+        request_url="https://agent.example/chat",
+        request_body_template='{"q": {{ prompt | tojson }}}', response_jsonpath="$.reply",
+    ))
+    findings, _ = await _run(target, [_probe()])
+    assert findings[0].reasoning == "target returned no text; check response_jsonpath or the endpoint"
+
+
+@pytest.mark.asyncio
+async def test_missing_rubric_errors_before_anything_is_sent_or_any_attacker_call(tmp_path):
+    target = _mock_target([("reply", 1.0)])
+    it = _iterative()
+    runner = Runner(target=target, judge=_RecordingJudge(), rubrics_dir=tmp_path)
+    findings = [f for p in (_probe(), it) for f in [g async for g in runner.run_probe(p)]]
+    assert [f.verdict for f in findings] == ["error", "error"]
+    assert all(f.reasoning.startswith("rubric file not found: ") for f in findings)
+    target.send_prompt.assert_not_called()
+    it.next_prompt.assert_not_called()

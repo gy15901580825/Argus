@@ -137,12 +137,12 @@ A probe that cannot reach a verdict gets an `error` finding that names the cause
 - HTTP 401 and 407 (`check credentials`), 404 (`check endpoint_url / request_url / model`), 405, 408 (timed out), 422 (`check request_body_template / the request schema`) and 429 (rate limited);
 - HTTP 5xx, an unfollowed redirect, timeouts, connection errors, and an HTTP 200 body that is not JSON;
 - gRPC errors, as one line with the status name. `UNAUTHENTICATED` and `PERMISSION_DENIED` say `check credentials`, `RESOURCE_EXHAUSTED` says rate limited;
-- a reply with no text: an HTTP 200 error object, a `response_jsonpath` that matches nothing, or a match that is `null`, `[]`, `{}` or only whitespace (`target returned no text; check response_jsonpath or the endpoint`). Such a reply is never sent to the judge;
-- a probe whose rubric file is missing. It is never judged against an empty rubric.
+- a reply with no text: an HTTP 200 error object, a message with no content, a `response_jsonpath` that matches nothing, or a match that is `null`, `[]`, `{}` or only whitespace. The reason names the field: `target returned no text; check response_jsonpath or the endpoint` for `custom_http`, `target returned no text; the endpoint returned no message content` for `openai_compat` and `anthropic_native`. Such a reply is never sent to the judge;
+- a judged probe whose rubric file is missing (`rubric file not found: <path>`). Nothing is sent for it and no attacker model is called.
 
 Probes judged on captured evidence (MCP and payment probes) are decided from the evidence, so an empty reply does not affect them. A testbed that times out or returns a body that is not JSON while a probe is set up or its evidence is read costs that probe an `error`, not the run.
 
-A reply that only calls tools is not empty. For `openai_compat` (`tool_calls`) and `anthropic_native` (`tool_use` blocks), the judge reads each call as `[tool_call] name(arguments)`.
+A reply that only calls tools is not empty. For `openai_compat` (`tool_calls`, also when `content` is only whitespace) and `anthropic_native` (`tool_use` blocks), the judge reads each call as `[tool_call] name(arguments)`. When `openai_compat` gets `content` as a list of parts, the judge reads the text parts joined; any other non-string content is read as JSON.
 
 These count as `blocked_by_target`, not as errors:
 
@@ -156,7 +156,7 @@ In a `conversation: true` probe, the first turn that is blocked or errors ends t
 
 **How long a dead target can take.** Chat adapters wait up to `timeout_s` for each reply: 120 seconds by default for `openai_compat`, `anthropic_native` and `custom_http`. `anthropic_native` retries once, so one prompt can take up to 2 x `timeout_s`. When 5 probes in a row get no answer to any of their prompts (every send failed with one of the errors above, not a block, or the testbed did not answer while the probe was set up), the run stops with `target unreachable: 5 probes in a row failed (<last reason>)`. A library probe has at most 5 prompts, and an iterative attack ends at its first failed round, so before that stop a target that never answers costs at most 25 x `timeout_s` (about 50 minutes at the default, 100 minutes for `anthropic_native`).
 
-When any finding is `error` or `aborted_cost`, the run is incomplete. The console prints `N of M probes errored; run incomplete` and up to three distinct reasons, or `N probe(s) stopped at the cost cap; run incomplete`. The report says the run is incomplete: a banner and notes in HTML, notes in SARIF and JUnit, `executionSuccessful: false` in SARIF, and `"status": "incomplete"` with an `incomplete_reason` in run.json. If the run stops early, for example because the target is unreachable or the judge fails unexpectedly, the report is still written with the findings so far and the console says why the run stopped. A probe that is `blocked_by_target` or `skipped` does not make a run incomplete.
+When any finding is `error` or `aborted_cost`, the run is incomplete. The console prints `N of M probes errored; run incomplete` and up to three distinct reasons, or `N probe(s) stopped at the cost cap; run incomplete`. The report says the run is incomplete: a banner and notes in HTML, notes in SARIF and JUnit, `executionSuccessful: false` in SARIF (whose `exitCode` is the command's real exit code), and `"status": "incomplete"` with an `incomplete_reason` in run.json. If the run stops early, for example because the target is unreachable or the judge fails unexpectedly, the report is still written with the findings so far and the console says why the run stopped. A probe that is `blocked_by_target` or `skipped` does not make a run incomplete.
 
 Exit codes:
 

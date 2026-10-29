@@ -469,3 +469,46 @@ def test_blocked_warning_ignores_skipped_probes(tmp_path, monkeypatch):
     result = _invoke(tmp_path, "--out", str(tmp_path / "r.html"))
     assert result.exit_code == 0, result.output
     assert "Warning: every probe was blocked with HTTP 400; check the request format" in result.output
+
+
+# --- fix round 2: SARIF exitCode is the process exit code --------------------------------------
+
+@pytest.mark.parametrize("events, then, code", [
+    ([_finding("p1", "aborted_cost", reasoning="cost cap hit at round 1: cap"), FAIL_FINDING], None, 4),
+    ([FAIL_FINDING], _LocalRunError("daily cap reached", "cost"), 4),
+    ([FAIL_FINDING, _finding("p2", "pass")], None, 3),
+    ([FAIL_FINDING, _finding("p2", "error", reasoning="x")], None, 1),
+    ([_finding("p1", "pass")], None, 0),
+])
+def test_sarif_exit_code_equals_the_process_exit_code(tmp_path, monkeypatch, events, then, code):
+    _install_fake_engine(monkeypatch, _engine(*events, then=then))
+    out = tmp_path / "r.sarif"
+    result = _invoke(tmp_path, "--format", "sarif", "--out", str(out), "--fail-on", "high")
+    assert result.exit_code == code, result.output
+    assert json.loads(out.read_text())["runs"][0]["invocations"][0]["exitCode"] == code
+
+
+def test_exit_code_is_not_written_to_run_json(tmp_path, monkeypatch):
+    _install_fake_engine(monkeypatch, _engine(FAIL_FINDING))
+    out = tmp_path / "r.json"
+    _invoke(tmp_path, "--format", "json", "--out", str(out), "--fail-on", "high")
+    assert "exit_code" not in json.loads(out.read_text())
+
+
+def test_run_exit_code_precedence():
+    from argus.cli.severity import run_exit_code
+
+    class Stop(Exception):
+        def __init__(self, code):
+            self.code = code
+
+    fail = {"probe_id": "a", "verdict": "fail", "severity": "critical"}
+    err = {"probe_id": "b", "verdict": "error", "severity": "info"}
+    aborted = {"probe_id": "c", "verdict": "aborted_cost", "severity": "info"}
+    assert run_exit_code([fail], None, None) == 0
+    assert run_exit_code([fail], None, "high") == 3
+    assert run_exit_code([fail, err], None, "high") == 1
+    assert run_exit_code([fail], RuntimeError("judge down"), "high") == 1
+    assert run_exit_code([fail, err, aborted], None, "high") == 4
+    assert run_exit_code([fail], Stop("cost"), None) == 4
+    assert run_exit_code([fail], Stop("unreachable"), None) == 1

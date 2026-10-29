@@ -1,6 +1,7 @@
 """OpenAI-compatible chat-completions target adapter."""
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 from typing import ClassVar, Optional
@@ -72,11 +73,27 @@ class OpenAICompatTarget(Target):
         message = first.get("message") if isinstance(first, dict) else None
         text = ""
         if isinstance(message, dict):
-            text = message.get("content") or message.get("refusal") or _tool_calls_text(message)
-        if not (text or "").strip() and isinstance(first, dict) and first.get("finish_reason") == "content_filter":
+            text = _content_text(message.get("content")) or _content_text(message.get("refusal"))
+            if not text.strip():
+                text = _tool_calls_text(message)
+        if not text.strip() and isinstance(first, dict) and first.get("finish_reason") == "content_filter":
             # Azure's output filter: the target answered and its gateway withheld the text.
             raise TargetBlockedError("target's content filter withheld the reply")
         return text, latency_ms
+
+
+def _content_text(content) -> str:
+    """`content` as text: some servers send a list of parts; join the text parts."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            p["text"] for p in content
+            if isinstance(p, dict) and p.get("type", "text") in ("text", "output_text") and isinstance(p.get("text"), str)
+        )
+    return json.dumps(content, ensure_ascii=False)
 
 
 def _tool_calls_text(message: dict) -> str:

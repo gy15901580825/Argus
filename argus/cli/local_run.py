@@ -9,7 +9,7 @@ from typing import Iterable, NamedTuple
 import click
 
 from argus.cli import reports, run_json
-from argus.cli.severity import blocked_warning, incomplete_lines
+from argus.cli.severity import blocked_warning, incomplete_lines, run_exit_code
 
 
 class LocalRunResult(NamedTuple):
@@ -18,11 +18,12 @@ class LocalRunResult(NamedTuple):
     # The exception that ended the run before every probe ran, and its text for the operator.
     stopped_by: Exception | None = None
     stop_reason: str | None = None
+    exit_code: int = 0
 
 
 def run_local_and_render(
     spec: dict, probe_ids: list[str], per_run_cap: float | None, report_format: str,
-    secret_values: Iterable[str] = (),
+    secret_values: Iterable[str] = (), fail_on: str | None = None,
 ) -> LocalRunResult:
     """Run the probes, print one line per finding, return the rendered report and findings.
 
@@ -76,12 +77,17 @@ def run_local_and_render(
         "coverage": coverage,
         "findings": findings,
     }
+    exit_code = run_exit_code(findings, stopped_by, fail_on)
+    # SARIF's exitCode; render_json leaves it out of run.json.
+    run["exit_code"] = exit_code
     if incomplete:
         run["incomplete_reason"] = "; ".join(incomplete)
     if notes:
         run["notes"] = notes
     if report_format == "json":
-        return LocalRunResult(run_json.render_json(run, secret_values, include_notes=True), findings, stopped_by, stop_reason)
+        return LocalRunResult(run_json.render_json(run, secret_values, include_notes=True), findings, stopped_by,
+                              stop_reason, exit_code)
     # Same scrub as run.json, so no format can leak what another one masks.
     render = {"html": reports.render_html, "sarif": reports.render_sarif, "junit": reports.render_junit}[report_format]
-    return LocalRunResult(render(run_json.scrub_run(run, secret_values)), findings, stopped_by, stop_reason)
+    return LocalRunResult(render(run_json.scrub_run(run, secret_values)), findings, stopped_by, stop_reason,
+                          exit_code)

@@ -160,7 +160,7 @@ async def test_run_probe_emits_skipped_when_target_class_mismatch():
         judge_rubric_path="rubrics/default.md",
     )
 
-    runner = Runner(target=mock_target, judge=mock_judge, rubrics_dir=Path("/tmp"))
+    runner = Runner(target=mock_target, judge=mock_judge, rubrics_dir=Path(ARGUS_DIR, "rubrics"))
     findings = [f async for f in runner.run_probe(probe)]
     assert len(findings) == 1
     assert findings[0].verdict == VERDICT_SKIPPED
@@ -195,7 +195,7 @@ async def test_run_probe_emits_blocked_by_target_on_target_4xx():
         judge_model="claude-haiku-4-5-20251001",
         judge_rubric_path="rubrics/default.md",
     )
-    runner = Runner(target=mock_target, judge=mock_judge, rubrics_dir=Path("/tmp"))
+    runner = Runner(target=mock_target, judge=mock_judge, rubrics_dir=Path(ARGUS_DIR, "rubrics"))
     findings = [f async for f in runner.run_probe(probe)]
     assert len(findings) == 1
     assert findings[0].verdict == VERDICT_BLOCKED_BY_TARGET
@@ -229,7 +229,7 @@ async def test_run_probe_emits_blocked_by_target_on_anthropic_apistatus_4xx():
         mappings=ProbeMappings(atlas=(), owasp_llm=(), nist_ai_rmf=(), eu_ai_act=()),
         judge_model="claude-haiku-4-5-20251001", judge_rubric_path="rubrics/default.md",
     )
-    runner = Runner(target=mock_target, judge=mock_judge, rubrics_dir=Path("/tmp"))
+    runner = Runner(target=mock_target, judge=mock_judge, rubrics_dir=Path(ARGUS_DIR, "rubrics"))
     findings = [f async for f in runner.run_probe(probe)]
     assert len(findings) == 1
     assert findings[0].verdict == VERDICT_BLOCKED_BY_TARGET
@@ -262,7 +262,7 @@ async def test_iterative_run_emits_aborted_cost_on_mid_run_cap_exceeded():
     iterative_probe.should_halt = MagicMock(return_value=False)
     iterative_probe.next_prompt = AsyncMock(return_value="seed prompt")
 
-    runner = Runner(target=mock_target, judge=mock_judge, rubrics_dir=Path("/tmp"))
+    runner = Runner(target=mock_target, judge=mock_judge, rubrics_dir=Path(ARGUS_DIR, "rubrics"))
     findings = [f async for f in runner.run_probe(iterative_probe)]
     assert len(findings) == 1
     assert findings[0].verdict == VERDICT_ABORTED

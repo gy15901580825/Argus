@@ -233,7 +233,7 @@ def _write_report(out_file: str, report: str, encoding: str | None = None, echo=
 def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, secret_values=()) -> None:
     click.echo(f"Running {('all probes' if not tokens else f'{len(tokens)} probe(s)')} locally ...")
     try:
-        result = run_local_and_render(spec, tokens, per_run_cap, report_format, secret_values)
+        result = run_local_and_render(spec, tokens, per_run_cap, report_format, secret_values, fail_on)
     except KeyboardInterrupt:
         # Same contract as mcp-trap and scan-mcp. SIGTERM keeps its default action (exit 143).
         click.echo("Interrupted: the run was stopped before it finished; no report was written.", file=sys.stderr)
@@ -250,11 +250,7 @@ def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, se
     incomplete = incomplete_lines(result.findings, result.stop_reason)
     _echo_masked(incomplete, spec, secret_values)
     _warn_if_all_blocked(result.findings)
-    hits = _count_fail_on(result.findings, fail_on)
-    # The cost cap keeps its own code so CI can tell "raise the cap" from "fix the target".
-    if getattr(result.stopped_by, "code", None) == "cost" or hit_cost_cap(result.findings):
-        sys.exit(EXIT_COST_CAP)
-    if incomplete:
-        sys.exit(1)
-    if hits:
-        sys.exit(3)
+    _count_fail_on(result.findings, fail_on)  # prints the hits even when another code wins
+    # run_exit_code: the cost cap (4) beats incomplete (1), which beats --fail-on (3).
+    if result.exit_code:
+        sys.exit(result.exit_code)

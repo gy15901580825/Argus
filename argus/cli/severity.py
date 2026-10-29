@@ -71,3 +71,17 @@ def blocked_warning(findings: list[dict]) -> str | None:
         return None
     every = "every" if n == sent else "almost every"
     return f"{every} probe was blocked with HTTP {code}; check the request format"
+
+
+def run_exit_code(findings: list[dict], stopped_by: Exception | None, fail_on: str | None) -> int:
+    """The exit code of `run --local`: 4 cost cap, 1 incomplete, 3 --fail-on hit, else 0.
+
+    One function for sys.exit and the SARIF exitCode, so the two cannot disagree.
+    """
+    if getattr(stopped_by, "code", None) == "cost" or hit_cost_cap(findings):
+        return 4
+    if incomplete_lines(findings, "stopped" if stopped_by is not None else None):
+        return 1
+    if fail_on is not None and findings_at_or_above(findings, fail_on):
+        return 3
+    return 0

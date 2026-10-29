@@ -113,7 +113,8 @@ def render_sarif(run: dict) -> str:
         "results": results,
         "invocations": [{
             "executionSuccessful": execution_successful,
-            "exitCode": 0 if execution_successful else 1,
+            # The real process exit code when the caller knows it (run --local).
+            "exitCode": run.get("exit_code", 0 if execution_successful else 1),
             "startTimeUtc": run.get("started_at"),
             "endTimeUtc": run.get("finished_at"),
         }],
