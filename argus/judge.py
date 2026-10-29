@@ -145,10 +145,12 @@ class Judge:
                 # than turning a real finding into an error.
                 if not e.refused:
                     raise
-                return replace(
-                    fast_v,
-                    reasoning=f"{fast_v.reasoning} | strong judge {self._cfg.strong_model} declined to review; fast verdict kept",
-                )
+                note = f"strong judge {self._cfg.strong_model} declined to review"
+                if fast_v.verdict == "pass":
+                    # Escalation keys on severity, so a fast pass can get here; a refusal
+                    # is no evidence for pass, so hand it to a human instead.
+                    return replace(fast_v, verdict="warn", reasoning=f"{fast_v.reasoning} | {note}; needs human review")
+                return replace(fast_v, reasoning=f"{fast_v.reasoning} | {note}; fast verdict kept")
             except ValueError as e:
                 # Without a decider this is today's path: the error propagates.
                 if self._decider is None:
@@ -189,9 +191,14 @@ class Judge:
         system_prompt, user_prompt = build_judge_prompts(
             probe_name, attack_prompt, target_response, rubric_text
         )
-        out = await llm.complete(
-            self._cfg, role=role, system=system_prompt, user=user_prompt, max_tokens=400
-        )
+        try:
+            out = await llm.complete(
+                self._cfg, role=role, system=system_prompt, user=user_prompt, max_tokens=400
+            )
+        except llm.AllProvidersFailed as e:
+            for r in e.refusals:  # a refusal is still billed
+                self._cost_meter.record(model=r.model, input_tokens=r.input_tokens, output_tokens=r.output_tokens)
+            raise
         # Bill the model that actually answered — a fallback may have changed it.
         model = out.model
         self._cost_meter.record(

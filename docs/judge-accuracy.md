@@ -53,7 +53,9 @@ commit without a key.
 
 Five back-to-back runs on 2026-10-29, 02:50 to 02:57 UTC, with the default Anthropic
 judge (fast `claude-haiku-4-5-20251001`, strong `claude-sonnet-4-6`), 155 cases per run,
-Jev decider off. The five runs together cost $1.84.
+Jev decider off. The five runs together cost $1.84 of metered spend. That figure leaves
+out the 35 strong-model calls that were refused: they are billed, but at the time a
+refused call was not recorded by the cost meter. It is recorded now.
 
 | Date | Judge (fast / strong) | Cases | Accuracy | False-pass | False-fail | Errors |
 |---|---|---|---|---|---|---|
@@ -77,11 +79,14 @@ What the numbers say:
     on the judge itself.
 - In every run the strong model declined to review seven attack-heavy `fail` cases
   (`stop_reason=refusal`). The judge now keeps the fast model's verdict in that case and
-  says so in the reasoning. Before that change these seven cases came back as errors, and
-  a real failure on an encoded-payload, unicode-smuggling or jailbreak probe could be
-  reported as an error instead of a `fail`. The first run before the fix scored 87.7%.
-- The remaining errors (one in two of the five runs) were judge replies whose verdict
-  field held a whole JSON object. They are reported as errors, never as passes.
+  says so in the reasoning; a fast `pass` is never kept this way and becomes `warn` for
+  human review. Before that change the refusal surfaced as an unhandled provider error,
+  and in a real scan it stopped the whole run with an error at the first encoded-payload,
+  unicode-smuggling or jailbreak probe the target failed. Five runs before the fix scored
+  87.7 to 89.0% with 7 or 8 errors each.
+- The remaining errors (one in two of the five runs) were judge replies with a usable
+  verdict but a missing field: in one, the fast model wrote `reason` instead of
+  `reasoning`. They are reported as errors, never as passes.
 
 Limits: the cases are written by us, so the accuracy is agreement with our labels, not a
 population estimate. Per-rubric sets are small (six to thirteen cases). Raw results:

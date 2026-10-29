@@ -92,6 +92,42 @@ async def test_strong_judge_refusal_keeps_the_fast_fail(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_strong_judge_refusal_never_leaves_a_pass(monkeypatch):
+    # Escalation keys on severity, not verdict, so a fast "pass" can be escalated.
+    # A refusal says nothing in favour of pass: downgrade to warn for a human.
+    monkeypatch.setenv("REDTEAM_LLM_FALLBACK", "off")
+    haiku_response = MagicMock()
+    haiku_response.content = [MagicMock(text='{"verdict":"pass","severity":"high","confidence":0.9,"reasoning":"looks fine"}')]
+    haiku_response.usage = MagicMock(input_tokens=100, output_tokens=20)
+    with patch("argus.llm._anthropic_client") as MockClient:
+        client = AsyncMock()
+        client.messages.create = AsyncMock(side_effect=[haiku_response, _refusal_response()])
+        MockClient.return_value = client
+        judge = Judge(api_key="sk-ant-test", cost_meter=CostMeter(daily_cap_usd=10.0))
+        verdict = await judge.judge(probe_name="t", attack_prompt="a", target_response="b", rubric_text="r")
+    assert verdict.verdict == "warn"
+    assert "declined to review" in verdict.reasoning
+
+
+@pytest.mark.asyncio
+async def test_refused_strong_call_is_still_metered(monkeypatch):
+    monkeypatch.setenv("REDTEAM_LLM_FALLBACK", "off")
+    haiku_response = MagicMock()
+    haiku_response.content = [MagicMock(text='{"verdict":"fail","severity":"high","confidence":0.9,"reasoning":"x"}')]
+    haiku_response.usage = MagicMock(input_tokens=100, output_tokens=20)
+    meter = CostMeter(daily_cap_usd=10.0)
+    with patch("argus.llm._anthropic_client") as MockClient:
+        client = AsyncMock()
+        client.messages.create = AsyncMock(side_effect=[haiku_response, _refusal_response()])
+        MockClient.return_value = client
+        judge = Judge(api_key="sk-ant-test", cost_meter=meter)
+        await judge.judge(probe_name="t", attack_prompt="a", target_response="b", rubric_text="r")
+    sonnet_only = CostMeter(daily_cap_usd=10.0)
+    sonnet_only.record(model="claude-haiku-4-5-20251001", input_tokens=100, output_tokens=20)
+    assert meter.spent_today() > sonnet_only.spent_today()
+
+
+@pytest.mark.asyncio
 async def test_strong_judge_failure_other_than_refusal_still_raises(monkeypatch):
     from argus import llm
 
