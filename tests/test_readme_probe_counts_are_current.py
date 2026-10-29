@@ -70,3 +70,19 @@ def test_readme_probe_breakdown_sums_to_the_stated_total():
         f"not the stated total of {stated_total}. Fix the family counts in the Scope "
         "section's probe-composition bullet (README.md) so they add up to the total."
     )
+
+
+# The intro and the architecture diagram repeat the total; both went stale at 219.
+_REPEATED_TOTALS = {
+    "intro": r"run\s+(\d+)\s+adversarial",
+    "architecture diagram": r"(\d+)\s+YAML\s",
+}
+
+
+def test_readme_repeated_totals_match_the_library():
+    text = README.read_text()
+    actual_total = len(list(gen_probe_mapping.load_all_probes(gen_probe_mapping.PROBES_DIR)))
+    stated = {label: _find_one(pattern, text, label) for label, pattern in _REPEATED_TOTALS.items()}
+    assert stated == dict.fromkeys(_REPEATED_TOTALS, actual_total), (
+        f"README.md repeats the probe total as {stated}; the library has {actual_total}."
+    )

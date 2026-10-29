@@ -8,7 +8,7 @@
 # Argus
 
 **Black-box red-team testing for AI agents.** Point Argus at any HTTP, gRPC,
-MCP, payment-agent, or browser-using agent endpoint, run 219 adversarial
+MCP, payment-agent, or browser-using agent endpoint, run 230 adversarial
 probes (OWASP LLM Top 10, MITRE ATLAS, NIST AI RMF, garak wrappers), and get
 LLM-judged findings as SARIF 2.1.0 / JUnit XML / HTML — upload straight to
 GitHub Code Scanning.
@@ -270,7 +270,7 @@ argus-probe scan-skill --sample key-grab
 │  argus  (engine; argus.server is the FastAPI app for server mode)       │
 │    probe loader  ──▶  target adapter  ──▶  judge harness                │
 │        │                  │                      │                      │
-│        └──── 219 YAML     │                      └──▶ fast model, then  │
+│        └──── 230 YAML     │                      └──▶ fast model, then  │
 │              probes       │                           strong model on   │
 │                           │                           high/critical,    │
 │                  ┌────────┴─────────┐                 confidence ≥ 0.7  │
