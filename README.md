@@ -92,6 +92,10 @@ What Argus does:
   OpenAI's default content filter blocks judge calls because the judge reads
   attack text; use a custom filter policy with jailbreak detection turned off
   for that deployment.
+  The target's reply goes to the judge inside a delimited block marked as
+  untrusted, and a judge verdict outside `pass` / `warn` / `fail` becomes an
+  `error` finding, never a pass. How accurate the judge is on our fixtures:
+  [docs/judge-accuracy.md](docs/judge-accuracy.md).
   Probes that carry `assertions` (payment, MCP) are decided by deterministic
   checks on captured evidence and skip the judge.
 - **Report formats**: SARIF 2.1.0 (drops into GitHub Code Scanning), JUnit

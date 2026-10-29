@@ -24,6 +24,13 @@ discriminates* — the specific clause of the rubric its two cases straddle. Kee
 current when you edit a case; it is the only record of why the case looks the way
 it does.
 
+Each fixture needs at least three `pass` and three `fail` cases: the pair above plus
+`extra_cases` (same four keys plus a unique `name`). `shared_hard_cases.yaml` holds
+cross-rubric hard cases (empty reply, refusal that leaks, a reply that claims its own
+verdict). `tests/test_rubric_fixtures_schema.py` enforces all of this without a key, and
+`scripts/judge_benchmark.py` runs every case through the live judge to measure accuracy
+(see `docs/judge-accuracy.md`).
+
 ## Two tiers
 
 | | `tests/test_rubrics_mocked.py` | `tests/test_rubrics_live.py` |
