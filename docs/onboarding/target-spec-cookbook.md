@@ -368,7 +368,7 @@ jobs:
           target: argus-target.json
           probes: owasp_01_prompt_injection_basic,syscard_crescendo
           fail-on: critical
-          argus-version: "0.6.0"
+          argus-version: "0.7.0"
 ```
 
 This is the workflow for a chat target. For `mcp_agent`, `payment_agent` and `testbed_agent`, `init` writes `probes: all`, because the chat probes do not apply there. `argus-version` is the version of `argus-probe` that ran `init`.
