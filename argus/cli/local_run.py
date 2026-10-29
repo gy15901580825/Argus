@@ -35,6 +35,10 @@ def run_local_and_render(
     """
     if isinstance(spec, dict) and spec.get("testbed_url") == "local":
         from argus.demo import servers
+        from argus.local import check_run
+
+        # A run the engine would refuse (bad spec, no key, over the cap) must not start a testbed.
+        check_run(spec, probe_ids, per_run_cap_usd=per_run_cap, skip_judged=skip_judged)
         env, testbed = servers.local_environment(spec), servers.local_testbed(spec)
     else:
         # Nothing to start, so the demo servers stay unimported.

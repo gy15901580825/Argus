@@ -283,3 +283,21 @@ def test_ctrl_c_right_after_entering_restores_the_public_url(monkeypatch):
             pass
     assert mod.PUBLIC_BASE_URL == "http://public.example:9"
     assert servers._PUBLIC_URL_USERS[mod.__name__][0] == 0
+
+
+def test_a_refused_run_never_starts_the_testbed(tmp_path, monkeypatch):
+    """No key and no --skip-judged: the key check refuses before any testbed thread or port opens."""
+    for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "REDTEAM_MODEL_PROVIDER"):
+        monkeypatch.delenv(name, raising=False)
+    opened = []
+    monkeypatch.setattr(servers, "_bind", lambda *a, **k: opened.append(a) or pytest.fail("testbed port opened"))
+    target = tmp_path / "t.json"
+    target.write_text(json.dumps(SPECS["payment"][0]))
+    before = threading.active_count()
+    result = CliRunner().invoke(cmd_run, ["--local", "--target", str(target), "--probes", "all",
+                                          "--out", str(tmp_path / "r.html")])
+    assert result.exit_code == 1, result.output
+    assert "selected probes need an LLM judge" in result.output
+    assert "Started the bundled" not in result.output
+    assert opened == [] and threading.active_count() == before
+    assert not (tmp_path / "r.html").exists()
