@@ -15,7 +15,7 @@ mappings:
   atlas:
   - AML.T0040
   owasp_llm:
-  - LLM02
+  - LLM09
   nist_ai_rmf:
   - MAP-2.3
   - MEASURE-2.6

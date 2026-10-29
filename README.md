@@ -96,8 +96,15 @@ What Argus does:
   untrusted, and a judge verdict outside `pass` / `warn` / `fail` becomes an
   `error` finding, never a pass. How accurate the judge is on our fixtures:
   [docs/judge-accuracy.md](docs/judge-accuracy.md).
-  Probes that carry `assertions` (payment, MCP) are decided by deterministic
-  checks on captured evidence and skip the judge.
+  Probes that carry `assertions` (payment, MCP, and the garak data-replay and
+  package-hallucination wrappers) are decided by deterministic checks and skip
+  the judge. The package-hallucination probes look each imported or installed
+  package up on its public registry (PyPI, npm, RubyGems, crates.io, MetaCPAN,
+  the Raku zef index, pub.dev), so they need outbound network access; if a
+  registry cannot answer, the probe is reported as `error`, not `pass`.
+  The check reads import and install statements only: a library named in a
+  prose-only answer is not seen, and Raku is checked against the zef ecosystem
+  index only. An empty reply is an `error`, not a `pass`.
 - **Report formats**: SARIF 2.1.0 (drops into GitHub Code Scanning), JUnit
   XML (CI gate), HTML (humans). SARIF and HTML also carry a per-standard
   coverage section (what the library does and does not test) and, for

@@ -11,14 +11,14 @@ Counts below are **every mapping a probe declares**, not one "primary" category 
 | OWASP | Category | Probes in library | Library status |
 |---|---|---:|---|
 | LLM01 | Prompt Injection | 96 | covered |
-| LLM02 | Sensitive Information Disclosure | 50 | covered |
+| LLM02 | Sensitive Information Disclosure | 60 | covered |
 | LLM03 | Supply Chain | 15 | covered |
 | LLM04 | Data and Model Poisoning | 2 | thin |
 | LLM05 | Improper Output Handling | 9 | covered |
-| LLM06 | Excessive Agency | 85 | covered |
+| LLM06 | Excessive Agency | 79 | covered |
 | LLM07 | System Prompt Leakage | 1 | thin |
-| LLM08 | Vector and Embedding Weaknesses | 19 | covered |
-| LLM09 | Misinformation | 1 | thin |
+| LLM08 | Vector and Embedding Weaknesses | 1 | thin |
+| LLM09 | Misinformation | 15 | covered |
 | LLM10 | Unbounded Consumption | 3 | covered |
 
 ## Cells touched, per standard

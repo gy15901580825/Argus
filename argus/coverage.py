@@ -1,7 +1,7 @@
 """What a scan did and did not test, per standard.
 
 The findings answer "what broke". This answers the question a customer cannot
-check for themselves: "what did you not look at?" A library of 193 probes can
+check for themselves: "what did you not look at?" A library of 230 probes can
 still leave a control category with one probe in it, and a run can skip a whole
 category because the target class did not match — neither fact appears anywhere
 in a findings list.

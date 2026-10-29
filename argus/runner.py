@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 from dataclasses import dataclass, field, replace
@@ -12,6 +13,7 @@ from uuid import UUID, uuid4
 
 import httpx
 
+from argus.placeholders import needs_rendering, render_generator_name, target_model_name
 from argus.probe import Probe
 
 logger = logging.getLogger(__name__)
@@ -211,6 +213,12 @@ class Runner:
             iterative_pair.set_cost_meter(judge._cost_meter)
             persona_strategy.set_cost_meter(judge._cost_meter)
 
+    def _shown(self, prompt: str) -> str:
+        """The prompt as it went on the wire (testbed URL filled in). Duck-typed
+        mock targets have no such method, so only a real bound method is called."""
+        shown = getattr(self._target, "rendered_prompt", None)
+        return shown(prompt) if prompt and inspect.ismethod(shown) else prompt
+
     def _skip(self, probe, reasoning: str) -> Finding:
         """A skipped Finding that still carries the probe's standards mappings,
         so the skip remains traceable in SARIF/JUnit rather than vanishing."""
@@ -234,6 +242,13 @@ class Runner:
         )
 
     async def run_probe(self, probe) -> AsyncIterator[Finding]:
+        # Template slots ({generator.name}) must never reach the target as literals.
+        name = target_model_name(self._target)
+        if isinstance(probe, Probe) and any(needs_rendering(p) for p in probe.prompts):
+            probe = replace(probe, prompts=tuple(render_generator_name(p, name) for p in probe.prompts))
+        base = getattr(probe, "base", None)  # deep mode: the attacker reads the base's first prompt
+        if isinstance(base, Probe) and any(needs_rendering(p) for p in base.prompts):
+            probe.base = replace(base, prompts=tuple(render_generator_name(p, name) for p in base.prompts))
         # A pack probe looks in its pack's rubrics first, then the built-in ones.
         candidate = None
         pack_rubrics = getattr(probe, "rubrics_dir", None)
@@ -362,6 +377,8 @@ class Runner:
         # from it and is left alone. After a failed fetch for this probe, a
         # refetch would attach evidence its error verdict was never based on.
         async for f in inner:
+            # Show the prompt as it went on the wire, not the probe's template.
+            f = replace(f, attack_prompt=self._shown(f.attack_prompt))
             if f.evidence is None and not self._evidence_failed:
                 # Duck-typed targets are everywhere in the test suite; only call
                 # a collector that is genuinely an async method, so a bare mock
@@ -438,7 +455,24 @@ class Runner:
                 evidence=evidence or None,
             )
 
-        results = evaluate_assertions(probe.assertions, evidence, response_text)
+        # Per-prompt checks (leak replay) need the prompt's position; a prompt
+        # repeated within one probe is ambiguous, so it gets none and fails closed.
+        prompts = list(getattr(probe, "prompts", ()))
+        prompt_index = prompts.index(prompt) if prompts.count(prompt) == 1 else None
+        if not prompts and getattr(probe, "base", None) is not None:
+            prompt_index = 0  # deep thread: the attacker is shown only the base's first prompt
+        # Blocking registry lookups must not stall the event loop.
+        results = await asyncio.to_thread(
+            evaluate_assertions, probe.assertions, evidence, response_text, prompt_index
+        )
+        undecided = [r for r in results if r.error]
+        if undecided:
+            return self._finding(
+                probe, prompt, response_text, latency_ms, probed_at,
+                verdict=VERDICT_ERROR, severity="info", confidence=1.0,
+                reasoning="; ".join(r.reason for r in undecided),
+                evidence=evidence or None,
+            )
         failed = [r for r in results if not r.passed]
         reasoning = "; ".join(r.reason for r in (failed or results))
         return self._finding(
@@ -534,7 +568,7 @@ class Runner:
             try:
                 verdict = await self._judge.judge(
                     probe_name=probe.name,
-                    attack_prompt=prompt,
+                    attack_prompt=self._shown(prompt),
                     target_response=response_text,
                     rubric_text=rubric_text,
                 )
@@ -649,7 +683,7 @@ class Runner:
                     try:
                         verdict = await self._judge.judge(
                             probe_name=probe.name,
-                            attack_prompt=prompt,
+                            attack_prompt=self._shown(prompt),
                             target_response=response_text,
                             rubric_text=rubric_text,
                         )
