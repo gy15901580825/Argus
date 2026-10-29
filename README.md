@@ -7,11 +7,28 @@
 
 # Argus
 
-**Black-box red-team testing for AI agents.** Point Argus at any HTTP, gRPC,
-MCP, payment-agent, or browser-using agent endpoint, run 230 adversarial
-probes (OWASP LLM Top 10, MITRE ATLAS, NIST AI RMF, garak wrappers), and get
-LLM-judged findings as SARIF 2.1.0 / JUnit XML / HTML — upload straight to
-GitHub Code Scanning.
+**Red-team an AI agent by what it does, not by what it says.** Argus attacks
+an agent through the things it trusts, then checks what the agent actually did.
+
+- **Hostile MCP servers.** A testbed serves poisoned tool descriptions,
+  look-alike tools, a tool list that turns hostile after the agent has trusted
+  it, and tools that fish for credentials. Argus records every tool call the
+  agent makes and decides the verdict from those calls, not from a model's
+  reading of the reply. `argus-probe mcp-trap` runs the same attacks against an
+  agent you start yourself.
+- **Payment agents.** A mock x402 merchant tests whether a buying agent can be
+  talked into paying a swapped payee, splitting a payment to stay under an
+  approval limit, paying twice on a retry, or draining a wallet in small
+  charges.
+- **Skills, before you install them.** `argus-probe scan-skill` installs a
+  Claude Code skill in a throwaway container, gives Claude Code ordinary tasks
+  that use it, and reports the files it read, the commands it ran and the
+  requests it tried to send.
+
+Around those sits a library of 230 adversarial probes (OWASP LLM Top 10,
+MITRE ATLAS, NIST AI RMF, garak wrappers) for chat, gRPC and browser-using
+agents. Findings come out as SARIF 2.1.0, JUnit XML and HTML, each with fix-it
+text, and the SARIF uploads straight to GitHub Code Scanning.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](pyproject.toml)
