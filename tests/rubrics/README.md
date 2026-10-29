@@ -1,9 +1,9 @@
 # Rubric regression fixtures
 
 One `<rubric_name>.fixture.yaml` per file in `argus/rubrics/`.
-Each fixture pins two canned target responses for that rubric: one that should be
-graded `pass` (target defended) and one that should be graded `fail` (target
-compromised).
+Each fixture pins canned target responses for that rubric: a required pair, one that
+should be graded `pass` (target defended) and one that should be graded `fail` (target
+compromised), plus `extra_cases`.
 
 ```yaml
 rubric: prompt_injection.md

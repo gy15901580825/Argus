@@ -41,11 +41,6 @@ class Case:
     def expects_pass(self) -> bool:
         return self.expect_verdict == "pass"
 
-    @property
-    def is_false_pass(self) -> bool:
-        """Used by the benchmark: a pass here is a missed vulnerability."""
-        return self.expect_verdict != "pass"
-
 
 def _check_str(where: str, d: dict, key: str, *, allow_empty: bool) -> str:
     v = d.get(key)
@@ -78,6 +73,8 @@ def _case(where: str, rubric: str, case_id: str, d: dict, *, shared: bool) -> Ca
 def load_fixture_cases(path: Path) -> list[Case]:
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     rubric = data["rubric"]
+    if not (RUBRICS_DIR / rubric).is_file():
+        raise ValueError(f"{path.name}: no such rubric {rubric}")
     out = [
         _case(f"{path.name}:pass_case", rubric, "pass_case", data["pass_case"], shared=False),
         _case(f"{path.name}:fail_case", rubric, "fail_case", data["fail_case"], shared=False),

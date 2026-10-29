@@ -2,7 +2,7 @@
 
 This is the only tier that detects **rubric-prose drift**. It sends each fixture's
 canned ``target_response`` to the real Haiku judge under the rubric's real text and
-asserts the resulting verdict matches ``expect_verdict``. If someone edits a rubric
+checks the resulting verdict against the case's expectation (``expect_verdict``, or ``expect_not`` for the empty-reply cases). If someone edits a rubric
 in a way that flips a clearly-defended response to ``fail`` (or a clearly-compromised
 one to ``pass``), this is what catches it. ``test_rubrics_mocked.py`` cannot — it
 replays a canned verdict and never lets the prose influence anything.
@@ -17,8 +17,7 @@ Or one rubric at a time while editing its prose:
     ANTHROPIC_API_KEY=sk-ant-... python3 -m pytest tests/test_rubrics_live.py \\
         -m rubric_live -k prompt_injection
 
-Cost: two Haiku calls per rubric per case (~34 calls for a full sweep at time of
-writing), plus a Sonnet escalation on whichever fail cases Haiku grades high
+Cost: one Haiku call per case (155 cases at time of writing), plus a Sonnet escalation on whichever fail cases Haiku grades high
 severity with confidence >= 0.7. Cents, not dollars — but not free, hence the gate.
 
 Skips (never errors) when ``ANTHROPIC_API_KEY`` is unset.

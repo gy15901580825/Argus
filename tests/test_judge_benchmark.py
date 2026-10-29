@@ -16,6 +16,7 @@ jb = importlib.util.module_from_spec(spec)
 sys.modules["judge_benchmark"] = jb
 spec.loader.exec_module(jb)
 
+from argus.cost_meter import CostMeter  # noqa: E402
 from rubric_cases import Case  # noqa: E402
 
 
@@ -40,6 +41,11 @@ def test_summarise_counts_false_pass_and_false_fail():
     assert s["correct"] == 2 and s["accuracy"] == round(2 / 6, 4)
     assert (s["false_pass"], s["should_not_pass"], s["false_pass_rate"]) == (1, 3, round(1 / 3, 4))
     assert (s["false_fail"], s["should_pass"], s["false_fail_rate"]) == (2, 3, round(2 / 3, 4))
+
+
+def test_judge_error_verdict_counts_as_an_error():
+    s = jb.summarise([_rec("a.md", True, "error"), _rec("a.md", False, "fail")])
+    assert s["errors"] == 1 and s["correct"] == 1 and s["false_pass"] == 0 and s["false_fail"] == 0
 
 
 def test_summarise_with_no_cases_has_no_rates():
@@ -139,7 +145,8 @@ def test_main_dry_run_needs_no_key(monkeypatch, capsys):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     assert jb.main(["--dry-run"]) == 0
-    assert "Estimated cost: $" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "Estimated cost: $" in out and "upper bound" not in out and "decider: off" in out
 
 
 def test_main_writes_json_with_meta_and_every_case(tmp_path, monkeypatch, capsys):
@@ -152,7 +159,7 @@ def test_main_writes_json_with_meta_and_every_case(tmp_path, monkeypatch, capsys
     assert rc == 0
     data = json.loads(out.read_text())
     assert data["meta"]["cases_total"] == 3 and data["meta"]["per_run_cap_usd"] == 5.0
-    assert data["meta"]["spent_usd"] > 0 and data["meta"]["stopped_at_cap"] is False
+    assert data["meta"]["decider"] == "off" and data["meta"]["spent_usd"] > 0 and data["meta"]["stopped_at_cap"] is False
     assert [c["verdict"] for c in data["cases"]] == ["pass", "fail", "fail"]
     assert data["overall"]["accuracy"] == 1.0
     printed = capsys.readouterr().out
@@ -162,3 +169,24 @@ def test_main_writes_json_with_meta_and_every_case(tmp_path, monkeypatch, capsys
 def test_main_requires_out_unless_dry_run():
     with pytest.raises(SystemExit):
         jb.main([])
+
+
+@pytest.mark.asyncio
+async def test_benchmark_turns_the_decider_off_and_counts_the_call_that_trips_the_cap(monkeypatch):
+    monkeypatch.setenv("REDTEAM_DECIDER", "jev")
+    monkeypatch.setenv("TYPESAFE_API_KEY", "x")
+    cfg = llm.resolve_config({"ANTHROPIC_API_KEY": "k"})
+    seen = {}
+    real = jb.Judge
+
+    def spy(*a, **k):
+        seen["judge"] = real(*a, **k)
+        return seen["judge"]
+
+    monkeypatch.setattr(jb, "Judge", spy)
+    # Each call is ~$0.00125; a $0.002 cap lets one through and trips on the second, which is still billed.
+    with patch("argus.llm._anthropic_client", return_value=_client("pass", "pass", "pass")):
+        records, spent, capped = await jb.run_benchmark(cfg, CASES, cap=0.002, concurrency=1)
+    assert real("", CostMeter(daily_cap_usd=1.0), cfg)._decider is not None  # the env does enable it
+    assert seen["judge"]._decider is None
+    assert capped and spent == pytest.approx(2 * 0.00125)

@@ -82,3 +82,18 @@ fail_case: {probe_name: p, attack_prompt: a, target_response: t2, expect_verdict
 """)
     with pytest.raises(ValueError, match="exactly one"):
         load_fixture_cases(p)
+
+
+@pytest.mark.parametrize("rubric", [r for r in RUBRICS if "**warn**" in (RUBRICS_DIR / r).read_text(encoding="utf-8")])
+def test_rubrics_with_a_warn_band_have_a_warn_case(rubric):
+    assert any(c.expect_verdict == "warn" for c in ALL if c.rubric == rubric and not c.shared)
+
+
+def test_loader_rejects_a_fixture_for_a_missing_rubric(tmp_path):
+    p = _write(tmp_path, """
+rubric: typo.md
+pass_case: {probe_name: p, attack_prompt: a, target_response: t, expect_verdict: pass}
+fail_case: {probe_name: p, attack_prompt: a, target_response: t2, expect_verdict: fail}
+""")
+    with pytest.raises(ValueError, match="no such rubric"):
+        load_fixture_cases(p)

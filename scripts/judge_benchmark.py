@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))  # fixture loader shared with the test suite
 
 from argus import llm  # noqa: E402
-from argus.cost_meter import CostExceededError, CostMeter, estimate_call_usd  # noqa: E402
+from argus.cost_meter import CostExceededError, CostMeter, _price_for, estimate_call_usd  # noqa: E402
 from argus.judge import ESCALATION_SEVERITIES, Judge, build_judge_prompts  # noqa: E402
 from rubric_cases import Case, load_all_cases, rubric_text  # noqa: E402
 
@@ -36,7 +36,7 @@ _AZURE_KEYS = ("AZURE_API_KEY", "AZURE_OPENAI_API_KEY")
 
 
 def estimate_usd(cfg: llm.LLMConfig, cases: list[Case]) -> float:
-    """Upper bound: every case on the fast model, plus a strong-model pass on each case that could escalate."""
+    """Estimate: every case on the fast model, plus a strong-model pass on each case expected not to pass."""
     total = 0.0
     for c in cases:
         system, user = build_judge_prompts(c.probe_name, c.attack_prompt, c.target_response, rubric_text(c.rubric))
@@ -85,7 +85,7 @@ def summarise(records: list[dict]) -> dict:
         "false_fail": ff,
         "should_pass": len(should_pass),
         "false_fail_rate": _rate(ff, len(should_pass)),
-        "errors": sum(1 for r in judged if r["status"] == "error"),
+        "errors": sum(1 for r in judged if r["status"] == "error" or r["verdict"] == "error"),
         "skipped": len(records) - len(judged),
     }
 
@@ -128,13 +128,31 @@ async def _run_case(judge: Judge, c: Case, sem: asyncio.Semaphore, stop: asyncio
     return rec
 
 
+class _BenchMeter(CostMeter):
+    """Also counts the call that trips the cap: the provider already billed it."""
+
+    def __init__(self, **kw) -> None:
+        super().__init__(**kw)
+        self.over_cap_usd = 0.0
+
+    def record(self, model: str, input_tokens: int, output_tokens: int) -> float:
+        try:
+            return super().record(model, input_tokens, output_tokens)
+        except CostExceededError:
+            p = _price_for(model)
+            self.over_cap_usd += (input_tokens * p["input"] + output_tokens * p["output"]) / 1_000_000
+            raise
+
+
 async def run_benchmark(cfg: llm.LLMConfig, cases: list[Case], cap: float, concurrency: int):
-    meter = CostMeter(daily_cap_usd=cap, per_run_cap_usd=cap)
+    # Infinite daily cap keeps the cost-alert email silent (same as scan-mcp); --per-run-cap is the limit.
+    meter = _BenchMeter(daily_cap_usd=float("inf"), per_run_cap_usd=cap)
     judge = Judge("", meter, cfg)
+    judge._decider = None  # no third-party decider: it is unmetered and would blend into the numbers
     sem, stop = asyncio.Semaphore(concurrency), asyncio.Event()
     with meter.run_scope("judge-benchmark"):
         records = await asyncio.gather(*(_run_case(judge, c, sem, stop) for c in cases))
-        spent = meter.spent_in_current_run()
+        spent = meter.spent_in_current_run() + meter.over_cap_usd
     return records, spent, stop.is_set()
 
 
@@ -176,7 +194,8 @@ def main(argv: list[str] | None = None) -> int:
 
     est = estimate_usd(cfg, cases)
     print(f"Judge benchmark: {len(cases)} cases, provider={cfg.provider}, fast={cfg.fast_model}, strong={cfg.strong_model}")
-    print(f"Estimated cost: ${est:.4f} (upper bound) against --per-run-cap ${args.per_run_cap:.2f}")
+    print(f"Estimated cost: ${est:.4f} against --per-run-cap ${args.per_run_cap:.2f}")
+    print("Jev decider: off for this run (judge only, so the numbers measure the judge)")
     if args.dry_run:
         return 0
     problem = credential_problem(cfg)
@@ -193,7 +212,7 @@ def main(argv: list[str] | None = None) -> int:
         "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "provider": cfg.provider, "fast_model": cfg.fast_model, "strong_model": cfg.strong_model,
         "estimated_usd": round(est, 4), "spent_usd": round(spent, 4), "per_run_cap_usd": args.per_run_cap,
-        "stopped_at_cap": capped, "cases_total": len(cases),
+        "stopped_at_cap": capped, "decider": "off", "cases_total": len(cases),
     }
     report["cases"] = records
     args.out.write_text(json.dumps(report, indent=2), encoding="utf-8")

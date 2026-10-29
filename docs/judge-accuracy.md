@@ -46,7 +46,7 @@ python scripts/judge_benchmark.py --out judge-benchmark.json --per-run-cap 1.00
 The script prints the estimated cost first, refuses to start without a judge key or when
 the estimate is above `--per-run-cap`, stops when the cap is reached, then prints accuracy,
 false-pass and false-fail rates per rubric and overall, and writes every case to the JSON
-file. The offline test `tests/test_rubric_fixtures_schema.py` checks the fixtures on every
+file. The Jev decider is switched off during the run so the numbers measure the judge alone. A call that finishes after the cap is reached is still billed and is counted in `spent_usd`; with `--concurrency` above 1 a few calls can finish past the cap, so spend can exceed the cap by a few cents. The estimate is a rough figure, not a bound: it prices 200 output tokens per call and a strong-model pass for every case not expected to pass. The offline test `tests/test_rubric_fixtures_schema.py` checks the fixtures on every
 commit without a key.
 
 ## Results
