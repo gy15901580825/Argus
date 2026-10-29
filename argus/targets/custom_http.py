@@ -35,7 +35,7 @@ class CustomHTTPSpec:
     request_body_template: str = ""
     response_jsonpath: str = ""
     response_latency_jsonpath: Optional[str] = None
-    timeout_s: float = 60.0
+    timeout_s: float = 120.0
 
     def __post_init__(self) -> None:
         # Coerce dict OR list-of-2-element-lists → tuple-of-tuples

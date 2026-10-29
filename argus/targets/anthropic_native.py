@@ -16,7 +16,7 @@ class AnthropicNativeSpec:
     model: str = ""
     api_key: str = ""
     max_tokens: int = 1024
-    timeout_s: float = 60.0
+    timeout_s: float = 120.0
 
     def __post_init__(self) -> None:
         # IMPORTANT: validate kind first to match the T1 review-fix pattern.

@@ -42,6 +42,81 @@ def _short(exc: Exception) -> str:
     return (str(exc) or type(exc).__name__)[:200]
 
 
+def _named(exc: BaseException) -> str:
+    # httpx timeouts often have an empty message, so the class name carries the cause.
+    msg = str(exc)
+    return f"{type(exc).__name__}: {msg[:200]}" if msg else type(exc).__name__
+
+
+# 4xx codes that mean the run is misconfigured or throttled, not that a defence fired.
+_STATUS_HINTS = {
+    401: "unauthorized; check credentials",
+    407: "proxy authentication required; check credentials",
+    404: "not found; check endpoint_url / request_url",
+    405: "method not allowed; check endpoint_url / request_method",
+    408: "the target timed out",
+    429: "rate limited; slow down or retry later",
+}
+
+NO_TEXT_REASON = "target returned no text; check response_jsonpath or the endpoint"
+
+
+def _status_code(exc: Exception) -> int | None:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code
+    code = getattr(exc, "status_code", None)  # SDK errors such as anthropic.APIStatusError
+    return code if isinstance(code, int) else None
+
+
+def _is_transport_failure(exc: Exception) -> bool:
+    """The request did not produce a usable reply: network, timeout, or a body that is not JSON."""
+    import json
+
+    from argus.targets._base import TargetDeliveryError
+
+    if isinstance(exc, (httpx.HTTPError, TargetDeliveryError, TimeoutError, ConnectionError,
+                        json.JSONDecodeError)):
+        return True
+    try:
+        import anthropic
+        if isinstance(exc, anthropic.APIConnectionError):  # includes APITimeoutError
+            return True
+    except ImportError:  # pragma: no cover - anthropic is a base dependency
+        pass
+    try:
+        from grpc.aio import AioRpcError
+        if isinstance(exc, AioRpcError):
+            return True
+    except ImportError:  # pragma: no cover - grpcio is a base dependency
+        pass
+    return False
+
+
+def _send_failure(exc: Exception) -> tuple[str, str] | None:
+    """(verdict, reasoning) for a send_prompt failure that costs one probe, or None to re-raise.
+
+    A target outage or a misconfigured spec must never abort the run (losing every
+    finding so far) nor read as a defended result.
+    """
+    from argus.targets._base import TargetDeliveryError
+
+    code = _status_code(exc)
+    if code is not None:
+        if code in _STATUS_HINTS:
+            return VERDICT_ERROR, f"target returned HTTP {code} ({_STATUS_HINTS[code]})"
+        if 400 <= code < 500:
+            return VERDICT_BLOCKED_BY_TARGET, f"target returned HTTP {code} to the attack prompt; counted as blocked"
+        if code >= 500:
+            return VERDICT_ERROR, f"target returned HTTP {code} (server error)"
+        # raise_for_status also raises on a redirect the adapter did not follow.
+        return VERDICT_ERROR, f"target returned HTTP {code}; check endpoint_url / request_url"
+    if isinstance(exc, TargetDeliveryError):
+        return VERDICT_ERROR, f"target could not deliver the probe: {_short(exc)}"
+    if _is_transport_failure(exc):
+        return VERDICT_ERROR, f"target request failed: {_named(exc)}"
+    return None
+
+
 @dataclass(frozen=True)
 class Finding:
     id: UUID
@@ -303,8 +378,7 @@ class Runner:
         With `conversation: true`: prompts are consecutive turns of one
         conversation, so prompt N is sent with turns 1..N-1 as history.
         """
-        import httpx
-        from argus.targets._base import TargetDeliveryError, Turn
+        from argus.targets._base import Turn
 
         conversation = getattr(probe, "conversation", False)
         transcript: list[Turn] = []
@@ -314,50 +388,30 @@ class Runner:
                 response_text, latency_ms = await self._target.send_prompt(
                     prompt, history=tuple(transcript)
                 )
-            except httpx.HTTPStatusError as e:
-                if 400 <= e.response.status_code < 500:
-                    yield Finding(
-                        id=uuid4(), probe_id=probe.id,
-                        attack_prompt=prompt, target_response="",
-                        target_latency_ms=0.0, probed_at=probed_at,
-                        verdict=VERDICT_BLOCKED_BY_TARGET, severity="info",
-                        confidence=1.0,
-                        reasoning=f"target HTTP {e.response.status_code}: target gateway rejected adversarial prompt",
-                        judge_model="", escalated_model=None,
-                        atlas_id=list(probe.mappings.atlas),
-                        owasp_id=list(probe.mappings.owasp_llm),
-                        nist_id=list(probe.mappings.nist_ai_rmf),
-                        eu_ai_act_id=list(probe.mappings.eu_ai_act),
-                    )
-                    continue
-                raise
-            except TargetDeliveryError as e:
-                # One undelivered prompt errors this probe, not the whole run.
+            except Exception as e:
+                failure = _send_failure(e)
+                if failure is None:
+                    raise
+                verdict, reasoning = failure
                 yield self._finding(
                     probe, prompt, "", 0.0, probed_at,
-                    verdict=VERDICT_ERROR, severity="info", confidence=1.0,
-                    reasoning=f"target could not deliver the probe: {_short(e)}",
-                    evidence=None,
+                    verdict=verdict, severity="info", confidence=1.0,
+                    reasoning=reasoning, evidence=None,
                 )
+                # Later turns of a conversation mean nothing without this one.
+                if conversation and verdict == VERDICT_ERROR:
+                    return
                 continue
-            except Exception as e:
-                if hasattr(e, "status_code") and isinstance(getattr(e, "status_code", None), int):
-                    if 400 <= e.status_code < 500:
-                        yield Finding(
-                            id=uuid4(), probe_id=probe.id,
-                            attack_prompt=prompt, target_response="",
-                            target_latency_ms=0.0, probed_at=probed_at,
-                            verdict=VERDICT_BLOCKED_BY_TARGET, severity="info",
-                            confidence=1.0,
-                            reasoning=f"target API status {e.status_code}: target gateway rejected adversarial prompt",
-                            judge_model="", escalated_model=None,
-                            atlas_id=list(probe.mappings.atlas),
-                            owasp_id=list(probe.mappings.owasp_llm),
-                            nist_id=list(probe.mappings.nist_ai_rmf),
-                            eu_ai_act_id=list(probe.mappings.eu_ai_act),
-                        )
-                        continue
-                raise
+            # An empty reply is a broken response path, not a refusal; a judge would read it as a pass.
+            if not probe.assertions and not (response_text or "").strip():
+                yield self._finding(
+                    probe, prompt, response_text or "", latency_ms, probed_at,
+                    verdict=VERDICT_ERROR, severity="info", confidence=1.0,
+                    reasoning=NO_TEXT_REASON, evidence=None,
+                )
+                if conversation:
+                    return
+                continue
             if conversation:
                 transcript.append(Turn(role="user", content=prompt))
                 transcript.append(Turn(role="assistant", content=response_text))
@@ -413,7 +467,6 @@ class Runner:
 
     async def _run_iterative(self, probe, rubric_text: str) -> AsyncIterator[Finding]:
         """IterativeProbe path: probe.next_prompt(ctx) drives each round."""
-        import httpx
         from argus.cost_meter import CostExceededError
         from argus.iterative import IterationContext
         from argus.judge import Verdict
@@ -458,50 +511,29 @@ class Runner:
                     response_text, latency_ms = await self._target.send_prompt(
                         prompt, history=tuple(transcript)
                     )
-                except httpx.HTTPStatusError as e:
-                    if 400 <= e.response.status_code < 500:
-                        yield Finding(
-                            id=uuid4(), probe_id=probe.id,
-                            attack_prompt=prompt, target_response="",
-                            target_latency_ms=0.0, probed_at=probed_at,
-                            verdict=VERDICT_BLOCKED_BY_TARGET, severity="info",
-                            confidence=1.0,
-                            reasoning=f"target HTTP {e.response.status_code}: target gateway rejected round {round_n} prompt",
-                            judge_model="", escalated_model=None,
-                            atlas_id=list(probe.mappings.atlas),
-                            owasp_id=list(probe.mappings.owasp_llm),
-                            nist_id=list(probe.mappings.nist_ai_rmf),
-                            eu_ai_act_id=list(probe.mappings.eu_ai_act),
-                        )
-                        return  # iterative attacks abort on 4xx — target won't engage
-                    raise
-                except TargetDeliveryError as e:
+                except Exception as e:
+                    failure = _send_failure(e)
+                    if failure is None:
+                        raise
+                    verdict_name, reasoning = failure
+                    if isinstance(e, TargetDeliveryError):
+                        reasoning = f"target could not deliver round {round_n} prompt: {_short(e)}"
+                    else:
+                        reasoning = f"round {round_n}: {reasoning}"
                     # The next round needs this round's reply, so the attack ends here.
                     yield self._finding(
                         probe, prompt, "", 0.0, probed_at,
-                        verdict=VERDICT_ERROR, severity="info", confidence=1.0,
-                        reasoning=f"target could not deliver round {round_n} prompt: {_short(e)}",
-                        evidence=None,
+                        verdict=verdict_name, severity="info", confidence=1.0,
+                        reasoning=reasoning, evidence=None,
                     )
                     return
-                except Exception as e:
-                    if hasattr(e, "status_code") and isinstance(getattr(e, "status_code", None), int):
-                        if 400 <= e.status_code < 500:
-                            yield Finding(
-                                id=uuid4(), probe_id=probe.id,
-                                attack_prompt=prompt, target_response="",
-                                target_latency_ms=0.0, probed_at=probed_at,
-                                verdict=VERDICT_BLOCKED_BY_TARGET, severity="info",
-                                confidence=1.0,
-                                reasoning=f"target API status {e.status_code}: target gateway rejected round {round_n} prompt",
-                                judge_model="", escalated_model=None,
-                                atlas_id=list(probe.mappings.atlas),
-                                owasp_id=list(probe.mappings.owasp_llm),
-                                nist_id=list(probe.mappings.nist_ai_rmf),
-                                eu_ai_act_id=list(probe.mappings.eu_ai_act),
-                            )
-                            return  # iterative attacks abort on 4xx — target won't engage
-                    raise
+                if not assertions and not (response_text or "").strip():
+                    yield self._finding(
+                        probe, prompt, response_text or "", latency_ms, probed_at,
+                        verdict=VERDICT_ERROR, severity="info", confidence=1.0,
+                        reasoning=f"round {round_n}: {NO_TEXT_REASON}", evidence=None,
+                    )
+                    return
                 if assertions:
                     pending = await self._assertion_finding(
                         probe, prompt, response_text, latency_ms, probed_at

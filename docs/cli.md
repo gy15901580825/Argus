@@ -126,7 +126,33 @@ Use [`argus-probe-action`](https://github.com/marketplace/actions/argus-agent-re
 
 The job needs `permissions: security-events: write` for the SARIF upload. `argus-probe init --workflow` writes a complete workflow file with that set. Pull requests from forks and Dependabot do not receive repository secrets, so `ANTHROPIC_API_KEY` is empty and the job fails on them.
 
-`--fail-on <severity>` exits 3 when a failing finding is at or above that level; the SARIF is written first. `--compare-to <base branch>` makes `--fail-on` count only failures that are new relative to the latest run on that branch. It is server mode only, because it needs run history, so the action does not offer it; see the target-spec cookbook for a server-mode workflow. Exit codes: 0 success, 1 run or configuration error, 2 usage error, 3 threshold hit, 4 cost cap.
+`--fail-on <severity>` exits 3 when a failing finding is at or above that level; the SARIF is written first. `--compare-to <base branch>` makes `--fail-on` count only failures that are new relative to the latest run on that branch. It is server mode only, because it needs run history, so the action does not offer it; see the target-spec cookbook for a server-mode workflow.
+
+### Errors and incomplete runs
+
+A probe that cannot reach a verdict gets an `error` finding that names the cause, and the run goes on to the next probe. This covers:
+
+- HTTP 401 and 407 (`check credentials`), 404 and 405 (`check endpoint_url / request_url`), 408 (timed out) and 429 (rate limited);
+- HTTP 5xx, timeouts and connection errors;
+- a reply with no text, for example an HTTP 200 body that is an error object or a `response_jsonpath` that matches nothing (`target returned no text; check response_jsonpath or the endpoint`). Such a reply is never sent to the judge. Probes judged on captured evidence (MCP and payment probes) are not affected.
+
+Other 4xx answers, such as a content filter's 400 or 403, stay `blocked_by_target` with the reason `target returned HTTP <code> to the attack prompt; counted as blocked`. Chat adapters (`openai_compat`, `anthropic_native`, `custom_http`) wait up to 120 seconds for a reply unless the target spec sets `timeout_s`.
+
+When any finding is `error`, the run is incomplete. The console prints `N of M probes errored; run incomplete` and up to three distinct reasons, the report says the run is incomplete (`"status": "incomplete"` in run.json), and the command exits 1. If the run stops early, for example on an unexpected error from the judge, the report is still written with the findings so far and the console says why the run stopped. A probe that is `blocked_by_target` or `skipped` does not make a run incomplete.
+
+Exit codes:
+
+| Code | Meaning |
+|---|---|
+| 0 | The run finished and every probe reached a verdict. Failing findings still exit 0 unless you set `--fail-on`. |
+| 1 | The target spec could not be loaded, the judge key is missing, the run hit an error, or at least one finding is `error`. When the run got as far as a finding, the report is written first. An incomplete run exits 1 even when `--fail-on` would have exited 3. In server mode, also when the server reports a status other than `completed`. |
+| 2 | Usage error, for example an option that does not fit the mode or an `--out` directory that does not exist. |
+| 3 | `--fail-on <severity>` is set, a finding with verdict `fail` is at or above that severity, and every probe reached a verdict. |
+| 4 | The cost cap. Before the run, the estimate is above `--per-run-cap` and nothing is written. During a local run, the daily cap was crossed; the report with the findings so far is written first. |
+| 130 | Ctrl-C. No report is written. |
+| 143 | SIGTERM, for example a CI cancel. No report is written. |
+
+In 0.6.0 and earlier, a probe that hit a 5xx, a timeout or a connection error stopped the whole run and lost its findings, while 401, 404 and 429 were reported as `blocked_by_target` and the run exited 0. A CI job that passed because of those errors now exits 1.
 
 ## Cost controls
 
@@ -134,7 +160,7 @@ The job needs `permissions: security-events: write` for the SARIF upload. `argus
 argus-probe run --target ... --per-run-cap 0.50
 ```
 
-Runs that would exceed the cap are rejected before any LLM cost is incurred, in both server and local mode (exit code 4).
+Runs that would exceed the cap are rejected before any LLM cost is incurred, in both server and local mode (exit code 4). If a local run crosses the daily cap partway, it stops, writes the report with the findings so far, marks it incomplete and exits 4.
 
 ## Check a skill before you install it
 

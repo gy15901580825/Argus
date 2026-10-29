@@ -16,7 +16,7 @@ def test_target_spec_validates_required_fields():
 def test_target_spec_defaults():
     spec = OpenAICompatSpec(endpoint_url="https://api.example.com/v1/chat/completions", model="gpt-4")
     assert spec.kind == "openai_compat"
-    assert spec.timeout_s == 30.0
+    assert spec.timeout_s == 120.0
 
 
 @pytest.mark.asyncio

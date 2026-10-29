@@ -36,7 +36,8 @@ h1 { border-bottom: 2px solid #333; }
 <body>
 <h1>Argus Red-Team Report</h1>
 <p>Run ID: <code>{{ run.id }}</code> · Status: <strong>{{ run.status }}</strong> · Probes: {{ run.findings | length }}</p>
-{% if run.target_spec %}
+{% if run.status == "incomplete" %}<p class="incomplete" style="background:#fff3cd;border:1px solid #e0c060;padding:0.5em 0.8em"><strong>This run is incomplete.</strong> Some probes produced no verdict or the run stopped early, so a clean result here is not a clean bill of health. See Notes below.</p>
+{% endif %}{% if run.target_spec %}
 <p class="target">Target: <code>{{ run.target_spec.kind }}</code>{% if run.target_spec.label %} — {{ run.target_spec.label }}{% endif %}{% if run.probe_suite %} · Suite: <code>{{ run.probe_suite }}</code>{% endif %}</p>
 {% endif %}
 <div class="summary">

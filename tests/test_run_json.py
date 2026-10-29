@@ -200,7 +200,7 @@ def test_cli_writes_redacted_run_json(tmp_path, monkeypatch):
     assert data["findings"][0]["target_response"] == "leaked ***"
 
 
-def test_cost_abort_writes_no_file(tmp_path, monkeypatch):
+def test_cost_abort_writes_the_findings_so_far_marked_incomplete(tmp_path, monkeypatch):
     async def _cost_after_first(target, probe_ids, **kw):
         yield FAIL_FINDING
         raise _LocalRunError("daily cap crossed", "cost")
@@ -209,8 +209,10 @@ def test_cost_abort_writes_no_file(tmp_path, monkeypatch):
     target = _spec_file(tmp_path, {"kind": "openai_compat", "endpoint_url": "https://x", "model": "m"})
     result = CliRunner().invoke(main, ["run", "--local", "--target", target, "--probes", "all",
                                        "--format", "json", "--out", str(tmp_path / "run.json")])
-    assert result.exit_code != 0
-    assert not (tmp_path / "run.json").exists()
+    assert result.exit_code == 4
+    record = json.loads((tmp_path / "run.json").read_text())
+    assert record["status"] == "incomplete"
+    assert len(record["findings"]) == 1
 
 
 def test_json_format_needs_local(tmp_path):

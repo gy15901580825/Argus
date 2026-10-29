@@ -32,6 +32,8 @@ Below are copy-paste templates for each supported agent shape, plus the gotchas 
   "extra_headers": [["api-key", "${AZURE_OPENAI_KEY}"]]
   ```
 - Content-filter responses (HTTP 400 on adversarial prompts) are a *correct* signal — they appear as `verdict=blocked_by_target` findings, not as errors. This represents a partial defense win for your stack.
+- HTTP 401, 404, 405, 407, 408 and 429, 5xx answers, timeouts and replies with no text are `error` findings that name the cause, and the run exits 1. See [cli.md](../cli.md#errors-and-incomplete-runs).
+- `timeout_s` (default 120) is how long Argus waits for one reply. Raise it for agents that run long tool chains.
 
 ---
 

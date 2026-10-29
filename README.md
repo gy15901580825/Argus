@@ -241,7 +241,8 @@ needs both too. Details are in
 In GitHub Actions, use
 [`argus-probe-action`](https://github.com/marketplace/actions/argus-agent-red-team-scan).
 It installs the CLI, runs it in local mode, uploads the SARIF to code
-scanning, and fails the job when a finding reaches `fail-on`:
+scanning, and fails the job when a finding reaches `fail-on` or when a probe
+errors (for example a 401 or a timeout from your agent):
 
 ```yaml
 - uses: actions/checkout@v4

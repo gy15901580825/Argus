@@ -10,7 +10,7 @@ argus-probe run --local --target target.json --probes all --format json --out ru
 
 `--format json` works only with `--local`. In server mode the CLI stops with a usage error, because the server's report endpoint has no json format yet.
 
-If a run stops partway, for example when the cost cap is crossed, the CLI exits with a non-zero code and writes no file. You never get a half-written `run.json`.
+If a run stops partway, for example when the daily cost cap is crossed or the judge fails unexpectedly, the CLI still writes `run.json` with the findings gathered so far, sets `status` to `"incomplete"` and exits with a non-zero code. A run that never starts (no judge key, a target spec that cannot be built, an estimate above `--per-run-cap`) writes no file. Ctrl-C and SIGTERM write no file either.
 
 ## Fields
 
@@ -20,7 +20,7 @@ The top-level keys always appear in this order:
 |---|---|---|
 | `schema_version` | string | Always `"argus.run/1"` for this version of the format. |
 | `id` | string | A UUID for this run. |
-| `status` | string | `"completed"` for a run that finished. |
+| `status` | string | `"completed"` when every probe reached a verdict. `"incomplete"` when at least one finding is `error` or the run stopped early; the CLI then exits 1 (4 for the cost cap). |
 | `started_at` | string | ISO 8601 timestamp, UTC. |
 | `finished_at` | string | ISO 8601 timestamp, UTC. |
 | `argus_version` | string | The installed `argus-probe` version. It is `"unknown"` when the CLI runs from a source tree that was never installed. |

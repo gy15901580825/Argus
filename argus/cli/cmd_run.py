@@ -9,10 +9,10 @@ import click
 import httpx
 from click.core import ParameterSource
 
-from argus.cli import api_client, git_context
+from argus.cli import api_client, git_context, run_json
 from argus.cli.baseline_key import baseline_key
 from argus.cli.local_run import run_local_and_render
-from argus.cli.severity import SEVERITY_ORDER, findings_at_or_above
+from argus.cli.severity import SEVERITY_ORDER, findings_at_or_above, incomplete_lines
 from argus.cli.target_loader import load_target_spec_with_secrets, TargetLoadError
 
 # Exit codes must fit 0-255; sys.exit(402) surfaced as 146 on Linux and macOS.
@@ -121,6 +121,8 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
     if run["status"] != "completed":
         click.echo(f"Error: run {run_id} ended with status {run['status']}", file=sys.stderr)
         sys.exit(1)
+    incomplete = incomplete_lines(run.get("findings", []))
+    _echo_masked(incomplete, spec, secret_values)
     if compare_to:
         try:
             d = api_client.get_diff(api_url, token, run_id, compare_to)
@@ -137,9 +139,14 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
                    f"not run: {len(d['not_run'])}")
         for item in d["new"]:
             click.echo(f"  new  {item['severity']:<9} {item['probe_id']}")
-        _apply_fail_on([{"verdict": "fail", **i} for i in d["new"]], fail_on)
+        hits = _count_fail_on([{"verdict": "fail", **i} for i in d["new"]], fail_on)
     else:
-        _apply_fail_on(run.get("findings", []), fail_on)
+        hits = _count_fail_on(run.get("findings", []), fail_on)
+    # An errored probe tested nothing, so a pass elsewhere must not read as green; 1 wins over 3.
+    if incomplete:
+        sys.exit(1)
+    if hits:
+        sys.exit(3)
 
 
 def _check_browser_spec(spec: dict) -> None:
@@ -187,6 +194,13 @@ def _apply_fail_on(findings: list[dict], fail_on: str | None) -> None:
         sys.exit(3)
 
 
+def _echo_masked(lines: list[str], spec: dict, secret_values) -> None:
+    """Print to stderr with the secrets every report format masks; reasons can quote a URL or error text."""
+    secrets = run_json.run_secrets(spec, secret_values)
+    for line in lines:
+        click.echo(run_json.mask_text(line, secrets), file=sys.stderr)
+
+
 def _check_out_dir(out_file: str | None) -> None:
     """Usage error when --out names a file in a directory that does not exist, before any work is done."""
     if out_file is not None and not Path(out_file).parent.is_dir():
@@ -209,14 +223,27 @@ def _write_report(out_file: str, report: str, encoding: str | None = None, echo=
 def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, secret_values=()) -> None:
     click.echo(f"Running {('all probes' if not tokens else f'{len(tokens)} probe(s)')} locally ...")
     try:
-        report, findings = run_local_and_render(spec, tokens, per_run_cap, report_format, secret_values)
-    except Exception as e:  # LocalRunError or a mid-run failure; no traceback for the operator
+        result = run_local_and_render(spec, tokens, per_run_cap, report_format, secret_values)
+    except KeyboardInterrupt:
+        # Same contract as mcp-trap and scan-mcp. SIGTERM keeps its default action (exit 143).
+        click.echo("Interrupted: the run was stopped before it finished; no report was written.", file=sys.stderr)
+        sys.exit(130)
+    except Exception as e:  # LocalRunError before the run started; no traceback for the operator
         code = getattr(e, "code", None)
         if code == "cost":
             click.echo(f"Run rejected for cost: {e}", file=sys.stderr)
             sys.exit(EXIT_COST_CAP)
         click.echo(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
-    _write_report(out_file, report)
+    _write_report(out_file, result.report)
     click.echo(f"Wrote report to {out_file}")
-    _apply_fail_on(findings, fail_on)
+    incomplete = incomplete_lines(result.findings, result.stop_reason)
+    _echo_masked(incomplete, spec, secret_values)
+    hits = _count_fail_on(result.findings, fail_on)
+    # The cost cap keeps its own code so CI can tell "raise the cap" from "fix the target".
+    if getattr(result.stopped_by, "code", None) == "cost":
+        sys.exit(EXIT_COST_CAP)
+    if incomplete:
+        sys.exit(1)
+    if hits:
+        sys.exit(3)

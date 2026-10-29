@@ -17,7 +17,7 @@ class OpenAICompatSpec:
     model: str = ""
     api_key: Optional[str] = None
     extra_headers: tuple[tuple[str, str], ...] = ()
-    timeout_s: float = 30.0
+    timeout_s: float = 120.0
 
     def __post_init__(self) -> None:
         # Allow callers to pass headers as dict OR list-of-2-element-lists
