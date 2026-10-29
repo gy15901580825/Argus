@@ -22,6 +22,7 @@ def _verdict_counts(findings: list[dict]) -> dict:
         "fail": counts.get("fail", 0),
         "warn": counts.get("warn", 0),
         "pass": counts.get("pass", 0),
+        "error": counts.get("error", 0),
         "escalated": sum(1 for f in findings if f.get("escalated_model")),
     }
 
@@ -97,15 +98,10 @@ def render_sarif(run: dict) -> str:
                 "escalated_model": f.get("escalated_model"),
             },
         })
-    # `executionSuccessful` controls GitHub's "tool exited with errors" badge.
-    # A run that produced any findings has done its job — orchestrator timeouts
-    # / partial completions late in the stream don't change that. We only mark
-    # the invocation as failed when there are truly no findings AND the run
-    # status indicates outright failure. exitCode is always set: GitHub
-    # specifically warns when executionSuccessful=false has no exit code.
-    status = run.get("status")
-    findings_count = len(run.get("findings", []))
-    execution_successful = status == "completed" or findings_count > 0
+    # `executionSuccessful` controls GitHub's "tool exited with errors" badge. An
+    # incomplete run exits 1, so it must not read as a clean tool run. exitCode is
+    # always set: GitHub warns when executionSuccessful=false has no exit code.
+    execution_successful = run.get("status") == "completed"
     sarif_run = {
         "tool": {
             "driver": {
@@ -117,7 +113,8 @@ def render_sarif(run: dict) -> str:
         "results": results,
         "invocations": [{
             "executionSuccessful": execution_successful,
-            "exitCode": 0 if execution_successful else 1,
+            # The real process exit code when the caller knows it (run --local).
+            "exitCode": run.get("exit_code", 0 if execution_successful else 1),
             "startTimeUtc": run.get("started_at"),
             "endTimeUtc": run.get("finished_at"),
         }],
@@ -132,8 +129,9 @@ def render_sarif(run: dict) -> str:
     notes = [str(n) for n in run.get("notes") or []]
     if notes:
         sarif_run.setdefault("properties", {})["notes"] = notes
+        level = "note" if execution_successful else "warning"
         sarif_run["invocations"][0]["toolExecutionNotifications"] = [
-            {"level": "note", "message": {"text": n}} for n in notes]
+            {"level": level, "message": {"text": n}} for n in notes]
     sarif = {
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
         "version": "2.1.0",

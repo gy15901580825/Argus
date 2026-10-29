@@ -16,7 +16,7 @@ def test_target_spec_validates_required_fields():
 def test_target_spec_defaults():
     spec = OpenAICompatSpec(endpoint_url="https://api.example.com/v1/chat/completions", model="gpt-4")
     assert spec.kind == "openai_compat"
-    assert spec.timeout_s == 30.0
+    assert spec.timeout_s == 120.0
 
 
 @pytest.mark.asyncio
@@ -145,3 +145,21 @@ async def test_send_prompt_survives_non_conforming_200(malformed):
         text, latency_ms = await target.send_prompt("Say hi")
     assert text == ""
     assert latency_ms > 0
+
+
+@pytest.mark.asyncio
+async def test_whitespace_content_does_not_hide_a_refusal():
+    target = OpenAICompatTarget(OpenAICompatSpec(
+        endpoint_url="https://api.example.com/v1/chat/completions", model="gpt-4", api_key="sk-test",
+    ))
+    body = {
+        "choices": [{"message": {"role": "assistant", "content": " \n", "refusal": "I cannot help with that."}}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 2},
+    }
+    client = AsyncMock()
+    client.post.return_value.json = lambda: body
+    client.post.return_value.raise_for_status = lambda: None
+    with patch("argus.targets.openai_compat.httpx.AsyncClient") as mc:
+        mc.return_value.__aenter__.return_value = client
+        text, _ = await target.send_prompt("anything")
+    assert text == "I cannot help with that."

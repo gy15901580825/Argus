@@ -595,3 +595,20 @@ def test_report_write_failure_exits_1_without_traceback(monkeypatch, tmp_path):
     assert result.exit_code == 1, result.output
     assert "Error: cannot write r.html: [Errno 28] No space left on device" in result.output
     assert "Traceback" not in result.output and "Wrote report" not in result.output
+
+
+def test_inconclusive_run_is_marked_incomplete_in_sarif(monkeypatch, tmp_path):
+    # The command exits 1, so the SARIF must not report a successful tool run.
+    _wired(monkeypatch, outcomes={"rug_pull": ["inconclusive"] * 3, "shadowing": ["failed"] * 3})
+    result = _invoke("--target", SPEC_ARG, "--scenarios", "rug_pull,shadowing", "--format", "sarif")
+    assert result.exit_code == 1, result.output
+    inv = json.loads((tmp_path / OUT_FILE["sarif"]).read_text())["runs"][0]["invocations"][0]
+    assert inv["executionSuccessful"] is False and inv["exitCode"] == 1
+
+
+def test_conclusive_run_stays_successful_in_sarif(monkeypatch, tmp_path):
+    _wired(monkeypatch, outcomes={"rug_pull": ["failed", "passed", "passed"]})
+    result = _invoke("--target", SPEC_ARG, "--scenarios", "rug_pull", "--format", "sarif")
+    assert result.exit_code == 0, result.output
+    inv = json.loads((tmp_path / OUT_FILE["sarif"]).read_text())["runs"][0]["invocations"][0]
+    assert inv["executionSuccessful"] is True and inv["exitCode"] == 0

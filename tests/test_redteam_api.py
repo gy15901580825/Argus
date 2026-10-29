@@ -54,7 +54,7 @@ def test_redteam_run_returns_500_when_anthropic_key_missing(monkeypatch):
                 "endpoint_url": "https://api.example.com/v1/chat/completions",
                 "model": "gpt-4",
             },
-            "probe_ids": ["any"],
+            "probe_ids": ["owasp_01_prompt_injection_basic"],
         },
     )
     assert response.status_code == 500
@@ -73,7 +73,7 @@ def test_redteam_run_returns_500_when_openai_key_missing(monkeypatch):
                 "endpoint_url": "https://api.example.com/v1/chat/completions",
                 "model": "gpt-4",
             },
-            "probe_ids": ["any"],
+            "probe_ids": ["owasp_01_prompt_injection_basic"],
         },
     )
     assert response.status_code == 500
@@ -285,3 +285,14 @@ def test_per_run_cap_usd_is_honored_at_preflight(monkeypatch):
     }
     resp = client.post("/redteam/run/preflight", json=body)
     assert resp.status_code == 402, f"expected 402 with tiny cap, got: {resp.status_code} {resp.text}"
+
+
+@pytest.mark.parametrize("route", ["/redteam/run", "/redteam/run/preflight"])
+def test_unknown_probe_ids_are_a_422_naming_them(route):
+    client = TestClient(app)
+    resp = client.post(route, json={
+        "target": {"kind": "openai_compat", "endpoint_url": "http://127.0.0.1:9/v1", "model": "m"},
+        "probe_ids": ["owasp_01_prompt_injection_basic", "no_such_probe"],
+    })
+    assert resp.status_code == 422
+    assert "unknown probe id(s): no_such_probe" in resp.json()["detail"]

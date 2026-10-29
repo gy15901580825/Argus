@@ -43,6 +43,7 @@ def _install(monkeypatch, run_local):
         "argus.demo.servers": types.ModuleType("argus.demo.servers"),
     }
     mods["argus.local"].run_local = run_local
+    mods["argus.local"].LocalRunError = type("LocalRunError", (Exception,), {})
     servers = mods["argus.demo.servers"]
     servers.PROBE_IDS = FAKE_PROBE_IDS
 

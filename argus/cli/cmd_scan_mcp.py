@@ -293,7 +293,9 @@ def cmd_scan_mcp(argv: tuple[str, ...], call_tools, tool_args: dict, headers: tu
     result = outcome
     run = {
         "id": str(uuid.uuid4()),
-        "status": "completed",
+        # These cases exit 1 below; the report must not read as a finished scan.
+        "status": ("incomplete" if result.out_of_time or result.all_selected_unexercised or result.unjudged
+                   else "completed"),
         "started_at": started_at.isoformat(),
         "finished_at": datetime.now(timezone.utc).isoformat(),
         "target_spec": target_spec,

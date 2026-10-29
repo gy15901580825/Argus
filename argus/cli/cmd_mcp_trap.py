@@ -200,7 +200,8 @@ def cmd_mcp_trap(target: str, rounds: int, scenarios: list[str], out_file: str |
         say(note)
     run = {
         "id": str(uuid.uuid4()),
-        "status": "completed",
+        # An inconclusive scenario exits 1 below; the report must not read as a finished run.
+        "status": "incomplete" if trap_run.all_inconclusive or trap_run.inconclusive_scenarios else "completed",
         "started_at": started_at.isoformat(),
         "finished_at": datetime.now(timezone.utc).isoformat(),
         "target_spec": spec,

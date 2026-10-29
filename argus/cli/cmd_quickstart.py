@@ -29,7 +29,10 @@ def cmd_quickstart(out: str) -> None:
     click.echo("Starting the demo MCP agent and a hostile MCP testbed on 127.0.0.1 (no API key needed) ...")
     try:
         with start_mcp_demo() as spec:
-            report, findings = run_local_and_render(spec, list(PROBE_IDS), None, "html")
+            result = run_local_and_render(spec, list(PROBE_IDS), None, "html", fail_on=None)
+            if result.stopped_by is not None:
+                raise result.stopped_by
+            report, findings = result.report, result.findings
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)

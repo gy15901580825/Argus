@@ -126,7 +126,51 @@ Use [`argus-probe-action`](https://github.com/marketplace/actions/argus-agent-re
 
 The job needs `permissions: security-events: write` for the SARIF upload. `argus-probe init --workflow` writes a complete workflow file with that set. Pull requests from forks and Dependabot do not receive repository secrets, so `ANTHROPIC_API_KEY` is empty and the job fails on them.
 
-`--fail-on <severity>` exits 3 when a failing finding is at or above that level; the SARIF is written first. `--compare-to <base branch>` makes `--fail-on` count only failures that are new relative to the latest run on that branch. It is server mode only, because it needs run history, so the action does not offer it; see the target-spec cookbook for a server-mode workflow. Exit codes: 0 success, 1 run or configuration error, 2 usage error, 3 threshold hit, 4 cost cap.
+`--fail-on <severity>` exits 3 when a failing finding is at or above that level; the SARIF is written first. `--compare-to <base branch>` makes `--fail-on` count only failures that are new relative to the latest run on that branch. It is server mode only, because it needs run history, so the action does not offer it; see the target-spec cookbook for a server-mode workflow.
+
+### Errors and incomplete runs
+
+Probe ids are checked before anything runs. An id the library does not have stops the command with exit 2 and a message that names it; `argus-probe list-probes` shows the valid ids.
+
+A probe that cannot reach a verdict gets an `error` finding that names the cause, and the run goes on to the next probe. This covers:
+
+- HTTP 401 and 407 (`check credentials`), 404 (`check endpoint_url / request_url / model`), 405, 408 (timed out), 422 (`check request_body_template / the request schema`) and 429 (rate limited);
+- HTTP 5xx, an unfollowed redirect, timeouts, connection errors, and an HTTP 200 body that is not JSON;
+- gRPC errors, as one line with the status name. `UNAUTHENTICATED` and `PERMISSION_DENIED` say `check credentials`, `RESOURCE_EXHAUSTED` says rate limited;
+- a reply with no text: an HTTP 200 error object, a message with no content, a `response_jsonpath` that matches nothing, or a match that is `null`, `[]`, `{}` or only whitespace. The reason names the field: `target returned no text; check response_jsonpath or the endpoint` for `custom_http`, `target returned no text; the endpoint returned no message content` for `openai_compat` and `anthropic_native`. Such a reply is never sent to the judge;
+- a judged probe whose rubric file is missing (`rubric file not found: <path>`). Nothing is sent for it and no attacker model is called.
+
+Probes judged on captured evidence (MCP and payment probes) are decided from the evidence, so an empty reply does not affect them. A testbed that times out or returns a body that is not JSON while a probe is set up or its evidence is read costs that probe an `error`, not the run.
+
+A reply that only calls tools is not empty. For `openai_compat` (`tool_calls`, also when `content` is only whitespace) and `anthropic_native` (`tool_use` blocks), the judge reads each call as `[tool_call] name(arguments)`. When `openai_compat` gets `content` as a list of parts, the judge reads the text parts joined; any other non-string content is read as JSON.
+
+These count as `blocked_by_target`, not as errors:
+
+- other 4xx answers, such as a content filter's 400 or a 403, with the reason `target returned HTTP <code> to the attack prompt; counted as blocked`;
+- an HTTP 200 from `openai_compat` whose choice has `finish_reason: "content_filter"` and no text (Azure OpenAI's output filter), with the reason `target's content filter withheld the reply; counted as blocked`;
+- an `anthropic_native` reply with `stop_reason: "refusal"` and no text.
+
+When at least 5 findings, and at least 90% of the findings that were sent (skipped probes do not count), were blocked with the same HTTP code, the console prints `Warning: every probe was blocked with HTTP <code>; check the request format` (`almost every` below 100%). In local mode the warning also goes into the report notes. The exit code does not change.
+
+In a `conversation: true` probe, the first turn that is blocked or errors ends the conversation. Later turns are not sent, because they mean nothing without it.
+
+**How long a dead target can take.** Chat adapters wait up to `timeout_s` for each reply: 120 seconds by default for `openai_compat`, `anthropic_native` and `custom_http`. `anthropic_native` retries once, so one prompt can take up to 2 x `timeout_s`. When 5 probes in a row get no answer to any of their prompts (every send failed with one of the errors above, not a block, or the testbed did not answer while the probe was set up), the run stops with `target unreachable: 5 probes in a row failed (<last reason>)`. A library probe has at most 5 prompts, and an iterative attack ends at its first failed round, so before that stop a target that never answers costs at most 25 x `timeout_s` (about 50 minutes at the default, 100 minutes for `anthropic_native`).
+
+When any finding is `error` or `aborted_cost`, the run is incomplete. The console prints `N of M probes errored; run incomplete` and up to three distinct reasons, or `N probe(s) stopped at the cost cap; run incomplete`. The report says the run is incomplete: a banner and notes in HTML, notes in SARIF and JUnit, `executionSuccessful: false` in SARIF (whose `exitCode` is the command's real exit code), and `"status": "incomplete"` with an `incomplete_reason` in run.json. If the run stops early, for example because the target is unreachable or the judge fails unexpectedly, the report is still written with the findings so far and the console says why the run stopped. A probe that is `blocked_by_target` or `skipped` does not make a run incomplete.
+
+Exit codes:
+
+| Code | Meaning |
+|---|---|
+| 0 | The run finished and every probe reached a verdict. Failing findings still exit 0 unless you set `--fail-on`. |
+| 1 | The target spec could not be loaded, the judge key is missing, the run hit an error, the target was unreachable, or at least one finding is `error`. When the run got as far as a finding, the report is written first. An incomplete run exits 1 even when `--fail-on` would have exited 3. In server mode, also when the server reports a status other than `completed`. |
+| 2 | Usage error: an unknown probe id, an option that does not fit the mode, or an `--out` directory that does not exist. Nothing runs and nothing is written. |
+| 3 | `--fail-on <severity>` is set, a finding with verdict `fail` is at or above that severity, and every probe reached a verdict. |
+| 4 | The cost cap. Before the run, the estimate is above `--per-run-cap` and nothing is written. During a local run, the daily cap was crossed, or any probe is `aborted_cost` (an iterative or deep-mode attack that hit the cap, in local or server mode); the report with the findings so far is written first. 4 wins over 1 and 3. |
+| 130 | Ctrl-C. No report is written. |
+| 143 | SIGTERM, for example a CI cancel. No report is written. |
+
+In 0.6.0 and earlier, a probe that hit a 5xx, a timeout or a connection error stopped the whole run and lost its findings, while 401, 404, 422 and 429 were reported as `blocked_by_target` and the run exited 0. An unknown probe id ran nothing and exited 0. A CI job that passed because of those errors now exits 1 or 2.
 
 ## Cost controls
 
@@ -134,7 +178,7 @@ The job needs `permissions: security-events: write` for the SARIF upload. `argus
 argus-probe run --target ... --per-run-cap 0.50
 ```
 
-Runs that would exceed the cap are rejected before any LLM cost is incurred, in both server and local mode (exit code 4).
+Runs that would exceed the cap are rejected before any LLM cost is incurred, in both server and local mode (exit code 4). If a local run crosses the daily cap partway, it stops, writes the report with the findings so far, marks it incomplete and exits 4. An iterative probe that hits the cap ends as `aborted_cost`; the run then also exits 4.
 
 ## Check a skill before you install it
 

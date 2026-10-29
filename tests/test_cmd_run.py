@@ -480,7 +480,9 @@ def test_out_in_a_missing_directory_is_a_usage_error_before_any_work(tmp_path, m
 def test_report_write_failure_exits_1_without_traceback(tmp_path, monkeypatch, local):
     from pathlib import Path
 
-    monkeypatch.setattr("argus.cli.cmd_run.run_local_and_render", lambda *a, **k: ("<html></html>", []))
+    from argus.cli.local_run import LocalRunResult
+
+    monkeypatch.setattr("argus.cli.cmd_run.run_local_and_render", lambda *a, **k: LocalRunResult("<html></html>", []))
     monkeypatch.setattr(api_client, "post_run", lambda *a, **k: {"run_id": "r1"})
     monkeypatch.setattr(api_client, "poll_until_complete", lambda *a, **k: {"status": "completed", "findings": []})
     monkeypatch.setattr(api_client, "get_report", lambda *a, **k: "<html></html>")
@@ -499,3 +501,48 @@ def test_report_write_failure_exits_1_without_traceback(tmp_path, monkeypatch, l
     assert result.exit_code == 1, result.output
     assert f"Error: cannot write {tmp_path / 'r.html'}: [Errno 28] No space left on device" in result.output
     assert "Traceback" not in result.output and "Wrote report" not in result.output
+
+
+def _server(monkeypatch, run):
+    monkeypatch.setattr(api_client, "post_run", lambda *a, **k: {"run_id": "r1"})
+    monkeypatch.setattr(api_client, "poll_until_complete", lambda *a, **k: run)
+    monkeypatch.setattr(api_client, "get_report", lambda *a, **k: "<html>server report</html>")
+
+
+def _server_args(tmp_path, out, *extra):
+    return _local_args(tmp_path, out)[:-1] + ["--token", "t", "--api-url", "http://127.0.0.1:9", *extra]
+
+
+def test_server_mode_error_finding_exits_1_after_writing_report(tmp_path, monkeypatch):
+    _server(monkeypatch, {"status": "completed", "findings": [
+        {"probe_id": "a", "verdict": "fail", "severity": "critical"},
+        {"probe_id": "b", "verdict": "error", "severity": "info", "reasoning": "target returned HTTP 429 (rate limited; slow down or retry later)"},
+    ]})
+    out = tmp_path / "r.html"
+    result = CliRunner().invoke(main, _server_args(tmp_path, out, "--fail-on", "high"))
+    assert result.exit_code == 1, result.output
+    assert out.read_text() == "<html>server report</html>"
+    assert "1 of 2 probes errored; run incomplete" in result.output
+    assert "rate limited" in result.output
+
+
+def test_server_mode_without_errors_keeps_fail_on_exit_3(tmp_path, monkeypatch):
+    _server(monkeypatch, {"status": "completed", "findings": [
+        {"probe_id": "a", "verdict": "fail", "severity": "critical"},
+        {"probe_id": "b", "verdict": "blocked_by_target", "severity": "info"},
+    ]})
+    result = CliRunner().invoke(main, _server_args(tmp_path, tmp_path / "r.html", "--fail-on", "high"))
+    assert result.exit_code == 3, result.output
+    assert "incomplete" not in result.output
+
+
+def test_server_mode_aborted_cost_exits_4(tmp_path, monkeypatch):
+    _server(monkeypatch, {"status": "completed", "findings": [
+        {"probe_id": "a", "verdict": "aborted_cost", "severity": "info", "reasoning": "cost cap hit at round 1: cap"},
+        {"probe_id": "b", "verdict": "error", "severity": "info", "reasoning": "x"},
+    ]})
+    out = tmp_path / "r.html"
+    result = CliRunner().invoke(main, _server_args(tmp_path, out))
+    assert result.exit_code == 4, result.output
+    assert out.exists()
+    assert "1 probe(s) stopped at the cost cap; run incomplete" in result.output

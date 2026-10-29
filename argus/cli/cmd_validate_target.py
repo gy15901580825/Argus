@@ -7,6 +7,12 @@ import httpx
 import yaml
 
 
+def _timeout_s(spec: dict) -> float:
+    from argus.targets.openai_compat import OpenAICompatSpec
+
+    return float(spec.get("timeout_s") or OpenAICompatSpec.timeout_s)
+
+
 @click.command()
 @click.option("--target", "target_file", type=click.Path(exists=True), required=True)
 def cmd_validate_target(target_file: str):
@@ -18,7 +24,8 @@ def cmd_validate_target(target_file: str):
         headers["Authorization"] = f"Bearer {spec['api_key']}"
     body = {"model": spec["model"], "messages": [{"role": "user", "content": "ping"}], "max_tokens": 10}
     try:
-        resp = httpx.post(url, headers=headers, json=body, timeout=15.0)
+        # The same wait as `run`, so an agent that run would accept is not rejected here.
+        resp = httpx.post(url, headers=headers, json=body, timeout=_timeout_s(spec))
     except httpx.RequestError as e:
         raise click.ClickException(f"network error: {e}")
     if resp.status_code != 200:

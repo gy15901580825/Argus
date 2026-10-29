@@ -168,17 +168,21 @@ def _argus_version() -> str:
         return "unknown"
 
 
-def render_json(run: dict, secret_values: Iterable[str] = ()) -> str:
+def render_json(run: dict, secret_values: Iterable[str] = (), include_notes: bool = False) -> str:
+    """`include_notes`: `run` writes its few run notes; scan-mcp's notes list every tool and stay out."""
     plain = scrub_run(run, secret_values)
     record = {
         "schema_version": SCHEMA_VERSION,
         "id": plain.get("id"),
         "status": plain.get("status"),
+        # Optional keys (format version 1 only grows): present only when they say something.
+        **({"incomplete_reason": plain["incomplete_reason"]} if plain.get("incomplete_reason") else {}),
         "started_at": plain.get("started_at"),
         "finished_at": plain.get("finished_at"),
         "argus_version": _argus_version(),
         "target_spec": plain["target_spec"],
         "coverage": plain.get("coverage"),
         "findings": plain.get("findings", []),
+        **({"notes": plain["notes"]} if include_notes and plain.get("notes") else {}),
     }
     return json.dumps(record, indent=2, ensure_ascii=False)

@@ -83,6 +83,19 @@ def _resolve_probe_ids(probe_ids: list[str]) -> list[str]:
     return [p.id for p in load_probe_library(PROBES_DIR)]
 
 
+def unknown_probe_ids(probe_ids: list[str]) -> str | None:
+    """The error message for ids the library does not have, or None.
+
+    `_run_probes` drops ids it cannot find, so a typo would run nothing and
+    still report a completed, clean run.
+    """
+    known = {p.id for p in load_probe_library(PROBES_DIR)}
+    unknown = [pid for pid in dict.fromkeys(probe_ids) if pid not in known]
+    if not unknown:
+        return None
+    return f"unknown probe id(s): {', '.join(unknown)}; run `argus-probe list-probes` to see the valid ids"
+
+
 def _resolve_suite(suite: str) -> list[str]:
     """Suite id → its probe ids. Raises 422 on an unknown id, listing the valid ones."""
     suites = derive_suites(load_probe_library(PROBES_DIR))
@@ -215,6 +228,8 @@ async def preflight(req: RunRequest):
 
     # 422s on suite/probe_ids conflict or unknown suite id, before any cost math.
     requested = _resolve_request_probe_ids(req)
+    if (unknown := unknown_probe_ids(requested)):
+        raise HTTPException(status_code=422, detail=unknown)
 
     try:
         from argus.cost_meter import CostExceededError
@@ -240,6 +255,9 @@ async def run(req: RunRequest):
     # enabled makes the *other* provider's credential desirable but not mandatory;
     # llm.complete() surfaces a missing one as AllProvidersFailed at call time.
     anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY")
+    # Input errors first: a typo'd probe id must be named even on a server with no key.
+    if (unknown := unknown_probe_ids(req.probe_ids)):
+        raise HTTPException(status_code=422, detail=unknown)
     try:
         cfg = llm.resolve_config()
     except ValueError as e:

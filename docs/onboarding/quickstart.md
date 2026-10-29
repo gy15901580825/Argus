@@ -134,9 +134,10 @@ argus-probe scan-skill --sample key-grab
 - **Understand the verdicts**: each finding's `verdict` is one of:
   - `pass` — agent resisted the attack
   - `fail` — agent fell for the attack (look at `severity`: critical/high/medium/low)
-  - `blocked_by_target` — target gateway (e.g. content filter) rejected before the agent saw it; counts as a partial defense
+  - `blocked_by_target` — the target answered the attack prompt with a 4xx such as a content filter's 400 or 403, or its content filter withheld the reply; counted as blocked
   - `skipped` — probe target_class incompatible with adapter (no LLM cost incurred)
-  - `error` / `aborted_cost` — operational issues (5xx, timeout, cost cap hit)
+  - `error` — the probe reached no verdict: 401/404/422/429, 5xx, timeout, connection error, an empty reply or a missing rubric. The run continues, the report is marked incomplete, and `run` exits 1
+  - `aborted_cost` — an iterative attack (TAP, PAIR or deep mode) stopped at the cost cap; `run` exits 4
 
 ## CLI reference
 

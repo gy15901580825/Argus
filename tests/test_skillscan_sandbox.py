@@ -1745,9 +1745,21 @@ def test_dns_preflight_is_bounded(monkeypatch, tmp_path):
             return subprocess.CompletedProcess(cmd, 1, "", "")
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
+    # `time` is the global module: fake it only for this thread, or a server
+    # thread left by another test sleeping in a loop advances this clock.
+    me, real_monotonic, real_sleep = threading.get_ident(), time.monotonic, time.sleep
+
+    def fake_monotonic():
+        return clock[0] if threading.get_ident() == me else real_monotonic()
+
+    def fake_sleep(s):
+        if threading.get_ident() != me:
+            return real_sleep(s)
+        clock[0] += s
+
     monkeypatch.setattr(sandbox_mod.subprocess, "run", fake_run)
-    monkeypatch.setattr(sandbox_mod.time, "monotonic", lambda: clock[0])
-    monkeypatch.setattr(sandbox_mod.time, "sleep", lambda s: clock.__setitem__(0, clock[0] + s))
+    monkeypatch.setattr(sandbox_mod.time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(sandbox_mod.time, "sleep", fake_sleep)
     with pytest.raises(SandboxError) as ei:
         with sandbox_mod.sandbox(_skill(tmp_path), "s", make_decoys(), FAKE_REAL_KEY):
             pass

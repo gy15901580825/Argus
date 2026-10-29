@@ -314,6 +314,7 @@ async def test_a_duck_typed_target_without_begin_probe_still_runs(tmp_path):
         async def judge(self, **kwargs):
             return Verdict()
 
+    (tmp_path / "default.md").write_text("rubric")  # a judged probe needs its rubric file
     for target in (BareMock(), DecoyMock()):
         runner = Runner(target=target, judge=Judge(), rubrics_dir=tmp_path)
         findings = [f async for f in runner.run_probe(_probe("plain", assertions=()))]

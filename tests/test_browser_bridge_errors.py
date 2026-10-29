@@ -385,15 +385,16 @@ async def test_old_client_agent_ignoring_trap_settings_errors_the_probe():
 
 
 @pytest.mark.asyncio
-async def test_other_target_errors_still_abort_the_run():
-    # Only the browser adapter's delivery failures are absorbed; an unreachable
-    # HTTP target keeps failing the run (and `run --local` keeps exiting 1).
+async def test_unreachable_http_target_errors_the_probe_too():
+    # An unreachable HTTP target is an error finding like a bridge failure; the
+    # CLI still exits 1 because the run has an error finding.
     import httpx
     target = MagicMock()
     target.send_prompt = AsyncMock(side_effect=httpx.ConnectError("refused"))
     runner = Runner(target=target, judge=_judge(), rubrics_dir=ARGUS_DIR / "rubrics")
-    with pytest.raises(httpx.ConnectError):
-        [f async for f in runner.run_probe(_probe("p"))]
+    findings = [f async for f in runner.run_probe(_probe("p"))]
+    assert [f.verdict for f in findings] == [VERDICT_ERROR]
+    assert findings[0].reasoning == "target request failed: ConnectError: refused"
 
 
 @pytest.mark.asyncio

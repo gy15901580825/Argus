@@ -10,23 +10,25 @@ argus-probe run --local --target target.json --probes all --format json --out ru
 
 `--format json` works only with `--local`. In server mode the CLI stops with a usage error, because the server's report endpoint has no json format yet.
 
-If a run stops partway, for example when the cost cap is crossed, the CLI exits with a non-zero code and writes no file. You never get a half-written `run.json`.
+If a run stops partway, for example when the daily cost cap is crossed, the target stops answering or the judge fails unexpectedly, the CLI still writes `run.json` with the findings gathered so far, sets `status` to `"incomplete"` and exits with a non-zero code. A run that never starts (no judge key, an unknown probe id, a target spec that cannot be built, an estimate above `--per-run-cap`) writes no file. Ctrl-C and SIGTERM write no file either.
 
 ## Fields
 
-The top-level keys always appear in this order:
+The top-level keys always appear in this order. `incomplete_reason` and `notes` appear only when they apply:
 
 | Key | Type | Meaning |
 |---|---|---|
 | `schema_version` | string | Always `"argus.run/1"` for this version of the format. |
 | `id` | string | A UUID for this run. |
-| `status` | string | `"completed"` for a run that finished. |
+| `status` | string | `"completed"` when every probe reached a verdict. `"incomplete"` when at least one finding is `error` or `aborted_cost`, or the run stopped early; the CLI then exits 1 (4 for the cost cap). |
+| `incomplete_reason` | string | `run` only, and only when `status` is `"incomplete"`. Why, in the console's words: for example `2 of 9 probes errored; run incomplete; target returned HTTP 401 (unauthorized; check credentials)`. |
 | `started_at` | string | ISO 8601 timestamp, UTC. |
 | `finished_at` | string | ISO 8601 timestamp, UTC. |
 | `argus_version` | string | The installed `argus-probe` version. It is `"unknown"` when the CLI runs from a source tree that was never installed. |
 | `target_spec` | object | The target spec after `${VAR}` expansion, with secrets masked (see below). |
 | `coverage` | object or null | The coverage summary per standard, as the engine reports it. Null if the engine sent none. |
 | `findings` | array | One object per probe result. |
+| `notes` | array of strings | Only when there is something to say: the incomplete reasons, and the warning when almost every probe was blocked with one HTTP code. `run` writes it; `mcp-trap` and `scan-mcp` do not. |
 
 Each finding has the same keys as the engine's `Finding` record: `id`, `probe_id`, `attack_prompt`, `target_response`, `target_latency_ms`, `probed_at`, `verdict`, `severity`, `confidence`, `reasoning`, `judge_model`, `escalated_model`, `atlas_id`, `owasp_id`, `nist_id`, `eu_ai_act_id`, `created_at` and `evidence`.
 

@@ -1,13 +1,14 @@
 """OpenAI-compatible chat-completions target adapter."""
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 from typing import ClassVar, Optional
 
 import httpx
 
-from argus.targets._base import Target, Turn
+from argus.targets._base import Target, TargetBlockedError, Turn
 
 
 @dataclass(frozen=True)
@@ -17,7 +18,7 @@ class OpenAICompatSpec:
     model: str = ""
     api_key: Optional[str] = None
     extra_headers: tuple[tuple[str, str], ...] = ()
-    timeout_s: float = 30.0
+    timeout_s: float = 120.0
 
     def __post_init__(self) -> None:
         # Allow callers to pass headers as dict OR list-of-2-element-lists
@@ -72,5 +73,41 @@ class OpenAICompatTarget(Target):
         message = first.get("message") if isinstance(first, dict) else None
         text = ""
         if isinstance(message, dict):
-            text = message.get("content") or message.get("refusal") or ""
+            # First of content / refusal that has real text: whitespace content must not hide a refusal.
+            text = next(
+                (t for t in (_content_text(message.get("content")), _content_text(message.get("refusal"))) if t.strip()),
+                "",
+            )
+            if not text.strip():
+                text = _tool_calls_text(message)
+        if not text.strip() and isinstance(first, dict) and first.get("finish_reason") == "content_filter":
+            # Azure's output filter: the target answered and its gateway withheld the text.
+            raise TargetBlockedError("target's content filter withheld the reply")
         return text, latency_ms
+
+
+def _content_text(content) -> str:
+    """`content` as text: some servers send a list of parts; join the text parts."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            p["text"] for p in content
+            if isinstance(p, dict) and p.get("type", "text") in ("text", "output_text") and isinstance(p.get("text"), str)
+        )
+    return json.dumps(content, ensure_ascii=False)
+
+
+def _tool_calls_text(message: dict) -> str:
+    """A reply that only calls tools is still a reply; the judge reads the calls."""
+    calls = message.get("tool_calls") or []
+    if isinstance(message.get("function_call"), dict):  # legacy single-call shape
+        calls = [*calls, {"function": message["function_call"]}]
+    lines = []
+    for call in calls:
+        fn = call.get("function") if isinstance(call, dict) else None
+        if isinstance(fn, dict):
+            lines.append(f"[tool_call] {fn.get('name', '?')}({fn.get('arguments', '')})")
+    return "\n".join(lines)

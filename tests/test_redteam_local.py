@@ -250,3 +250,37 @@ async def test_invalid_provider_still_rejected_for_assertion_only_run():
     with pytest.raises(LocalRunError) as exc:
         await _collect(run_local(MCP_TARGET, [ASSERTION_PROBE], env={"REDTEAM_MODEL_PROVIDER": "bogus"}))
     assert exc.value.code == "config"
+
+
+async def test_run_local_rejects_unknown_probe_ids_before_anything_runs(monkeypatch):
+    # A typo used to run nothing, report `completed` and exit 0. No key is needed to be told.
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("REDTEAM_MODEL_PROVIDER", raising=False)
+
+    async def _must_not_run(*a, **k):
+        raise AssertionError("probes ran")
+        yield  # pragma: no cover
+
+    with patch("argus.api._run_probes", _must_not_run):
+        with pytest.raises(LocalRunError) as exc:
+            await _collect(run_local(TARGET, ["owasp_01_prompt_injection_basic", "owasp_01_typo", "zz_nope"]))
+    assert exc.value.code == "usage"
+    assert str(exc.value) == (
+        "unknown probe id(s): owasp_01_typo, zz_nope; run `argus-probe list-probes` to see the valid ids"
+    )
+
+
+async def test_run_local_turns_an_unreachable_target_into_a_stop(monkeypatch):
+    from argus.runner import TargetUnreachableError
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+
+    async def _dead(*args, **kwargs):
+        yield FAKE_FINDING
+        raise TargetUnreachableError("target unreachable: 5 probes in a row failed (x)")
+
+    with patch("argus.api._run_probes", _dead):
+        with pytest.raises(LocalRunError) as exc:
+            await _collect(run_local(TARGET, ["owasp_01_prompt_injection_basic"]))
+    assert exc.value.code == "unreachable"
+    assert str(exc.value) == "target unreachable: 5 probes in a row failed (x)"
