@@ -104,14 +104,30 @@ _INSTALL_CMDS = {
 # `-f` for npm) must not swallow the package that follows them.
 _VALUE_FLAGS = {
     "python": frozenset("-r -c -e -i -t -f --requirement --constraint --editable --index-url "
-                        "--extra-index-url --target --find-links --prefix --root --python".split()),
-    "javascript": frozenset("--registry --prefix --tag -w --workspace --cwd".split()),
-    "ruby": frozenset("-v --version -s --source -i --install-dir -n --bindir --platform --group".split()),
+                        "--extra-index-url --target --find-links --prefix --root --python --trusted-host "
+                        "--timeout --retries --upgrade-strategy --progress-bar --platform "
+                        "--python-version --implementation --abi --only-binary --no-binary "
+                        "--cache-dir --log --src --proxy --cert --client-cert --global-option "
+                        "--config-settings --report --exists-action --use-feature --root-user-action".split()),
+    "javascript": frozenset("--registry --prefix --tag -w --workspace --cwd --omit --include --loglevel "
+                            "--cache --userconfig --filter -F --fetch-retries --fetch-timeout "
+                            "--otp --scope --global-style --install-strategy --lockfile-dir "
+                            "--store-dir --network-concurrency --cwd --modules-folder".split()),
+    "ruby": frozenset("-v --version -s --source -i --install-dir -n --bindir --platform --group "
+                      "--config-file --http-proxy --build-root --document -P --trust-policy".split()),
     "rust": frozenset("--features -F --git --branch --tag --rev --path --registry --rename "
-                      "--package -p --target --root --version --vers -j --jobs".split()),
+                      "--package -p --target --root --version --vers -j --jobs --manifest-path --color "
+                      "--config --target-dir --profile --index --registry --bin --example "
+                      "--rename --branch --tag --rev --path --git".split()),
     "perl": frozenset("--mirror -l --local-lib".split()),
     "dart": frozenset("--path --git-url --git-ref --git-path -C".split()),
 }
+# Words that mark a bullet as prose about a command rather than the command.
+_PROSE_WORDS = frozenset(
+    "might may can could will would should must fails fail takes take on in at while is are was "
+    "a an requires require needs need installs gives shows error permission sudo linux macos "
+    "windows because since usually often sometimes also not no does doesn't".split()
+)
 _PROSE_STOP = frozenset("and or then to you which that for with the so but if when it is are".split())
 # `.js` is absent on purpose: chart.js and highlight.js are real npm packages.
 _FILE_EXT = re.compile(r"\.(txt|py|ts|json|toml|cfg|lock|whl|gz|zip|md|rb|rs|yaml|yml)$", re.I)
@@ -121,14 +137,26 @@ def _install_names(language: str, text: str) -> set[str]:
     pattern = _INSTALL_CMDS.get(language)
     if not pattern:
         return set()
-    candidates = [ln.strip() for ln in text.splitlines()]
-    candidates += [m.strip() for m in re.findall(r"`([^`\n]+)`", text)]
+    # (line, trusted): lines inside a code fence or a backtick span are code;
+    # a list-prefixed line elsewhere is only a command if it reads like one.
+    candidates: list[tuple[str, bool]] = []
+    in_fence = False
+    for ln in text.splitlines():
+        if ln.strip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        candidates.append((ln.strip(), in_fence))
+    candidates += [(m.strip(), True) for m in re.findall(r"`([^`\n]+)`", text)]
     names: set[str] = set()
-    for line in candidates:
-        m = re.match(r"(?:(?:\d+[.)]|[-*+])\s+)?(?:[$>!%]\s*)?" + pattern + r"\b(.*)$", line)
+    for line, trusted in candidates:
+        m = re.match(r"((?:\d+[.)]|[-*+])\s+)?(?:[$>!%]\s*)?" + pattern + r"\b(.*)$", line)
         if not m:
             continue
-        rest = re.split(r"&&|\|\||;|\||#", m.group(1), maxsplit=1)[0]
+        rest = re.split(r"&&|\|\||;|\||(?:^|\s)#", m.group(2), maxsplit=1)[0]
+        if m.group(1) and not trusted:
+            words = [t.strip("\"'").rstrip(".,:)").lower() for t in rest.split() if not t.startswith("-")]
+            if any(w in _PROSE_WORDS or w in _PROSE_STOP for w in words) or not rest.split():
+                continue
         skip_next = False
         for tok in rest.split():
             if skip_next:
@@ -154,14 +182,18 @@ _FILE_LINE = re.compile(r"[\w./-]+\.(?:py|js|mjs|ts|rb|rs|pl|pm|dart|raku)")
 
 def _local_stems(text: str) -> set[str]:
     """Modules the reply defines as files: a line that is just a file name, as a
-    comment header or heading (`# utils.py`, `// helpers.js`, `**main.py**`). A
-    file name inside a prose sentence does not count."""
+    comment header or heading (`# utils.py`, `**main.py**`). A file name inside a
+    prose sentence does not count. Python only: a bare JS or Ruby specifier always
+    resolves to the registry, never to a sibling file."""
     stems = set()
     for line in text.splitlines():
-        head = re.sub(r"^\s*(?:#+|//|/\*|\*+|--|<!--)?\s*(?:file(?:name)?\s*:\s*)?", "", line)
+        head = re.sub(r"^\s*(?:#+|//|/\*|\*+|--|<!--)?\s*(?:file(?:name)?\s*:\s*)?", "", line, flags=re.I)
         head = re.sub(r"\s*(?:\*/|\*+|-->|:)?\s*$", "", head).strip("`")
         if _FILE_LINE.fullmatch(head):
-            stems.add(head.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower())
+            parts = head.split("/")
+            stem = parts[-1].rsplit(".", 1)[0]
+            # pkg/__init__.py defines the package `pkg`.
+            stems.add((parts[-2] if stem == "__init__" and len(parts) > 1 else stem).lower())
     return stems
 
 
@@ -200,14 +232,14 @@ def _javascript(text: str) -> set[str]:
         tok = re.sub(r"(?<=.)@[^/@]*$", "", tok)
         if (r := _scoped_root(tok)):
             names.add(r)
-    return {n for n in names if n not in _NODE_BUILTINS and n.lower() not in _local_stems(text)}
+    return {n for n in names if n not in _NODE_BUILTINS}
 
 
 def _ruby(text: str) -> set[str]:
     names = set(re.findall(r"^\s*require\s+['\"]([A-Za-z0-9_-]+)['\"]", text, re.M))
     names |= set(re.findall(r"^\s*gem\s+['\"]([A-Za-z0-9_-]+)['\"]", text, re.M))
     names |= {t for t in _install_names("ruby", text) if re.fullmatch(r"[A-Za-z0-9_-]+", t)}
-    return {n for n in names if n not in _RUBY_STDLIB and n.lower() not in _local_stems(text)}
+    return {n for n in names if n not in _RUBY_STDLIB}
 
 
 def _rust(text: str) -> set[str]:

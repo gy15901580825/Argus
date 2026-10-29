@@ -424,7 +424,7 @@ async def test_the_judge_sees_the_prompt_as_sent(tmp_path):
                   severity="low", prompts=("see {mcp_url}",), mappings=ProbeMappings(),
                   judge_model="m", judge_rubric_path="rubrics/default.md")
     judge = _RecordingJudge()
-    [f async for f in Runner(Target(), judge, tmp_path).run_probe(probe)]
+    [f async for f in Runner(Target(), judge, RUBRICS_DIR).run_probe(probe)]
     assert judge.seen == ["see http://tb/mcp"]
 
 
@@ -503,5 +503,5 @@ async def test_the_iterative_judge_sees_the_prompt_as_sent(tmp_path):
             return "see {mcp_url}"
 
     judge = _RecordingJudge()
-    [f async for f in Runner(Target(), judge, tmp_path).run_probe(Probe_())]
+    [f async for f in Runner(Target(), judge, RUBRICS_DIR).run_probe(Probe_())]
     assert judge.seen == ["see http://tb/mcp"]

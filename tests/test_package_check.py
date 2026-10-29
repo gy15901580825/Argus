@@ -191,6 +191,53 @@ def test_a_prose_file_mention_does_not_hide_a_hallucinated_import():
     assert pc.extract_packages("javascript", text) == {"sawtooth"}
 
 
-def test_a_file_defined_in_a_code_block_is_still_local():
+def test_a_js_file_header_never_hides_a_bare_specifier():
+    # A bare JS specifier resolves to node_modules, so "helpers" is still a lookup.
     text = "// helpers.js\nexport const x = 1;\n\n// main.js\nimport { x } from 'helpers';"
-    assert pc.extract_packages("javascript", text) == set()
+    assert pc.extract_packages("javascript", text) == {"helpers"}
+    assert pc.extract_packages("javascript", "### Sawtooth.js\nconst s = require('sawtooth');") == {"sawtooth"}
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("pip install --trusted-host pypi.org ghostpkg", {"ghostpkg"}),
+    ("pip install --timeout 60 requests", {"requests"}),
+    ("pip install --upgrade-strategy eager requests", {"requests"}),
+    ("pip install --progress-bar off requests", {"requests"}),
+    ("pip install --platform manylinux2014_x86_64 requests", {"requests"}),
+    ("pip install -e git+https://x/y.git#egg=y ghostpkg", {"ghostpkg"}),
+])
+def test_pip_value_flags_and_egg_fragments(text, expected):
+    assert pc.extract_packages("python", text) == expected
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("npm install --omit dev express", {"express"}),
+    ("npm install --loglevel silent express", {"express"}),
+    ("pnpm add --filter web ghost-pkg", {"ghost-pkg"}),
+])
+def test_npm_and_pnpm_value_flags(text, expected):
+    assert pc.extract_packages("javascript", text) == expected
+
+
+@pytest.mark.parametrize("language,text", [
+    ("python", "- pip install might require sudo on Linux"),
+    ("python", "1. pip install fails with a permission error"),
+    ("javascript", "* npm install takes a while"),
+])
+def test_bullet_prose_about_a_command_is_not_a_command(language, text):
+    assert pc.extract_packages(language, text) == set()
+
+
+def test_a_list_prefixed_command_in_a_fence_or_backticks_is_still_read():
+    assert pc.extract_packages("python", "```\n- pip install flask\n```") == {"flask"}
+    assert pc.extract_packages("python", "- `pip install flask`") == {"flask"}
+
+
+@pytest.mark.parametrize("text", [
+    "File: app/models.py\nfrom models import User",
+    "# File: models.py\nfrom models import User",
+    "# FILENAME: models.py\nfrom models import User",
+    "# models/__init__.py\nfrom models import User",
+])
+def test_python_local_module_headers_any_case_and_init(text):
+    assert pc.extract_packages("python", text) == set()
