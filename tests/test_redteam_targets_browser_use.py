@@ -187,6 +187,7 @@ async def test_runner_runs_scenario_less_probe_with_prompt_as_payload(tmp_path):
     ))
     ws = _mock_ws()
     spec = BrowserUseSpec(agent_url="https://x", scenario_kind="dom_injection")
+    (tmp_path / "default.md").write_text("rubric")  # a judged probe needs its rubric file
     with patch("argus.targets.browser_use._get_client_agent_ws", return_value=ws):
         runner = Runner(target=BrowserUseTarget(spec), judge=judge, rubrics_dir=tmp_path)
         findings = [f async for f in runner.run_probe(_browser_probe(kind=None, payload=""))]

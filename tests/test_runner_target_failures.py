@@ -89,7 +89,7 @@ async def test_config_and_rate_limit_4xx_are_errors_naming_the_cause(code, hint)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("code", [400, 403, 422])
+@pytest.mark.parametrize("code", [400, 403, 409])
 async def test_other_4xx_stay_blocked_with_neutral_wording(code):
     findings, judge = await _run(_mock_target(_status_error(code)), [_probe()])
     assert [f.verdict for f in findings] == ["blocked_by_target"]
@@ -287,3 +287,272 @@ def test_chat_adapters_default_to_a_120_second_timeout():
     assert OpenAICompatSpec(endpoint_url=URL, model="m").timeout_s == 120.0
     assert CustomHTTPSpec(request_url=URL, request_body_template="{}", response_jsonpath="$.a").timeout_s == 120.0
     assert AnthropicNativeSpec(model="m", api_key="not-a-real-key").timeout_s == 120.0
+
+
+# --- fix round 1 -------------------------------------------------------------------------------
+
+def _req():
+    return httpx.Request("POST", URL)
+
+
+def _anthropic_errors():
+    import anthropic
+    return [
+        (anthropic.APIConnectionError(request=_req()), "error", "APIConnectionError"),
+        (anthropic.APITimeoutError(request=_req()), "error", "APITimeoutError"),
+        (anthropic.APIStatusError("overloaded", response=httpx.Response(529, request=_req()), body=None),
+         "error", "HTTP 529 (server error)"),
+        (anthropic.BadRequestError("refused", response=httpx.Response(400, request=_req()), body=None),
+         "blocked_by_target", "HTTP 400 to the attack prompt"),
+    ]
+
+
+def _grpc_error(code_name, details="boom"):
+    import grpc
+    return grpc.aio.AioRpcError(getattr(grpc.StatusCode, code_name), grpc.aio.Metadata(), grpc.aio.Metadata(),
+                                details=details)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exc, verdict, needle", _anthropic_errors())
+async def test_anthropic_sdk_errors_cost_one_probe(exc, verdict, needle):
+    findings, _ = await _run(_mock_target([exc, ("no", 1.0)]), [_probe("p1"), _probe("p2")])
+    assert [(f.probe_id, f.verdict) for f in findings] == [("p1", verdict), ("p2", "pass")]
+    assert needle in findings[0].reasoning
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code, reason", [
+    ("UNAVAILABLE", "target request failed: gRPC UNAVAILABLE: boom"),
+    ("DEADLINE_EXCEEDED", "target request failed: gRPC DEADLINE_EXCEEDED: boom"),
+    ("UNAUTHENTICATED", "target returned gRPC UNAUTHENTICATED (check credentials): boom"),
+    ("PERMISSION_DENIED", "target returned gRPC PERMISSION_DENIED (check credentials): boom"),
+    ("RESOURCE_EXHAUSTED", "target returned gRPC RESOURCE_EXHAUSTED (rate limited; slow down or retry later): boom"),
+    ("INTERNAL", "target request failed: gRPC INTERNAL: boom"),
+])
+async def test_grpc_errors_get_one_line_reasons(code, reason):
+    findings, _ = await _run(_mock_target([_grpc_error(code)]), [_probe()])
+    assert findings[0].verdict == "error"
+    assert findings[0].reasoning == reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code, hint", [
+    (404, "check endpoint_url / request_url / model"),
+    (422, "check request_body_template / the request schema"),
+])
+async def test_404_and_422_hints(code, hint):
+    findings, _ = await _run(_mock_target(_status_error(code)), [_probe()])
+    assert findings[0].verdict == "error"
+    assert findings[0].reasoning == f"target returned HTTP {code} (" + {
+        404: "not found; ", 422: "unprocessable request; "}[code] + hint + ")"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_200_with_a_non_json_body_costs_one_probe():
+    respx.post(URL).mock(side_effect=[
+        httpx.Response(200, text="<html>gateway</html>", headers={"content-type": "application/json"}),
+        httpx.Response(200, json=OK_BODY),
+    ])
+    target = OpenAICompatTarget(OpenAICompatSpec(endpoint_url=URL, model="m"))
+    findings, _ = await _run(target, [_probe("a"), _probe("b")])
+    assert [(f.probe_id, f.verdict) for f in findings] == [("a", "error"), ("b", "pass")]
+    assert findings[0].reasoning.startswith("target request failed: JSONDecodeError")
+
+
+@pytest.mark.asyncio
+async def test_blocked_turn_ends_a_conversation_probe():
+    target = _mock_target([("ok", 1.0), _status_error(400), ("later", 1.0)])
+    findings, _ = await _run(target, [_probe(prompts=("one", "two", "three"), conversation=True)])
+    assert [f.verdict for f in findings] == ["pass", "blocked_by_target"]
+    assert target.send_prompt.await_count == 2
+
+
+# Breaker: a target that stopped answering must not cost hours of timeouts.
+
+@pytest.mark.asyncio
+async def test_five_unreachable_probes_in_a_row_stop_the_run():
+    from argus.runner import TargetUnreachableError
+
+    timeout = httpx.ReadTimeout("", request=_req())
+    target = _mock_target([timeout] * 10)
+    runner = Runner(target=target, judge=_RecordingJudge(), rubrics_dir=RUBRICS)
+    seen = []
+    with pytest.raises(TargetUnreachableError) as info:
+        for i in range(8):
+            async for f in runner.run_probe(_probe(f"p{i}")):
+                seen.append(f.probe_id)
+    assert seen == ["p0", "p1", "p2", "p3", "p4"]
+    assert str(info.value) == "target unreachable: 5 probes in a row failed (target request failed: ReadTimeout)"
+    assert target.send_prompt.await_count == 5
+
+
+@pytest.mark.asyncio
+async def test_a_probe_that_got_an_answer_resets_the_breaker():
+    err = _status_error(503)
+    target = _mock_target([err] * 4 + [("no", 1.0)] + [err] * 4 + [_status_error(400)] + [err] * 4)
+    findings, _ = await _run(target, [_probe(f"p{i}") for i in range(14)])
+    assert len(findings) == 14  # never five failed probes in a row: a pass and a block reset it
+
+
+@pytest.mark.asyncio
+async def test_breaker_counts_a_probe_only_when_every_send_failed():
+    err = _status_error(502)
+    # Each two-prompt probe gets one failure and one answer: never "all sends failed".
+    target = _mock_target([err, ("no", 1.0)] * 6)
+    findings, _ = await _run(target, [_probe(f"p{i}", prompts=("a", "b")) for i in range(6)])
+    assert len(findings) == 12
+
+
+# Missing rubric: never judge against an empty rubric.
+
+@pytest.mark.asyncio
+async def test_missing_rubric_is_an_error_and_the_judge_is_not_called(tmp_path):
+    runner = Runner(target=_mock_target([("reply", 1.0)]), judge=_RecordingJudge(), rubrics_dir=tmp_path)
+    judge = runner._judge
+    findings = [f async for f in runner.run_probe(_probe())]
+    assert [f.verdict for f in findings] == ["error"]
+    assert findings[0].reasoning.startswith("rubric file not found: ")
+    assert judge.seen == []
+
+
+# Setup and evidence: a transport-shaped failure there costs the probe, not the run.
+
+class _TestbedTarget:
+    compatible_classes = frozenset({"llm_chat"})
+    supports_history = True
+
+    def __init__(self, begin_exc=None, evidence_exc=None):
+        self._begin_exc, self._evidence_exc = begin_exc, evidence_exc
+
+    async def begin_probe(self, probe):
+        if self._begin_exc:
+            raise self._begin_exc
+
+    async def send_prompt(self, prompt, history=()):
+        return "done", 1.0
+
+    async def collect_evidence(self):
+        if self._evidence_exc:
+            raise self._evidence_exc
+        return {"interaction_count": 1}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exc", [TimeoutError(), ConnectionResetError("reset")])
+async def test_setup_timeout_costs_one_probe(exc):
+    findings, _ = await _run(_TestbedTarget(begin_exc=exc), [_probe(assertions=({"max_payments": 0},))])
+    assert [f.verdict for f in findings] == ["error"]
+    assert findings[0].reasoning.startswith("target could not set up this probe: ")
+
+
+@pytest.mark.asyncio
+async def test_non_json_evidence_body_costs_one_probe():
+    import json
+    exc = json.JSONDecodeError("Expecting value", "<html>", 0)
+    findings, _ = await _run(_TestbedTarget(evidence_exc=exc), [_probe(assertions=({"max_payments": 0},))])
+    assert [f.verdict for f in findings] == ["error"]
+    assert findings[0].reasoning.startswith("could not read evidence from the testbed: ")
+
+
+# Reply shapes the adapters must turn into text, a block, or nothing.
+
+@pytest.mark.asyncio
+@respx.mock
+@pytest.mark.parametrize("value", [None, [], {}, "  "])
+async def test_custom_http_empty_json_values_are_no_text(value):
+    respx.post("https://agent.example/chat").mock(return_value=httpx.Response(200, json={"reply": value}))
+    target = CustomHTTPTarget(CustomHTTPSpec(
+        request_url="https://agent.example/chat",
+        request_body_template='{"q": {{ prompt | tojson }}}', response_jsonpath="$.reply",
+    ))
+    findings, judge = await _run(target, [_probe()])
+    assert [f.verdict for f in findings] == ["error"]
+    assert judge.seen == []
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_custom_http_structured_value_is_judged_as_json():
+    respx.post("https://agent.example/chat").mock(
+        return_value=httpx.Response(200, json={"reply": {"text": "no", "ok": True}}))
+    target = CustomHTTPTarget(CustomHTTPSpec(
+        request_url="https://agent.example/chat",
+        request_body_template='{"q": {{ prompt | tojson }}}', response_jsonpath="$.reply",
+    ))
+    findings, judge = await _run(target, [_probe()])
+    assert judge.seen == ['{"text": "no", "ok": true}']
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_openai_output_content_filter_is_blocked():
+    respx.post(URL).mock(return_value=httpx.Response(200, json={
+        "choices": [{"finish_reason": "content_filter", "message": {"role": "assistant", "content": None}}]}))
+    target = OpenAICompatTarget(OpenAICompatSpec(endpoint_url=URL, model="m"))
+    findings, judge = await _run(target, [_probe()])
+    assert [f.verdict for f in findings] == ["blocked_by_target"]
+    assert findings[0].reasoning == "target's content filter withheld the reply; counted as blocked"
+    assert judge.seen == []
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_openai_tool_calls_without_text_are_judged_as_tool_calls():
+    respx.post(URL).mock(return_value=httpx.Response(200, json={"choices": [{
+        "finish_reason": "tool_calls",
+        "message": {"role": "assistant", "content": None, "tool_calls": [
+            {"id": "1", "type": "function",
+             "function": {"name": "send_email", "arguments": "{\"to\": \"attacker@x\"}"}}]}}]}))
+    target = OpenAICompatTarget(OpenAICompatSpec(endpoint_url=URL, model="m"))
+    findings, judge = await _run(target, [_probe()])
+    assert judge.seen == ['[tool_call] send_email({"to": "attacker@x"})']
+    assert findings[0].verdict == "pass"
+
+
+def _anthropic_reply(blocks, stop_reason="end_turn"):
+    from types import SimpleNamespace
+    return SimpleNamespace(content=blocks, stop_reason=stop_reason)
+
+
+@pytest.mark.asyncio
+async def test_anthropic_tool_use_without_text_is_judged_as_tool_calls(monkeypatch):
+    from types import SimpleNamespace
+    from argus.targets import anthropic_native
+    from argus.targets.anthropic_native import AnthropicNativeSpec, AnthropicNativeTarget
+
+    reply = _anthropic_reply([SimpleNamespace(type="tool_use", name="send_email", input={"to": "attacker@x"})],
+                             stop_reason="tool_use")
+    seen_kwargs = {}
+
+    class FakeClient:
+        def __init__(self, **kw):
+            seen_kwargs.update(kw)
+            self.messages = SimpleNamespace(create=AsyncMock(return_value=reply))
+
+    monkeypatch.setattr(anthropic_native, "AsyncAnthropic", FakeClient)
+    target = AnthropicNativeTarget(AnthropicNativeSpec(model="m", api_key="not-a-real-key"))
+    findings, judge = await _run(target, [_probe()])
+    assert judge.seen == ['[tool_call] send_email({"to": "attacker@x"})']
+    # One retry at most, so the documented worst-case wait (2 x timeout_s) is true.
+    assert seen_kwargs["max_retries"] == 1
+
+
+@pytest.mark.asyncio
+async def test_anthropic_refusal_without_text_is_blocked(monkeypatch):
+    from types import SimpleNamespace
+    from argus.targets import anthropic_native
+    from argus.targets.anthropic_native import AnthropicNativeSpec, AnthropicNativeTarget
+
+    reply = _anthropic_reply([], stop_reason="refusal")
+
+    class FakeClient:
+        def __init__(self, **kw):
+            self.messages = SimpleNamespace(create=AsyncMock(return_value=reply))
+
+    monkeypatch.setattr(anthropic_native, "AsyncAnthropic", FakeClient)
+    target = AnthropicNativeTarget(AnthropicNativeSpec(model="m", api_key="not-a-real-key"))
+    findings, judge = await _run(target, [_probe()])
+    assert [f.verdict for f in findings] == ["blocked_by_target"]
+    assert findings[0].reasoning == "target refused to answer (stop_reason: refusal); counted as blocked"

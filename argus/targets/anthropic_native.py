@@ -1,13 +1,14 @@
 """Anthropic native messages.create adapter."""
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 from typing import ClassVar
 
 from anthropic import AsyncAnthropic
 
-from argus.targets._base import Target, Turn
+from argus.targets._base import Target, TargetBlockedError, Turn
 
 
 @dataclass(frozen=True)
@@ -44,7 +45,8 @@ class AnthropicNativeTarget(Target):
     async def send_prompt(
         self, prompt: str, history: tuple[Turn, ...] = ()
     ) -> tuple[str, float]:
-        client = AsyncAnthropic(api_key=self.spec.api_key, timeout=self.spec.timeout_s)
+        # One retry, so the longest wait for a reply is 2 x timeout_s, as the docs say.
+        client = AsyncAnthropic(api_key=self.spec.api_key, timeout=self.spec.timeout_s, max_retries=1)
         messages = [{"role": t.role, "content": t.content} for t in history]
         messages.append({"role": "user", "content": prompt})
         start = time.monotonic()
@@ -54,6 +56,13 @@ class AnthropicNativeTarget(Target):
             messages=messages,
         )
         latency_ms = (time.monotonic() - start) * 1000.0
-        # Concatenate text blocks; ignore tool_use / image blocks for v0.
+        # Concatenate text blocks. A reply that only calls tools is judged on its calls.
         text = "".join(b.text for b in resp.content if hasattr(b, "text"))
+        if not text.strip():
+            text = "\n".join(
+                f"[tool_call] {b.name}({json.dumps(b.input, ensure_ascii=False)})"
+                for b in resp.content if getattr(b, "type", None) == "tool_use"
+            )
+        if not text.strip() and getattr(resp, "stop_reason", None) == "refusal":
+            raise TargetBlockedError("target refused to answer (stop_reason: refusal)")
         return text, latency_ms

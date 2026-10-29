@@ -12,6 +12,13 @@ class TargetDeliveryError(Exception):
     """The prompt never reached the target, so this probe has no result."""
 
 
+class TargetBlockedError(Exception):
+    """The target answered but withheld its reply (a content filter, a refusal stop).
+
+    The message says why; the runner records it as blocked_by_target.
+    """
+
+
 @dataclass(frozen=True)
 class Turn:
     """One exchange in a conversation transcript.

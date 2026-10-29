@@ -36,7 +36,7 @@ h1 { border-bottom: 2px solid #333; }
 <body>
 <h1>Argus Red-Team Report</h1>
 <p>Run ID: <code>{{ run.id }}</code> · Status: <strong>{{ run.status }}</strong> · Probes: {{ run.findings | length }}</p>
-{% if run.status == "incomplete" %}<p class="incomplete" style="background:#fff3cd;border:1px solid #e0c060;padding:0.5em 0.8em"><strong>This run is incomplete.</strong> Some probes produced no verdict or the run stopped early, so a clean result here is not a clean bill of health. See Notes below.</p>
+{% if run.status == "incomplete" %}<p class="incomplete" style="background:#fff3cd;border:1px solid #e0c060;padding:0.5em 0.8em"><strong>This run is incomplete.</strong> Some checks did not reach a verdict or the run stopped early, so a clean result here does not mean nothing is wrong. See Notes below.</p>
 {% endif %}{% if run.target_spec %}
 <p class="target">Target: <code>{{ run.target_spec.kind }}</code>{% if run.target_spec.label %} — {{ run.target_spec.label }}{% endif %}{% if run.probe_suite %} · Suite: <code>{{ run.probe_suite }}</code>{% endif %}</p>
 {% endif %}
@@ -44,6 +44,7 @@ h1 { border-bottom: 2px solid #333; }
   <div class="metric"><div class="v fail">{{ counts.fail }} fail</div></div>
   <div class="metric"><div class="v warn">{{ counts.warn }} warn</div></div>
   <div class="metric"><div class="v pass">{{ counts.pass }} pass</div></div>
+  <div class="metric"><div class="v">{{ counts.error }} error</div></div>
   <div class="metric"><div class="v">{{ counts.escalated }} escalated</div></div>
 </div>
 <h2>Findings ({{ run.findings | length }})</h2>
@@ -56,6 +57,8 @@ h1 { border-bottom: 2px solid #333; }
   <pre>{{ f.target_response | truncate(800) }}</pre>
   {% if f.judge_model %}
   <p><strong>Judge reasoning:</strong> {{ f.reasoning }}</p>
+  {% elif f.verdict in ("error", "blocked_by_target", "skipped", "aborted_cost") %}
+  <p><strong>Not judged:</strong> {{ f.reasoning }}</p>
   {% else %}
   <p><strong>Verdict basis:</strong> {{ f.reasoning }} <span class="deterministic">deterministic — no model consulted</span></p>
   {% endif %}
@@ -144,7 +147,7 @@ h1 { border-bottom: 2px solid #333; }
     {% for n in f.nist_id %}<code>NIST:{{ n }}</code>{% endfor %}
     {% for e in f.eu_ai_act_id %}<code>EU:{{ e }}</code>{% endfor %}
   </div>
-  <p style="font-size:0.85em;color:#888">{% if f.judge_model %}judge: {{ f.judge_model }}{% if f.escalated_model %} → {{ f.escalated_model }}{% endif %}{% else %}verdict: deterministic, from captured evidence{% endif %} · target latency: {{ "%.0f"|format(f.target_latency_ms) }}ms · probed at {{ f.probed_at }}</p>
+  <p style="font-size:0.85em;color:#888">{% if f.judge_model %}judge: {{ f.judge_model }}{% if f.escalated_model %} → {{ f.escalated_model }}{% endif %}{% elif f.verdict in ("error", "blocked_by_target", "skipped", "aborted_cost") %}verdict: not judged{% else %}verdict: deterministic, from captured evidence{% endif %} · target latency: {{ "%.0f"|format(f.target_latency_ms) }}ms · probed at {{ f.probed_at }}</p>
 </div>
 {% endfor %}
 {% if run.notes %}

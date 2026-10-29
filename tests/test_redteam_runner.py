@@ -97,7 +97,7 @@ async def test_runner_yields_one_finding_per_prompt():
 
 
 @pytest.mark.asyncio
-async def test_runner_warns_when_rubric_missing(caplog):
+async def test_runner_errors_when_rubric_missing(caplog):
     target = AsyncMock()
     target.send_prompt = AsyncMock(return_value=("ok", 50.0))
     judge = MagicMock()
@@ -114,9 +114,10 @@ async def test_runner_warns_when_rubric_missing(caplog):
         findings = [f async for f in runner.run_probe(probe)]
     assert len(findings) == 1
     assert any("rubric not found" in r.message for r in caplog.records)
-    # judge was still called (with empty rubric_text) — verify by inspecting call kwargs
-    call_kwargs = judge.judge.await_args.kwargs
-    assert call_kwargs["rubric_text"] == ""
+    # A judge given no rubric has nothing to judge against: error, never a verdict.
+    assert findings[0].verdict == "error"
+    assert findings[0].reasoning.startswith("rubric file not found: ")
+    judge.judge.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -322,7 +323,7 @@ async def test_iterative_judge_error_ends_the_attack_with_an_error_finding():
     probe.should_halt = MagicMock(return_value=False)
     probe.next_prompt = AsyncMock(return_value="next prompt")
 
-    runner = Runner(target=target, judge=judge, rubrics_dir=Path("/tmp"))
+    runner = Runner(target=target, judge=judge, rubrics_dir=Path(ARGUS_DIR, "rubrics"))
     findings = [f async for f in runner.run_probe(probe)]
 
     assert [f.verdict for f in findings] == ["warn", "error"]

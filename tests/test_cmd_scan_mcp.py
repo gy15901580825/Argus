@@ -733,3 +733,21 @@ def test_args_file_values_are_known_secrets(monkeypatch, tmp_path):
     assert result.exit_code == 0, result.output
     report = (tmp_path / OUT_FILE["json"]).read_text(encoding="utf-8")
     assert top not in report + result.output and deep not in report + result.output
+
+
+@pytest.mark.parametrize("kw", [{"unjudged": 1}, {"unexercised": True}, {"out_of_time": True}])
+def test_an_inconclusive_scan_is_marked_incomplete(monkeypatch, tmp_path, kw):
+    found = [_f(checks.SECRET, "fail", "high", tool="t", excerpt="x")]
+    _fake(monkeypatch, _result(found, **kw))
+    result = _invoke(URL, "--format", "sarif")
+    assert result.exit_code == 1, result.output
+    inv = json.loads((tmp_path / OUT_FILE["sarif"]).read_text())["runs"][0]["invocations"][0]
+    assert inv["executionSuccessful"] is False and inv["exitCode"] == 1
+
+
+def test_a_finished_scan_stays_successful_in_sarif(monkeypatch, tmp_path):
+    _fake(monkeypatch, _result([_f(checks.SECRET, "fail", "high", tool="t", excerpt="x")]))
+    result = _invoke(URL, "--format", "sarif")
+    assert result.exit_code == 0, result.output
+    inv = json.loads((tmp_path / OUT_FILE["sarif"]).read_text())["runs"][0]["invocations"][0]
+    assert inv["executionSuccessful"] is True

@@ -17,12 +17,16 @@ from argus import api, llm
 from argus.cost_meter import CostExceededError
 from argus.coverage import build_coverage
 from argus.probe import load_probe_library
+from argus.runner import TargetUnreachableError
 from argus.targets import build_target
 from argus.targets.browser_use import local_browser_mode
 
 
 class LocalRunError(Exception):
-    """A run could not start. `code` is "config", "input" or "cost"."""
+    """A run could not start or had to stop.
+
+    `code` is "config", "input", "usage" (unknown probe ids), "cost" or "unreachable".
+    """
 
     def __init__(self, message: str, code: str) -> None:
         super().__init__(message)
@@ -66,6 +70,8 @@ async def run_local(
         requested = api._resolve_request_probe_ids(req)
     except HTTPException as e:
         raise LocalRunError(str(e.detail), code="input") from e
+    if (unknown := api.unknown_probe_ids(requested)):
+        raise LocalRunError(unknown, code="usage")
 
     # Assertion-backed probes are decided from evidence and never call the judge,
     # so a static run of only those needs no judge credential.
@@ -113,6 +119,8 @@ async def run_local(
         # Raised by cost_meter.record() once the run is underway. Other mid-run
         # exceptions propagate unchanged for the CLI to report.
         raise LocalRunError(str(e), code="cost") from e
+    except TargetUnreachableError as e:
+        raise LocalRunError(str(e), code="unreachable") from e
     finally:
         await probes.aclose()
     yield {

@@ -9,7 +9,7 @@ from typing import Iterable, NamedTuple
 import click
 
 from argus.cli import reports, run_json
-from argus.cli.severity import incomplete_lines
+from argus.cli.severity import blocked_warning, incomplete_lines
 
 
 class LocalRunResult(NamedTuple):
@@ -63,21 +63,25 @@ def run_local_and_render(
         else:
             stop_reason = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
 
-    notes = incomplete_lines(findings, stop_reason)
+    incomplete = [line.strip() for line in incomplete_lines(findings, stop_reason)]
+    notes = list(incomplete)
+    if warning := blocked_warning(findings):
+        notes.append(warning)
     run = {
         "id": str(uuid.uuid4()),
-        "status": "incomplete" if notes else "completed",
+        "status": "incomplete" if incomplete else "completed",
         "started_at": started_at.isoformat(),
         "finished_at": datetime.now(timezone.utc).isoformat(),
         "target_spec": spec,
         "coverage": coverage,
         "findings": findings,
     }
+    if incomplete:
+        run["incomplete_reason"] = "; ".join(incomplete)
     if notes:
-        # HTML, SARIF and JUnit show run notes; run.json carries the status only.
-        run["notes"] = [n.strip() for n in notes]
+        run["notes"] = notes
     if report_format == "json":
-        return LocalRunResult(run_json.render_json(run, secret_values), findings, stopped_by, stop_reason)
+        return LocalRunResult(run_json.render_json(run, secret_values, include_notes=True), findings, stopped_by, stop_reason)
     # Same scrub as run.json, so no format can leak what another one masks.
     render = {"html": reports.render_html, "sarif": reports.render_sarif, "junit": reports.render_junit}[report_format]
     return LocalRunResult(render(run_json.scrub_run(run, secret_values)), findings, stopped_by, stop_reason)

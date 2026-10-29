@@ -52,13 +52,28 @@ def _named(exc: BaseException) -> str:
 _STATUS_HINTS = {
     401: "unauthorized; check credentials",
     407: "proxy authentication required; check credentials",
-    404: "not found; check endpoint_url / request_url",
+    404: "not found; check endpoint_url / request_url / model",
     405: "method not allowed; check endpoint_url / request_method",
     408: "the target timed out",
+    422: "unprocessable request; check request_body_template / the request schema",
     429: "rate limited; slow down or retry later",
 }
 
 NO_TEXT_REASON = "target returned no text; check response_jsonpath or the endpoint"
+
+_GRPC_HINTS = {
+    "UNAUTHENTICATED": "check credentials",
+    "PERMISSION_DENIED": "check credentials",
+    "RESOURCE_EXHAUSTED": "rate limited; slow down or retry later",
+}
+
+# Probes in a row whose every send failed before the run stops: a hung target would
+# otherwise cost one timeout per prompt across the whole library.
+UNREACHABLE_AFTER = 5
+
+
+class TargetUnreachableError(Exception):
+    """The target failed every send of UNREACHABLE_AFTER probes in a row."""
 
 
 def _status_code(exc: Exception) -> int | None:
@@ -92,14 +107,35 @@ def _is_transport_failure(exc: Exception) -> bool:
     return False
 
 
+def _grpc_reason(exc: Exception) -> str | None:
+    # AioRpcError's str() is a multi-line repr; reports need one line.
+    try:
+        from grpc.aio import AioRpcError
+    except ImportError:  # pragma: no cover - grpcio is a base dependency
+        return None
+    if not isinstance(exc, AioRpcError):
+        return None
+    name = exc.code().name
+    details = " ".join((exc.details() or "").split())[:200]
+    suffix = f": {details}" if details else ""
+    if name in _GRPC_HINTS:
+        return f"target returned gRPC {name} ({_GRPC_HINTS[name]}){suffix}"
+    return f"target request failed: gRPC {name}{suffix}"
+
+
 def _send_failure(exc: Exception) -> tuple[str, str] | None:
     """(verdict, reasoning) for a send_prompt failure that costs one probe, or None to re-raise.
 
     A target outage or a misconfigured spec must never abort the run (losing every
     finding so far) nor read as a defended result.
     """
-    from argus.targets._base import TargetDeliveryError
+    from argus.targets._base import TargetBlockedError, TargetDeliveryError
 
+    if isinstance(exc, TargetBlockedError):
+        return VERDICT_BLOCKED_BY_TARGET, f"{exc}; counted as blocked"
+    grpc_reason = _grpc_reason(exc)
+    if grpc_reason is not None:
+        return VERDICT_ERROR, grpc_reason
     code = _status_code(exc)
     if code is not None:
         if code in _STATUS_HINTS:
@@ -148,6 +184,11 @@ class Runner:
         self._rubrics_dir = Path(rubrics_dir)
         # Set when this probe's evidence fetch failed; reset per probe in run_probe.
         self._evidence_failed = False
+        # Breaker state: probes in a row whose every send failed, and the last reason.
+        self._failed_streak = 0
+        self._last_send_failure = ""
+        self._sends_ok = self._sends_failed = 0
+        self._missing_rubric = ""
         # Inject the meter into iterative modules so their planner LLM calls record cost.
         # The meter is extracted from judge, which was passed in from api.py.
         if hasattr(judge, "_cost_meter") and judge._cost_meter is not None:
@@ -192,7 +233,9 @@ class Runner:
             rubric_text = candidate.read_text()
         else:
             logger.warning("rubric not found for probe %s: resolved=%s", probe.id, candidate)
-            rubric_text = ""
+            # Judged probes turn this into an error finding; never judge against no rubric.
+            rubric_text = None
+            self._missing_rubric = str(candidate)
 
         # Plan 5 D2: target_class compat check — skip probes that don't match the target adapter
         target_compat = getattr(self._target, "compatible_classes", frozenset())
@@ -266,18 +309,24 @@ class Runner:
                     evidence=None,
                 )
                 return
-            except httpx.HTTPError as e:
+            except Exception as e:
                 # Testbed unreachable while opening the session: same policy,
                 # one errored probe rather than an aborted scan.
+                if not _is_transport_failure(e):
+                    raise
                 yield self._finding(
                     probe, "", "", 0.0, datetime.now(timezone.utc),
                     verdict=VERDICT_ERROR, severity="info", confidence=1.0,
                     reasoning=f"target could not set up this probe: {_short(e)}",
                     evidence=None,
                 )
+                self._sends_ok, self._sends_failed = 0, 1
+                self._last_send_failure = f"target could not set up this probe: {_short(e)}"
+                self._check_breaker()
                 return
 
         self._evidence_failed = False
+        self._sends_ok = self._sends_failed = 0
 
         # Dispatch on iterative flag
         if getattr(probe, "iterative", False):
@@ -299,14 +348,43 @@ class Runner:
                 if inspect.iscoroutinefunction(collector):
                     try:
                         observed = await collector()
-                    except httpx.HTTPError as e:
+                    except Exception as e:
                         # The verdict was decided without evidence, so a testbed
                         # blip only loses the attachment; say so and keep going.
+                        if not _is_transport_failure(e):
+                            raise
                         f = replace(f, reasoning=f"{f.reasoning} | evidence unavailable: {_short(e)}")
                     else:
                         if observed:
                             f = replace(f, evidence=observed)
             yield f
+        self._check_breaker()
+
+    def _note_send(self, failure_reason: str | None) -> None:
+        """Count one send for the breaker; a block is an answer, so pass None for it."""
+        if failure_reason is None:
+            self._sends_ok += 1
+        else:
+            self._sends_failed += 1
+            self._last_send_failure = failure_reason
+
+    def _check_breaker(self) -> None:
+        """After a probe: raise once UNREACHABLE_AFTER probes in a row failed every send."""
+        if self._sends_failed and not self._sends_ok:
+            self._failed_streak += 1
+        elif self._sends_ok:
+            self._failed_streak = 0
+        if self._failed_streak >= UNREACHABLE_AFTER:
+            raise TargetUnreachableError(
+                f"target unreachable: {self._failed_streak} probes in a row failed ({self._last_send_failure})"
+            )
+
+    def _no_rubric(self, probe, prompt, response_text, latency_ms, probed_at) -> Finding:
+        return self._finding(
+            probe, prompt, response_text, latency_ms, probed_at,
+            verdict=VERDICT_ERROR, severity="info", confidence=1.0,
+            reasoning=f"rubric file not found: {self._missing_rubric}", evidence=None,
+        )
 
     async def _assertion_finding(self, probe, prompt, response_text, latency_ms, probed_at) -> Finding:
         """Build a Finding whose verdict comes from captured evidence."""
@@ -317,7 +395,9 @@ class Runner:
         if inspect.iscoroutinefunction(collector):
             try:
                 evidence = await collector() or {}
-            except httpx.HTTPError as e:
+            except Exception as e:
+                if not _is_transport_failure(e):
+                    raise
                 # No evidence means no verdict. A testbed blip or an expired
                 # session errors this probe only; it must never read as a pass.
                 self._evidence_failed = True
@@ -371,7 +451,7 @@ class Runner:
             evidence=evidence,
         )
 
-    async def _run_static(self, probe, rubric_text: str) -> AsyncIterator[Finding]:
+    async def _run_static(self, probe, rubric_text: str | None) -> AsyncIterator[Finding]:
         """Static-prompt path.
 
         Default: each prompt is an independent single shot (history stays empty).
@@ -393,15 +473,17 @@ class Runner:
                 if failure is None:
                     raise
                 verdict, reasoning = failure
+                self._note_send(reasoning if verdict == VERDICT_ERROR else None)
                 yield self._finding(
                     probe, prompt, "", 0.0, probed_at,
                     verdict=verdict, severity="info", confidence=1.0,
                     reasoning=reasoning, evidence=None,
                 )
                 # Later turns of a conversation mean nothing without this one.
-                if conversation and verdict == VERDICT_ERROR:
+                if conversation:
                     return
                 continue
+            self._note_send(None)
             # An empty reply is a broken response path, not a refusal; a judge would read it as a pass.
             if not probe.assertions and not (response_text or "").strip():
                 yield self._finding(
@@ -433,6 +515,11 @@ class Runner:
                 yield await self._assertion_finding(probe, prompt, response_text, latency_ms, probed_at)
                 continue
 
+            if rubric_text is None:
+                yield self._no_rubric(probe, prompt, response_text, latency_ms, probed_at)
+                if conversation:
+                    return
+                continue
             try:
                 verdict = await self._judge.judge(
                     probe_name=probe.name,
@@ -465,7 +552,7 @@ class Runner:
                 eu_ai_act_id=list(probe.mappings.eu_ai_act),
             )
 
-    async def _run_iterative(self, probe, rubric_text: str) -> AsyncIterator[Finding]:
+    async def _run_iterative(self, probe, rubric_text: str | None) -> AsyncIterator[Finding]:
         """IterativeProbe path: probe.next_prompt(ctx) drives each round."""
         from argus.cost_meter import CostExceededError
         from argus.iterative import IterationContext
@@ -520,6 +607,7 @@ class Runner:
                         reasoning = f"target could not deliver round {round_n} prompt: {_short(e)}"
                     else:
                         reasoning = f"round {round_n}: {reasoning}"
+                    self._note_send(reasoning if verdict_name == VERDICT_ERROR else None)
                     # The next round needs this round's reply, so the attack ends here.
                     yield self._finding(
                         probe, prompt, "", 0.0, probed_at,
@@ -527,6 +615,7 @@ class Runner:
                         reasoning=reasoning, evidence=None,
                     )
                     return
+                self._note_send(None)
                 if not assertions and not (response_text or "").strip():
                     yield self._finding(
                         probe, prompt, response_text or "", latency_ms, probed_at,
@@ -546,6 +635,9 @@ class Runner:
                         judge_model="", escalated_model=None,
                     )
                 else:
+                    if rubric_text is None:
+                        yield self._no_rubric(probe, prompt, response_text, latency_ms, probed_at)
+                        return
                     try:
                         verdict = await self._judge.judge(
                             probe_name=probe.name,

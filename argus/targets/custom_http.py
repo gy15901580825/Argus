@@ -8,6 +8,7 @@ method) to the configured URL, and extracts the response via a JSONPath query.
 """
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from dataclasses import dataclass
@@ -23,6 +24,15 @@ from argus.targets._template import compile_template, render
 def _dry_run_ctx() -> dict:
     """A fresh context for the construction-time check of each template."""
     return {"prompt": "", "api_key": "", "history": [], "conversation_id": ""}
+
+
+def _as_text(value) -> str:
+    # null / [] / {} mean "no reply"; str() would hand the judge "None" or "[]" to pass.
+    if value is None or value == [] or value == {}:
+        return ""
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False)
 
 
 @dataclass(frozen=True)
@@ -121,7 +131,7 @@ class CustomHTTPTarget(Target):
         wall_latency_ms = (time.monotonic() - start) * 1000.0
 
         matches = self._jsonpath.find(data)
-        text = str(matches[0].value) if matches else ""
+        text = _as_text(matches[0].value) if matches else ""
 
         latency_ms = wall_latency_ms
         if self._latency_jsonpath is not None:

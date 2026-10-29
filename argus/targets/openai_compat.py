@@ -7,7 +7,7 @@ from typing import ClassVar, Optional
 
 import httpx
 
-from argus.targets._base import Target, Turn
+from argus.targets._base import Target, TargetBlockedError, Turn
 
 
 @dataclass(frozen=True)
@@ -72,5 +72,21 @@ class OpenAICompatTarget(Target):
         message = first.get("message") if isinstance(first, dict) else None
         text = ""
         if isinstance(message, dict):
-            text = message.get("content") or message.get("refusal") or ""
+            text = message.get("content") or message.get("refusal") or _tool_calls_text(message)
+        if not (text or "").strip() and isinstance(first, dict) and first.get("finish_reason") == "content_filter":
+            # Azure's output filter: the target answered and its gateway withheld the text.
+            raise TargetBlockedError("target's content filter withheld the reply")
         return text, latency_ms
+
+
+def _tool_calls_text(message: dict) -> str:
+    """A reply that only calls tools is still a reply; the judge reads the calls."""
+    calls = message.get("tool_calls") or []
+    if isinstance(message.get("function_call"), dict):  # legacy single-call shape
+        calls = [*calls, {"function": message["function_call"]}]
+    lines = []
+    for call in calls:
+        fn = call.get("function") if isinstance(call, dict) else None
+        if isinstance(fn, dict):
+            lines.append(f"[tool_call] {fn.get('name', '?')}({fn.get('arguments', '')})")
+    return "\n".join(lines)

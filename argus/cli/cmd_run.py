@@ -12,7 +12,9 @@ from click.core import ParameterSource
 from argus.cli import api_client, git_context, run_json
 from argus.cli.baseline_key import baseline_key
 from argus.cli.local_run import run_local_and_render
-from argus.cli.severity import SEVERITY_ORDER, findings_at_or_above, incomplete_lines
+from argus.cli.severity import (
+    SEVERITY_ORDER, blocked_warning, findings_at_or_above, hit_cost_cap, incomplete_lines,
+)
 from argus.cli.target_loader import load_target_spec_with_secrets, TargetLoadError
 
 # Exit codes must fit 0-255; sys.exit(402) surfaced as 146 on Linux and macOS.
@@ -123,6 +125,7 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
         sys.exit(1)
     incomplete = incomplete_lines(run.get("findings", []))
     _echo_masked(incomplete, spec, secret_values)
+    _warn_if_all_blocked(run.get("findings", []))
     if compare_to:
         try:
             d = api_client.get_diff(api_url, token, run_id, compare_to)
@@ -142,6 +145,8 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
         hits = _count_fail_on([{"verdict": "fail", **i} for i in d["new"]], fail_on)
     else:
         hits = _count_fail_on(run.get("findings", []), fail_on)
+    if hit_cost_cap(run.get("findings", [])):
+        sys.exit(EXIT_COST_CAP)
     # An errored probe tested nothing, so a pass elsewhere must not read as green; 1 wins over 3.
     if incomplete:
         sys.exit(1)
@@ -194,6 +199,11 @@ def _apply_fail_on(findings: list[dict], fail_on: str | None) -> None:
         sys.exit(3)
 
 
+def _warn_if_all_blocked(findings: list[dict]) -> None:
+    if warning := blocked_warning(findings):
+        click.echo(f"Warning: {warning}", file=sys.stderr)
+
+
 def _echo_masked(lines: list[str], spec: dict, secret_values) -> None:
     """Print to stderr with the secrets every report format masks; reasons can quote a URL or error text."""
     secrets = run_json.run_secrets(spec, secret_values)
@@ -234,14 +244,15 @@ def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, se
             click.echo(f"Run rejected for cost: {e}", file=sys.stderr)
             sys.exit(EXIT_COST_CAP)
         click.echo(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
+        sys.exit(2 if code == "usage" else 1)
     _write_report(out_file, result.report)
     click.echo(f"Wrote report to {out_file}")
     incomplete = incomplete_lines(result.findings, result.stop_reason)
     _echo_masked(incomplete, spec, secret_values)
+    _warn_if_all_blocked(result.findings)
     hits = _count_fail_on(result.findings, fail_on)
     # The cost cap keeps its own code so CI can tell "raise the cap" from "fix the target".
-    if getattr(result.stopped_by, "code", None) == "cost":
+    if getattr(result.stopped_by, "code", None) == "cost" or hit_cost_cap(result.findings):
         sys.exit(EXIT_COST_CAP)
     if incomplete:
         sys.exit(1)

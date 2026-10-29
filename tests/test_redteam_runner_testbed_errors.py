@@ -95,6 +95,7 @@ async def test_evidence_error_after_a_judged_verdict_keeps_the_verdict(tmp_path)
         verdict="fail", severity="high", confidence=0.8,
         reasoning="complied", judge_model="haiku", escalated_model=None,
     ))
+    (tmp_path / "default.md").write_text("rubric")  # a judged probe needs its rubric file
     runner = Runner(target=target, judge=judge, rubrics_dir=tmp_path)
     findings = [f async for f in runner.run_probe(_probe("judged", assertions=()))]
     assert len(findings) == 1

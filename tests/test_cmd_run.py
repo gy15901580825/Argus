@@ -534,3 +534,15 @@ def test_server_mode_without_errors_keeps_fail_on_exit_3(tmp_path, monkeypatch):
     result = CliRunner().invoke(main, _server_args(tmp_path, tmp_path / "r.html", "--fail-on", "high"))
     assert result.exit_code == 3, result.output
     assert "incomplete" not in result.output
+
+
+def test_server_mode_aborted_cost_exits_4(tmp_path, monkeypatch):
+    _server(monkeypatch, {"status": "completed", "findings": [
+        {"probe_id": "a", "verdict": "aborted_cost", "severity": "info", "reasoning": "cost cap hit at round 1: cap"},
+        {"probe_id": "b", "verdict": "error", "severity": "info", "reasoning": "x"},
+    ]})
+    out = tmp_path / "r.html"
+    result = CliRunner().invoke(main, _server_args(tmp_path, out))
+    assert result.exit_code == 4, result.output
+    assert out.exists()
+    assert "1 probe(s) stopped at the cost cap; run incomplete" in result.output

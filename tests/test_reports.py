@@ -83,7 +83,8 @@ FIXTURES = Path(__file__).parent / "fixtures" / "html_report"
 
 
 def test_html_for_non_trap_findings_is_unchanged_from_base():
-    # The golden file is base 4f7259b's render_html of this run, before the mcp-trap branch existed.
+    # The golden file is base 4f7259b's render_html of this run, before the mcp-trap branch existed,
+    # plus three deliberate run-reliability changes: an error count, and error findings say "not judged".
     run = json.loads((FIXTURES / "non_trap_run.json").read_text(encoding="utf-8"))
     expected = (FIXTURES / "non_trap_run.base-4f7259b.html").read_text(encoding="utf-8")
     assert reports.render_html(run) == expected
@@ -139,3 +140,10 @@ def test_html_rug_pull_rows_show_which_definition_each_call_ran_under():
     # Only rug_pull changes a definition, so other scenarios do not show it.
     assert html.count("definition in force") == 2
     assert "…[+1 more]" in html and "<code></code>" not in html
+
+
+def test_sarif_reports_an_incomplete_run_as_unsuccessful_even_with_findings():
+    sarif = json.loads(reports.render_sarif({**RUN, "status": "incomplete", "notes": ["1 of 1 probes errored"]}))
+    inv = sarif["runs"][0]["invocations"][0]
+    assert inv["executionSuccessful"] is False and inv["exitCode"] == 1
+    assert inv["toolExecutionNotifications"][0]["level"] == "warning"
