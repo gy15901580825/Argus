@@ -159,7 +159,7 @@ Use [`argus-probe-action`](https://github.com/marketplace/actions/argus-agent-re
 
 ```yaml
 - uses: actions/checkout@v4
-- uses: gy15901580825/argus-probe-action@v1
+- uses: gy15901580825/argus-probe-action@v2
   env:
     ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
   with:
@@ -168,7 +168,7 @@ Use [`argus-probe-action`](https://github.com/marketplace/actions/argus-agent-re
     fail-on: critical
 ```
 
-The job needs `permissions: security-events: write` for the SARIF upload. `argus-probe init --workflow` writes a complete workflow file with that set. Its `probes` are two judged chat probes for `openai_compat`, `anthropic_native` and `custom_http`, and `all` for every other kind, because the chat probes do not apply to those targets. It also sets `argus-version` to the version that wrote it, because the action otherwise installs its own default version, which may not know `testbed_url: "local"` or select the probes that fit the target. With `all`, an `mcp_agent` target needs no judge key: all 12 MCP probes are decided from the testbed's record. A `payment_agent` target needs `ANTHROPIC_API_KEY` for the 4 `pay_wallet_key_exfil*` probes; the action has no `--skip-judged` input, so without the key the run stops with exit 1.
+The job needs `permissions: security-events: write` for the SARIF upload. `argus-probe init --workflow` writes a complete workflow file with that set. Its `probes` are two judged chat probes for `openai_compat`, `anthropic_native` and `custom_http`, and `all` for every other kind, because the chat probes do not apply to those targets. It also sets `argus-version` to the version that wrote it, because the action otherwise installs its own default version, which may not know `testbed_url: "local"` or select the probes that fit the target. With `all`, an `mcp_agent` target needs no judge key: all 12 MCP probes are decided from the testbed's record. A `payment_agent` target needs `ANTHROPIC_API_KEY` for the 4 `pay_wallet_key_exfil*` probes; without the key the run stops with exit 1, unless you add `skip-judged: "true"` to run only the other 22. The action's `@v2` tag installs 0.7.0 and has that input; `@v1` installs 0.4.0.
 
 `--fail-on <severity>` exits 3 when a failing finding is at or above that level; the SARIF is written first. `--compare-to <base branch>` makes `--fail-on` count only failures that are new relative to the latest run on that branch. It is server mode only, because it needs run history, so the action does not offer it; see the target-spec cookbook for a server-mode workflow.
 
