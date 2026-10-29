@@ -280,7 +280,7 @@ errors (for example a 401 or a timeout from your agent):
 
 ```yaml
 - uses: actions/checkout@v4
-- uses: gy15901580825/argus-probe-action@v1
+- uses: gy15901580825/argus-probe-action@v2
   env:
     ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
   with:

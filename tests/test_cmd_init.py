@@ -188,7 +188,7 @@ def test_init_with_workflow_writes_workflow_file(tmp_path, monkeypatch):
     wf = yaml.safe_load(content)
     steps = wf["jobs"]["redteam"]["steps"]
     action = next(s for s in steps if "argus-probe-action" in s.get("uses", ""))
-    assert action["uses"] == "gy15901580825/argus-probe-action@v1"
+    assert action["uses"] == "gy15901580825/argus-probe-action@v2"
     assert action["with"]["target"] == "argus-target.json"
     assert action["with"]["fail-on"] == "critical"
     assert action["env"] == {

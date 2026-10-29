@@ -102,7 +102,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - uses: gy15901580825/argus-probe-action@v1
+      - uses: gy15901580825/argus-probe-action@v2
         env:
           # The LLM judge.
           ANTHROPIC_API_KEY: ${{{{ secrets.ANTHROPIC_API_KEY }}}}
