@@ -1,12 +1,14 @@
 """FastAPI sub-router for redteam runs (called by a server implementing the
 /api/v1/redteam API).
 
-Auth: argus.server mounts this router behind a bearer-token check
-(ARGUS_SERVER_TOKEN) and binds to loopback by default.
+Auth: the router itself does not authenticate callers. argus.server adds a
+bearer-token check (ARGUS_SERVER_TOKEN) when it mounts the router; any other
+server that mounts it must authenticate callers itself.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from dataclasses import asdict
@@ -165,7 +167,7 @@ def _judged_exchanges(req: RunRequest, probe_ids: list[str]) -> int:
 
 async def _run_probes(req: RunRequest, anthropic_api_key: str) -> AsyncIterator[dict]:
     # build_target() validates the dict and selects the right adapter — C1 fix.
-    target = build_target(req.target)
+    target = await asyncio.to_thread(build_target, req.target)
     judge = Judge(api_key=anthropic_api_key, cost_meter=_COST_METER)
     runner = Runner(target=target, judge=judge, rubrics_dir=RUBRICS_DIR)
 
@@ -206,7 +208,8 @@ async def preflight(req: RunRequest):
         raise HTTPException(status_code=422, detail="target must be a JSON object")
     try:
         # Validate target dict is buildable before we run cost math — C1 fix.
-        build_target(req.target)
+        # Off the event loop: building renders the spec's templates once.
+        await asyncio.to_thread(build_target, req.target)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
@@ -248,7 +251,9 @@ async def run(req: RunRequest):
     if not isinstance(req.target, dict):
         raise HTTPException(status_code=422, detail="target must be a JSON object")
     try:
-        build_target(req.target)  # validate early; actual target rebuilt inside _run_probes
+        # Validate early, off the event loop (building renders the spec's templates once);
+        # the actual target is rebuilt inside _run_probes.
+        await asyncio.to_thread(build_target, req.target)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 

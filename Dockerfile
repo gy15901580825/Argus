@@ -22,10 +22,13 @@ RUN pip install --no-cache-dir ".[server]" && rm -rf /app/argus
 ENV PYTHONUNBUFFERED=1
 
 # argus.server listens on $PORT, default 8080. In a container it must bind to all
-# interfaces, so it refuses to start unless ARGUS_SERVER_TOKEN is set (clients send
-# "Authorization: Bearer <token>" to /redteam/*). If a proxy in front of the
-# container does the authentication, set ARGUS_SERVER_ALLOW_UNAUTHENTICATED=1 instead.
-#   docker run -p 8080:8080 -e ARGUS_SERVER_TOKEN=<token> --env-file .env <image>
+# interfaces, so it refuses to start unless both ARGUS_SERVER_TOKEN (callers send
+# "Authorization: Bearer <token>" to /redteam/*) and AGENT_CONNECT_SECRET (client
+# agents send it as x-agent-secret on /agent/connect) are set. Use two different values.
+# ARGUS_SERVER_ALLOW_UNAUTHENTICATED=1 skips the check and leaves both open; use it
+# only behind a proxy that authenticates both.
+#   docker run -p 8080:8080 -e ARGUS_SERVER_TOKEN=<token> \
+#     -e AGENT_CONNECT_SECRET=<agent secret> --env-file .env <image>
 ENV ARGUS_SERVER_HOST=0.0.0.0
 EXPOSE 8080
 

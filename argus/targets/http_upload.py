@@ -72,17 +72,19 @@ class HTTPUploadTarget(Target):
         self._render_jsonpath = (
             jsonpath_parse(spec.render_url_jsonpath) if spec.render_url_jsonpath else None
         )
-        self._ctx = {"api_key": spec.api_key or ""}
         self._tpls = {
             group: [
-                (k, f"{group}[{k}]", compile_template(v, f"{group}[{k}]", self._ctx))
+                (k, f"{group}[{k}]", compile_template(v, f"{group}[{k}]", self._ctx()))
                 for k, v in getattr(spec, group)
             ]
             for group in ("upload_headers", "render_headers", "extra_form_fields")
         }
 
+    def _ctx(self) -> dict[str, str]:
+        return {"api_key": self.spec.api_key or ""}
+
     def _render_group(self, group: str) -> dict[str, str]:
-        return {k: render(tpl, field, self._ctx) for k, field, tpl in self._tpls[group]}
+        return {k: render(tpl, field, self._ctx()) for k, field, tpl in self._tpls[group]}
 
     async def send_prompt(self, prompt: str) -> tuple[str, float]:
         # The probe's prompt IS the file body — encode as bytes for upload.

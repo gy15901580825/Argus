@@ -19,8 +19,10 @@ from jsonpath_ng import parse as jsonpath_parse
 from argus.targets._base import Target, Turn
 from argus.targets._template import compile_template, render
 
-# Context for the construction-time check of the spec's templates.
-_DRY_RUN_CTX = {"prompt": "", "api_key": "", "history": [], "conversation_id": ""}
+
+def _dry_run_ctx() -> dict:
+    """A fresh context for the construction-time check of each template."""
+    return {"prompt": "", "api_key": "", "history": [], "conversation_id": ""}
 
 
 @dataclass(frozen=True)
@@ -66,10 +68,10 @@ class CustomHTTPTarget(Target):
     def __init__(self, spec: CustomHTTPSpec) -> None:
         self.spec = spec
         self._body_tpl = compile_template(
-            spec.request_body_template, "request_body_template", _DRY_RUN_CTX
+            spec.request_body_template, "request_body_template", _dry_run_ctx()
         )
         self._header_tpls = [
-            (k, f"request_headers[{k}]", compile_template(v, f"request_headers[{k}]", _DRY_RUN_CTX))
+            (k, f"request_headers[{k}]", compile_template(v, f"request_headers[{k}]", _dry_run_ctx()))
             for k, v in spec.request_headers
         ]
         self._jsonpath = jsonpath_parse(spec.response_jsonpath)

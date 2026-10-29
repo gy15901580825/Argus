@@ -12,7 +12,7 @@ You only need it in server mode. `argus-probe run --local` runs `browser_use` ta
 
 Connect straight to the orchestrator. `--agent-name` is used as the agent id, and a second agent with the same id is refused while the first is connected. If an agent drops without closing its socket, the orchestrator's WebSocket pings clear the old connection within about 40 seconds, after which the same id can reconnect.
 
-Whoever can reach `/agent/connect` can act as an agent and receive probe payloads. Set the same `AGENT_CONNECT_SECRET` on the orchestrator and the client agent so only agents that know it are accepted, and keep the orchestrator on localhost or a trusted network. Without the secret the orchestrator logs a warning at startup.
+Whoever can reach `/agent/connect` can act as an agent and receive probe payloads. Set the same `AGENT_CONNECT_SECRET` on the orchestrator and the client agent so only agents that know it are accepted. The orchestrator listens on `127.0.0.1` by default. For a client agent on another machine, start it with `ARGUS_SERVER_HOST=0.0.0.0`, `AGENT_CONNECT_SECRET` and `ARGUS_SERVER_TOKEN` (a different value, for callers of `/redteam/*`); off loopback it refuses to start without both. On loopback, a missing secret only logs a warning. See [services.md](../docs/reference/services.md#orchestrator-python--m-argusserver-port-8080).
 
 ```bash
 pip install -r requirements.txt && playwright install chromium
@@ -33,6 +33,7 @@ If your server registers agents first, also pass `--api-service-url` and credent
 
 ```bash
 export AGENT_PASSWORD=<password>                     # or: export AGENT_API_TOKEN=<token>
+export AGENT_CONNECT_SECRET=<shared secret>          # same value as on the orchestrator
 python client_agent.py --orchestrator-url wss://<orchestrator-host> \
     --api-service-url https://<your-server> --agent-name my-browser-agent \
     --username <username>
@@ -46,5 +47,6 @@ docker run -e ORCHESTRATOR_URL=wss://<orchestrator-host> \
            -e AGENT_NAME=my-browser-agent \
            -e USERNAME=<username> \
            -e PASSWORD=<password> \
+           -e AGENT_CONNECT_SECRET=<shared secret> \
            <your-gh-user>/client_agent:latest
 ```

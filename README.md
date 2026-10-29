@@ -219,11 +219,12 @@ on both sides:
 `python client_agent/client_agent.py --orchestrator-url ws://<orchestrator-host>:8080 --agent-name my-browser-agent`.
 
 `python -m argus.server` (the engine's own FastAPI app) binds to `127.0.0.1`
-by default. To serve other machines, set `ARGUS_SERVER_HOST=0.0.0.0` and
-`ARGUS_SERVER_TOKEN`; callers of `/redteam/*` then send
-`Authorization: Bearer <token>`. On a non-loopback address the server will
-not start without a token. The Docker image binds to `0.0.0.0`, so it needs
-`ARGUS_SERVER_TOKEN` too. Details are in
+by default. To serve other machines, set `ARGUS_SERVER_HOST=0.0.0.0`,
+`ARGUS_SERVER_TOKEN` and `AGENT_CONNECT_SECRET`, with different values.
+Callers of `/redteam/*` then send `Authorization: Bearer <token>`, and
+client agents send the agent secret. On a non-loopback address the server
+will not start without both. The Docker image binds to `0.0.0.0`, so it
+needs both too. Details are in
 [`docs/reference/services.md`](docs/reference/services.md).
 
 `--probes all` runs the whole library. `--format` is `html` (default),

@@ -62,51 +62,88 @@ def test_post_routes_are_guarded_before_body_validation(client, monkeypatch):
 @pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json"])
 def test_docs_routes_stay_open(client, monkeypatch, path):
     monkeypatch.setenv("ARGUS_SERVER_TOKEN", "right-token")
-    assert client.get(path).status_code == 200
+
+
+def test_openapi_declares_the_bearer_scheme(client):
+    schema = client.get("/openapi.json").json()
+    schemes = schema["components"]["securitySchemes"]
+    assert any(s == {"type": "http", "scheme": "bearer"} for s in schemes.values())
+    assert schema["paths"]["/redteam/probes"]["get"].get("security")
 
 
 # --------------------------------------------------------------------------
 # startup guard
 # --------------------------------------------------------------------------
 
-@pytest.mark.parametrize("host", ["127.0.0.1", "127.0.0.2", "::1", "localhost"])
-def test_loopback_without_token_may_start(host):
+def _guard(host, token="", agent_secret="", allow=False):
     from argus.server import startup_error
 
-    assert startup_error(host, token="", allow_unauthenticated=False) is None
+    return startup_error(host, token=token, agent_secret=agent_secret, allow_unauthenticated=allow)
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "127.0.0.2", "::1", "localhost"])
+def test_loopback_without_secrets_may_start(host):
+    assert _guard(host) is None
 
 
 @pytest.mark.parametrize("host", ["0.0.0.0", "::", "10.0.0.5", "my-host.example"])
-def test_non_loopback_without_token_is_refused(host):
-    from argus.server import startup_error
-
-    msg = startup_error(host, token="", allow_unauthenticated=False)
+def test_non_loopback_without_secrets_is_refused(host):
+    msg = _guard(host)
     assert msg is not None
     assert host in msg
     assert "ARGUS_SERVER_TOKEN" in msg
+    assert "AGENT_CONNECT_SECRET" in msg
     assert "ARGUS_SERVER_ALLOW_UNAUTHENTICATED=1" in msg
 
 
-def test_non_loopback_with_token_may_start():
-    from argus.server import startup_error
+def test_non_loopback_with_token_but_no_agent_secret_is_refused():
+    msg = _guard("0.0.0.0", token="t")
+    assert msg is not None
+    assert "AGENT_CONNECT_SECRET" in msg
+    assert "ARGUS_SERVER_TOKEN is not set" not in msg
 
-    assert startup_error("0.0.0.0", token="t", allow_unauthenticated=False) is None
+
+def test_non_loopback_with_agent_secret_but_no_token_is_refused():
+    msg = _guard("0.0.0.0", agent_secret="s")
+    assert msg is not None
+    assert "ARGUS_SERVER_TOKEN" in msg
+    assert "AGENT_CONNECT_SECRET is not set" not in msg
 
 
-def test_non_loopback_with_explicit_opt_out_may_start():
-    from argus.server import startup_error
+def test_server_token_does_not_stand_in_for_the_agent_secret():
+    # Same value in both slots is fine; a token alone never opens the hub.
+    assert _guard("0.0.0.0", token="same", agent_secret="") is not None
+    assert _guard("0.0.0.0", token="t", agent_secret="s") is None
 
-    assert startup_error("0.0.0.0", token="", allow_unauthenticated=True) is None
+
+def test_opt_out_opens_both_surfaces():
+    assert _guard("0.0.0.0", allow=True) is None
+    assert _guard("0.0.0.0", token="t", allow=True) is None
+
+
+def test_refusal_message_says_the_opt_out_opens_both():
+    msg = _guard("0.0.0.0")
+    assert "/redteam/*" in msg and "/agent/connect" in msg
+
+
+def _clear_server_env(monkeypatch):
+    for name in ("ARGUS_SERVER_HOST", "ARGUS_SERVER_TOKEN", "ARGUS_SERVER_ALLOW_UNAUTHENTICATED",
+                 "AGENT_CONNECT_SECRET", "PORT"):
+        monkeypatch.delenv(name, raising=False)
+
+
+def _fake_uvicorn(monkeypatch):
+    started = []
+    monkeypatch.setattr("uvicorn.run", lambda *a, **kw: started.append(kw))
+    return started
 
 
 def test_main_exits_nonzero_on_unsafe_bind(monkeypatch, capsys):
     import argus.server as server
 
+    _clear_server_env(monkeypatch)
     monkeypatch.setenv("ARGUS_SERVER_HOST", "0.0.0.0")
-    monkeypatch.delenv("ARGUS_SERVER_TOKEN", raising=False)
-    monkeypatch.delenv("ARGUS_SERVER_ALLOW_UNAUTHENTICATED", raising=False)
-    started = []
-    monkeypatch.setattr("uvicorn.run", lambda *a, **kw: started.append(kw))
+    started = _fake_uvicorn(monkeypatch)
     with pytest.raises(SystemExit) as exc:
         server.main()
     assert exc.value.code == 1
@@ -114,24 +151,37 @@ def test_main_exits_nonzero_on_unsafe_bind(monkeypatch, capsys):
     assert started == []
 
 
+def test_main_exits_nonzero_off_loopback_with_token_but_no_agent_secret(monkeypatch, capsys):
+    import argus.server as server
+
+    _clear_server_env(monkeypatch)
+    monkeypatch.setenv("ARGUS_SERVER_HOST", "0.0.0.0")
+    monkeypatch.setenv("ARGUS_SERVER_TOKEN", "t")
+    started = _fake_uvicorn(monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        server.main()
+    assert exc.value.code == 1
+    assert "AGENT_CONNECT_SECRET" in capsys.readouterr().err
+    assert started == []
+
+
 def test_main_binds_loopback_by_default(monkeypatch):
     import argus.server as server
 
-    for name in ("ARGUS_SERVER_HOST", "ARGUS_SERVER_TOKEN", "ARGUS_SERVER_ALLOW_UNAUTHENTICATED", "PORT"):
-        monkeypatch.delenv(name, raising=False)
-    started = []
-    monkeypatch.setattr("uvicorn.run", lambda *a, **kw: started.append(kw))
+    _clear_server_env(monkeypatch)
+    started = _fake_uvicorn(monkeypatch)
     server.main()
     assert started[0]["host"] == "127.0.0.1"
     assert started[0]["port"] == 8080
 
 
-def test_main_binds_configured_host_with_token(monkeypatch):
+def test_main_binds_configured_host_with_both_secrets(monkeypatch):
     import argus.server as server
 
+    _clear_server_env(monkeypatch)
     monkeypatch.setenv("ARGUS_SERVER_HOST", "0.0.0.0")
     monkeypatch.setenv("ARGUS_SERVER_TOKEN", "t")
-    started = []
-    monkeypatch.setattr("uvicorn.run", lambda *a, **kw: started.append(kw))
+    monkeypatch.setenv("AGENT_CONNECT_SECRET", "s")
+    started = _fake_uvicorn(monkeypatch)
     server.main()
     assert started[0]["host"] == "0.0.0.0"

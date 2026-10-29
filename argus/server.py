@@ -9,7 +9,8 @@ from dotenv import load_dotenv
 load_dotenv()
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
 
-from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
 
 # Configure logging
@@ -54,17 +55,22 @@ def log_agent_auth_mode() -> None:
         )
 
 
-log_agent_auth_mode()
+
+# auto_error=False: the scheme is declared in OpenAPI, but whether a token is
+# required depends on ARGUS_SERVER_TOKEN, checked below.
+_bearer = HTTPBearer(auto_error=False)
 
 
-def require_server_token(request: Request) -> None:
+def require_server_token(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+) -> None:
     """When ARGUS_SERVER_TOKEN is set, require `Authorization: Bearer <token>`."""
     # Read per request so the token is never cached at import time.
     token = os.getenv("ARGUS_SERVER_TOKEN", "")
     if not token:
         return
-    scheme, _, supplied = request.headers.get("authorization", "").partition(" ")
-    if scheme.lower() != "bearer" or not hmac.compare_digest(supplied.encode(), token.encode()):
+    supplied = credentials.credentials if credentials else ""
+    if not hmac.compare_digest(supplied.encode(), token.encode()):
         raise HTTPException(status_code=401, detail="missing or invalid bearer token",
                             headers={"WWW-Authenticate": "Bearer"})
 
@@ -78,18 +84,30 @@ def _is_loopback(host: str) -> bool:
         return False
 
 
-def startup_error(host: str, token: str, allow_unauthenticated: bool) -> str | None:
+def startup_error(
+    host: str, token: str, agent_secret: str, allow_unauthenticated: bool
+) -> str | None:
     """Why the server must not start on `host`, or None when it may."""
-    # /redteam/run accepts a target spec and makes the server send requests to it,
-    # so it is open only on loopback unless the operator opts out explicitly.
-    if _is_loopback(host) or token or allow_unauthenticated:
+    # /redteam/run sends requests to a caller-named target, and /agent/connect hands
+    # probe payloads to whoever connects, so off loopback each needs its own secret.
+    # The API token never stands in for the agent secret: they are different principals.
+    if _is_loopback(host) or allow_unauthenticated:
+        return None
+    missing = []
+    if not token:
+        missing.append("ARGUS_SERVER_TOKEN is not set, so /redteam/* would accept anyone's runs")
+    if not agent_secret:
+        missing.append("AGENT_CONNECT_SECRET is not set, so anyone could register on /agent/connect")
+    if not missing:
         return None
     return (
-        f"Refusing to start: ARGUS_SERVER_HOST={host} is reachable from other machines "
-        "and ARGUS_SERVER_TOKEN is not set, so /redteam/* would accept anyone's runs. "
-        "Set ARGUS_SERVER_TOKEN (clients send 'Authorization: Bearer <token>'), "
-        "bind to 127.0.0.1, or set ARGUS_SERVER_ALLOW_UNAUTHENTICATED=1 if a proxy "
-        "in front of the server does the authentication."
+        f"Refusing to start: ARGUS_SERVER_HOST={host} is reachable from other machines and "
+        + "; ".join(missing) + ". "
+        "Set ARGUS_SERVER_TOKEN (callers send 'Authorization: Bearer <token>') and "
+        "AGENT_CONNECT_SECRET (client agents send it as x-agent-secret), or bind to 127.0.0.1. "
+        "ARGUS_SERVER_ALLOW_UNAUTHENTICATED=1 skips this check and leaves both /redteam/* and "
+        "/agent/connect open to anything that reaches the port; use it only behind a proxy "
+        "that authenticates both."
     )
 
 # ============================================================================
@@ -153,11 +171,13 @@ def main() -> None:
     import uvicorn
     host = os.getenv("ARGUS_SERVER_HOST") or "127.0.0.1"
     token = os.getenv("ARGUS_SERVER_TOKEN", "")
+    agent_secret = os.getenv("AGENT_CONNECT_SECRET", "")
     allow = os.getenv("ARGUS_SERVER_ALLOW_UNAUTHENTICATED") == "1"
-    error = startup_error(host, token, allow)
+    error = startup_error(host, token, agent_secret, allow)
     if error:
         print(error, file=sys.stderr)
         sys.exit(1)
+    log_agent_auth_mode()
     if not token and not _is_loopback(host):
         logger.warning("ARGUS_SERVER_ALLOW_UNAUTHENTICATED=1: /redteam/* on %s accepts unauthenticated requests.", host)
     port = int(os.getenv("PORT", 8080))

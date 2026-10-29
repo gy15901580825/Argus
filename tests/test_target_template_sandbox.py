@@ -59,6 +59,60 @@ def test_unsafe_dunder_class_access_is_refused():
         _custom(body="{{ prompt.__class__.__mro__ }}")
 
 
+# One blocked step must be an error, not an empty string (Jinja's default).
+@pytest.mark.parametrize("body", [
+    "{{ prompt.__class__ }}",                    # attribute
+    "{{ prompt['__class__'] }}",                 # subscript
+    "{{ prompt|attr('__class__') }}",            # attr filter
+    "{{ '{0.__class__}'.format(prompt) }}",      # format string
+    "{{ self.__init__ }}",                       # self global
+    "{{ self._TemplateReference__context }}",    # self private attribute
+])
+def test_single_step_unsafe_access_is_a_spec_error(body):
+    with pytest.raises(ValueError, match="request_body_template: template refused by the sandbox"):
+        _custom(body=body)
+
+
+def test_dry_run_cannot_mutate_the_context():
+    with pytest.raises(ValueError, match="request_body_template"):
+        _custom(body="{{ history.append('x') }}{}")
+    # A later spec still sees an empty history in its dry run.
+    _custom(body="{% if history %}" + UNSAFE + "{% endif %}{}")
+
+
+def test_overflow_is_a_spec_error_at_construction():
+    with pytest.raises(ValueError, match="request_body_template"):
+        _custom(body="{{ 10.0 ** 1000 }}")
+
+
+@pytest.mark.asyncio
+async def test_overflow_behind_a_branch_is_a_spec_error_at_send():
+    target = _custom(body="{% if history %}{{ 10.0 ** 1000 }}{% endif %}{}")
+    with pytest.raises(ValueError, match="request_body_template"):
+        await _send_custom(target, history=(Turn("user", "a"),))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", [
+    "{{ range(3)|list }}",
+    "{{ lipsum.__globals__ }}",
+    "{{ cycler.__init__ }}",
+    "{{ namespace(a=1).a }}",
+])
+async def test_default_globals_are_not_available(body):
+    # Undefined names render empty in Jinja; calling or reading through one fails
+    # at construction or at send, as a spec error either way.
+    with pytest.raises(ValueError, match="request_body_template"):
+        await _send_custom(_custom(body=body))
+
+
+@pytest.mark.asyncio
+async def test_unsafe_header_branch_fails_at_send():
+    target = _custom(headers=(("X-H", "{% if history %}{{ prompt.__class__ }}{% endif %}"),))
+    with pytest.raises(ValueError, match=r"request_headers\[X-H\]"):
+        await _send_custom(target, history=(Turn("user", "a"),))
+
+
 def test_unsafe_header_template_names_the_header():
     with pytest.raises(ValueError, match=r"request_headers\[X-Evil\]"):
         _custom(headers=(("X-Evil", UNSAFE),))
@@ -224,3 +278,39 @@ def test_preflight_returns_422_for_unsafe_template(monkeypatch):
     })
     assert resp.status_code == 422
     assert "request_body_template" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_build_target_runs_off_the_event_loop(monkeypatch):
+    # The construction-time dry run renders the template; it must not block the server's loop.
+    import asyncio
+    from fastapi.testclient import TestClient
+    import argus.api as api
+    from argus.server import app
+
+    seen = []
+
+    def fake_build_target(spec):
+        try:
+            asyncio.get_running_loop()
+            seen.append("loop")
+        except RuntimeError:
+            seen.append("thread")
+        raise ValueError("stop here")
+
+    monkeypatch.setattr(api, "build_target", fake_build_target)
+    resp = TestClient(app).post("/redteam/run/preflight", json={"target": {"kind": "custom_http"}})
+    assert resp.status_code == 422
+    assert seen == ["thread"]
+
+
+def test_jinja2_floor_has_the_sandbox_fixes():
+    # 3.1.6 fixes CVE-2024-56326 and CVE-2025-27516; the template guarantee depends on it.
+    import tomllib
+    from pathlib import Path
+
+    import jinja2
+
+    deps = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())["project"]["dependencies"]
+    assert "jinja2>=3.1.6" in deps
+    assert tuple(int(x) for x in jinja2.__version__.split(".")[:3]) >= (3, 1, 6)
