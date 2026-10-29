@@ -9,7 +9,7 @@ from typing import Iterable, NamedTuple
 import click
 
 from argus.cli import reports, run_json
-from argus.cli.severity import blocked_warning, incomplete_lines, run_exit_code
+from argus.cli.severity import blocked_warning, incomplete_lines, judge_skip_line, run_exit_code
 
 
 class LocalRunResult(NamedTuple):
@@ -23,7 +23,7 @@ class LocalRunResult(NamedTuple):
 
 def run_local_and_render(
     spec: dict, probe_ids: list[str], per_run_cap: float | None, report_format: str,
-    secret_values: Iterable[str] = (), fail_on: str | None = None,
+    secret_values: Iterable[str] = (), fail_on: str | None = None, skip_judged: bool = False,
 ) -> LocalRunResult:
     """Run the probes, print one line per finding, return the rendered report and findings.
 
@@ -39,7 +39,7 @@ def run_local_and_render(
 
     async def _consume() -> None:
         nonlocal coverage
-        async for event in run_local(spec, probe_ids, per_run_cap_usd=per_run_cap):
+        async for event in run_local(spec, probe_ids, per_run_cap_usd=per_run_cap, skip_judged=skip_judged):
             if event.get("type") == "coverage":
                 coverage = event.get("coverage")
                 continue
@@ -63,11 +63,20 @@ def run_local_and_render(
             stop_reason = str(e)
         else:
             stop_reason = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+        if coverage is None:
+            # The engine emits coverage only at the end; build it from what did run.
+            from argus.api import PROBES_DIR
+            from argus.coverage import build_coverage
+            from argus.probe import load_probe_library
+
+            coverage = build_coverage(load_probe_library(PROBES_DIR), findings)
 
     incomplete = [line.strip() for line in incomplete_lines(findings, stop_reason)]
     notes = list(incomplete)
     if warning := blocked_warning(findings):
         notes.append(warning)
+    if skip_note := judge_skip_line(findings):
+        notes.append(skip_note)
     run = {
         "id": str(uuid.uuid4()),
         "status": "incomplete" if incomplete else "completed",

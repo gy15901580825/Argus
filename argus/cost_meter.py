@@ -2,7 +2,7 @@
 
 Strategy C semantics (Plan 4):
 - daily_cap_usd: global; > cap rejects all new runs and any further `record` calls
-- per_run_cap_usd: per-run; record() raises CostExceededError when next call would exceed
+- per_run_cap_usd: per-run; record() counts a finished call, then raises CostExceededError once spend is past the cap
 - predictive abort: pre-run estimator refuses runs whose estimated cost > per_run_cap or > daily remaining
 - alert_threshold: at this fraction of daily_cap, fire one email alert; cooldown to avoid flood
 """
@@ -78,8 +78,15 @@ _BUDGET_EPSILON_USD = 0.005
 
 
 class CostExceededError(RuntimeError):
-    """Raised when a daily or per-run cap would be exceeded."""
-    pass
+    """Raised when a daily or per-run cap would be exceeded.
+
+    `estimated_usd` is set only when the pre-run estimate exceeds the per-run cap,
+    so a caller can name the cap that would fit.
+    """
+
+    def __init__(self, message: str, estimated_usd: float | None = None) -> None:
+        super().__init__(message)
+        self.estimated_usd = estimated_usd
 
 
 # Backward-compat alias — remove after all callers are updated.
@@ -123,6 +130,7 @@ class CostMeter:
         self._spent_today_deep = 0.0
         self._spent_in_run: Optional[float] = None  # None when no run is active
         self._run_is_deep = False
+        self._run_cap: Optional[float] = None
         self._last_alert_ts = 0.0
 
     @property
@@ -162,53 +170,71 @@ class CostMeter:
         return self._spent_in_run or 0.0
 
     @contextlib.contextmanager
-    def run_scope(self, run_id: str, deep: bool = False):
+    def run_scope(self, run_id: str, deep: bool = False, per_run_cap_usd: float | None = None,
+                  spent_usd: float = 0.0, resume: bool = False):
+        """Meter one run: record() raises once a call takes the run's spend past the cap.
+
+        per_run_cap_usd overrides the applicable per-run cap for this run (the CLI's --per-run-cap).
+        spent_usd and resume=True continue a run metered in steps, so a scope never has to stay
+        open across a yield. The deep budget is checked only when a run starts, not when it resumes.
+        """
         if self._spent_in_run is not None:
             raise RuntimeError(f"run_scope is non-reentrant; another run is active")
-        if deep and not self.can_start_deep_run():
+        if deep and not resume and not self.can_start_deep_run():
             raise CostExceededError(
                 f"deep budget ${self.deep_daily_cap_usd:.2f}/day "
                 f"(={self.deep_budget_fraction:.0%} of the ${self.daily_cap_usd:.2f} daily cap) "
                 f"is exhausted; ${self.deep_budget_remaining():.2f} remains. "
                 "Static runs are unaffected."
             )
-        self._spent_in_run = 0.0
+        self._spent_in_run = spent_usd
         self._run_is_deep = deep
+        self._run_cap = per_run_cap_usd
         try:
             yield
         finally:
             self._spent_in_run = None
             self._run_is_deep = False
+            self._run_cap = None
 
     def record(self, model: str, input_tokens: int, output_tokens: int) -> float:
-        self._maybe_reset_day()
-        if self._spent_today >= self.daily_cap_usd:
-            raise CostExceededError(
-                f"daily cap ${self.daily_cap_usd:.2f} already reached on {self._day}"
-            )
-        prices = _price_for(model)
-        cost = (input_tokens / 1_000_000) * prices["input"] + (output_tokens / 1_000_000) * prices["output"]
+        """Count one finished call, then raise if it took spend past a cap."""
+        return self.record_many([(model, input_tokens, output_tokens)])
 
-        # Per-run check uses pre-call accounting (lookahead): the next call to
-        # record cannot push the per-run total above the applicable cap.
+    def record_many(self, calls) -> float:
+        """Count finished calls, then check the caps once; returns their cost.
+
+        `calls` is (model, input_tokens, output_tokens) for each attempt of one
+        completion: refused attempts and the answer. Callers record after the
+        calls have returned, so their cost is real: all of it is counted, even
+        when it crosses a cap, and the error stops the next call.
+        """
+        self._maybe_reset_day()
+        cost = 0.0
+        for model, input_tokens, output_tokens in calls:
+            prices = _price_for(model)
+            cost += (input_tokens / 1_000_000) * prices["input"] + (output_tokens / 1_000_000) * prices["output"]
+        was_over_daily = self._spent_today >= self.daily_cap_usd
+        self._spent_today += cost
+        over: str | None = None
+        if was_over_daily:
+            over = f"daily cap ${self.daily_cap_usd:.2f} already reached on {self._day}"
         if self._spent_in_run is not None:
             cap = self.deep_per_run_cap_usd if self._run_is_deep else self.per_run_cap_usd
+            if self._run_cap is not None:
+                cap = self._run_cap
             label = "deep per_run" if self._run_is_deep else "per_run"
-            if self._spent_in_run + cost > cap:
-                raise CostExceededError(
-                    f"{label} cap ${cap:.2f} would be exceeded by this call"
-                )
-            if self._run_is_deep and self._spent_today_deep + cost > self.deep_daily_cap_usd:
-                raise CostExceededError(
-                    f"deep daily budget ${self.deep_daily_cap_usd:.2f} would be exceeded "
-                    "by this call; static runs are unaffected"
-                )
             self._spent_in_run += cost
             if self._run_is_deep:
                 self._spent_today_deep += cost
-
-        self._spent_today += cost
+            if over is None and self._spent_in_run > cap:
+                over = f"{label} cap ${cap:.2f} exceeded: this run has spent ${self._spent_in_run:.4f}"
+            if over is None and self._run_is_deep and self._spent_today_deep > self.deep_daily_cap_usd:
+                over = (f"deep daily budget ${self.deep_daily_cap_usd:.2f} exceeded; "
+                        "static runs are unaffected")
         self._maybe_alert()
+        if over is not None:
+            raise CostExceededError(over)
         return cost
 
     def _maybe_alert(self) -> None:
@@ -250,30 +276,40 @@ class CostMeter:
         LLM that drives every deep round.
         """
         self._maybe_reset_day()
-        # Per-exchange: target send + judge call ≈ 2 LLM calls; an attacker/planner
-        # LLM adds ≈ 1 more — always in deep mode, and assumed for the chat kinds.
-        calls_per_round = 3 if (deep or target_kind in {"openai_compat", "anthropic_native"}) else 2
-        # Char-based heuristic with safety margin
+        # Only Argus's own LLM calls are counted: per judged exchange a fast judge
+        # call and, as if every verdict escalated, a strong one; deep mode adds the
+        # attacker (fast role). Sends to the target are the target's bill.
         est_input_tokens = (_AVG_PROMPT_CHARS / _CHARS_PER_TOKEN) * _SAFETY_MARGIN
         est_output_tokens = (_AVG_RESPONSE_CHARS / _CHARS_PER_TOKEN) * _SAFETY_MARGIN
-        # Price at the configured fast judge model; a bad provider setting falls back
-        # to Haiku here and is reported by the credential check.
+
+        def _call_usd(prices: dict) -> float:
+            return (est_input_tokens / 1_000_000) * prices["input"] + (
+                est_output_tokens / 1_000_000
+            ) * prices["output"]
+
+        # Price at the configured judge models; a bad provider setting falls back
+        # to the Anthropic defaults here and is reported by the credential check.
         from argus import llm
         try:
-            prices = _price_for(llm.resolve_config().fast_model)
+            cfg = llm.resolve_config()
+            fast, strong = _price_for(cfg.fast_model), _price_for(cfg.strong_model)
+            escalates = cfg.escalation_is_meaningful
         except ValueError:
-            prices = _PRICES_PER_M_TOKENS["claude-haiku-4-5-20251001"]
-        cost_per_call = (est_input_tokens / 1_000_000) * prices["input"] + (
-            est_output_tokens / 1_000_000
-        ) * prices["output"]
+            fast = _PRICES_PER_M_TOKENS["claude-haiku-4-5-20251001"]
+            strong = _PRICES_PER_M_TOKENS["claude-sonnet-4-6"]
+            escalates = True
+        per_exchange = _call_usd(fast) + (_call_usd(strong) if escalates else 0.0)
+        if deep:
+            per_exchange += _call_usd(fast)
         exchanges = total_exchanges if total_exchanges is not None else len(probe_ids) * iterative_rounds
-        estimated = cost_per_call * exchanges * calls_per_round
+        estimated = per_exchange * exchanges
 
         default_cap = self.deep_per_run_cap_usd if deep else self.per_run_cap_usd
         cap = per_run_cap_override if per_run_cap_override is not None else default_cap
         if estimated > cap:
             raise CostExceededError(
-                f"estimated cost ${estimated:.4f} > per_run_cap ${cap:.2f}"
+                f"estimated cost ${estimated:.4f} > per_run_cap ${cap:.2f}",
+                estimated_usd=estimated,
             )
         remaining = self.daily_cap_usd - self._spent_today
         label = "daily"

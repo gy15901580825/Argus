@@ -38,6 +38,10 @@ VERDICT_ERROR = "error"
 VERDICT_BLOCKED_BY_TARGET = "blocked_by_target"  # adapter HTTP 4xx (target gateway content filter)
 VERDICT_SKIPPED = "skipped"                       # probe.target_class disjoint from target.compatible_classes
 VERDICT_ABORTED = "aborted_cost"                  # mid-run CostExceededError (daily cap crossed)
+# Reason prefix of a judged probe skipped because no judge credential is set.
+NO_JUDGE_KEY = "no judge key"
+# Reason prefix of a probe the run never started because it had already hit a cost cap.
+NOT_STARTED_AT_CAP = "not started"
 
 
 def _short(exc: Exception) -> str:
@@ -194,6 +198,34 @@ class Finding:
     evidence: dict | None = None
 
 
+def skipped_finding(probe, reasoning: str) -> Finding:
+    """A skipped Finding that still carries the probe's standards mappings,
+    so the skip remains traceable in SARIF/JUnit rather than vanishing."""
+    return Finding(
+        id=uuid4(),
+        probe_id=probe.id,
+        attack_prompt="",
+        target_response="",
+        target_latency_ms=0.0,
+        probed_at=datetime.now(timezone.utc),
+        verdict=VERDICT_SKIPPED,
+        severity="info",
+        confidence=1.0,
+        reasoning=reasoning,
+        judge_model="",
+        escalated_model=None,
+        atlas_id=list(probe.mappings.atlas),
+        owasp_id=list(probe.mappings.owasp_llm),
+        nist_id=list(probe.mappings.nist_ai_rmf),
+        eu_ai_act_id=list(probe.mappings.eu_ai_act),
+    )
+
+
+def aborted_finding(probe, reasoning: str) -> Finding:
+    """The probe that was running when the cost cap stopped the run."""
+    return replace(skipped_finding(probe, reasoning), verdict=VERDICT_ABORTED)
+
+
 class Runner:
     def __init__(self, target, judge, rubrics_dir: Path) -> None:
         self._target = target
@@ -220,26 +252,7 @@ class Runner:
         return shown(prompt) if prompt and inspect.ismethod(shown) else prompt
 
     def _skip(self, probe, reasoning: str) -> Finding:
-        """A skipped Finding that still carries the probe's standards mappings,
-        so the skip remains traceable in SARIF/JUnit rather than vanishing."""
-        return Finding(
-            id=uuid4(),
-            probe_id=probe.id,
-            attack_prompt="",
-            target_response="",
-            target_latency_ms=0.0,
-            probed_at=datetime.now(timezone.utc),
-            verdict=VERDICT_SKIPPED,
-            severity="info",
-            confidence=1.0,
-            reasoning=reasoning,
-            judge_model="",
-            escalated_model=None,
-            atlas_id=list(probe.mappings.atlas),
-            owasp_id=list(probe.mappings.owasp_llm),
-            nist_id=list(probe.mappings.nist_ai_rmf),
-            eu_ai_act_id=list(probe.mappings.eu_ai_act),
-        )
+        return skipped_finding(probe, reasoning)
 
     async def run_probe(self, probe) -> AsyncIterator[Finding]:
         # Template slots ({generator.name}) must never reach the target as literals.

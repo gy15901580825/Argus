@@ -77,6 +77,18 @@ The trap page listens on `127.0.0.1` by default, which works when the agent runs
 
 The local judge uses `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY` when that is the only key set. For a local model, set `REDTEAM_MODEL_PROVIDER=litellm` and `REDTEAM_FAST_MODEL=ollama/qwen2.5:32b` (add `REDTEAM_LLM_API_BASE` for a non-default host); small models miss many jailbreaks, so the CLI prints a warning. `REDTEAM_MODEL_PROVIDER=azure` runs the judge on Azure OpenAI. Azure's default content filter blocks judge calls because the judge reads attack text, so use a custom filter policy with jailbreak detection turned off for that deployment (also when `OPENAI_API_KEY` is paired with `REDTEAM_LLM_API_BASE` pointing at Azure). If `OPENAI_API_KEY` is paired with `REDTEAM_LLM_API_BASE` pointing at Azure, set `REDTEAM_FAST_MODEL` and `REDTEAM_STRONG_MODEL` to your deployment names, because the default strong model `gpt-5.6-terra` is usually not deployed. Local models other than Ollama (vLLM or LM Studio via `openai/...` with `REDTEAM_LLM_API_BASE`) are billed at the most expensive known rate, so pass `--per-run-cap`.
 
+### Choosing probes
+
+`--probes all` selects every probe the target can run: the probes whose `target_class` matches the target kind, less any `conversation` probe when the target cannot carry a conversation (for example an `mcp_agent` whose `inner` target is `grpc`). In the bundled library (230 probes, counted on 2026-10-29) that is 139 for `openai_compat`, `anthropic_native` and `custom_http`, 25 for `grpc`, 37 for `browser_use`, 12 for `mcp_agent` and 26 for `payment_agent`. `argus-probe list-probes --target argus-target.json` prints that list, and `argus-probe list-probes --target-class <class>` lists the probes that declare one class. A probe id you name yourself runs as given; one that does not fit the target is reported as `skipped`.
+
+### Without a judge key
+
+Some probes are decided by deterministic checks on what the agent did or said, not by the LLM judge, and need no key. In the bundled library (counted on 2026-10-29) that is all 12 `mcp_agent` probes, 22 of the 26 `payment_agent` probes and 23 of the 139 chat probes (the training-data replay and package-hallucination probes). `grpc` and `browser_use` probes all need the judge.
+
+Without a judge key, `run --local` refuses to start when any selected probe needs the judge, exits 1 and names the count and the key, for example `116 of 139 selected probes need an LLM judge: ANTHROPIC_API_KEY is not set. Set a key, or pass --skip-judged to run only the 23 probes decided by deterministic checks.` A probe the target cannot run never counts.
+
+With `--skip-judged`, each probe that needs the judge is reported as `skipped` with the reason `no judge key: ANTHROPIC_API_KEY is not set; skipped by --skip-judged`, and the others run. The console prints `N of M probes skipped: no judge key. To run them, set ANTHROPIC_API_KEY or OPENAI_API_KEY, or set REDTEAM_MODEL_PROVIDER to azure or litellm.`, and the same line goes into the report notes (run.json, SARIF, JUnit and HTML). The skipped probes do not change the exit code. If every selected probe needs the judge, `--skip-judged` would leave nothing to run, so the run is still refused. With a judge key set, `--skip-judged` does nothing and the console says so. `--skip-judged` needs `--local`: in server mode the server holds the judge key.
+
 Server mode talks to any server implementing the `/api/v1/redteam` API: set `ARGUS_API_URL` to it and `ARGUS_API_TOKEN` to a token that server issued. There is no hosted Argus instance, and the Argus repo no longer ships a server; the self-hosted stack is at tag [`v0.3-full`](https://github.com/gy15901580825/Argus/tree/v0.3-full). A `browser_use` run in server mode also needs a [`client_agent`](https://github.com/gy15901580825/Argus/blob/main/client_agent/README.md) connected to the server's orchestrator; it connects directly, with the same `AGENT_CONNECT_SECRET` set on both sides.
 
 ## Supported agent shapes
@@ -156,17 +168,17 @@ In a `conversation: true` probe, the first turn that is blocked or errors ends t
 
 **How long a dead target can take.** Chat adapters wait up to `timeout_s` for each reply: 120 seconds by default for `openai_compat`, `anthropic_native` and `custom_http`. `anthropic_native` retries once, so one prompt can take up to 2 x `timeout_s`. When 5 probes in a row get no answer to any of their prompts (every send failed with one of the errors above, not a block, or the testbed did not answer while the probe was set up), the run stops with `target unreachable: 5 probes in a row failed (<last reason>)`. A library probe has at most 5 prompts, and an iterative attack ends at its first failed round, so before that stop a target that never answers costs at most 25 x `timeout_s` (about 50 minutes at the default, 100 minutes for `anthropic_native`).
 
-When any finding is `error` or `aborted_cost`, the run is incomplete. The console prints `N of M probes errored; run incomplete` and up to three distinct reasons, or `N probe(s) stopped at the cost cap; run incomplete`. The report says the run is incomplete: a banner and notes in HTML, notes in SARIF and JUnit, `executionSuccessful: false` in SARIF (whose `exitCode` is the command's real exit code), and `"status": "incomplete"` with an `incomplete_reason` in run.json. If the run stops early, for example because the target is unreachable or the judge fails unexpectedly, the report is still written with the findings so far and the console says why the run stopped. A probe that is `blocked_by_target` or `skipped` does not make a run incomplete.
+When any finding is `error` or `aborted_cost`, the run is incomplete. The console prints `N of M probes errored; run incomplete` and up to three distinct reasons, or `N probe(s) stopped at the cost cap; run incomplete` (`... and M not started` when the cap also kept probes from starting). The report says the run is incomplete: a banner and notes in HTML, notes in SARIF and JUnit, `executionSuccessful: false` in SARIF (whose `exitCode` is the command's real exit code), and `"status": "incomplete"` with an `incomplete_reason` in run.json. If the run stops early, for example because the target is unreachable or the judge fails unexpectedly, the report is still written with the findings so far and the console says why the run stopped. A probe that is `blocked_by_target` or `skipped` does not make a run incomplete.
 
 Exit codes:
 
 | Code | Meaning |
 |---|---|
-| 0 | The run finished and every probe reached a verdict. Failing findings still exit 0 unless you set `--fail-on`. |
-| 1 | The target spec could not be loaded, the judge key is missing, the run hit an error, the target was unreachable, or at least one finding is `error`. When the run got as far as a finding, the report is written first. An incomplete run exits 1 even when `--fail-on` would have exited 3. In server mode, also when the server reports a status other than `completed`. |
+| 0 | The run finished and every probe that ran reached a verdict. Failing findings still exit 0 unless you set `--fail-on`. Skipped probes, including those `--skip-judged` skipped, do not change the exit code. |
+| 1 | The target spec could not be loaded, a selected probe needs the judge and no judge key is set (without `--skip-judged`, or with it when every selected probe needs the judge), the run hit an error, the target was unreachable, or at least one finding is `error`. When the run got as far as a finding, the report is written first. An incomplete run exits 1 even when `--fail-on` would have exited 3. In server mode, also when the server reports a status other than `completed`. |
 | 2 | Usage error: an unknown probe id, an option that does not fit the mode, or an `--out` directory that does not exist. Nothing runs and nothing is written. |
 | 3 | `--fail-on <severity>` is set, a finding with verdict `fail` is at or above that severity, and every probe reached a verdict. |
-| 4 | The cost cap. Before the run, the estimate is above `--per-run-cap` and nothing is written. During a local run, the daily cap was crossed, or any probe is `aborted_cost` (an iterative or deep-mode attack that hit the cap, in local or server mode); the report with the findings so far is written first. 4 wins over 1 and 3. |
+| 4 | The cost cap. Before the run, the estimate is above `--per-run-cap` and nothing is written. During a local run, spend reached `--per-run-cap` or the daily cap, or any probe is `aborted_cost` (a probe the cap stopped or never let start, in local or server mode); the report with the findings so far is written first. 4 wins over 1 and 3. |
 | 130 | Ctrl-C. No report is written. |
 | 143 | SIGTERM, for example a CI cancel. No report is written. |
 
@@ -178,7 +190,11 @@ In 0.6.0 and earlier, a probe that hit a 5xx, a timeout or a connection error st
 argus-probe run --target ... --per-run-cap 0.50
 ```
 
-Runs that would exceed the cap are rejected before any LLM cost is incurred, in both server and local mode (exit code 4). If a local run crosses the daily cap partway, it stops, writes the report with the findings so far, marks it incomplete and exits 4. An iterative probe that hits the cap ends as `aborted_cost`; the run then also exits 4.
+`--per-run-cap` (default $0.50) limits what Argus itself spends on model calls in one run: the LLM judge, and the attacker model in deep mode. Requests to your agent are not counted.
+
+Before the run, Argus estimates that spend and does not start a run whose estimate is above the cap (exit 4, in server and local mode). The estimate assumes one fast judge call and one strong judge call for every prompt of every probe that needs the judge, as if every verdict escalated to the stronger model, plus the attacker in deep mode. Probes decided by deterministic checks cost nothing. When the estimate is above the cap, the error names a cap at or above it, for example `estimated cost $5.3196 > per_run_cap $0.50; rerun with --per-run-cap 5.32 or select fewer probes`. On 2026-10-29, `--probes all` against a chat target had 403 judged prompts and was estimated at $5.32 with the default Anthropic judge (Claude Haiku 4.5 fast, Claude Sonnet 4.6 strong) and $3.46 with the default OpenAI judge (gpt-5.6-luna fast, gpt-5.6-terra strong). Most verdicts do not escalate, so a run usually costs well under its estimate.
+
+With `--local`, the cap also holds during the run. The judge or attacker call that takes the run's spend past the cap stops the run. The probe it was judging (or the deep-mode thread it belonged to) is reported as `aborted_cost`, and so is every probe not yet started (reason `not started: the run had stopped at the cost cap (...)`), without another paid call. The report is written with the findings so far and marked incomplete, and the command exits 4. That last call has already been paid for and is counted, together with any refused attempt of the same judge call, so spend can pass the cap by one call (about one cent at the default models). A local run that crosses the daily cap stops the same way. In server mode the server applies its own limits.
 
 ## Check a skill before you install it
 
@@ -338,7 +354,7 @@ v1 limits:
 argus-probe quickstart          Run the MCP probes against a built-in demo agent, no key
 argus-probe init                Interactive target.json generator
 argus-probe validate-target     Sanity-check target reachability
-argus-probe list-probes         List probe ids (local library, or a server with --api-url)
+argus-probe list-probes         List probe ids (local library, or a server with --api-url); --target / --target-class filter them
 argus-probe run                 Submit a run + write the report
 argus-probe report              Re-render a run stored on a server
 argus-probe coverage            Show what the probe library covers; asks the server, runs no probes

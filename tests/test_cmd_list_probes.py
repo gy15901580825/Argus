@@ -44,3 +44,74 @@ def test_list_probes_server_mode_lists_from_api(monkeypatch):
     assert result.exit_code == 0, result.output
     assert calls == [("https://x", "t")]
     assert result.output.splitlines()[:2] == ["a", "b"]
+
+
+def _write(tmp_path, spec: dict) -> str:
+    import json
+    p = tmp_path / "t.json"
+    p.write_text(json.dumps(spec))
+    return str(p)
+
+
+def _ids_in(output: str) -> list[str]:
+    lines = output.splitlines()
+    return lines[:lines.index("")]
+
+
+def test_list_probes_target_shows_only_what_that_target_can_run(tmp_path, monkeypatch):
+    monkeypatch.delenv("ARGUS_API_URL", raising=False)
+    spec = _write(tmp_path, {"kind": "mcp_agent", "testbed_url": "http://127.0.0.1:1", "sandbox": True,
+                             "inner": {"kind": "openai_compat", "endpoint_url": "http://x/v1", "model": "m"}})
+    result = CliRunner().invoke(main, ["list-probes", "--target", spec])
+    assert result.exit_code == 0, result.output
+    wanted = sorted(p.id for p in load_probe_library(PROBES_DIR) if "mcp_agent" in p.target_class)
+    assert 0 < len(wanted) < len(load_probe_library(PROBES_DIR))
+    assert _ids_in(result.output) == wanted
+    assert f"\n{len(wanted)} probes" in result.output
+
+
+def test_list_probes_target_reads_testbed_agent_environment(tmp_path, monkeypatch):
+    # testbed_agent sets its classes from `environment`, so the filter must use the built target.
+    monkeypatch.delenv("ARGUS_API_URL", raising=False)
+    spec = _write(tmp_path, {"kind": "testbed_agent", "environment": "payment", "testbed_url": "http://127.0.0.1:1",
+                             "sandbox": True, "inner": {"kind": "openai_compat", "endpoint_url": "http://x/v1",
+                                                        "model": "m"}})
+    result = CliRunner().invoke(main, ["list-probes", "--target", spec])
+    assert result.exit_code == 0, result.output
+    assert _ids_in(result.output) == sorted(
+        p.id for p in load_probe_library(PROBES_DIR) if "payment_agent" in p.target_class)
+
+
+def test_list_probes_target_class_filter_and_combines_with_filter(monkeypatch):
+    monkeypatch.delenv("ARGUS_API_URL", raising=False)
+    result = CliRunner().invoke(main, ["list-probes", "--target-class", "browser-using"])
+    assert result.exit_code == 0, result.output
+    wanted = sorted(p.id for p in load_probe_library(PROBES_DIR) if "browser-using" in p.target_class)
+    assert wanted and _ids_in(result.output) == wanted
+
+    result = CliRunner().invoke(main, ["list-probes", "--target-class", "browser-using", "--filter", wanted[0]])
+    assert _ids_in(result.output) == [wanted[0]]
+    # A chat probe id never passes a browser-using filter.
+    chat = next(p.id for p in load_probe_library(PROBES_DIR) if p.target_class == ("http-chat",))
+    result = CliRunner().invoke(main, ["list-probes", "--target-class", "browser-using", "--filter", chat])
+    assert "\n0 probes" in result.output
+
+
+def test_list_probes_rejects_unknown_target_class():
+    result = CliRunner().invoke(main, ["list-probes", "--target-class", "nope"])
+    assert result.exit_code == 2
+    assert "nope" in result.output
+
+
+def test_list_probes_bad_target_spec_is_a_usage_error(tmp_path, monkeypatch):
+    monkeypatch.delenv("ARGUS_API_URL", raising=False)
+    result = CliRunner().invoke(main, ["list-probes", "--target", _write(tmp_path, {"kind": "nope"})])
+    assert result.exit_code == 2
+    assert "unknown target.kind" in result.output
+
+
+def test_list_probes_target_filters_need_the_local_library():
+    for flag, value in (("--target", "{}"), ("--target-class", "llm_chat")):
+        result = CliRunner().invoke(main, ["list-probes", "--api-url", "https://x", "--token", "t", flag, value])
+        assert result.exit_code == 2
+        assert f"{flag} filters the local library" in result.output

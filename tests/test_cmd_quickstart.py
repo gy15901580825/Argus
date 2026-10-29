@@ -22,7 +22,7 @@ def _finding(probe_id, verdict):
     }
 
 
-async def _ok_run(target, probe_ids, *, mode="static", per_run_cap_usd=None, env=None):
+async def _ok_run(target, probe_ids, *, mode="static", per_run_cap_usd=None, env=None, skip_judged=False):
     yield _finding("mcp_probe_a", "fail")
     yield _finding("mcp_probe_b", "pass")
     yield {"type": "coverage", "coverage": {"thin_threshold": 2, "standards": {}}}
@@ -77,7 +77,7 @@ def test_quickstart_writes_report_and_exits_zero_with_failures(tmp_path, monkeyp
 def test_quickstart_runs_exactly_the_demo_probes_against_the_demo_spec(tmp_path, monkeypatch):
     calls = []
 
-    async def _spy(target, probe_ids, *, mode="static", per_run_cap_usd=None, env=None):
+    async def _spy(target, probe_ids, *, mode="static", per_run_cap_usd=None, env=None, skip_judged=False):
         calls.append((target, probe_ids))
         yield _finding("mcp_probe_a", "pass")
 
@@ -88,7 +88,7 @@ def test_quickstart_runs_exactly_the_demo_probes_against_the_demo_spec(tmp_path,
 
 
 def test_quickstart_mid_run_error_exits_1(tmp_path, monkeypatch):
-    async def _boom(target, probe_ids, *, mode="static", per_run_cap_usd=None, env=None):
+    async def _boom(target, probe_ids, *, mode="static", per_run_cap_usd=None, env=None, skip_judged=False):
         yield _finding("mcp_probe_a", "fail")
         raise RuntimeError("boom")
 

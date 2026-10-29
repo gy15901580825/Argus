@@ -31,10 +31,21 @@ def incomplete_lines(findings: list[dict], stopped_by: str | None = None) -> lis
     Keys off `error` and `aborted_cost` findings and an early stop only: blocked
     and skipped probes are outcomes, not probes that failed to run.
     """
+    from argus.runner import NOT_STARTED_AT_CAP
+
     lines: list[str] = []
-    aborted = {f.get("probe_id") for f in findings if f.get("verdict") == "aborted_cost"}
+    aborted = [f for f in findings if f.get("verdict") == "aborted_cost"]
     if aborted:
-        lines.append(f"{len(aborted)} probe(s) stopped at the cost cap; run incomplete")
+        never = {f.get("probe_id") for f in aborted
+                 if str(f.get("reasoning") or "").startswith(NOT_STARTED_AT_CAP)}
+        stopped = {f.get("probe_id") for f in aborted} - never
+        if stopped and never:
+            lines.append(f"{len(stopped)} probe(s) stopped at the cost cap and {len(never)} not started; "
+                         "run incomplete")
+        elif stopped:
+            lines.append(f"{len(stopped)} probe(s) stopped at the cost cap; run incomplete")
+        else:
+            lines.append(f"{len(never)} probe(s) not started because of the cost cap; run incomplete")
     errors = [f for f in findings if f.get("verdict") == "error"]
     if errors:
         probes = {f.get("probe_id") for f in findings}
@@ -45,6 +56,22 @@ def incomplete_lines(findings: list[dict], stopped_by: str | None = None) -> lis
     if stopped_by:
         lines.append(f"Run stopped early: {stopped_by}. The report covers only the probes that ran.")
     return lines
+
+
+def judge_skip_line(findings: list[dict]) -> str | None:
+    """How many probes were skipped for want of a judge key, and how to run them; None if none were.
+
+    A note, not an incomplete-run reason: the run did what it could without a key.
+    """
+    from argus.runner import NO_JUDGE_KEY
+
+    skipped = {f.get("probe_id") for f in findings
+               if f.get("verdict") == "skipped" and str(f.get("reasoning") or "").startswith(NO_JUDGE_KEY)}
+    if not skipped:
+        return None
+    total = len({f.get("probe_id") for f in findings})
+    return (f"{len(skipped)} of {total} probes skipped: no judge key. To run them, set ANTHROPIC_API_KEY "
+            "or OPENAI_API_KEY, or set REDTEAM_MODEL_PROVIDER to azure or litellm.")
 
 
 def hit_cost_cap(findings: list[dict]) -> bool:

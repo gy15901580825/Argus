@@ -70,14 +70,8 @@ async def _call_attacker_llm(system_prompt: str, user_prompt: str) -> str:
     except llm.AllProvidersFailed as e:
         llm.record_refusals(_cost_meter, e.refusals)
         raise
-    llm.record_refusals(_cost_meter, out.refusals)
-    if _cost_meter is not None:
-        # Bill the model that answered — a provider fallback may have changed it.
-        _cost_meter.record(
-            model=out.model,
-            input_tokens=out.input_tokens,
-            output_tokens=out.output_tokens,
-        )
+    # Bill the model that answered (a provider fallback may have changed it) with the refusals.
+    llm.record_completion(_cost_meter, out)
     return out.text
 
 

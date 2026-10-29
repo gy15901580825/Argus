@@ -108,9 +108,9 @@ def test_deep_preflight_is_capped_by_the_deep_per_run_cap():
     $0.50 static cap — otherwise a single-probe deep run could never start."""
     m = CostMeter(daily_cap_usd=13.50, per_run_cap_usd=0.50, deep_per_run_cap_usd=5.00)
     with pytest.raises(CostExceededError, match="per_run_cap"):
-        m.check_or_abort_pre_run(probe_ids=["p1"], target_kind="openai_compat", total_exchanges=60)
+        m.check_or_abort_pre_run(probe_ids=["p1"], target_kind="openai_compat", total_exchanges=200)
     estimated = m.check_or_abort_pre_run(
-        probe_ids=["p1"], target_kind="openai_compat", total_exchanges=60, deep=True
+        probe_ids=["p1"], target_kind="openai_compat", total_exchanges=200, deep=True
     )
     assert 0.50 < estimated < 5.00
 
@@ -122,7 +122,7 @@ def test_deep_preflight_respects_the_deep_daily_slice():
     # ~$9 of estimated spend fits the day ($13.50) but not the deep slice ($8.10).
     with pytest.raises(CostExceededError, match="deep"):
         m.check_or_abort_pre_run(
-            probe_ids=["p1"], target_kind="openai_compat", total_exchanges=910, deep=True
+            probe_ids=["p1"], target_kind="openai_compat", total_exchanges=545, deep=True
         )
 
 
@@ -136,8 +136,9 @@ def _big_run(m, **kw):
 
 def test_preflight_default_estimate_is_haiku_rated(monkeypatch):
     m = CostMeter(daily_cap_usd=13.50, per_run_cap_usd=0.50)
-    # 1000/4*1.2=300 in, 2000/4*1.2=600 out tokens per call at $1/$5 per M, 2 calls per exchange.
-    expected = (300 / 1e6 * 1.0 + 600 / 1e6 * 5.0) * 10 * 2
+    # 1000/4*1.2=300 in, 2000/4*1.2=600 out tokens per call; per exchange a Haiku fast call
+    # ($1/$5 per M) and, as if it escalated, a Sonnet strong call ($3/$15 per M).
+    expected = ((300 / 1e6 * 1.0 + 600 / 1e6 * 5.0) + (300 / 1e6 * 3.0 + 600 / 1e6 * 15.0)) * 10
     assert m.check_or_abort_pre_run(
         probe_ids=["p"], target_kind="custom_http", total_exchanges=10
     ) == pytest.approx(expected)
@@ -153,7 +154,7 @@ def test_preflight_ollama_fast_model_is_free(monkeypatch):
 def test_preflight_openai_default_uses_luna_rates(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-fake")
     m = CostMeter(daily_cap_usd=13.50, per_run_cap_usd=0.50)
-    expected = (300 / 1e6 * 0.20 + 600 / 1e6 * 1.20) * 10 * 2
+    expected = ((300 / 1e6 * 0.20 + 600 / 1e6 * 1.20) + (300 / 1e6 * 2.00 + 600 / 1e6 * 12.00)) * 10
     assert m.check_or_abort_pre_run(
         probe_ids=["p"], target_kind="custom_http", total_exchanges=10
     ) == pytest.approx(expected)
@@ -174,3 +175,171 @@ def test_estimate_call_usd_uses_price_table_with_margin():
     assert estimate_call_usd("claude-sonnet-4-6", 4000, 400) == pytest.approx(0.0036 + 0.006)
     # An unknown model is billed at the dearest known rate, as record() does.
     assert estimate_call_usd("no-such-model", 4000, 400) == pytest.approx(1200 * 15 / 1e6 + 400 * 75 / 1e6)
+
+
+_HAIKU = 300 / 1e6 * 1.0 + 600 / 1e6 * 5.0
+_SONNET = 300 / 1e6 * 3.0 + 600 / 1e6 * 15.0
+
+
+@pytest.mark.parametrize("kind", ["openai_compat", "anthropic_native", "custom_http", "mcp_agent"])
+def test_estimate_counts_only_argus_llm_calls(kind, monkeypatch):
+    """Sends to the target are not Argus's spend. Per exchange: a fast judge call plus
+    a strong one (every verdict assumed to escalate), and the attacker in deep mode."""
+    monkeypatch.delenv("REDTEAM_MODEL_PROVIDER", raising=False)
+    m = CostMeter(daily_cap_usd=13.50, per_run_cap_usd=0.50, deep_per_run_cap_usd=5.00)
+    assert m.check_or_abort_pre_run(
+        probe_ids=["p"], target_kind=kind, total_exchanges=10
+    ) == pytest.approx((_HAIKU + _SONNET) * 10)
+    assert m.check_or_abort_pre_run(
+        probe_ids=["p"], target_kind=kind, total_exchanges=10, deep=True
+    ) == pytest.approx((2 * _HAIKU + _SONNET) * 10)
+
+
+def test_estimate_skips_escalation_when_fast_and_strong_are_one_model(monkeypatch):
+    # Azure ships one deployment for both roles; the judge does not escalate then.
+    monkeypatch.setenv("REDTEAM_MODEL_PROVIDER", "azure")
+    m = CostMeter(daily_cap_usd=13.50, per_run_cap_usd=0.50)
+    one_call = 300 / 1e6 * 1.0 + 600 / 1e6 * 5.0  # gpt-5.4-mini placeholder rate
+    assert m.check_or_abort_pre_run(
+        probe_ids=["p"], target_kind="custom_http", total_exchanges=10
+    ) == pytest.approx(one_call * 10)
+
+
+def test_per_run_cap_error_carries_the_estimate(monkeypatch):
+    monkeypatch.delenv("REDTEAM_MODEL_PROVIDER", raising=False)
+    m = CostMeter(daily_cap_usd=13.50, per_run_cap_usd=0.50)
+    with pytest.raises(CostExceededError) as exc:
+        m.check_or_abort_pre_run(probe_ids=["p"], target_kind="custom_http", total_exchanges=100)
+    assert exc.value.estimated_usd == pytest.approx((_HAIKU + _SONNET) * 100)
+    assert str(exc.value) == f"estimated cost ${exc.value.estimated_usd:.4f} > per_run_cap $0.50"
+
+
+def test_daily_budget_error_carries_no_estimate():
+    # A bigger per-run cap cannot fix an exhausted day, so no cap is suggested.
+    m = CostMeter(daily_cap_usd=0.01, per_run_cap_usd=10.0)
+    with pytest.raises(CostExceededError, match="daily") as exc:
+        m.check_or_abort_pre_run(probe_ids=["p"], target_kind="custom_http", total_exchanges=10)
+    assert exc.value.estimated_usd is None
+
+
+def test_run_scope_cap_override_applies_to_record():
+    m = CostMeter(daily_cap_usd=100.0, per_run_cap_usd=0.50)
+    with m.run_scope("r", per_run_cap_usd=0.01):
+        with pytest.raises(CostExceededError, match=r"per_run cap \$0\.01"):
+            m.record("claude-haiku-4-5-20251001", 0, 10_000)  # $0.05
+    with m.run_scope("r", per_run_cap_usd=1.00):
+        assert m.record("claude-haiku-4-5-20251001", 0, 10_000) == pytest.approx(0.05)
+    with m.run_scope("r"):  # no override: the meter's own cap
+        with pytest.raises(CostExceededError, match=r"per_run cap \$0\.50"):
+            m.record("claude-haiku-4-5-20251001", 0, 200_000)  # $1.00
+
+
+def test_the_call_that_crosses_the_cap_is_counted_before_the_error():
+    # record() runs after the call has returned: that money is spent, so it is counted.
+    m = CostMeter(daily_cap_usd=100.0, per_run_cap_usd=0.08)
+    with m.run_scope("r"):
+        m.record("claude-haiku-4-5-20251001", 0, 10_000)  # $0.05
+        with pytest.raises(CostExceededError, match=r"per_run cap \$0\.08 exceeded: this run has spent \$0\.1000"):
+            m.record("claude-haiku-4-5-20251001", 0, 10_000)
+        assert m.spent_in_current_run() == pytest.approx(0.10)
+    assert m.spent_today() == pytest.approx(0.10)
+
+
+def test_a_call_after_the_daily_cap_is_counted_and_refused():
+    m = CostMeter(daily_cap_usd=0.05)
+    m.record("claude-haiku-4-5-20251001", 0, 10_000)  # $0.05: reaches the cap
+    with pytest.raises(CostExceededError, match="daily cap"):
+        m.record("claude-haiku-4-5-20251001", 0, 10_000)
+    assert m.spent_today() == pytest.approx(0.10)
+
+
+def test_deep_crossing_call_counts_toward_the_deep_slice():
+    m = CostMeter(daily_cap_usd=100.0, deep_per_run_cap_usd=0.08)
+    with m.run_scope("r", deep=True):
+        m.record("claude-haiku-4-5-20251001", 0, 10_000)
+        with pytest.raises(CostExceededError, match="deep per_run cap"):
+            m.record("claude-haiku-4-5-20251001", 0, 10_000)
+    assert m.spent_today_deep() == pytest.approx(0.10)
+
+
+def test_run_scope_resumes_from_spent_usd():
+    m = CostMeter(daily_cap_usd=100.0, per_run_cap_usd=0.08)
+    with m.run_scope("r", spent_usd=0.05):
+        with pytest.raises(CostExceededError, match=r"spent \$0\.1000"):
+            m.record("claude-haiku-4-5-20251001", 0, 10_000)
+    assert m._spent_in_run is None
+
+
+def test_run_scope_resume_skips_the_deep_budget_check():
+    m = CostMeter(daily_cap_usd=1.0, deep_per_run_cap_usd=100.0)  # deep slice $0.60
+    with m.run_scope("r", deep=True):
+        with pytest.raises(CostExceededError):
+            m.record("claude-haiku-4-5-20251001", 0, 130_000)  # $0.65
+    with pytest.raises(CostExceededError, match="deep budget"):
+        with m.run_scope("r2", deep=True):
+            pass
+    with m.run_scope("r", deep=True, spent_usd=0.65, resume=True):
+        assert m.spent_in_current_run() == pytest.approx(0.65)
+
+
+def test_record_many_counts_every_attempt_before_one_cap_check():
+    m = CostMeter(daily_cap_usd=100.0, per_run_cap_usd=0.04)
+    with m.run_scope("r"):
+        with pytest.raises(CostExceededError, match=r"spent \$0\.1000"):
+            m.record_many([("claude-haiku-4-5-20251001", 0, 10_000)] * 2)
+        assert m.spent_in_current_run() == pytest.approx(0.10)
+    assert m.spent_today() == pytest.approx(0.10)
+
+
+import json as _json
+
+from argus import llm as _llm
+
+_H = "claude-haiku-4-5-20251001"
+
+
+def _refused_then_answered(text: str):
+    # The primary refuses and the fallback answers: two paid calls of $0.05 each.
+    async def fake(cfg, *, role, system, user, max_tokens):
+        refused = _llm.ModelRefused("refused", model=_H, input_tokens=0, output_tokens=10_000)
+        return _llm.Completion(text=text, input_tokens=0, output_tokens=10_000, model=_H, refusals=(refused,))
+    return fake
+
+
+@pytest.mark.parametrize("cap, raises", [(0.12, False), (0.06, True), (0.04, True)])
+async def test_judge_meters_the_refusal_and_the_answer_even_when_the_refusal_crosses_the_cap(
+        monkeypatch, cap, raises):
+    from argus.judge import Judge
+
+    monkeypatch.delenv("REDTEAM_MODEL_PROVIDER", raising=False)
+    reply = _json.dumps({"verdict": "pass", "severity": "info", "confidence": 0.9, "reasoning": "r"})
+    monkeypatch.setattr(_llm, "complete", _refused_then_answered(reply))
+    m = CostMeter(daily_cap_usd=100.0, per_run_cap_usd=cap)
+    judge = Judge("", m, _llm.resolve_config({"ANTHROPIC_API_KEY": "k"}))
+    judge._decider = None
+    with m.run_scope("r"):
+        if raises:
+            with pytest.raises(CostExceededError):
+                await judge.judge("p", "a", "r", "rubric")
+        else:
+            await judge.judge("p", "a", "r", "rubric")
+        assert m.spent_in_current_run() == pytest.approx(0.10)
+    assert m.spent_today() == pytest.approx(0.10)
+
+
+@pytest.mark.parametrize("module, fn", [
+    ("argus.iterative_pair", "_call_attacker_llm"),
+    ("argus.iterative_tap", "_call_planner_llm"),
+    ("argus.persona_strategy", "_call_attacker_llm"),
+])
+async def test_attackers_meter_the_refusal_and_the_answer_before_the_cap_check(monkeypatch, module, fn):
+    import importlib
+
+    mod = importlib.import_module(module)
+    monkeypatch.setattr(_llm, "complete", _refused_then_answered("next prompt"))
+    m = CostMeter(daily_cap_usd=100.0, per_run_cap_usd=0.04)
+    monkeypatch.setattr(mod, "_cost_meter", m)
+    with m.run_scope("r"):
+        with pytest.raises(CostExceededError):
+            await getattr(mod, fn)("s", "u")
+        assert m.spent_in_current_run() == pytest.approx(0.10)
