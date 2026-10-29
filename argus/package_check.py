@@ -100,13 +100,21 @@ _INSTALL_CMDS = {
     "perl": r"cpanm?(?:\s+install)?",
     "dart": r"(?:dart|flutter)\s+pub\s+add",
 }
-_VALUE_FLAGS = frozenset(
-    "-r -e -c -v -f -i -t -p -b -n --version --features --index-url --extra-index-url --target "
-    "--requirement --constraint --registry --prefix --git --path --branch --tag --rev --source "
-    "--bindir --name --vers".split()
-)
+# Flags that take a value, per package manager. Boolean flags (`-v` for pip,
+# `-f` for npm) must not swallow the package that follows them.
+_VALUE_FLAGS = {
+    "python": frozenset("-r -c -e -i -t -f --requirement --constraint --editable --index-url "
+                        "--extra-index-url --target --find-links --prefix --root --python".split()),
+    "javascript": frozenset("--registry --prefix --tag -w --workspace --cwd".split()),
+    "ruby": frozenset("-v --version -s --source -i --install-dir -n --bindir --platform --group".split()),
+    "rust": frozenset("--features -F --git --branch --tag --rev --path --registry --rename "
+                      "--package -p --target --root --version --vers -j --jobs".split()),
+    "perl": frozenset("--mirror -l --local-lib".split()),
+    "dart": frozenset("--path --git-url --git-ref --git-path -C".split()),
+}
 _PROSE_STOP = frozenset("and or then to you which that for with the so but if when it is are".split())
-_FILE_EXT = re.compile(r"\.(txt|py|js|ts|json|toml|cfg|lock|whl|gz|zip|md|rb|rs|yaml|yml)$", re.I)
+# `.js` is absent on purpose: chart.js and highlight.js are real npm packages.
+_FILE_EXT = re.compile(r"\.(txt|py|ts|json|toml|cfg|lock|whl|gz|zip|md|rb|rs|yaml|yml)$", re.I)
 
 
 def _install_names(language: str, text: str) -> set[str]:
@@ -117,7 +125,7 @@ def _install_names(language: str, text: str) -> set[str]:
     candidates += [m.strip() for m in re.findall(r"`([^`\n]+)`", text)]
     names: set[str] = set()
     for line in candidates:
-        m = re.match(r"(?:[$>]\s*)?" + pattern + r"\b(.*)$", line)
+        m = re.match(r"(?:(?:\d+[.)]|[-*+])\s+)?(?:[$>!%]\s*)?" + pattern + r"\b(.*)$", line)
         if not m:
             continue
         rest = re.split(r"&&|\|\||;|\||#", m.group(1), maxsplit=1)[0]
@@ -127,7 +135,7 @@ def _install_names(language: str, text: str) -> set[str]:
                 skip_next = False
                 continue
             if tok.startswith("-"):
-                skip_next = tok in _VALUE_FLAGS
+                skip_next = tok in _VALUE_FLAGS.get(language, ())
                 continue
             ends_sentence = tok.endswith(".") and not _FILE_EXT.search(tok.rstrip("."))
             tok = tok.strip("\"'").rstrip(".,:)")
@@ -141,9 +149,20 @@ def _install_names(language: str, text: str) -> set[str]:
     return names
 
 
+_FILE_LINE = re.compile(r"[\w./-]+\.(?:py|js|mjs|ts|rb|rs|pl|pm|dart|raku)")
+
+
 def _local_stems(text: str) -> set[str]:
-    """Modules the reply itself defines as files (`utils.py`, `// helpers.js`)."""
-    return {m.lower() for m in re.findall(r"\b([\w-]+)\.(?:py|js|mjs|ts|rb|rs|pl|pm|dart|raku)\b", text)}
+    """Modules the reply defines as files: a line that is just a file name, as a
+    comment header or heading (`# utils.py`, `// helpers.js`, `**main.py**`). A
+    file name inside a prose sentence does not count."""
+    stems = set()
+    for line in text.splitlines():
+        head = re.sub(r"^\s*(?:#+|//|/\*|\*+|--|<!--)?\s*(?:file(?:name)?\s*:\s*)?", "", line)
+        head = re.sub(r"\s*(?:\*/|\*+|-->|:)?\s*$", "", head).strip("`")
+        if _FILE_LINE.fullmatch(head):
+            stems.add(head.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower())
+    return stems
 
 
 def _python(text: str) -> set[str]:

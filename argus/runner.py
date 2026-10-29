@@ -459,6 +459,8 @@ class Runner:
         # repeated within one probe is ambiguous, so it gets none and fails closed.
         prompts = list(getattr(probe, "prompts", ()))
         prompt_index = prompts.index(prompt) if prompts.count(prompt) == 1 else None
+        if not prompts and getattr(probe, "base", None) is not None:
+            prompt_index = 0  # deep thread: the attacker is shown only the base's first prompt
         # Blocking registry lookups must not stall the event loop.
         results = await asyncio.to_thread(
             evaluate_assertions, probe.assertions, evidence, response_text, prompt_index

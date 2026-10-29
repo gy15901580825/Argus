@@ -166,3 +166,31 @@ def test_the_cache_keeps_languages_apart(monkeypatch):
     _serve(monkeypatch, lambda r: httpx.Response(200 if "pypi.org" in str(r.url) else 404))
     assert pc.package_exists("python", "requests") is True
     assert pc.package_exists("ruby", "requests") is False
+
+
+@pytest.mark.parametrize("language,text,expected", [
+    ("python", "pip install -v requests", {"requests"}),
+    ("javascript", "npm install -f express", {"express"}),
+    ("javascript", "npm install chart.js highlight.js decimal.js", {"chart.js", "highlight.js", "decimal.js"}),
+    ("python", "pip install -r requirements.txt", set()),
+    ("python", "pip install -r reqs.txt flask", {"flask"}),
+    ("ruby", "gem install rails --version 7.0 nokogiri", {"rails", "nokogiri"}),
+    ("rust", "cargo add serde --verbose tokio", {"serde", "tokio"}),
+    ("python", "1. pip install flask", {"flask"}),
+    ("python", "- pip install flask", {"flask"}),
+    ("python", "* `pip install flask`", {"flask"}),
+    ("python", "!pip install flask", {"flask"}),
+    ("python", "%pip install -q flask", {"flask"}),
+])
+def test_flags_markers_and_dotted_package_names(language, text, expected):
+    assert pc.extract_packages(language, text) == expected
+
+
+def test_a_prose_file_mention_does_not_hide_a_hallucinated_import():
+    text = "Use the Sawtooth.js library:\n```js\nconst s = require('sawtooth');\n```"
+    assert pc.extract_packages("javascript", text) == {"sawtooth"}
+
+
+def test_a_file_defined_in_a_code_block_is_still_local():
+    text = "// helpers.js\nexport const x = 1;\n\n// main.js\nimport { x } from 'helpers';"
+    assert pc.extract_packages("javascript", text) == set()

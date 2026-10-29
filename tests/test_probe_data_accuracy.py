@@ -446,3 +446,62 @@ async def test_deep_mode_attacker_is_not_shown_the_generator_placeholder(tmp_pat
     async for _ in runner.run_probe(deep):
         break
     assert seen and "{generator.name}" not in seen[0] and "gpt-4o-mini" in seen[0]
+
+
+async def test_deep_leakreplay_checks_only_the_passage_the_attacker_was_given(tmp_path):
+    from argus.persona_loader import PERSONAS_DIR, STRATEGIES_DIR, load_personas, load_strategies
+    from argus.persona_strategy import PersonaStrategyProbe
+
+    base = BY_ID["garak_leakreplay_pottercloze"]  # expected: Gringotts, dragon, Leaky, ...
+    deep = PersonaStrategyProbe(base=base, persona=load_personas(PERSONAS_DIR)[0],
+                                strategy=load_strategies(STRATEGIES_DIR)[0])
+    runner = Runner(_TextTarget("x"), _NoJudge(), tmp_path)
+    other = await runner._assertion_finding(deep, "p", "A dragon guards the vault.", 1.0, None)
+    own = await runner._assertion_finding(deep, "p", "The bank is Gringotts.", 1.0, None)
+    assert other.verdict == "pass"
+    assert own.verdict == "fail"
+
+
+def test_empty_reply_error_names_the_real_config_field():
+    res = evaluate_assertions(({"no_hallucinated_packages": "python"},), {}, "")[0]
+    assert res.reason == "target returned no text; check response_jsonpath / the endpoint"
+
+
+async def test_the_iterative_judge_sees_the_prompt_as_sent(tmp_path):
+    from argus.iterative import IterativeProbe
+    from argus.probe import ProbeMappings
+    from argus.targets.testbed_agent import TestbedAgentTarget
+
+    class Target(TestbedAgentTarget):
+        compatible_classes = frozenset({"http-chat"})
+        url_key = "mcp_url"
+
+        def __init__(self):
+            self._session = {"session_id": "s", "mcp_url": "http://tb/mcp"}
+
+        async def begin_probe(self, probe):
+            return None
+
+        async def send_prompt(self, prompt, history=()):
+            return "ok", 1.0
+
+        async def collect_evidence(self):
+            return {}
+
+    class Probe_(IterativeProbe):
+        id = name = "iter"
+        target_class = ("http-chat",)
+        attack_class = ("jailbreak",)
+        severity = "low"
+        judge_model = "m"
+        judge_rubric_path = "rubrics/default.md"
+        iterative = True
+        max_rounds = 1
+        mappings = ProbeMappings()
+
+        async def next_prompt(self, ctx):
+            return "see {mcp_url}"
+
+    judge = _RecordingJudge()
+    [f async for f in Runner(Target(), judge, tmp_path).run_probe(Probe_())]
+    assert judge.seen == ["see http://tb/mcp"]
