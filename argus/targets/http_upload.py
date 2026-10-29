@@ -20,12 +20,10 @@ from typing import Any, ClassVar, Optional
 from urllib.parse import urljoin
 
 import httpx
-from jinja2 import Environment
 from jsonpath_ng import parse as jsonpath_parse
 
 from argus.targets._base import Target
-
-_jinja = Environment(autoescape=False)
+from argus.targets._template import compile_template, render
 
 
 @dataclass(frozen=True)
@@ -74,22 +72,17 @@ class HTTPUploadTarget(Target):
         self._render_jsonpath = (
             jsonpath_parse(spec.render_url_jsonpath) if spec.render_url_jsonpath else None
         )
+        self._ctx = {"api_key": spec.api_key or ""}
+        self._tpls = {
+            group: [
+                (k, f"{group}[{k}]", compile_template(v, f"{group}[{k}]", self._ctx))
+                for k, v in getattr(spec, group)
+            ]
+            for group in ("upload_headers", "render_headers", "extra_form_fields")
+        }
 
-    def _render_template_headers(
-        self, headers: tuple[tuple[str, str], ...]
-    ) -> dict[str, str]:
-        ctx = {"api_key": self.spec.api_key or ""}
-        out: dict[str, str] = {}
-        for k, v in headers:
-            out[k] = _jinja.from_string(v).render(**ctx)
-        return out
-
-    def _render_form_fields(self) -> dict[str, str]:
-        ctx = {"api_key": self.spec.api_key or ""}
-        out: dict[str, str] = {}
-        for k, v in self.spec.extra_form_fields:
-            out[k] = _jinja.from_string(v).render(**ctx)
-        return out
+    def _render_group(self, group: str) -> dict[str, str]:
+        return {k: render(tpl, field, self._ctx) for k, field, tpl in self._tpls[group]}
 
     async def send_prompt(self, prompt: str) -> tuple[str, float]:
         # The probe's prompt IS the file body — encode as bytes for upload.
@@ -101,8 +94,8 @@ class HTTPUploadTarget(Target):
                 self.spec.upload_content_type,
             )
         }
-        data = self._render_form_fields()
-        upload_headers = self._render_template_headers(self.spec.upload_headers)
+        data = self._render_group("extra_form_fields")
+        upload_headers = self._render_group("upload_headers")
 
         start = time.monotonic()
         async with httpx.AsyncClient(timeout=self.spec.timeout_s) as client:
@@ -125,7 +118,7 @@ class HTTPUploadTarget(Target):
             if not render_url.startswith(("http://", "https://")):
                 render_url = urljoin(self.spec.upload_url, render_url)
 
-            render_headers = self._render_template_headers(self.spec.render_headers)
+            render_headers = self._render_group("render_headers")
             rendered = await client.request(
                 method=self.spec.render_method,
                 url=render_url,

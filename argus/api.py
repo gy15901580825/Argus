@@ -1,8 +1,8 @@
 """FastAPI sub-router for redteam runs (called by a server implementing the
 /api/v1/redteam API).
 
-Auth: this endpoint has no authentication. Expose it only to that server on a
-private network.
+Auth: argus.server mounts this router behind a bearer-token check
+(ARGUS_SERVER_TOKEN) and binds to loopback by default.
 """
 
 from __future__ import annotations

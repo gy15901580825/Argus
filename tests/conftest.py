@@ -50,6 +50,8 @@ def _isolate_env(monkeypatch, request):
              "REDTEAM_FAST_MODEL", "REDTEAM_STRONG_MODEL", "REDTEAM_LLM_API_BASE"]
     if request.node.get_closest_marker("rubric_live") or request.node.get_closest_marker("live_skillscan"):
         scrub.remove("ANTHROPIC_API_KEY")
+    # A server token from a developer's .env would 401 every /redteam/* test.
+    scrub += ["ARGUS_SERVER_TOKEN", "ARGUS_SERVER_HOST", "ARGUS_SERVER_ALLOW_UNAUTHENTICATED"]
     for k in scrub:
         monkeypatch.delenv(k, raising=False)
     yield

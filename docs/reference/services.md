@@ -26,6 +26,19 @@ The client agent's reply includes `trap_url`, the URL it sent the browser agent.
 
 Install with `pip install "argus-probe[server]"`; the `server` extra adds the WebSocket library uvicorn needs for `/agent/connect`.
 
+The server is configured with these environment variables:
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `ARGUS_SERVER_HOST` | `127.0.0.1` | Address to bind. The Docker image sets `0.0.0.0`. |
+| `PORT` | `8080` | Port to bind. |
+| `ARGUS_SERVER_TOKEN` | unset | When set, every `/redteam/*` request must send `Authorization: Bearer <token>`; others get 401. |
+| `ARGUS_SERVER_ALLOW_UNAUTHENTICATED` | unset | Set to `1` to start on a non-loopback address without a token, for example when a proxy in front of the server does the authentication. |
+
+The server refuses to start, with exit code 1, when `ARGUS_SERVER_HOST` is not a loopback address and `ARGUS_SERVER_TOKEN` is not set, unless `ARGUS_SERVER_ALLOW_UNAUTHENTICATED=1`. `/redteam/run` makes the server send requests to whatever target the caller names and spends the server's judge budget, so it should not be open to a network.
+
+`/docs`, `/redoc` and `/openapi.json` stay open without a token. `/agent/connect` does not use `ARGUS_SERVER_TOKEN`; it has its own `AGENT_CONNECT_SECRET`.
+
 | Method | Path | Role |
 |--------|------|------|
 | POST | `/redteam/run/preflight` | Cost-cap check without running probes (402 when over the cap) |

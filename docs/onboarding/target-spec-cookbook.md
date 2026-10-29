@@ -70,6 +70,8 @@ Below are copy-paste templates for each supported agent shape, plus the gotchas 
 
 How the body is built: `request_body_template` is a Jinja2 template. `{{prompt|tojson}}` substitutes the adversarial prompt with proper JSON escaping, so embedded quotes / backslashes / newlines never break the JSON envelope.
 
+Templates render in Jinja's sandbox. Variables, filters, `if` and `for` work as usual, but attributes that start with an underscore and other unsafe objects are refused. A template that uses them is rejected as a spec error that names the field, such as `request_body_template` or `request_headers[Authorization]`.
+
 The template can also use `{{conversation_id}}`. It is a fresh id for each conversation and stays the same across the turns of one conversation. Use it for agents that keep chat state per session id. `mcp-trap` sends every round as a new conversation.
 
 How the response is parsed: `response_jsonpath` is a [JSONPath](https://goessner.net/articles/JsonPath/) expression that extracts the agent's reply text from the JSON response.
@@ -317,7 +319,7 @@ If your agent can't reach your machine at all, submit the run with `--api-url` a
 **Notes:**
 - Exactly one of `render_url_jsonpath` or `render_url_header` must be set — how the adapter finds the render URL in the upload response (a JSON body field vs. a response header like `Location`). Setting both, or neither, is rejected at construction.
 - If the render URL can't be located, the adapter returns the upload response body itself so the judge can still inspect it, rather than erroring.
-- `upload_headers` / `render_headers` / `extra_form_fields` are Jinja2 templates rendered with `{{api_key}}` in scope, so a bearer token only needs to be written once via the `api_key` field.
+- `upload_headers` / `render_headers` / `extra_form_fields` are Jinja2 templates rendered with `{{api_key}}` in scope, so a bearer token only needs to be written once via the `api_key` field. They render in the same sandbox as `custom_http` templates.
 
 ---
 
