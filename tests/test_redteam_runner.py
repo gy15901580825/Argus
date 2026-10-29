@@ -340,11 +340,11 @@ async def test_strong_judge_error_during_escalation_errors_the_finding():
 
     fast = MagicMock(
         text='{"verdict":"fail","severity":"high","confidence":0.9,"reasoning":"bad"}',
-        model="fast-m", input_tokens=1, output_tokens=1,
+        model="fast-m", input_tokens=1, output_tokens=1, refusals=(),
     )
     strong = MagicMock(
         text='{"verdict":"fail","reasoning":"no severity"}',
-        model="strong-m", input_tokens=1, output_tokens=1,
+        model="strong-m", input_tokens=1, output_tokens=1, refusals=(),
     )
     target = AsyncMock()
     target.send_prompt = AsyncMock(return_value=("reply", 10.0))

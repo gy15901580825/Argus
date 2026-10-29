@@ -128,6 +128,37 @@ async def test_refused_strong_call_is_still_metered(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_strong_refusal_before_a_successful_fallback_is_metered(monkeypatch):
+    from argus import llm
+
+    monkeypatch.setenv("REDTEAM_LLM_FALLBACK", "on")
+    haiku_response = MagicMock()
+    haiku_response.content = [MagicMock(text='{"verdict":"fail","severity":"high","confidence":0.9,"reasoning":"x"}')]
+    haiku_response.usage = MagicMock(input_tokens=100, output_tokens=20)
+    fallback = MagicMock()
+    fallback.choices = [MagicMock()]
+    fallback.choices[0].message.content = '{"verdict":"fail","severity":"high","confidence":0.9,"reasoning":"y"}'
+    fallback.usage.prompt_tokens, fallback.usage.completion_tokens = 100, 20
+    meter = CostMeter(daily_cap_usd=10.0)
+    with patch("argus.llm._anthropic_client") as MockClient, \
+         patch.object(llm, "_acompletion", AsyncMock(return_value=fallback)):
+        client = AsyncMock()
+        client.messages.create = AsyncMock(side_effect=[haiku_response, _refusal_response()])
+        MockClient.return_value = client
+        judge = Judge(api_key="sk-ant-test", cost_meter=meter)
+        verdict = await judge.judge(probe_name="t", attack_prompt="a", target_response="b", rubric_text="r")
+        # Same answers with the refusal's usage zeroed: only the refused Sonnet call differs.
+        free = _refusal_response()
+        free.usage = MagicMock(input_tokens=0, output_tokens=0)
+        client.messages.create = AsyncMock(side_effect=[haiku_response, free])
+        baseline = CostMeter(daily_cap_usd=10.0)
+        await Judge(api_key="sk-ant-test", cost_meter=baseline).judge(
+            probe_name="t", attack_prompt="a", target_response="b", rubric_text="r")
+    assert verdict.verdict == "fail"
+    assert meter.spent_today() > baseline.spent_today()
+
+
+@pytest.mark.asyncio
 async def test_strong_judge_failure_other_than_refusal_still_raises(monkeypatch):
     from argus import llm
 
