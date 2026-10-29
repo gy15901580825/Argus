@@ -187,7 +187,7 @@ If your agent can't reach your machine at all, submit the run with `--api-url` a
 ```json
 {
   "kind": "payment_agent",
-  "testbed_url": "http://127.0.0.1:8090",
+  "testbed_url": "local",
   "inner": {
     "kind": "openai_compat",
     "endpoint_url": "http://127.0.0.1:8091/v1/chat/completions",
@@ -199,7 +199,14 @@ If your agent can't reach your machine at all, submit the run with `--api-url` a
 
 **`sandbox: true` is not a formality — it's a safety interlock.** This adapter drives an agent that spends real money if you point it at a real payment endpoint. Construction is refused outright without `sandbox: true` (both the engine and the CLI check it independently); there is no way to turn it off. If you think you don't need it, you're pointing this adapter at the wrong thing.
 
-**What's on the other end:** `inner` is a nested target spec (any kind above — here, `openai_compat`) for the transport that actually talks to your agent; the payment adapter wraps it. The `testbed_url` must point at a running `payment_testbed/` instance from this repo — see `payment_testbed/README.md` for `testbed/` (mock merchant + facilitator) and `demo_agent/` (the vulnerable reference agent the example above points at). Nothing in `payment_testbed/` touches a blockchain or real funds.
+**What's on the other end:** `inner` is a nested target spec (any kind above — here, `openai_compat`) for the transport that actually talks to your agent; the payment adapter wraps it. `"testbed_url": "local"` makes `run --local` start the bundled payment testbed (mock merchant and facilitator) on 127.0.0.1 for the run; your agent must be able to reach that address. To run the testbed yourself, for example where a container can reach it, see "The bundled testbed for MCP and payment agents" in `docs/cli.md`, or `payment_testbed/README.md` for the standalone service and `demo_agent/`, the vulnerable reference agent. Nothing in the testbed touches a blockchain or real funds.
+
+To try it without your own agent, start the bundled demo payment agent and pin the testbed port it is allowed to call:
+
+```bash
+TESTBED_ORIGIN=http://127.0.0.1:8090 python -m uvicorn argus.demo.payment_testbed.demo_agent.app:app --port 8091 &
+ARGUS_TESTBED_PORT=8090 argus-probe run --local --target payment-target.json --probes pay_x402_payto_swap --out report.html
+```
 
 **Notes:**
 - `payment_agent` only runs probes whose `target_class` includes `payment_agent` (the ones under `argus/probes/payment/`). Point an ordinary chat probe at a `payment_agent` target and it's skipped, not run; point a payment probe at a `custom_http`/`openai_compat` target and it's skipped too — the two families only match each other.
@@ -214,7 +221,7 @@ If your agent can't reach your machine at all, submit the run with `--api-url` a
 ```json
 {
   "kind": "mcp_agent",
-  "testbed_url": "http://127.0.0.1:8092",
+  "testbed_url": "local",
   "inner": {
     "kind": "openai_compat",
     "endpoint_url": "http://127.0.0.1:8093/v1/chat/completions",
@@ -226,7 +233,7 @@ If your agent can't reach your machine at all, submit the run with `--api-url` a
 
 **`sandbox: true` is not a formality — it's a safety interlock.** This adapter drives an agent against a live MCP server. Construction is refused outright without `sandbox: true` (both the engine and the CLI check it independently); there is no way to turn it off. It exists because a red-team run that can reach a real MCP server is not a configuration mistake you want to recover from after the fact.
 
-**What's on the other end:** `inner` is a nested target spec (any kind above — here, `openai_compat`) for the transport that actually talks to your agent. The `testbed_url` must point at a running `mcp_testbed/` instance from this repo — see `mcp_testbed/README.md` for `testbed/` (the hostile MCP server, staging tool poisoning / rug-pull / shadowing / confused-deputy / credential-lure scenarios) and `demo_agent/` (the vulnerable reference MCP client the example above points at).
+**What's on the other end:** `inner` is a nested target spec (any kind above — here, `openai_compat`) for the transport that actually talks to your agent. `"testbed_url": "local"` makes `run --local` start the bundled hostile MCP server (tool poisoning, rug pull, shadowing, confused deputy and credential lure scenarios) on 127.0.0.1 for the run; your agent must be able to reach that address. To run the testbed yourself, see "The bundled testbed for MCP and payment agents" in `docs/cli.md`, or `mcp_testbed/README.md` for the standalone service and `demo_agent/`, the vulnerable reference MCP client. `argus-probe quickstart` runs that demo agent against the bundled testbed in one command.
 
 **Notes:**
 - `mcp_agent` only runs probes whose `target_class` includes `mcp_agent` (the ones under `argus/probes/mcp/`). Point an ordinary chat probe at an `mcp_agent` target and it's skipped, not run; point an MCP probe at a `custom_http`/`openai_compat` target and it's skipped too — the two families only match each other.
@@ -290,7 +297,7 @@ If your agent can't reach your machine at all, submit the run with `--api-url` a
 {
   "kind": "testbed_agent",
   "environment": "mcp",
-  "testbed_url": "http://127.0.0.1:8092",
+  "testbed_url": "local",
   "inner": {
     "kind": "openai_compat",
     "endpoint_url": "http://127.0.0.1:8093/v1/chat/completions",

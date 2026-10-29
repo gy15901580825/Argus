@@ -18,7 +18,7 @@ RUN_JSON_KEYS = ["schema_version", "id", "status", "started_at", "finished_at",
                  "argus_version", "target_spec", "coverage", "findings"]
 FINDING_KEYS = ["id", "probe_id", "attack_prompt", "target_response", "target_latency_ms", "probed_at",
                 "verdict", "severity", "confidence", "reasoning", "judge_model", "escalated_model",
-                "atlas_id", "owasp_id", "nist_id", "eu_ai_act_id", "created_at", "evidence"]
+                "atlas_id", "owasp_id", "nist_id", "eu_ai_act_id", "created_at", "evidence", "remediation"]
 API = "https://srv.example"
 
 

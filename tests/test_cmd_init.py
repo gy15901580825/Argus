@@ -234,3 +234,15 @@ def test_init_refuses_overwrite_without_confirmation(tmp_path, monkeypatch):
     assert result.exit_code != 0  # Click.Abort
     # Original file unchanged
     assert json.loads((tmp_path / "argus-target.json").read_text())["kind"] == "existing"
+
+
+@pytest.mark.parametrize("kind,answers", [("mcp_agent", "\n\n"), ("payment_agent", "\n\n"),
+                                          ("testbed_agent", "payment\n\n\n")])
+def test_init_testbed_kinds_default_to_the_bundled_testbed(tmp_path, monkeypatch, kind, answers):
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(init_command, ["--kind", kind, "--no-workflow"], input=answers)
+    assert result.exit_code == 0, result.output
+    spec = json.loads((tmp_path / "argus-target.json").read_text())
+    assert spec["testbed_url"] == "local"
+    assert "127.0.0.1" in result.output  # says where the bundled testbed listens
+    load_target_spec(str(tmp_path / "argus-target.json"))

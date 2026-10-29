@@ -71,6 +71,7 @@ include = ["argus*"]
     "probes/*/*.yaml",
     "rubrics/*.md",
     "data/*/*.md",
+    "data/remediation.yaml",
     "skillscan/docker/*",
     "skillscan/samples/README.md",
     "skillscan/samples/*/*",

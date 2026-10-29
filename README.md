@@ -57,8 +57,9 @@ What Argus does:
   (Jinja2 + JSONPath), `grpc` (with reflection auto-discovery), `http_upload`
   (file-upload-and-render sinks), `browser_use` (Playwright-driven
   full-browser flows), `payment_agent` (x402 wallet-carrying agents, runs
-  against `payment_testbed/`), `mcp_agent` (MCP tool-server abuse, runs
-  against `mcp_testbed/`), `mcp_server` (an MCP server's own HTTP exposure:
+  against the payment testbed), `mcp_agent` (MCP tool-server abuse, runs
+  against the hostile MCP testbed; `"testbed_url": "local"` starts either
+  testbed for the run), `mcp_server` (an MCP server's own HTTP exposure:
   foreign Origin, missing auth, env/shell/file tools, versions with a published
   advisory; it lists tools and never
   calls one), `vllm_server` (reads a vLLM server's `/version` and matches it

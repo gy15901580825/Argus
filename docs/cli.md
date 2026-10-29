@@ -109,6 +109,36 @@ Server mode talks to any server implementing the `/api/v1/redteam` API: set `ARG
 
 Full configuration reference: [target spec cookbook](https://github.com/gy15901580825/Argus/blob/main/docs/onboarding/target-spec-cookbook.md).
 
+### The bundled testbed for MCP and payment agents
+
+`mcp_agent`, `payment_agent` and `testbed_agent` run each probe inside a testbed: a hostile MCP server, or a mock x402 merchant that takes no real money. The testbed records what your agent did there, and the probe judges that record. Set `"testbed_url": "local"` and `run --local` starts the testbed that ships with `argus-probe`, so you need no clone and no container:
+
+```json
+{
+  "kind": "mcp_agent",
+  "testbed_url": "local",
+  "sandbox": true,
+  "inner": {"kind": "openai_compat", "endpoint_url": "http://127.0.0.1:8093/v1/chat/completions", "model": "my-agent"}
+}
+```
+
+The testbed listens on 127.0.0.1, on a free port, for this run only. The console prints its address. Argus stops it when the run ends, including when the run fails or you press Ctrl-C. run.json records the address the run used in `target_spec.testbed_url`. `argus-probe init` writes `"local"` by default. Server mode (`run` without `--local`) stops with a usage error, because the testbed starts in this process.
+
+Each probe's prompt gives your agent a URL on that address, so your agent must be able to reach it:
+
+- An agent on the same machine can reach it. If the agent sends HTTP through a proxy, add `127.0.0.1` to its `NO_PROXY`. Argus already does this for its own requests.
+- An agent that only talks to allowlisted origins needs a fixed port. Set `ARGUS_TESTBED_PORT=8092` and allow `http://127.0.0.1:8092`.
+- An agent on another host or in a container cannot reach 127.0.0.1 on your machine. Run the testbed yourself on an address the agent can reach, and put that URL in `testbed_url` instead of `"local"`:
+
+```bash
+# MCP testbed. For the payment testbed use argus.demo.payment_testbed.testbed.app:app.
+# TESTBED_PUBLIC_URL is the base URL the agent is told to use.
+TESTBED_PUBLIC_URL=http://host.docker.internal:8092 \
+  python -m uvicorn argus.demo.mcp_testbed.testbed.app:app --host 0.0.0.0 --port 8092
+```
+
+  Then set `"testbed_url": "http://127.0.0.1:8092"`. Binding `0.0.0.0` exposes the testbed to your network, so bind the one address the agent uses when you can.
+
 ## What it does
 
 Without `--local`, `argus-probe` is a thin client: it submits the target spec and probe selection over HTTPS to a server implementing the `/api/v1/redteam` API; that server runs the probes against your agent and returns the report. With `--local` the same engine runs in this process and calls the judge model directly with your key.
@@ -120,6 +150,8 @@ Secret references in your target spec (`${OPENAI_API_KEY}`, etc.) are resolved f
 - `html` — human-readable report
 - `sarif` — SARIF 2.1.0, uploads cleanly to GitHub code-scanning (Security tab)
 - `junit` — JUnit XML for any CI tool that parses test results
+
+Each finding from a library probe says how to fix the weakness it tests: a few lines for each attack class the probe covers. `scan-skill` reports have none. You find it under "How to fix" on `fail` and `warn` findings in HTML, as the rule's `help` in SARIF, on the last line of the `<failure>` text in JUnit, and in the `remediation` field in run.json.
 
 ## CI integration
 

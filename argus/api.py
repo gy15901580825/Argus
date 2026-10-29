@@ -20,7 +20,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from argus import llm
+from argus import llm, remediation
 from argus.coverage import build_coverage
 from argus.cost_meter import CostExceededError, CostMeter
 from argus.judge import Judge
@@ -237,7 +237,7 @@ async def _run_probes(req: RunRequest, anthropic_api_key: str) -> AsyncIterator[
             continue
         try:
             async for finding in runner.run_probe(probe):
-                yield finding_dict(finding)
+                yield finding_dict(finding, probe)
                 # An iterative thread reports the cap as aborted_cost instead of raising.
                 if finding.verdict == VERDICT_ABORTED and cap_hit is None:
                     m = re.match(r"cost cap hit at round \d+: (.*)", finding.reasoning, re.S)
@@ -249,11 +249,13 @@ async def _run_probes(req: RunRequest, anthropic_api_key: str) -> AsyncIterator[
         raise cap_hit
 
 
-def finding_dict(finding) -> dict:
-    """A Finding as the JSON-ready dict every run path emits."""
+def finding_dict(finding, probe=None) -> dict:
+    """A Finding as the JSON-ready dict every run path emits, with the probe's remediation."""
     # asdict() recurses dataclasses but does NOT convert UUIDs/datetimes.
     # When adding Finding fields, ensure they're JSON-serializable here.
     d = asdict(finding)
+    if probe is not None:
+        d["remediation"] = remediation.for_classes(probe.attack_class)
     d["id"] = str(finding.id)
     d["probed_at"] = finding.probed_at.isoformat()
     d["created_at"] = finding.created_at.isoformat()

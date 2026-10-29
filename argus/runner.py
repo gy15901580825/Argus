@@ -196,6 +196,8 @@ class Finding:
     # What the target observed, when it can observe anything (see
     # Target.collect_evidence). None for the text-only adapters.
     evidence: dict | None = None
+    # How to fix it, from the probe's attack_class (argus/remediation.py). Empty when unknown.
+    remediation: str = ""
 
 
 def skipped_finding(probe, reasoning: str) -> Finding:

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Mapping, Sequence
 from uuid import uuid4
 
+from argus import remediation
 from argus.mcp_scan import rules
 from argus.mcp_scan.calls import CallRun, ToolOutcome, good_result, show_text
 from argus.mcp_scan.checks import (COMMAND, CROSS_SESSION, DESCRIPTION, HIDDEN, INJECTION, LIST_CHANGED, REFLECTION,
@@ -47,7 +48,8 @@ def finding(probe: Probe, *, verdict: str, severity: str, reasoning: str, eviden
                 severity=severity, confidence=confidence, reasoning=reasoning, judge_model=judge_model,
                 escalated_model=escalated_model, atlas_id=list(probe.mappings.atlas),
                 owasp_id=list(probe.mappings.owasp_llm), nist_id=list(probe.mappings.nist_ai_rmf),
-                eu_ai_act_id=list(probe.mappings.eu_ai_act), evidence=evidence)
+                eu_ai_act_id=list(probe.mappings.eu_ai_act), evidence=evidence,
+                remediation=remediation.for_classes(probe.attack_class))
     d = asdict(f)
     d["id"] = str(f.id)
     d["probed_at"] = f.probed_at.isoformat()

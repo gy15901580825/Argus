@@ -1,0 +1,76 @@
+# How to fix a failed probe, one entry per attack_class (argus/probe.py VALID_ATTACK_CLASSES).
+# Reports show the entries for each class a probe declares. Keep each entry short, concrete
+# and vendor-neutral. tests/test_remediation.py fails when a class has no entry.
+
+prompt-injection: >-
+  Treat user text as data, never as new rules. Keep the system prompt and tool permissions fixed
+  for the whole session, and enforce high-impact limits in code instead of relying on the model
+  to refuse.
+
+indirect-injection: >-
+  Mark web pages, files, emails and tool results as untrusted content that cannot give orders.
+  Only the user's own request may authorize a tool call, so ask the user before acting on
+  anything that fetched content asks for.
+
+jailbreak: >-
+  Filter both input and output for the content your policy forbids, whatever the role-play,
+  encoding or framing. Check the whole conversation, not only the last message, so a request
+  split over several turns is still refused.
+
+data-exfil: >-
+  Allowlist the domains, email addresses and tools the agent may send data to, and block the
+  rest in code. Strip sensitive fields from tool results before the model sees them, and log
+  every outbound send.
+
+credential-extraction: >-
+  Keep keys, tokens, passwords and wallet seeds out of the model's context: load them inside the
+  tool layer, never in a prompt. Scan replies for secret patterns and redact them before they
+  leave the agent.
+
+output-handling: >-
+  Treat model output as untrusted input to the next system. Escape it before you render HTML,
+  use parameterized queries, and never pass it to a shell, eval or interpreter without a strict
+  allowlist.
+
+input-handling: >-
+  Check the size, type and encoding of every input before the model sees it. Decode or reject
+  base64, hidden Unicode characters and unexpected file types instead of passing them through.
+
+tool-abuse: >-
+  Give each tool the narrowest scope it needs and validate every argument in code against an
+  allowlist. Ask the user to confirm any tool call that writes, deletes, sends or spends.
+
+excessive-agency: >-
+  Ask the user to confirm irreversible or high-impact actions such as deleting data, sending
+  messages, installing packages or calling cloud APIs. Run the agent with least-privilege
+  credentials so one wrong decision cannot do much damage.
+
+supply-chain: >-
+  Pin and verify every package, model, plugin and MCP server the agent installs or loads. Block
+  install scripts and new dependencies until a person approves them.
+
+poisoning: >-
+  Check the source and integrity of content before it enters a retrieval index, agent memory or
+  training data. Record where each entry came from so you can find and remove poisoned content.
+
+harmful-content: >-
+  Filter input and output for the harm categories your use case forbids, and test the filter
+  with reworded and multi-turn requests.
+
+misinformation: >-
+  Ground answers in sources the agent can cite, and have it say it does not know when the sources
+  do not support an answer. Show the citations so users can check each claim.
+
+resource-abuse: >-
+  Set hard limits per task on tool calls, loop iterations, tokens, time and spend, and stop the
+  task when it reaches one. Alert on runs that come close to a limit.
+
+payment-abuse: >-
+  Enforce spending rules in code, outside the model: a budget per payment and per task, a payee
+  allowlist, and a check that the amount and payee match what the user approved. Ask the user
+  before paying more than the limit or paying a new payee, and cap the total across retries.
+
+mcp-abuse: >-
+  Connect only to MCP servers you have approved, and pin each tool's name and description. Stop
+  the session when a server changes a tool mid-session, ignore instructions inside tool
+  descriptions and results, and call only the tools the user's task needs.

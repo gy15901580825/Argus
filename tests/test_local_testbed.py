@@ -1,0 +1,177 @@
+"""`testbed_url: "local"`: run --local starts the bundled testbed on 127.0.0.1 for the run and stops it after."""
+import json
+import pathlib
+import socket
+import threading
+
+import httpx
+import pytest
+from click.testing import CliRunner
+
+from argus.cli.cmd_run import cmd_run
+from argus.demo import servers
+from argus.local import LocalRunError, run_local
+
+INNER = {"kind": "openai_compat", "endpoint_url": "http://127.0.0.1:9/v1/chat/completions", "model": "m"}
+SPECS = {
+    "mcp": ({"kind": "mcp_agent", "testbed_url": "local", "sandbox": True, "inner": INNER}, "mcp_url"),
+    "payment": ({"kind": "payment_agent", "testbed_url": "local", "sandbox": True, "inner": INNER}, "merchant_url"),
+    "generic": ({"kind": "testbed_agent", "environment": "payment", "testbed_url": "local", "sandbox": True,
+                 "inner": INNER}, "merchant_url"),
+}
+PAYMENT_PROBES = sorted(
+    p.stem for p in (pathlib.Path(servers.__file__).parents[1] / "probes/payment").glob("*.yaml")
+    if "assertions:" in p.read_text()
+)
+
+
+@pytest.fixture(autouse=True)
+def _no_proxy(monkeypatch):
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
+    monkeypatch.setenv("no_proxy", "127.0.0.1")
+    monkeypatch.delenv(servers.PORT_ENV, raising=False)
+
+
+def _port(url: str) -> int:
+    return int(url.rsplit(":", 1)[1])
+
+
+def _closed(port: int) -> bool:
+    with socket.socket() as s:
+        return s.connect_ex(("127.0.0.1", port)) != 0
+
+
+@pytest.fixture
+def no_leftover_threads():
+    # Closing the socket alone frees the port; the server thread must stop too.
+    before = threading.active_count()
+    yield
+    assert threading.active_count() == before
+
+
+def _free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+@pytest.mark.parametrize("name", sorted(SPECS))
+def test_local_starts_the_matching_testbed_and_stops_it(name, no_leftover_threads):
+    spec, url_key = SPECS[name]
+    with servers.local_testbed(spec) as resolved:
+        assert resolved["testbed_url"].startswith("http://127.0.0.1:")
+        port = _port(resolved["testbed_url"])
+        session = httpx.post(f"{resolved['testbed_url']}/sessions", json={}).json()
+        assert session[url_key].startswith(resolved["testbed_url"] + "/s/")
+        assert {k: v for k, v in resolved.items() if k != "testbed_url"} == {
+            k: v for k, v in spec.items() if k != "testbed_url"}
+    assert spec["testbed_url"] == "local"  # the caller's spec is not mutated
+    assert _closed(port)
+
+
+def test_a_real_url_is_left_alone_and_nothing_starts():
+    spec = {**SPECS["mcp"][0], "testbed_url": "http://10.0.0.5:8092"}
+    with servers.local_testbed(spec) as resolved:
+        assert resolved == spec
+
+
+def test_testbed_stops_when_the_run_raises(no_leftover_threads):
+    with pytest.raises(RuntimeError, match="boom"):
+        with servers.local_testbed(SPECS["mcp"][0]) as resolved:
+            port = _port(resolved["testbed_url"])
+            raise RuntimeError("boom")
+    assert _closed(port)
+
+
+def test_testbed_stops_on_ctrl_c(no_leftover_threads):
+    with pytest.raises(KeyboardInterrupt):
+        with servers.local_testbed(SPECS["payment"][0]) as resolved:
+            port = _port(resolved["testbed_url"])
+            raise KeyboardInterrupt
+    assert _closed(port)
+
+
+def test_port_env_pins_the_port(monkeypatch):
+    port = _free_port()
+    monkeypatch.setenv(servers.PORT_ENV, str(port))
+    with servers.local_testbed(SPECS["mcp"][0]) as resolved:
+        assert resolved["testbed_url"] == f"http://127.0.0.1:{port}"
+    assert _closed(port)
+
+
+def test_port_in_use_is_a_clear_error(monkeypatch):
+    with socket.socket() as busy:
+        busy.bind(("127.0.0.1", 0))
+        busy.listen()
+        port = busy.getsockname()[1]
+        monkeypatch.setenv(servers.PORT_ENV, str(port))
+        with pytest.raises(LocalRunError, match=f"127.0.0.1:{port}") as exc:
+            with servers.local_testbed(SPECS["mcp"][0]):
+                pass
+    assert servers.PORT_ENV in str(exc.value)
+
+
+@pytest.mark.parametrize("bad", ["abc", "0", "70000"])
+def test_bad_port_env_is_a_clear_error(monkeypatch, bad):
+    monkeypatch.setenv(servers.PORT_ENV, bad)
+    with pytest.raises(LocalRunError, match=servers.PORT_ENV):
+        with servers.local_testbed(SPECS["mcp"][0]):
+            pass
+
+
+async def test_payment_demo_agent_against_the_local_testbed_needs_no_key():
+    """The bundled payment testbed, with the bundled demo agent, gives real verdicts and remediation."""
+    from argus.demo.payment_testbed.demo_agent import app as agent_mod
+    from argus.probe import load_probe_library
+    from argus.api import PROBES_DIR
+    from argus import remediation
+
+    spec = {**SPECS["payment"][0]}
+    with servers.local_testbed(spec) as resolved, servers.serve_demo_agent(
+            agent_mod, resolved["testbed_url"]) as agent_url:
+        resolved["inner"] = {"kind": "openai_compat", "endpoint_url": agent_url, "model": "demo"}
+        events = [e async for e in run_local(resolved, PAYMENT_PROBES, env={})]
+    findings = [e for e in events if "verdict" in e]
+    assert len(PAYMENT_PROBES) == 22
+    assert {f["probe_id"] for f in findings} == set(PAYMENT_PROBES)
+    assert not [f for f in findings if f["verdict"] == "error"], findings
+    assert any(f["verdict"] == "fail" for f in findings)
+    classes = {p.id: p.attack_class for p in load_probe_library(PROBES_DIR)}
+    for f in findings:
+        assert f["remediation"] == remediation.for_classes(classes[f["probe_id"]]) != ""
+
+
+def test_cli_run_local_with_local_testbed(tmp_path, monkeypatch):
+    """The real CLI path: resolves "local", runs, records the URL it used, frees the port."""
+    from argus.demo.mcp_testbed.demo_agent import app as agent_mod
+
+    port = _free_port()
+    monkeypatch.setenv(servers.PORT_ENV, str(port))
+    origin = f"http://127.0.0.1:{port}"
+    with servers.serve_demo_agent(agent_mod, origin) as agent_url:
+        target = tmp_path / "t.json"
+        target.write_text(json.dumps({**SPECS["mcp"][0], "inner": {
+            "kind": "openai_compat", "endpoint_url": agent_url, "model": "demo"}}))
+        out = tmp_path / "run.json"
+        result = CliRunner().invoke(cmd_run, [
+            "--local", "--target", str(target), "--probes", ",".join(servers.PROBE_IDS),
+            "--format", "json", "--out", str(out)])
+    assert result.exit_code == 0, result.output
+    assert f"bundled MCP testbed on {origin}" in result.output
+    run = json.loads(out.read_text())
+    assert run["target_spec"]["testbed_url"] == origin
+    assert len(run["findings"]) == 12
+    assert not [f for f in run["findings"] if f["verdict"] == "error"]
+    assert any(f["verdict"] == "fail" for f in run["findings"])
+    assert all(f["remediation"] for f in run["findings"])
+    assert _closed(port)
+
+
+def test_server_mode_rejects_local(tmp_path):
+    target = tmp_path / "t.json"
+    target.write_text(json.dumps(SPECS["mcp"][0]))
+    result = CliRunner().invoke(cmd_run, [
+        "--target", str(target), "--probes", "mcp_shadow_near_name", "--out", str(tmp_path / "r.html"),
+        "--api-url", "http://127.0.0.1:9", "--token", "t"])
+    assert result.exit_code == 2, result.output
+    assert '"local"' in result.output and "--local" in result.output

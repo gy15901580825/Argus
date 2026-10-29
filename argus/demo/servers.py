@@ -1,7 +1,8 @@
-"""In-process demo servers for `argus-probe quickstart`: the MCP testbed and a scripted insecure agent."""
+"""In-process servers: the bundled testbeds for `testbed_url: "local"`, and the demo agents `quickstart` runs."""
 from __future__ import annotations
 
 import asyncio
+import os
 import socket
 import threading
 import time
@@ -10,6 +11,7 @@ from contextlib import contextmanager
 
 import uvicorn
 
+from argus.demo import bypass_proxy_for_localhost
 from argus.demo.mcp_testbed.demo_agent import app as _agent_mod
 from argus.demo.mcp_testbed.testbed import app as _testbed_mod
 
@@ -30,53 +32,110 @@ PROBE_IDS: tuple[str, ...] = (
 )
 
 
-def _bind() -> socket.socket:
+# `testbed_url: "local"` asks `run --local` for the bundled testbed on 127.0.0.1 for the run.
+LOCAL = "local"
+# Pins that testbed's port, for an agent that may only call allowlisted origins. Unset: a free port.
+PORT_ENV = "ARGUS_TESTBED_PORT"
+LABELS = {"mcp": "MCP", "payment": "payment"}
+_KIND_ENVIRONMENT = {"mcp_agent": "mcp", "payment_agent": "payment"}
+
+
+def _bind(port: int = 0) -> socket.socket:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(("127.0.0.1", 0))
+    if port and os.name != "nt":
+        # A pinned port must be reusable right after the previous run closed it.
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("127.0.0.1", port))
     return sock
+
+
+@contextmanager
+def _serve(app, sock: socket.socket) -> Iterator[str]:
+    """Serve `app` on the pre-bound `sock` in a thread; yield its URL; always stop it and free the port."""
+    server = None
+    thread = None
+    try:
+        server = uvicorn.Server(uvicorn.Config(app, log_level="warning"))
+        thread = threading.Thread(target=lambda: asyncio.run(server.serve(sockets=[sock])), daemon=True)
+        thread.start()
+        deadline = time.monotonic() + 10
+        while not server.started:
+            if time.monotonic() > deadline or not thread.is_alive():
+                raise RuntimeError("local server did not start")
+            time.sleep(0.02)
+        yield f"http://127.0.0.1:{sock.getsockname()[1]}"
+    finally:
+        if server is not None:
+            server.should_exit = True
+        if thread is not None:
+            thread.join(timeout=5)
+        sock.close()
+
+
+@contextmanager
+def serve_demo_agent(agent_mod, testbed_url: str) -> Iterator[str]:
+    """Serve a bundled demo agent paired with `testbed_url`; yield its chat-completions URL."""
+    agent_mod.set_testbed_origin(testbed_url)
+    with _serve(agent_mod.app, _bind()) as url:
+        yield f"{url}/v1/chat/completions"
 
 
 @contextmanager
 def start_mcp_demo() -> Iterator[dict]:
     # Pre-bound sockets avoid a port race between picking and listening.
-    socks: list[socket.socket] = []
-    servers: list = []
-    threads: list = []
-    try:
-        socks.append(_bind())
-        socks.append(_bind())
-        ports = [s.getsockname()[1] for s in socks]
-        _agent_mod.set_testbed_origin(f"http://127.0.0.1:{ports[0]}")
-        _agent_mod.set_weaknesses(None)
-        servers = [
-            uvicorn.Server(uvicorn.Config(app, log_level="warning"))
-            for app in (_testbed_mod.app, _agent_mod.app)
-        ]
-        threads = [
-            threading.Thread(target=lambda s=srv, k=sk: asyncio.run(s.serve(sockets=[k])), daemon=True)
-            for srv, sk in zip(servers, socks)
-        ]
-        for t in threads:
-            t.start()
-        deadline = time.monotonic() + 10
-        while not all(s.started for s in servers):
-            if time.monotonic() > deadline:
-                raise RuntimeError("demo servers did not start")
-            time.sleep(0.02)
+    _agent_mod.set_weaknesses(None)
+    with _serve(_testbed_mod.app, _bind()) as testbed_url, serve_demo_agent(_agent_mod, testbed_url) as agent_url:
         yield {
             "kind": "mcp_agent",
-            "testbed_url": f"http://127.0.0.1:{ports[0]}",
+            "testbed_url": testbed_url,
             "sandbox": True,
-            "inner": {
-                "kind": "openai_compat",
-                "endpoint_url": f"http://127.0.0.1:{ports[1]}/v1/chat/completions",
-                "model": "demo",
-            },
+            "inner": {"kind": "openai_compat", "endpoint_url": agent_url, "model": "demo"},
         }
-    finally:
-        for s in servers:
-            s.should_exit = True
-        for t in threads:
-            t.join(timeout=5)
-        for sk in socks:
-            sk.close()
+
+
+def local_environment(spec) -> str | None:
+    """"mcp" or "payment" when `spec` asks for the bundled testbed, else None."""
+    if not isinstance(spec, dict) or spec.get("testbed_url") != LOCAL:
+        return None
+    env = spec.get("environment") if spec.get("kind") == "testbed_agent" else _KIND_ENVIRONMENT.get(spec.get("kind"))
+    return env if env in LABELS else None
+
+
+def _pinned_port() -> int:
+    from argus.local import LocalRunError
+
+    raw = os.environ.get(PORT_ENV, "").strip()
+    if not raw:
+        return 0
+    if not raw.isdigit() or not 1 <= int(raw) <= 65535:
+        raise LocalRunError(f"{PORT_ENV}={raw!r} is not a port number (1-65535)", code="config")
+    return int(raw)
+
+
+@contextmanager
+def local_testbed(spec: dict) -> Iterator[dict]:
+    """Yield `spec` with `testbed_url: "local"` replaced by a bundled testbed on 127.0.0.1, stopped on exit.
+
+    Any other spec is yielded unchanged and nothing starts."""
+    env = local_environment(spec)
+    if env is None:
+        yield spec
+        return
+    from argus.local import LocalRunError
+
+    if env == "mcp":
+        app = _testbed_mod.app
+    else:
+        from argus.demo.payment_testbed.testbed import app as payment_mod
+        app = payment_mod.app
+    port = _pinned_port()
+    try:
+        sock = _bind(port)
+    except OSError as e:
+        hint = f"; free it or change {PORT_ENV}" if port else ""
+        raise LocalRunError(
+            f"cannot start the bundled {LABELS[env]} testbed on 127.0.0.1:{port}: {e.strerror or e}{hint}",
+            code="config") from e
+    bypass_proxy_for_localhost()
+    with _serve(app, sock) as url:
+        yield {**spec, "testbed_url": url}

@@ -36,7 +36,7 @@ _KIND_QUESTIONS: dict[str, list[tuple[str, str, str | None]]] = {
         ("scenario_kind", "Scenario kind (dom_injection/ui_phishing/visual_injection/os_cmd)", "dom_injection"),
     ],
     "payment_agent": [
-        ("testbed_url", "Payment testbed URL", "http://127.0.0.1:8090"),
+        ("testbed_url", "Payment testbed URL (\"local\" starts the bundled one on 127.0.0.1 for each run)", "local"),
         (
             "inner_json",
             "Inner target spec (JSON) for the transport that talks to your agent",
@@ -44,7 +44,7 @@ _KIND_QUESTIONS: dict[str, list[tuple[str, str, str | None]]] = {
         ),
     ],
     "mcp_agent": [
-        ("testbed_url", "MCP testbed URL", "http://127.0.0.1:8092"),
+        ("testbed_url", "MCP testbed URL (\"local\" starts the bundled one on 127.0.0.1 for each run)", "local"),
         (
             "inner_json",
             "Inner target spec (JSON) for the transport that talks to your agent",
@@ -53,7 +53,7 @@ _KIND_QUESTIONS: dict[str, list[tuple[str, str, str | None]]] = {
     ],
     "testbed_agent": [
         ("environment", "Environment (mcp/payment)", "mcp"),
-        ("testbed_url", "Testbed URL", "http://127.0.0.1:8092"),
+        ("testbed_url", "Testbed URL (\"local\" starts the bundled one on 127.0.0.1 for each run)", "local"),
         (
             "inner_json",
             "Inner target spec (JSON) for the transport that talks to your agent",

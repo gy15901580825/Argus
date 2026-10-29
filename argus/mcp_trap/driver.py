@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable, Literal, Sequence
 from uuid import uuid4
 
+from argus import remediation
 from argus.assertions import evaluate_assertions
 from argus.mcp_trap.trap.scenarios import SCENARIO_NAMES
 from argus.mcp_trap.trap.state import new_canary
@@ -268,6 +269,7 @@ def scenario_finding(probe: Probe, rounds: list[RoundOutcome], conversations: in
             "scope_note": SCOPE_NOTE,
             "conversations_sent": conversations,
         },
+        remediation=remediation.for_classes(probe.attack_class),
     )
     d = asdict(finding)
     d["id"] = str(finding.id)

@@ -27,6 +27,7 @@ source_modules =
     argus.persona_loader
     argus.persona_strategy
     argus.probe
+    argus.remediation
     argus.runner
     argus.skillscan
     argus.suites
