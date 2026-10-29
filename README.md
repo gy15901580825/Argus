@@ -225,6 +225,15 @@ orchestrator. It connects directly, with the same `AGENT_CONNECT_SECRET` set
 on both sides:
 `python client_agent/client_agent.py --orchestrator-url ws://<orchestrator-host>:8080 --agent-name my-browser-agent`.
 
+`python -m argus.server` (the engine's own FastAPI app) binds to `127.0.0.1`
+by default. To serve other machines, set `ARGUS_SERVER_HOST=0.0.0.0`,
+`ARGUS_SERVER_TOKEN` and `AGENT_CONNECT_SECRET`, with different values.
+Callers of `/redteam/*` then send `Authorization: Bearer <token>`, and
+client agents send the agent secret. On a non-loopback address the server
+will not start without both. The Docker image binds to `0.0.0.0`, so it
+needs both too. Details are in
+[`docs/reference/services.md`](docs/reference/services.md).
+
 `--probes all` runs the whole library. `--format` is `html` (default),
 `sarif` (SARIF 2.1.0, uploads to GitHub Code Scanning) or `junit`.
 `--per-run-cap` sets a USD ceiling for the run.

@@ -7,7 +7,7 @@ pip install -e ".[dev]"        # dev includes the server extra's websockets
 argus-probe quickstart
 python -m pytest -q           # from the repo root or from tests/
 lint-imports
-python -m argus.server        # the /redteam API and the /agent/connect hub, on $PORT (default 8080)
+python -m argus.server        # the /redteam API and the /agent/connect hub, on 127.0.0.1:$PORT (default 8080)
 ```
 
 ## Other Python services (client_agent, demo_target, payment_testbed, mcp_testbed)

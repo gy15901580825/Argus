@@ -26,6 +26,20 @@ The client agent's reply includes `trap_url`, the URL it sent the browser agent.
 
 Install with `pip install "argus-probe[server]"`; the `server` extra adds the WebSocket library uvicorn needs for `/agent/connect`.
 
+The server is configured with these environment variables:
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `ARGUS_SERVER_HOST` | `127.0.0.1` | Address to bind. The Docker image sets `0.0.0.0`. |
+| `PORT` | `8080` | Port to bind. |
+| `ARGUS_SERVER_TOKEN` | unset | When set, every `/redteam/*` request must send `Authorization: Bearer <token>`; others get 401. |
+| `AGENT_CONNECT_SECRET` | unset | When set, a client agent must send it in the `x-agent-secret` header to connect to `/agent/connect`. |
+| `ARGUS_SERVER_ALLOW_UNAUTHENTICATED` | unset | Set to `1` to start on a non-loopback address without `ARGUS_SERVER_TOKEN` or `AGENT_CONNECT_SECRET`. This leaves both `/redteam/*` and `/agent/connect` open to anything that reaches the port, so use it only behind a proxy that authenticates both. |
+
+The server refuses to start, with exit code 1, when `ARGUS_SERVER_HOST` is not a loopback address and either `ARGUS_SERVER_TOKEN` or `AGENT_CONNECT_SECRET` is not set, unless `ARGUS_SERVER_ALLOW_UNAUTHENTICATED=1`. `/redteam/run` makes the server send requests to whatever target the caller names and spends the server's judge budget. A client agent on `/agent/connect` receives probe payloads and returns results into runs. Neither should be open to a network. Use different values for the two secrets: a client agent machine needs only `AGENT_CONNECT_SECRET`, and the API token would let it start runs. On a loopback address, a missing `AGENT_CONNECT_SECRET` only logs a warning.
+
+`/docs`, `/redoc` and `/openapi.json` stay open without a token. `/agent/connect` does not use `ARGUS_SERVER_TOKEN`; it has its own `AGENT_CONNECT_SECRET`.
+
 | Method | Path | Role |
 |--------|------|------|
 | POST | `/redteam/run/preflight` | Cost-cap check without running probes (402 when over the cap) |

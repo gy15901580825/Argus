@@ -1,13 +1,16 @@
 import hmac
+import ipaddress
 import logging
 import os
+import sys
 from dotenv import load_dotenv
 
 # Load .env from this directory, then the parent; existing values are never overridden.
 load_dotenv()
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
 
 # Configure logging
@@ -23,6 +26,7 @@ app = FastAPI(
     ## API Endpoints
     
     * `/redteam/*` - Red-team runs, probes, suites and coverage
+      (needs `Authorization: Bearer <token>` when ARGUS_SERVER_TOKEN is set)
     * `/agent/connect` - WebSocket endpoint for agent connections
     """,
     docs_url="/docs",  # Swagger UI at /docs
@@ -51,7 +55,60 @@ def log_agent_auth_mode() -> None:
         )
 
 
-log_agent_auth_mode()
+
+# auto_error=False: the scheme is declared in OpenAPI, but whether a token is
+# required depends on ARGUS_SERVER_TOKEN, checked below.
+_bearer = HTTPBearer(auto_error=False)
+
+
+def require_server_token(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+) -> None:
+    """When ARGUS_SERVER_TOKEN is set, require `Authorization: Bearer <token>`."""
+    # Read per request so the token is never cached at import time.
+    token = os.getenv("ARGUS_SERVER_TOKEN", "")
+    if not token:
+        return
+    supplied = credentials.credentials if credentials else ""
+    if not hmac.compare_digest(supplied.encode(), token.encode()):
+        raise HTTPException(status_code=401, detail="missing or invalid bearer token",
+                            headers={"WWW-Authenticate": "Bearer"})
+
+
+def _is_loopback(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def startup_error(
+    host: str, token: str, agent_secret: str, allow_unauthenticated: bool
+) -> str | None:
+    """Why the server must not start on `host`, or None when it may."""
+    # /redteam/run sends requests to a caller-named target, and /agent/connect hands
+    # probe payloads to whoever connects, so off loopback each needs its own secret.
+    # The API token never stands in for the agent secret: they are different principals.
+    if _is_loopback(host) or allow_unauthenticated:
+        return None
+    missing = []
+    if not token:
+        missing.append("ARGUS_SERVER_TOKEN is not set, so /redteam/* would accept anyone's runs")
+    if not agent_secret:
+        missing.append("AGENT_CONNECT_SECRET is not set, so anyone could register on /agent/connect")
+    if not missing:
+        return None
+    return (
+        f"Refusing to start: ARGUS_SERVER_HOST={host} is reachable from other machines and "
+        + "; ".join(missing) + ". "
+        "Set ARGUS_SERVER_TOKEN (callers send 'Authorization: Bearer <token>') and "
+        "AGENT_CONNECT_SECRET (client agents send it as x-agent-secret), or bind to 127.0.0.1. "
+        "ARGUS_SERVER_ALLOW_UNAUTHENTICATED=1 skips this check and leaves both /redteam/* and "
+        "/agent/connect open to anything that reaches the port; use it only behind a proxy "
+        "that authenticates both."
+    )
 
 # ============================================================================
 # WebSocket Agent Connection Management
@@ -60,7 +117,7 @@ log_agent_auth_mode()
 # Import the global connection manager from separate module to avoid circular imports
 from argus.connection_manager import connection_manager
 from argus.api import router as redteam_router
-app.include_router(redteam_router)
+app.include_router(redteam_router, dependencies=[Depends(require_server_token)])
 
 @app.websocket("/agent/connect")
 async def websocket_endpoint(websocket: WebSocket):
@@ -110,9 +167,24 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.error(f"Error in websocket connection: {e}")
         await connection_manager.disconnect(agent_id, connection=websocket)
 
-if __name__ == "__main__":
+def main() -> None:
     import uvicorn
+    host = os.getenv("ARGUS_SERVER_HOST") or "127.0.0.1"
+    token = os.getenv("ARGUS_SERVER_TOKEN", "")
+    agent_secret = os.getenv("AGENT_CONNECT_SECRET", "")
+    allow = os.getenv("ARGUS_SERVER_ALLOW_UNAUTHENTICATED") == "1"
+    error = startup_error(host, token, agent_secret, allow)
+    if error:
+        print(error, file=sys.stderr)
+        sys.exit(1)
+    log_agent_auth_mode()
+    if not token and not _is_loopback(host):
+        logger.warning("ARGUS_SERVER_ALLOW_UNAUTHENTICATED=1: /redteam/* on %s accepts unauthenticated requests.", host)
     port = int(os.getenv("PORT", 8080))
     # Protocol pings drop a dead agent socket within ~40 s, which frees its id
     # for reconnect (duplicate ids are refused while the old socket is live).
-    uvicorn.run(app, host="0.0.0.0", port=port, ws_ping_interval=20.0, ws_ping_timeout=20.0)
+    uvicorn.run(app, host=host, port=port, ws_ping_interval=20.0, ws_ping_timeout=20.0)
+
+
+if __name__ == "__main__":
+    main()

@@ -14,12 +14,15 @@ from dataclasses import dataclass
 from typing import ClassVar, Optional
 
 import httpx
-from jinja2 import Environment
 from jsonpath_ng import parse as jsonpath_parse
 
 from argus.targets._base import Target, Turn
+from argus.targets._template import compile_template, render
 
-_jinja = Environment(autoescape=False)
+
+def _dry_run_ctx() -> dict:
+    """A fresh context for the construction-time check of each template."""
+    return {"prompt": "", "api_key": "", "history": [], "conversation_id": ""}
 
 
 @dataclass(frozen=True)
@@ -64,7 +67,13 @@ class CustomHTTPTarget(Target):
 
     def __init__(self, spec: CustomHTTPSpec) -> None:
         self.spec = spec
-        self._body_tpl = _jinja.from_string(spec.request_body_template)
+        self._body_tpl = compile_template(
+            spec.request_body_template, "request_body_template", _dry_run_ctx()
+        )
+        self._header_tpls = [
+            (k, f"request_headers[{k}]", compile_template(v, f"request_headers[{k}]", _dry_run_ctx()))
+            for k, v in spec.request_headers
+        ]
         self._jsonpath = jsonpath_parse(spec.response_jsonpath)
         self._latency_jsonpath = (
             jsonpath_parse(spec.response_latency_jsonpath) if spec.response_latency_jsonpath else None
@@ -86,12 +95,12 @@ class CustomHTTPTarget(Target):
             "history": [{"role": t.role, "content": t.content} for t in history],
             "conversation_id": self._conversation_id,
         }
-        body = self._body_tpl.render(**ctx)
+        body = render(self._body_tpl, "request_body_template", ctx)
 
         # Render headers (api_key substitution allowed in header values too).
         headers = {}
-        for k, v in self.spec.request_headers:
-            headers[k] = _jinja.from_string(v).render(**ctx)
+        for k, field, tpl in self._header_tpls:
+            headers[k] = render(tpl, field, ctx)
 
         # Set Content-Type to application/json if not already specified.
         ct = headers.get("Content-Type", "application/json")

@@ -70,6 +70,8 @@ Below are copy-paste templates for each supported agent shape, plus the gotchas 
 
 How the body is built: `request_body_template` is a Jinja2 template. `{{prompt|tojson}}` substitutes the adversarial prompt with proper JSON escaping, so embedded quotes / backslashes / newlines never break the JSON envelope.
 
+Templates render in Jinja's sandbox. The variables above, filters, `if` and `for` work as usual. Jinja's global helpers (`range`, `dict`, `lipsum`, `cycler`, `joiner`, `namespace`) are not available, and attributes that start with an underscore, other unsafe objects and calls that modify a value are refused. A template that uses them is rejected as a spec error that names the field, such as `request_body_template` or `request_headers[Authorization]`. Most are caught when the target is built; one inside an `if` that depends on the conversation is caught when that turn is sent.
+
 The template can also use `{{conversation_id}}`. It is a fresh id for each conversation and stays the same across the turns of one conversation. Use it for agents that keep chat state per session id. `mcp-trap` sends every round as a new conversation.
 
 How the response is parsed: `response_jsonpath` is a [JSONPath](https://goessner.net/articles/JsonPath/) expression that extracts the agent's reply text from the JSON response.
@@ -135,7 +137,7 @@ export AGENT_CONNECT_SECRET=<shared secret>      # same value as on the orchestr
 python client_agent.py --orchestrator-url ws://<orchestrator-host>:8080 --agent-name my-browser-agent
 ```
 
-Anyone who can reach the orchestrator's `/agent/connect` can pose as an agent and receive probe payloads. Set `AGENT_CONNECT_SECRET` on both sides and keep the orchestrator on localhost or a trusted network.
+Anyone who can reach the orchestrator's `/agent/connect` can pose as an agent and receive probe payloads. Set `AGENT_CONNECT_SECRET` on both sides. The orchestrator listens on `127.0.0.1` by default; for a client agent on another machine, start it with `ARGUS_SERVER_HOST=0.0.0.0`, `AGENT_CONNECT_SECRET` and a different `ARGUS_SERVER_TOKEN` for `/redteam/*` callers. Off loopback it refuses to start without both ([services.md](../reference/services.md#orchestrator-python--m-argusserver-port-8080)).
 
 We provide a thin reference adapter you can drop into your agent harness; ask in the design-partner channel for the latest version.
 
@@ -317,7 +319,7 @@ If your agent can't reach your machine at all, submit the run with `--api-url` a
 **Notes:**
 - Exactly one of `render_url_jsonpath` or `render_url_header` must be set — how the adapter finds the render URL in the upload response (a JSON body field vs. a response header like `Location`). Setting both, or neither, is rejected at construction.
 - If the render URL can't be located, the adapter returns the upload response body itself so the judge can still inspect it, rather than erroring.
-- `upload_headers` / `render_headers` / `extra_form_fields` are Jinja2 templates rendered with `{{api_key}}` in scope, so a bearer token only needs to be written once via the `api_key` field.
+- `upload_headers` / `render_headers` / `extra_form_fields` are Jinja2 templates rendered with `{{api_key}}` in scope, so a bearer token only needs to be written once via the `api_key` field. They render in the same sandbox as `custom_http` templates.
 
 ---
 
