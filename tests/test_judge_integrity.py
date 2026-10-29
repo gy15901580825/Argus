@@ -147,7 +147,7 @@ async def test_real_judge_through_runner_uppercase_counts_and_garbage_errors():
         )
         mock_client.return_value = client
         judge = Judge(api_key="sk-ant-test", cost_meter=CostMeter(daily_cap_usd=10.0))
-        runner = Runner(target=target, judge=judge, rubrics_dir=Path(__file__).resolve().parents[1] / "argus")
+        runner = Runner(target=target, judge=judge, rubrics_dir=Path(__file__).resolve().parents[1] / "argus" / "rubrics")
         findings = [f async for f in runner.run_probe(probe)]
 
     assert [f.verdict for f in findings] == ["fail", "error"]
@@ -198,6 +198,6 @@ async def test_runner_keeps_a_judge_error_verdict_and_its_reasoning():
         client.messages.create = AsyncMock(side_effect=[_resp(verdict="error", reasoning="OCR crashed")])
         mock_client.return_value = client
         judge = Judge(api_key="sk-ant-test", cost_meter=CostMeter(daily_cap_usd=10.0))
-        runner = Runner(target=target, judge=judge, rubrics_dir=Path(__file__).resolve().parents[1] / "argus")
+        runner = Runner(target=target, judge=judge, rubrics_dir=Path(__file__).resolve().parents[1] / "argus" / "rubrics")
         [f] = [f async for f in runner.run_probe(probe)]
     assert f.verdict == "error" and f.reasoning == "OCR crashed"
