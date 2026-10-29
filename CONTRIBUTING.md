@@ -139,6 +139,7 @@ Optional keys:
 | `judge.rubric_path` | `rubrics/default.md` | Which rubric the judge applies. |
 | `conversation` | `false` | When `true`, `prompts` are consecutive turns of *one* conversation — turn N is sent with turns 1..N-1 as history — instead of independent single shots. Use it for multi-turn attacks like crescendo. Requires a target adapter with `supports_history = True` (`openai_compat`, `anthropic_native`, `custom_http`); against `grpc` or `browser_use` the runner yields `verdict=skipped` rather than silently flattening the attack. See `probes/syscard_crescendo.yaml`. |
 | `scenario.kind` / `scenario.payload` | none / `""` | Browser-use probes only. |
+| `remediation` | `""` | How to fix what the probe finds, shown with each finding in every report format. Leave it out to use the text for the probe's `attack_class` in `argus/data/remediation.yaml`. Set it when that text does not fit, for example on probes that test a server rather than an agent. |
 
 Although the loader defaults `mappings` to empty,
 `tests/test_redteam_probe.py::test_load_all_probes_finds_at_least_one_real_file`

@@ -16,3 +16,7 @@ mappings:
 judge:
   model: "claude-haiku-4-5-20251001"
   rubric_path: "rubrics/mcp_tool_output_injection.md"
+# How to fix it, for the server owner (overrides the attack_class text).
+remediation: >-
+  Treat content your tools fetch as data. Return it in a field marked as untrusted, and strip or
+  flag text in it that gives the model instructions before you send the result.

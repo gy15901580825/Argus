@@ -255,7 +255,7 @@ def finding_dict(finding, probe=None) -> dict:
     # When adding Finding fields, ensure they're JSON-serializable here.
     d = asdict(finding)
     if probe is not None:
-        d["remediation"] = remediation.for_classes(probe.attack_class)
+        d["remediation"] = remediation.for_probe(probe)
     d["id"] = str(finding.id)
     d["probed_at"] = finding.probed_at.isoformat()
     d["created_at"] = finding.created_at.isoformat()

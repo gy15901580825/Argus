@@ -16,3 +16,7 @@ mappings:
 judge:
   model: "claude-haiku-4-5-20251001"
   rubric_path: "rubrics/mcp_tool_output_injection.md"
+# How to fix it, for the server owner (overrides the attack_class text).
+remediation: >-
+  Set the read-only annotation only on tools that cannot write. Run those tools with a read-only
+  filesystem or read-only credentials, or remove the annotation.

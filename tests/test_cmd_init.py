@@ -246,3 +246,29 @@ def test_init_testbed_kinds_default_to_the_bundled_testbed(tmp_path, monkeypatch
     assert spec["testbed_url"] == "local"
     assert "127.0.0.1" in result.output  # says where the bundled testbed listens
     load_target_spec(str(tmp_path / "argus-target.json"))
+
+
+@pytest.mark.parametrize("kind,answers,probes", [
+    ("mcp_agent", "\n\n", "all"),
+    ("payment_agent", "\n\n", "all"),
+    ("testbed_agent", "mcp\n\n\n", "all"),
+    ("openai_compat", "\nm\n\n", "owasp_01_prompt_injection_basic,syscard_crescendo"),
+])
+def test_init_picks_probes_that_fit_the_kind(tmp_path, monkeypatch, kind, answers, probes):
+    # A chat probe against an MCP or payment target is skipped, so a job using it tests nothing.
+    from argus.api import PROBES_DIR
+    from argus.probe import load_probe_library
+    from argus.targets import build_target
+
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(init_command, ["--kind", kind, "--workflow"], input=answers)
+    assert result.exit_code == 0, result.output
+    workflow = yaml.safe_load((tmp_path / ".github/workflows/argus-probe.yml").read_text())
+    step = next(s for s in workflow["jobs"]["redteam"]["steps"] if "with" in s)
+    assert step["with"]["probes"] == probes
+    assert f"--probes {probes} " in result.output  # the printed next command runs as shown
+    if probes != "all":
+        spec = json.loads((tmp_path / "argus-target.json").read_text())
+        classes = build_target({**spec, "api_key": "x"}).compatible_classes
+        library = {p.id: p for p in load_probe_library(PROBES_DIR)}
+        assert all(set(library[i].target_class) & classes for i in probes.split(","))

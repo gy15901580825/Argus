@@ -3,9 +3,9 @@
 # and vendor-neutral. tests/test_remediation.py fails when a class has no entry.
 
 prompt-injection: >-
-  Treat user text as data, never as new rules. Keep the system prompt and tool permissions fixed
-  for the whole session, and enforce high-impact limits in code instead of relying on the model
-  to refuse.
+  A user message can ask for things but cannot change the system prompt's rules or the agent's
+  tool permissions. Keep both fixed for the whole session, and enforce high-impact limits in code
+  instead of relying on the model to refuse.
 
 indirect-injection: >-
   Mark web pages, files, emails and tool results as untrusted content that cannot give orders.

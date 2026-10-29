@@ -18,3 +18,7 @@ mappings:
 judge:
   model: "claude-haiku-4-5-20251001"
   rubric_path: "rubrics/mcp_tool_abuse.md"
+# How to fix it, for the server owner (overrides the attack_class text).
+remediation: >-
+  Remove tools that dump environment variables, run arbitrary commands or read arbitrary files.
+  If a tool must stay, limit it to named values or one directory, and require authentication.

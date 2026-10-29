@@ -18,3 +18,7 @@ mappings:
 judge:
   model: "claude-haiku-4-5-20251001"
   rubric_path: "rubrics/mcp_tool_abuse.md"
+# How to fix it, for the server owner (overrides the attack_class text).
+remediation: >-
+  Upgrade the MCP server to a release that fixes the advisory named in the finding. Until then,
+  keep it off untrusted networks and require authentication.

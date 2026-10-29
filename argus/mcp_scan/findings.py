@@ -49,7 +49,7 @@ def finding(probe: Probe, *, verdict: str, severity: str, reasoning: str, eviden
                 escalated_model=escalated_model, atlas_id=list(probe.mappings.atlas),
                 owasp_id=list(probe.mappings.owasp_llm), nist_id=list(probe.mappings.nist_ai_rmf),
                 eu_ai_act_id=list(probe.mappings.eu_ai_act), evidence=evidence,
-                remediation=remediation.for_classes(probe.attack_class))
+                remediation=remediation.for_probe(probe))
     d = asdict(f)
     d["id"] = str(f.id)
     d["probed_at"] = f.probed_at.isoformat()

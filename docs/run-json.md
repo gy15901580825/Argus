@@ -32,7 +32,7 @@ The top-level keys always appear in this order. `incomplete_reason` and `notes` 
 
 Each finding has the same keys as the engine's `Finding` record: `id`, `probe_id`, `attack_prompt`, `target_response`, `target_latency_ms`, `probed_at`, `verdict`, `severity`, `confidence`, `reasoning`, `judge_model`, `escalated_model`, `atlas_id`, `owasp_id`, `nist_id`, `eu_ai_act_id`, `created_at`, `evidence` and `remediation`.
 
-`remediation` is how to fix the weakness the probe tests: a few sentences for each of the probe's attack classes, one class per line. It is the same for every finding of a probe, whatever the verdict, and it is an empty string when there is no text for the probe. Files written before this field existed do not have it.
+`remediation` is how to fix the weakness the probe tests: the probe's own text when it has one, else a few sentences for each of the probe's attack classes, one class per line. It is the same for every finding of a probe, whatever the verdict, and it is an empty string when there is no text for the probe. Files written before this field existed do not have it.
 
 `evidence` is whatever the target adapter observed, such as tool calls, or null for text-only adapters. Its contents are free-form. Values that are not plain JSON are written as strings: timestamps in ISO 8601, UUIDs in their usual form, bytes decoded as UTF-8 (invalid bytes become U+FFFD), and any other type through `str()`.
 

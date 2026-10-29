@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import re
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -142,6 +143,14 @@ def _grpc_reason(exc: Exception) -> str | None:
     if name in _GRPC_HINTS:
         return f"target returned gRPC {name} ({_GRPC_HINTS[name]}){suffix}"
     return f"target request failed: gRPC {name}{suffix}"
+
+
+def _never_reached(blocked_reasoning: str) -> str:
+    """Reasoning for a block from an agent that never touched its testbed."""
+    m = re.match(r"target returned HTTP (\d{3}) ", blocked_reasoning)
+    cause = (f"agent returned HTTP {m[1]}" if m
+             else f"{blocked_reasoning.split('; counted as blocked')[0]}, and the agent")
+    return f"{cause} and never reached the testbed, so the probe did not run; this is not a defended result"
 
 
 def _send_failure(exc: Exception) -> tuple[str, str] | None:
@@ -411,6 +420,12 @@ class Runner:
                     else:
                         if observed:
                             f = replace(f, evidence=observed)
+            # A 4xx or refusal before the agent touched the testbed means the attack was never
+            # staged in front of it (unreachable testbed, wrong origin), not that it was defended.
+            # Same gate as _assertion_finding: only evidence-judged probes that need the testbed.
+            if (f.verdict == VERDICT_BLOCKED_BY_TARGET and probe.assertions and probe.requires_interaction
+                    and not (f.evidence or {}).get("interaction_count")):
+                f = replace(f, verdict=VERDICT_ERROR, reasoning=_never_reached(f.reasoning))
             yield f
         self._check_breaker()
 

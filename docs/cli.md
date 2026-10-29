@@ -151,7 +151,7 @@ Secret references in your target spec (`${OPENAI_API_KEY}`, etc.) are resolved f
 - `sarif` — SARIF 2.1.0, uploads cleanly to GitHub code-scanning (Security tab)
 - `junit` — JUnit XML for any CI tool that parses test results
 
-Each finding from a library probe says how to fix the weakness it tests: a few lines for each attack class the probe covers. `scan-skill` reports have none. You find it under "How to fix" on `fail` and `warn` findings in HTML, as the rule's `help` in SARIF, on the last line of the `<failure>` text in JUnit, and in the `remediation` field in run.json.
+Each finding from a library probe says how to fix the weakness it tests: the probe's own text when it has one (the MCP server and vLLM probes do), else a few lines for each attack class the probe covers. `scan-skill` findings have an empty `remediation`. You find it under "How to fix" on `fail` and `warn` findings in HTML, as the rule's `help` in SARIF, on the last line of the `<failure>` text in JUnit, and in the `remediation` field in run.json.
 
 ## CI integration
 
@@ -168,7 +168,7 @@ Use [`argus-probe-action`](https://github.com/marketplace/actions/argus-agent-re
     fail-on: critical
 ```
 
-The job needs `permissions: security-events: write` for the SARIF upload. `argus-probe init --workflow` writes a complete workflow file with that set. Pull requests from forks and Dependabot do not receive repository secrets, so `ANTHROPIC_API_KEY` is empty and the job fails on them.
+The job needs `permissions: security-events: write` for the SARIF upload. `argus-probe init --workflow` writes a complete workflow file with that set. Its `probes` are two judged chat probes for `openai_compat`, `anthropic_native` and `custom_http`, and `all` for every other kind, because the chat probes do not apply to those targets. Pull requests from forks and Dependabot do not receive repository secrets, so `ANTHROPIC_API_KEY` is empty and the job fails on them.
 
 `--fail-on <severity>` exits 3 when a failing finding is at or above that level; the SARIF is written first. `--compare-to <base branch>` makes `--fail-on` count only failures that are new relative to the latest run on that branch. It is server mode only, because it needs run history, so the action does not offer it; see the target-spec cookbook for a server-mode workflow.
 
@@ -193,6 +193,8 @@ These count as `blocked_by_target`, not as errors:
 - other 4xx answers, such as a content filter's 400 or a 403, with the reason `target returned HTTP <code> to the attack prompt; counted as blocked`;
 - an HTTP 200 from `openai_compat` whose choice has `finish_reason: "content_filter"` and no text (Azure OpenAI's output filter), with the reason `target's content filter withheld the reply; counted as blocked`;
 - an `anthropic_native` reply with `stop_reason: "refusal"` and no text.
+
+The MCP and payment probes that judge the testbed's record are the exception. If the agent blocks one of these before it sends a single request to its testbed, the probe never ran, so it is an `error` with the reason `agent returned HTTP <code> and never reached the testbed, ...`. This is what you see when the agent cannot reach the testbed address or only allows another origin. A block after the agent used the testbed stays `blocked_by_target`.
 
 When at least 5 findings, and at least 90% of the findings that were sent (skipped probes do not count), were blocked with the same HTTP code, the console prints `Warning: every probe was blocked with HTTP <code>; check the request format` (`almost every` below 100%). In local mode the warning also goes into the report notes. The exit code does not change.
 

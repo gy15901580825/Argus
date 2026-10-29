@@ -103,6 +103,9 @@ class Probe:
     # Set for probes from a probe pack: the pack's own rubrics directory, which
     # the runner tries before the built-in one. None for built-in probes.
     rubrics_dir: Path | None = None
+    # Fix-it text for this probe, overriding the attack_class text in argus/data/remediation.yaml.
+    # Server-facing probes need it: the class text is written for someone who runs an agent.
+    remediation: str = ""
 
 
 def load_probe(path: Path) -> Probe:
@@ -142,6 +145,7 @@ def load_probe(path: Path) -> Probe:
             assertions=tuple(raw.get("assertions", ()) or ()),
             requires_interaction=bool(raw.get("requires_interaction", True)),
             technique=tuple(raw.get("technique", ()) or ()),
+            remediation=str(raw.get("remediation", "") or ""),
         )
     except KeyError as exc:
         raise ValueError(f"missing required key {exc.args[0]!r} in {path}") from exc

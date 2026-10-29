@@ -23,8 +23,37 @@ def test_every_attack_class_in_the_library_has_remediation():
     assert not missing, f"attack_class without remediation in argus/data/remediation.yaml: {missing}"
 
 
+SERVER_CLASSES = {"mcp_scan", "mcp_server", "vllm_server"}
+
+
+def test_server_facing_probes_have_their_own_remediation():
+    # Class text is written for someone who runs an agent; these findings go to a server owner.
+    probes = [p for p in load_probe_library(PROBES_DIR) if SERVER_CLASSES & set(p.target_class)]
+    assert len(probes) == 16
+    missing = [p.id for p in probes if not p.remediation.strip()]
+    assert not missing, missing
+    for p in probes:
+        assert remediation.for_probe(p) == p.remediation.strip()
+        assert "\u2014" not in p.remediation and "\u2013" not in p.remediation, p.id
+
+
+def test_for_probe_falls_back_to_the_class_text():
+    p = next(p for p in load_probe_library(PROBES_DIR) if p.id == "mcp_poison_description_exfil")
+    assert p.remediation == ""
+    assert remediation.for_probe(p) == remediation.for_classes(p.attack_class) != ""
+
+
+def test_load_probe_reads_remediation(tmp_path):
+    from argus.probe import load_probe
+
+    path = tmp_path / "p.yaml"
+    path.write_text("id: p\nname: p\ntarget_class: [http-chat]\nattack_class: [jailbreak]\nseverity: low\n"
+                    "prompts: [x]\nremediation: >-\n  Patch the thing.\n")
+    assert load_probe(path).remediation == "Patch the thing."
+
+
 def test_every_library_probe_gets_remediation():
-    empty = [p.id for p in load_probe_library(PROBES_DIR) if not remediation.for_classes(p.attack_class)]
+    empty = [p.id for p in load_probe_library(PROBES_DIR) if not remediation.for_probe(p)]
     assert not empty, f"probes whose findings would carry no remediation: {empty}"
 
 
@@ -54,6 +83,10 @@ def _run(**finding):
 def test_html_shows_remediation_for_a_failure():
     html = reports.render_html(_run())
     assert "How to fix" in html and "Connect only to approved MCP servers." in html
+
+
+def test_html_shows_remediation_for_a_warn():
+    assert "Connect only to approved MCP servers." in reports.render_html(_run(verdict="warn"))
 
 
 def test_html_leaves_remediation_out_of_a_pass():
@@ -87,8 +120,16 @@ def test_mcp_scan_and_mcp_trap_findings_carry_remediation():
 
     scan_probe = next(p for p in load_probe_library(PROBES_DIR) if p.id == "mcp_scan_command_execution")
     f = scan_finding(scan_probe, verdict="pass", severity="info", reasoning="r", evidence={})
-    assert f["remediation"] == remediation.for_classes(scan_probe.attack_class) != ""
+    assert f["remediation"] == remediation.for_probe(scan_probe) == scan_probe.remediation.strip() != ""
 
     trap_probe = load_trap_probes(["rug_pull"])[0]
     t = scenario_finding(trap_probe, [RoundOutcome(1, "failed", "sent", "p", "r", {"interaction_count": 1})], 1)
-    assert t["remediation"] == remediation.for_classes(trap_probe.attack_class) != ""
+    assert t["remediation"] == remediation.for_probe(trap_probe) != ""
+
+
+def test_scan_skill_findings_carry_an_empty_remediation():
+    # docs/run-json.md promises the key on every finding; scan-skill rules are not library probes.
+    from argus.skillscan.scan import _normalise
+
+    assert _normalise({"probe_id": "skill_exfiltration"}, "t")["remediation"] == ""
+    assert _normalise({"probe_id": "x", "remediation": "keep"}, "t")["remediation"] == "keep"

@@ -3,6 +3,7 @@ import json
 import pathlib
 import socket
 import threading
+import time
 
 import httpx
 import pytest
@@ -69,10 +70,12 @@ def test_local_starts_the_matching_testbed_and_stops_it(name, no_leftover_thread
     assert _closed(port)
 
 
-def test_a_real_url_is_left_alone_and_nothing_starts():
+def test_a_real_url_is_left_alone_and_nothing_starts(no_leftover_threads):
     spec = {**SPECS["mcp"][0], "testbed_url": "http://10.0.0.5:8092"}
+    before = threading.active_count()
     with servers.local_testbed(spec) as resolved:
         assert resolved == spec
+        assert threading.active_count() == before
 
 
 def test_testbed_stops_when_the_run_raises(no_leftover_threads):
@@ -136,9 +139,9 @@ async def test_payment_demo_agent_against_the_local_testbed_needs_no_key():
     assert {f["probe_id"] for f in findings} == set(PAYMENT_PROBES)
     assert not [f for f in findings if f["verdict"] == "error"], findings
     assert any(f["verdict"] == "fail" for f in findings)
-    classes = {p.id: p.attack_class for p in load_probe_library(PROBES_DIR)}
+    library = {p.id: p for p in load_probe_library(PROBES_DIR)}
     for f in findings:
-        assert f["remediation"] == remediation.for_classes(classes[f["probe_id"]]) != ""
+        assert f["remediation"] == remediation.for_probe(library[f["probe_id"]]) != ""
 
 
 def test_cli_run_local_with_local_testbed(tmp_path, monkeypatch):
@@ -175,3 +178,72 @@ def test_server_mode_rejects_local(tmp_path):
         "--api-url", "http://127.0.0.1:9", "--token", "t"])
     assert result.exit_code == 2, result.output
     assert '"local"' in result.output and "--local" in result.output
+
+
+async def test_agent_that_cannot_reach_the_local_testbed_is_an_error_not_a_pass():
+    """The demo agent only calls its pinned origin; a free-port testbed is elsewhere, so it answers 403."""
+    from argus.demo.mcp_testbed.demo_agent import app as agent_mod
+
+    with servers.local_testbed(SPECS["mcp"][0]) as resolved, servers.serve_demo_agent(
+            agent_mod, f"http://127.0.0.1:{_free_port()}") as agent_url:
+        resolved["inner"] = {"kind": "openai_compat", "endpoint_url": agent_url, "model": "demo"}
+        events = [e async for e in run_local(resolved, ["mcp_shadow_near_name"], env={})]
+    [finding] = [e for e in events if "verdict" in e]
+    assert finding["verdict"] == "error"
+    assert finding["reasoning"].startswith("agent returned HTTP 403 and never reached the testbed")
+
+
+@pytest.mark.parametrize("name", ["mcp", "payment"])
+def test_local_testbed_ignores_testbed_public_url(name, monkeypatch):
+    """TESTBED_PUBLIC_URL is read at import; a shell that exports it must not redirect a local run."""
+    import importlib
+
+    mod = importlib.import_module(f"argus.demo.{name}_testbed.testbed.app")
+    monkeypatch.setenv("TESTBED_PUBLIC_URL", "http://host.docker.internal:9")
+    monkeypatch.setattr(mod, "PUBLIC_BASE_URL", "http://host.docker.internal:9")  # what import would read
+    spec, url_key = SPECS[name]
+    with servers.local_testbed(spec) as resolved:
+        session = httpx.post(f"{resolved['testbed_url']}/sessions", json={}).json()
+    assert session[url_key].startswith(resolved["testbed_url"] + "/s/")
+    assert mod.PUBLIC_BASE_URL == "http://host.docker.internal:9"  # restored for whoever set it
+
+
+def test_quickstart_demo_ignores_testbed_public_url(monkeypatch):
+    from argus.demo.mcp_testbed.testbed import app as mod
+
+    monkeypatch.setattr(mod, "PUBLIC_BASE_URL", "http://host.docker.internal:9")
+    with servers.start_mcp_demo() as spec:
+        session = httpx.post(f"{spec['testbed_url']}/sessions", json={}).json()
+    assert session["mcp_url"].startswith(spec["testbed_url"] + "/s/")
+
+
+def test_shutdown_does_not_wait_forever_on_a_half_sent_request(no_leftover_threads):
+    """An agent cut off mid-request (Ctrl-C during a probe) must not keep the server thread alive."""
+    with servers.local_testbed(SPECS["mcp"][0]) as resolved:
+        port = _port(resolved["testbed_url"])
+        half = socket.create_connection(("127.0.0.1", port))
+        half.sendall(b"POST /sessions HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
+                     b"Content-Length: 100\r\n\r\n{\"scen")
+        time.sleep(0.2)  # let the server start reading the body
+    half.close()
+    assert _closed(port)
+
+
+def test_a_testbed_that_fails_to_start_says_why_fast(no_leftover_threads):
+    from contextlib import asynccontextmanager
+
+    from fastapi import FastAPI
+
+    @asynccontextmanager
+    async def broken(app):
+        raise RuntimeError("database file is locked")
+        yield
+
+    sock = servers._bind()
+    port = sock.getsockname()[1]
+    start = time.monotonic()
+    with pytest.raises(RuntimeError, match="the broken server did not start: RuntimeError: database file is locked"):
+        with servers._serve(FastAPI(lifespan=broken), sock, "broken server"):
+            pass
+    assert time.monotonic() - start < 3
+    assert _closed(port)

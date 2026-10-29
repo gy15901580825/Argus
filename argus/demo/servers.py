@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import socket
 import threading
@@ -49,34 +50,77 @@ def _bind(port: int = 0) -> socket.socket:
     return sock
 
 
+class _StartupErrors(logging.Handler):
+    """Keeps the last line of each uvicorn error, which for a traceback is the exception itself."""
+
+    def __init__(self) -> None:
+        super().__init__(logging.ERROR)
+        self.lines: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        lines = [ln.strip() for ln in record.getMessage().splitlines() if ln.strip()]
+        if lines:
+            self.lines.append(lines[-1])
+
+
 @contextmanager
-def _serve(app, sock: socket.socket) -> Iterator[str]:
+def _serve(app, sock: socket.socket, name: str = "local server") -> Iterator[str]:
     """Serve `app` on the pre-bound `sock` in a thread; yield its URL; always stop it and free the port."""
     server = None
     thread = None
+    errors = _StartupErrors()
     try:
-        server = uvicorn.Server(uvicorn.Config(app, log_level="warning"))
-        thread = threading.Thread(target=lambda: asyncio.run(server.serve(sockets=[sock])), daemon=True)
+        # A bounded graceful shutdown: an agent cut off mid-request must not hold the thread.
+        server = uvicorn.Server(uvicorn.Config(app, log_level="warning", timeout_graceful_shutdown=2))
+        failure: list[BaseException] = []
+
+        def run() -> None:
+            try:
+                asyncio.run(server.serve(sockets=[sock]))
+            except BaseException as e:  # uvicorn exits a failed startup with SystemExit
+                failure.append(e)
+
+        logging.getLogger("uvicorn.error").addHandler(errors)
+        thread = threading.Thread(target=run, daemon=True)
         thread.start()
         deadline = time.monotonic() + 10
         while not server.started:
-            if time.monotonic() > deadline or not thread.is_alive():
-                raise RuntimeError("local server did not start")
+            if not thread.is_alive() or time.monotonic() > deadline:
+                why = errors.lines[0] if errors.lines else repr(failure[0]) if failure else "timed out"
+                raise RuntimeError(f"the {name} did not start: {why}")
             time.sleep(0.02)
         yield f"http://127.0.0.1:{sock.getsockname()[1]}"
     finally:
+        logging.getLogger("uvicorn.error").removeHandler(errors)
         if server is not None:
             server.should_exit = True
         if thread is not None:
             thread.join(timeout=5)
+            if thread.is_alive() and server is not None:
+                server.force_exit = True
+                thread.join(timeout=5)
         sock.close()
+
+
+@contextmanager
+def _serve_testbed(mod, sock: socket.socket, name: str) -> Iterator[str]:
+    """Serve a bundled testbed module so it hands out its own address.
+
+    The testbed reads TESTBED_PUBLIC_URL once at import; an exported value would send the agent elsewhere."""
+    saved = mod.PUBLIC_BASE_URL
+    mod.PUBLIC_BASE_URL = ""
+    try:
+        with _serve(mod.app, sock, name) as url:
+            yield url
+    finally:
+        mod.PUBLIC_BASE_URL = saved
 
 
 @contextmanager
 def serve_demo_agent(agent_mod, testbed_url: str) -> Iterator[str]:
     """Serve a bundled demo agent paired with `testbed_url`; yield its chat-completions URL."""
     agent_mod.set_testbed_origin(testbed_url)
-    with _serve(agent_mod.app, _bind()) as url:
+    with _serve(agent_mod.app, _bind(), "demo agent") as url:
         yield f"{url}/v1/chat/completions"
 
 
@@ -84,7 +128,8 @@ def serve_demo_agent(agent_mod, testbed_url: str) -> Iterator[str]:
 def start_mcp_demo() -> Iterator[dict]:
     # Pre-bound sockets avoid a port race between picking and listening.
     _agent_mod.set_weaknesses(None)
-    with _serve(_testbed_mod.app, _bind()) as testbed_url, serve_demo_agent(_agent_mod, testbed_url) as agent_url:
+    with _serve_testbed(_testbed_mod, _bind(), "bundled MCP testbed") as testbed_url, \
+            serve_demo_agent(_agent_mod, testbed_url) as agent_url:
         yield {
             "kind": "mcp_agent",
             "testbed_url": testbed_url,
@@ -124,10 +169,9 @@ def local_testbed(spec: dict) -> Iterator[dict]:
     from argus.local import LocalRunError
 
     if env == "mcp":
-        app = _testbed_mod.app
+        mod = _testbed_mod
     else:
-        from argus.demo.payment_testbed.testbed import app as payment_mod
-        app = payment_mod.app
+        from argus.demo.payment_testbed.testbed import app as mod
     port = _pinned_port()
     try:
         sock = _bind(port)
@@ -137,5 +181,5 @@ def local_testbed(spec: dict) -> Iterator[dict]:
             f"cannot start the bundled {LABELS[env]} testbed on 127.0.0.1:{port}: {e.strerror or e}{hint}",
             code="config") from e
     bypass_proxy_for_localhost()
-    with _serve(app, sock) as url:
+    with _serve_testbed(mod, sock, f"bundled {LABELS[env]} testbed") as url:
         yield {**spec, "testbed_url": url}
