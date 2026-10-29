@@ -459,3 +459,13 @@ def test_html_summary_counts_errors_and_does_not_call_them_deterministic(tmp_pat
     assert "1 error</div>" in html
     assert "no model consulted" not in html and "from captured evidence" not in html
     assert "not judged:" in html.lower()
+
+
+def test_blocked_warning_ignores_skipped_probes(tmp_path, monkeypatch):
+    # `--probes all` skips probes for other target classes; they were never sent and must not dilute the share.
+    _install_fake_engine(monkeypatch, _engine(
+        *[_blocked(f"p{i}") for i in range(6)], *[_finding(f"s{i}", "skipped") for i in range(4)],
+    ))
+    result = _invoke(tmp_path, "--out", str(tmp_path / "r.html"))
+    assert result.exit_code == 0, result.output
+    assert "Warning: every probe was blocked with HTTP 400; check the request format" in result.output

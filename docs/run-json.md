@@ -21,7 +21,7 @@ The top-level keys always appear in this order. `incomplete_reason` and `notes` 
 | `schema_version` | string | Always `"argus.run/1"` for this version of the format. |
 | `id` | string | A UUID for this run. |
 | `status` | string | `"completed"` when every probe reached a verdict. `"incomplete"` when at least one finding is `error` or `aborted_cost`, or the run stopped early; the CLI then exits 1 (4 for the cost cap). |
-| `incomplete_reason` | string | Only when `status` is `"incomplete"`. Why, in the console's words: for example `2 of 9 probes errored; run incomplete; target returned HTTP 401 (unauthorized; check credentials)`. |
+| `incomplete_reason` | string | `run` only, and only when `status` is `"incomplete"`. Why, in the console's words: for example `2 of 9 probes errored; run incomplete; target returned HTTP 401 (unauthorized; check credentials)`. |
 | `started_at` | string | ISO 8601 timestamp, UTC. |
 | `finished_at` | string | ISO 8601 timestamp, UTC. |
 | `argus_version` | string | The installed `argus-probe` version. It is `"unknown"` when the CLI runs from a source tree that was never installed. |

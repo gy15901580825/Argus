@@ -150,7 +150,7 @@ These count as `blocked_by_target`, not as errors:
 - an HTTP 200 from `openai_compat` whose choice has `finish_reason: "content_filter"` and no text (Azure OpenAI's output filter), with the reason `target's content filter withheld the reply; counted as blocked`;
 - an `anthropic_native` reply with `stop_reason: "refusal"` and no text.
 
-When at least 5 findings, and at least 90% of all findings, were blocked with the same HTTP code, the console prints `Warning: every probe was blocked with HTTP <code>; check the request format` (`almost every` below 100%). In local mode the warning also goes into the report notes. The exit code does not change.
+When at least 5 findings, and at least 90% of the findings that were sent (skipped probes do not count), were blocked with the same HTTP code, the console prints `Warning: every probe was blocked with HTTP <code>; check the request format` (`almost every` below 100%). In local mode the warning also goes into the report notes. The exit code does not change.
 
 In a `conversation: true` probe, the first turn that is blocked or errors ends the conversation. Later turns are not sent, because they mean nothing without it.
 

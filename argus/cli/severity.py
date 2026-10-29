@@ -66,7 +66,8 @@ def blocked_warning(findings: list[dict]) -> str | None:
     if not codes:
         return None
     code, n = codes.most_common(1)[0]
-    if n < 5 or n < 0.9 * len(findings):
+    sent = sum(1 for f in findings if f.get("verdict") != "skipped")  # a skipped probe was never sent
+    if n < 5 or n < 0.9 * sent:
         return None
-    every = "every" if n == len(findings) else "almost every"
+    every = "every" if n == sent else "almost every"
     return f"{every} probe was blocked with HTTP {code}; check the request format"
