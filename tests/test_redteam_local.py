@@ -620,3 +620,24 @@ async def test_a_deep_run_that_drains_the_deep_slice_still_reports_later_threads
         events = await _collect(run_local(TARGET, ["chat_j1"], mode="deep", env=KEY))
     assert [e.get("probe_id") for e in events if e.get("verdict")] == ["t1", "t2"]
     assert meter._spent_in_run is None
+
+
+async def test_a_deep_run_is_refused_at_its_first_step_when_the_deep_slice_is_spent(library, monkeypatch):
+    # Steps after the first resume their scope without the deep check; the first must not.
+    from argus.cost_meter import CostMeter
+
+    meter = CostMeter(daily_cap_usd=1.0, deep_per_run_cap_usd=100.0)  # deep slice $0.60
+    monkeypatch.setattr(api, "_COST_METER", meter)
+    monkeypatch.setattr(meter, "check_or_abort_pre_run", lambda **kw: 0.0)
+    meter._spent_today_deep = meter.deep_daily_cap_usd + 0.01
+    started = []
+
+    async def _deep(req, key):
+        started.append(1)
+        yield {**FAKE_FINDING, "probe_id": "t1", "verdict": "pass"}
+
+    with patch("argus.api._run_probes", _deep):
+        with pytest.raises(LocalRunError):
+            await _collect(run_local(TARGET, ["chat_j1"], mode="deep", env=KEY))
+    assert started == []
+    assert meter._spent_in_run is None

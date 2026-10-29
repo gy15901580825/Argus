@@ -63,6 +63,13 @@ def run_local_and_render(
             stop_reason = str(e)
         else:
             stop_reason = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+        if coverage is None:
+            # The engine emits coverage only at the end; build it from what did run.
+            from argus.api import PROBES_DIR
+            from argus.coverage import build_coverage
+            from argus.probe import load_probe_library
+
+            coverage = build_coverage(load_probe_library(PROBES_DIR), findings)
 
     incomplete = [line.strip() for line in incomplete_lines(findings, stop_reason)]
     notes = list(incomplete)
