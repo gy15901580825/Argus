@@ -153,9 +153,11 @@ def _install_names(language: str, text: str) -> set[str]:
         if not m:
             continue
         rest = re.split(r"&&|\|\||;|\||(?:^|\s)#", m.group(2), maxsplit=1)[0]
-        if m.group(1) and not trusted:
+        if not trusted:
             words = [t.strip("\"'").rstrip(".,:)").lower() for t in rest.split() if not t.startswith("-")]
-            if any(w in _PROSE_WORDS or w in _PROSE_STOP for w in words) or not rest.split():
+            # A bullet is stricter than a plain line, which may continue with a sentence.
+            prose = _PROSE_WORDS | _PROSE_STOP if m.group(1) else _PROSE_WORDS
+            if any(w in prose for w in words) or not rest.split():
                 continue
         skip_next = False
         for tok in rest.split():

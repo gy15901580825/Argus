@@ -241,3 +241,25 @@ def test_a_list_prefixed_command_in_a_fence_or_backticks_is_still_read():
 ])
 def test_python_local_module_headers_any_case_and_init(text):
     assert pc.extract_packages("python", text) == set()
+
+
+@pytest.mark.parametrize("text", [
+    "pip install might require sudo on Linux",
+    "pip install fails sometimes because of permissions",
+])
+def test_plain_prose_after_an_install_verb_is_not_a_command(text):
+    assert pc.extract_packages("python", text) == set()
+
+
+def test_plain_install_lines_still_work():
+    assert pc.extract_packages("python", "pip install flask requests") == {"flask", "requests"}
+
+
+def test_a_fenced_line_with_a_prose_word_is_still_a_command():
+    # Inside a fence the line is code, so "on-prem" style words are not prose filters.
+    assert pc.extract_packages("python", "```\n- pip install ghostpkg on\n```") == {"ghostpkg", "on"}
+    assert pc.extract_packages("python", "- pip install ghostpkg on") == set()
+
+
+def test_a_ruby_file_header_never_hides_a_bare_require():
+    assert pc.extract_packages("ruby", "# helpers.rb\nrequire 'helpers'") == {"helpers"}
