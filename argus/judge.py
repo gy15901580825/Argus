@@ -42,14 +42,15 @@ _OUTPUT_CONTRACT = (
 # "error" is for a judge that reports it could not assess the reply (browser_visual.md asks for it).
 _VALID_VERDICTS = frozenset({"pass", "warn", "fail", "error"})
 
-# Any spelling of the delimiter tag a text might contain (case, spaces, attributes, zero-width
+# Any spelling of the start of a delimiter tag (open or close) a text might contain (case, spaces, attributes, zero-width
 # characters), so it cannot open or close the block.
 _ZW = r"[\u200b-\u200d\u2060\ufeff]*"
+_GAP = r"[\s\u200b-\u200d\u2060\ufeff]*"  # one class, so matching stays linear on long runs
 _DELIMITER_TAG = re.compile(
-    "<" + _ZW + r"\s*" + _ZW + "/?" + _ZW + r"\s*" + _ZW
-    + _ZW.join("target_response") + "[^>]*>",
+    "<" + _GAP + "(?:/" + _GAP + ")?" + _ZW.join("target_response"),
     re.IGNORECASE,
 )
+
 
 _UNTRUSTED_NOTICE = (
     "\n# Untrusted input\n\n"
@@ -60,7 +61,7 @@ _UNTRUSTED_NOTICE = (
 
 
 def _defuse(text: str) -> str:
-    return _DELIMITER_TAG.sub(lambda m: "&lt;" + m.group(0)[1:-1] + "&gt;", text)
+    return _DELIMITER_TAG.sub(lambda m: "&lt;" + m.group(0)[1:], text)
 
 
 def build_judge_prompts(
@@ -119,7 +120,7 @@ class Judge:
     ) -> Verdict:
         fast_v = await self._call("fast", probe_name, attack_prompt, target_response, rubric_text)
         if fast_v.verdict == "error":  # nothing was assessed, so there is nothing to escalate
-            return fast_v
+            return replace(fast_v, severity="info")
         should_escalate = (
             fast_v.severity in ESCALATION_SEVERITIES
             and fast_v.confidence >= ESCALATION_MIN_CONFIDENCE
