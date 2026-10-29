@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 import click
@@ -109,7 +110,14 @@ jobs:
           target: {target_path}
           probes: {probes}
           fail-on: critical
-"""
+{version_line}"""
+
+
+def _installed_version() -> str | None:
+    try:
+        return version("argus-probe")
+    except PackageNotFoundError:  # a source tree that was never installed
+        return None
 
 
 @click.command("init")
@@ -186,8 +194,13 @@ def init_command(kind: str, output: str, workflow: bool | None) -> None:
         if env_var and env_var != "ANTHROPIC_API_KEY":
             # The target spec reads this key at run time.
             target_env = f"          {env_var}: ${{{{ secrets.{env_var} }}}}\n"
-        wf_path.write_text(_WORKFLOW_TEMPLATE.format(target_path=target_path.name, target_env=target_env,
-                                                  probes=_probes_for(kind)))
+        # The Action installs its own default version otherwise, which may predate this spec's
+        # features (testbed_url "local", target-fitting `all`).
+        v = _installed_version()
+        version_line = f'          argus-version: "{v}"\n' if v else ""
+        wf_path.write_text(_WORKFLOW_TEMPLATE.format(
+            target_path=target_path.name, target_env=target_env, probes=_probes_for(kind),
+            version_line=version_line))
         click.echo(f"✅ Wrote {wf_path}")
 
     click.echo("")

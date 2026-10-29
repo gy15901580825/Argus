@@ -105,7 +105,7 @@ async def run_local(
             raise LocalRunError(f"{n} of {m} selected probes need an LLM judge: {key} is not set. "
                                 f"{hint} {_KEY_HELP}", code="config")
         reason = f"{NO_JUDGE_KEY}: {key} is not set; skipped by --skip-judged"
-        skipped = [api.finding_dict(skipped_finding(by_id[pid], reason)) for pid in judged]
+        skipped = [api.finding_dict(skipped_finding(by_id[pid], reason), by_id[pid]) for pid in judged]
         requested = [pid for pid in requested if pid not in set(judged)]
         judged = []
     elif skip_judged and cfg.missing_credential() is None:

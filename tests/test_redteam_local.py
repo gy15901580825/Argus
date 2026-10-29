@@ -641,3 +641,30 @@ async def test_a_deep_run_is_refused_at_its_first_step_when_the_deep_slice_is_sp
             await _collect(run_local(TARGET, ["chat_j1"], mode="deep", env=KEY))
     assert started == []
     assert meter._spent_in_run is None
+
+
+async def test_skipped_findings_carry_the_probe_remediation(library):
+    from argus import remediation
+
+    with patch("argus.api._run_probes", _spy_run({})):
+        events = await _collect(run_local(TARGET, [], env={}, skip_judged=True))
+    skipped = [e for e in events if e.get("verdict") == "skipped"]
+    assert skipped
+    for f in skipped:
+        assert f["remediation"] == remediation.for_probe(library[f["probe_id"]]) != ""
+
+
+async def test_findings_stopped_or_not_started_at_the_cap_carry_remediation(library):
+    from argus import remediation
+
+    _MeteredRunner.calls = []
+    req = api.RunRequest(target=TARGET, probe_ids=["chat_j1", "chat_j2", "chat_a1"])
+    events = []
+    with patch("argus.api.Runner", _MeteredRunner):
+        with api._COST_METER.run_scope("t", per_run_cap_usd=0.08):
+            with pytest.raises(CostExceededError):
+                async for e in api._run_probes(req, "k"):
+                    events.append(e)
+    assert [e["verdict"] for e in events] == ["pass", "aborted_cost", "aborted_cost"]
+    for f in events:
+        assert f["remediation"] == remediation.for_probe(library[f["probe_id"]]) != ""

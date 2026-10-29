@@ -263,3 +263,23 @@ def test_overlapping_runs_keep_the_local_url_and_restore_the_original(monkeypatc
     assert session["mcp_url"].startswith(resolved_b["testbed_url"] + "/s/")
     b.__exit__(None, None, None)
     assert mod.PUBLIC_BASE_URL == "http://public.example:9"
+
+
+def test_ctrl_c_right_after_entering_restores_the_public_url(monkeypatch):
+    from contextlib import contextmanager
+
+    from argus.demo.mcp_testbed.testbed import app as mod
+
+    monkeypatch.setattr(mod, "PUBLIC_BASE_URL", "http://public.example:9")
+
+    @contextmanager
+    def interrupted(*a, **k):
+        raise KeyboardInterrupt
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(servers, "_serve", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        with servers.local_testbed(SPECS["mcp"][0]):
+            pass
+    assert mod.PUBLIC_BASE_URL == "http://public.example:9"
+    assert servers._PUBLIC_URL_USERS[mod.__name__][0] == 0

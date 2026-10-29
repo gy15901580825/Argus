@@ -113,20 +113,24 @@ def _serve_testbed(mod, sock: socket.socket, name: str) -> Iterator[str]:
 
     The testbed reads TESTBED_PUBLIC_URL once at import; an exported value would send the agent elsewhere.
     The first run to enter saves the value and the last to leave restores it."""
-    with _PUBLIC_URL_LOCK:
-        users = _PUBLIC_URL_USERS.setdefault(mod.__name__, [0, None])
-        if users[0] == 0:
-            users[1] = mod.PUBLIC_BASE_URL
-        users[0] += 1
-        mod.PUBLIC_BASE_URL = ""
+    entered = False
     try:
+        # Inside the try, so a Ctrl-C right after the increment still reaches the decrement.
+        with _PUBLIC_URL_LOCK:
+            users = _PUBLIC_URL_USERS.setdefault(mod.__name__, [0, None])
+            if users[0] == 0:
+                users[1] = mod.PUBLIC_BASE_URL
+            users[0] += 1
+            entered = True
+            mod.PUBLIC_BASE_URL = ""
         with _serve(mod.app, sock, name) as url:
             yield url
     finally:
-        with _PUBLIC_URL_LOCK:
-            users[0] -= 1
-            if users[0] == 0:
-                mod.PUBLIC_BASE_URL = users[1]
+        if entered:
+            with _PUBLIC_URL_LOCK:
+                users[0] -= 1
+                if users[0] == 0:
+                    mod.PUBLIC_BASE_URL = users[1]
 
 
 @contextmanager
