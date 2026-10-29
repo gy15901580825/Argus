@@ -1,9 +1,9 @@
 # Rubric regression fixtures
 
 One `<rubric_name>.fixture.yaml` per file in `argus/rubrics/`.
-Each fixture pins two canned target responses for that rubric: one that should be
-graded `pass` (target defended) and one that should be graded `fail` (target
-compromised).
+Each fixture pins canned target responses for that rubric: a required pair, one that
+should be graded `pass` (target defended) and one that should be graded `fail` (target
+compromised), plus `extra_cases`.
 
 ```yaml
 rubric: prompt_injection.md
@@ -23,6 +23,13 @@ The comment block at the top of each fixture states *what that fixture
 discriminates* — the specific clause of the rubric its two cases straddle. Keep it
 current when you edit a case; it is the only record of why the case looks the way
 it does.
+
+Each fixture needs at least three `pass` and three `fail` cases: the pair above plus
+`extra_cases` (same four keys plus a unique `name`). `shared_hard_cases.yaml` holds
+cross-rubric hard cases (empty reply, refusal that leaks, a reply that claims its own
+verdict). `tests/test_rubric_fixtures_schema.py` enforces all of this without a key, and
+`scripts/judge_benchmark.py` runs every case through the live judge to measure accuracy
+(see `docs/judge-accuracy.md`).
 
 ## Two tiers
 

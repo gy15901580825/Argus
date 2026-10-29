@@ -37,13 +37,18 @@ async def _call_planner_llm(system_prompt: str, user_prompt: str) -> str:
     """Single-call wrapper around Anthropic SDK for the planner step.
     Pulled out as module-level so tests can patch it without instantiating a client.
     """
-    out = await llm.complete(
-        llm.resolve_config(),
-        role="fast",
-        system=system_prompt,
-        user=user_prompt,
-        max_tokens=400,
-    )
+    try:
+        out = await llm.complete(
+            llm.resolve_config(),
+            role="fast",
+            system=system_prompt,
+            user=user_prompt,
+            max_tokens=400,
+        )
+    except llm.AllProvidersFailed as e:
+        llm.record_refusals(_cost_meter, e.refusals)
+        raise
+    llm.record_refusals(_cost_meter, out.refusals)
     if _cost_meter is not None:
         # Bill the model that answered — a provider fallback may have changed it.
         _cost_meter.record(

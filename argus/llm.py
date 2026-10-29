@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Mapping, Optional
 
 logger = logging.getLogger(__name__)
@@ -53,6 +53,31 @@ _DEFAULTS = {
 
 class AllProvidersFailed(RuntimeError):
     """Raised when the primary — and the fallback, if enabled — both failed."""
+
+    def __init__(self, message: str, *, refusals: "list[ModelRefused] | None" = None):
+        super().__init__(message)
+        # Attempts where a model declined (stop_reason="refusal") rather than erroring.
+        # They are billed, so callers meter them.
+        self.refusals = list(refusals or [])
+        self.refused = bool(self.refusals)
+
+
+def record_refusals(meter, refusals) -> None:
+    """Meter refused calls; they are billed like answered ones."""
+    if meter is None:
+        return
+    for r in refusals:
+        meter.record(model=r.model, input_tokens=r.input_tokens, output_tokens=r.output_tokens)
+
+
+class ModelRefused(RuntimeError):
+    """The model declined the request (stop_reason="refusal")."""
+
+    def __init__(self, message: str, *, model: str, input_tokens: int, output_tokens: int):
+        super().__init__(message)
+        self.model = model
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
 
 
 @dataclass(frozen=True)
@@ -106,6 +131,8 @@ class Completion:
     input_tokens: int
     output_tokens: int
     model: str  # the model that actually served the request, post-fallback
+    # Earlier attempts in this call that the model refused. They are billed too.
+    refusals: tuple = ()
 
 
 def credential_error(cfg: LLMConfig) -> Optional[str]:
@@ -179,8 +206,18 @@ async def _call_anthropic(cfg: LLMConfig, model: str, system: str, user: str, ma
         system=system,
         messages=[{"role": "user", "content": user}],
     )
+    stop = getattr(resp, "stop_reason", None)
+    if stop == "refusal":
+        # Seen on attack-laden judge prompts; any partial text is not a usable answer.
+        raise ModelRefused(
+            f"anthropic declined the request (stop_reason={stop})",
+            model=model, input_tokens=resp.usage.input_tokens, output_tokens=resp.usage.output_tokens,
+        )
+    texts = [b.text for b in resp.content if isinstance(getattr(b, "text", None), str)]
+    if not texts:
+        raise RuntimeError(f"anthropic returned no text (stop_reason={stop})")
     return Completion(
-        text=resp.content[0].text.strip(),
+        text="\n".join(texts).strip(),
         input_tokens=resp.usage.input_tokens,
         output_tokens=resp.usage.output_tokens,
         model=model,
@@ -251,6 +288,7 @@ async def complete(cfg: LLMConfig, *, role: str, system: str, user: str, max_tok
     cost against that, not against the model you asked for.
     """
     errors: list[str] = []
+    refusals: list[ModelRefused] = []
     attempts = [(cfg.provider, cfg.model_for(role))]
     fb = cfg.fallback_provider
     if cfg.fallback_enabled and fb is not None:
@@ -258,11 +296,14 @@ async def complete(cfg: LLMConfig, *, role: str, system: str, user: str, max_tok
 
     for provider, model in attempts:
         try:
-            return await _DISPATCH[provider](cfg, model, system, user, max_tokens)
+            out = await _DISPATCH[provider](cfg, model, system, user, max_tokens)
+            return replace(out, refusals=tuple(refusals)) if refusals else out
         except Exception as e:  # noqa: BLE001 — any provider error is a fallback trigger
+            if isinstance(e, ModelRefused):
+                refusals.append(e)
             errors.append(f"{provider}/{model}: {type(e).__name__}: {e}")
             logger.warning("redteam LLM call failed on %s/%s: %s", provider, model, e)
 
     raise AllProvidersFailed(
-        f"all providers failed for role={role!r}: " + " | ".join(errors)
+        f"all providers failed for role={role!r}: " + " | ".join(errors), refusals=refusals
     )

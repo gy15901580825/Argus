@@ -99,6 +99,38 @@ async def test_anthropic_path_returns_text_and_token_counts():
 
 
 @pytest.mark.asyncio
+async def test_anthropic_reply_with_no_text_names_the_stop_reason():
+    # Seen live: Sonnet 4.6 returned an empty content list on attack-laden judge
+    # prompts, which used to surface as a bare IndexError.
+    cfg = llm.resolve_config(env={"ANTHROPIC_API_KEY": "sk-ant-x", "REDTEAM_LLM_FALLBACK": "off"})
+    resp = _anthropic_response("")
+    resp.content = []
+    resp.stop_reason = "refusal"
+    client = MagicMock()
+    client.messages.create = AsyncMock(return_value=resp)
+    with patch.object(llm, "_anthropic_client", return_value=client):
+        with pytest.raises(llm.AllProvidersFailed) as exc:
+            await llm.complete(cfg, role="strong", system="s", user="u", max_tokens=50)
+    assert exc.value.refused is True
+    assert "refusal" in str(exc.value)
+    assert "IndexError" not in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_anthropic_text_blocks_are_joined_and_non_text_blocks_skipped():
+    cfg = llm.resolve_config(env={"ANTHROPIC_API_KEY": "sk-ant-x", "REDTEAM_LLM_FALLBACK": "off"})
+    resp = _anthropic_response("first")
+    second, other = MagicMock(), MagicMock(spec=[])
+    second.text = "second"
+    resp.content = [other, resp.content[0], second]
+    client = MagicMock()
+    client.messages.create = AsyncMock(return_value=resp)
+    with patch.object(llm, "_anthropic_client", return_value=client):
+        out = await llm.complete(cfg, role="fast", system="s", user="u", max_tokens=50)
+    assert out.text == "first\nsecond"
+
+
+@pytest.mark.asyncio
 async def test_azure_path_goes_through_litellm_and_maps_token_fields():
     cfg = llm.resolve_config(env={"REDTEAM_MODEL_PROVIDER": "azure"})
     with patch.object(llm, "_acompletion", new=AsyncMock(return_value=_litellm_response("hi", 33, 44))) as m:
@@ -329,3 +361,76 @@ async def test_acompletion_suppresses_litellm_debug_info():
     with patch("litellm.acompletion", new=AsyncMock(return_value=_litellm_response("x"))):
         await llm._acompletion(model="openai/gpt-5.6-luna", messages=[])
     assert litellm.suppress_debug_info is True
+
+
+@pytest.mark.asyncio
+async def test_refusal_with_partial_text_is_still_a_refusal():
+    cfg = llm.resolve_config(env={"ANTHROPIC_API_KEY": "sk-ant-x", "REDTEAM_LLM_FALLBACK": "off"})
+    resp = _anthropic_response("I can't help with")
+    resp.stop_reason = "refusal"
+    client = MagicMock()
+    client.messages.create = AsyncMock(return_value=resp)
+    with patch.object(llm, "_anthropic_client", return_value=client):
+        with pytest.raises(llm.AllProvidersFailed) as exc:
+            await llm.complete(cfg, role="strong", system="s", user="u", max_tokens=50)
+    assert exc.value.refused is True
+    assert [(r.input_tokens, r.output_tokens) for r in exc.value.refusals] == [(100, 20)]
+
+
+@pytest.mark.asyncio
+async def test_no_text_without_refusal_is_not_marked_refused():
+    cfg = llm.resolve_config(env={"ANTHROPIC_API_KEY": "sk-ant-x", "REDTEAM_LLM_FALLBACK": "off"})
+    resp = _anthropic_response("")
+    resp.content = []
+    resp.stop_reason = "max_tokens"
+    client = MagicMock()
+    client.messages.create = AsyncMock(return_value=resp)
+    with patch.object(llm, "_anthropic_client", return_value=client):
+        with pytest.raises(llm.AllProvidersFailed) as exc:
+            await llm.complete(cfg, role="strong", system="s", user="u", max_tokens=50)
+    assert exc.value.refused is False
+    assert exc.value.refusals == []
+
+
+@pytest.mark.asyncio
+async def test_refusal_then_fallback_error_is_still_marked_refused():
+    # The live case: Sonnet refused, then the Azure fallback errored (not configured).
+    cfg = llm.resolve_config(env={"ANTHROPIC_API_KEY": "sk-ant-x"})
+    resp = _anthropic_response("")
+    resp.content = []
+    resp.stop_reason = "refusal"
+    client = MagicMock()
+    client.messages.create = AsyncMock(return_value=resp)
+    with patch.object(llm, "_anthropic_client", return_value=client), \
+         patch.object(llm, "_acompletion", AsyncMock(side_effect=RuntimeError("no endpoint"))):
+        with pytest.raises(llm.AllProvidersFailed) as exc:
+            await llm.complete(cfg, role="strong", system="s", user="u", max_tokens=50)
+    assert exc.value.refused is True
+    assert "no endpoint" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_refusal_before_a_successful_fallback_is_carried_on_the_completion():
+    # The refused call is billed even though the fallback answered.
+    cfg = llm.resolve_config(env={"ANTHROPIC_API_KEY": "sk-ant-x"})
+    resp = _anthropic_response("")
+    resp.content = []
+    resp.stop_reason = "refusal"
+    client = MagicMock()
+    client.messages.create = AsyncMock(return_value=resp)
+    with patch.object(llm, "_anthropic_client", return_value=client), \
+         patch.object(llm, "_acompletion", AsyncMock(return_value=_litellm_response("ok", 7, 3))):
+        out = await llm.complete(cfg, role="strong", system="s", user="u", max_tokens=50)
+    assert out.text == "ok"
+    assert [(r.model, r.input_tokens, r.output_tokens) for r in out.refusals] == [("claude-sonnet-4-6", 100, 20)]
+
+
+def test_record_refusals_meters_each_refused_call():
+    from argus.cost_meter import CostMeter
+
+    meter, baseline = CostMeter(daily_cap_usd=10.0), CostMeter(daily_cap_usd=10.0)
+    r = llm.ModelRefused("x", model="claude-sonnet-4-6", input_tokens=1000, output_tokens=0)
+    llm.record_refusals(meter, [r, r])
+    baseline.record(model="claude-sonnet-4-6", input_tokens=2000, output_tokens=0)
+    assert meter.spent_today() == pytest.approx(baseline.spent_today())
+    llm.record_refusals(None, [r])  # no meter configured: nothing to do

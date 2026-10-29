@@ -15,7 +15,7 @@ from argus.mcp_scan.models import Candidate
 logger = logging.getLogger(__name__)
 
 JUDGE_MAX_TOKENS = 400  # what Judge._call asks for
-# Judge._call's fixed framing (system header, output contract, user headings) is under 700 characters.
+# Judge._call's fixed framing (system header, untrusted notice, output contract, user headings) is about 830 characters.
 _PROMPT_FRAME_CHARS = 1000
 CAP_REASON = "not judged: cost cap"
 ERROR_REASON = "not judged: judge reply unusable"
@@ -90,7 +90,8 @@ class JudgeGate:
     async def _judge_one(self, judge: Judge, meter: CostMeter, cand: Candidate,
                          mask: Callable[[str], str]) -> JudgeOutcome:
         masked = mask(cand.text)
-        attack = mask(f"{cand.source} of MCP tool {cand.tool}")
+        # The tool name is server-controlled, so it stays out of the trusted attack-prompt slot.
+        attack = mask(f"{cand.source} of an MCP tool")
         chars = len(self.rubric_text) + _PROMPT_FRAME_CHARS + len(cand.probe_id) + len(attack) + len(masked)
         if meter.spent_in_current_run() + call_estimate_usd(self.config, chars) > self.per_run_cap_usd:
             return JudgeOutcome(cand, "cap", reasoning=CAP_REASON)

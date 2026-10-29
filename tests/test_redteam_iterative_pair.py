@@ -68,3 +68,41 @@ async def test_pair_attacker_llm_records_to_cost_meter(monkeypatch):
                 assert meter.spent_in_current_run() > 0
     finally:
         iterative_pair.set_cost_meter(None)  # reset to avoid test pollution
+
+
+@pytest.mark.asyncio
+async def test_attacker_refusal_is_metered_before_the_error_propagates():
+    from unittest.mock import AsyncMock, patch
+    from argus import iterative_pair, llm
+    from argus.cost_meter import CostMeter
+
+    meter = CostMeter(daily_cap_usd=10.0)
+    refused = llm.ModelRefused("x", model="claude-haiku-4-5-20251001", input_tokens=500, output_tokens=0)
+    old = iterative_pair._cost_meter
+    iterative_pair._cost_meter = meter
+    try:
+        with patch.object(llm, "complete", AsyncMock(side_effect=llm.AllProvidersFailed("all failed", refusals=[refused]))):
+            with pytest.raises(llm.AllProvidersFailed):
+                await iterative_pair._call_attacker_llm("s", "u")
+    finally:
+        iterative_pair._cost_meter = old
+    assert meter.spent_today() > 0
+
+
+@pytest.mark.asyncio
+async def test_attacker_refusal_before_a_successful_fallback_is_metered():
+    from unittest.mock import AsyncMock, patch
+    from argus import iterative_pair, llm
+    from argus.cost_meter import CostMeter
+
+    meter = CostMeter(daily_cap_usd=10.0)
+    refused = llm.ModelRefused("x", model="claude-haiku-4-5-20251001", input_tokens=500, output_tokens=0)
+    ok = llm.Completion(text="attack", input_tokens=0, output_tokens=0, model="gpt-5.4-mini", refusals=(refused,))
+    old = iterative_pair._cost_meter
+    iterative_pair._cost_meter = meter
+    try:
+        with patch.object(llm, "complete", AsyncMock(return_value=ok)):
+            assert await iterative_pair._call_attacker_llm("s", "u") == "attack"
+    finally:
+        iterative_pair._cost_meter = old
+    assert meter.spent_today() > 0

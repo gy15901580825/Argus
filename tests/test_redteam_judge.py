@@ -60,6 +60,121 @@ async def test_judge_escalates_to_sonnet_on_high_severity():
         assert client.messages.create.await_count == 2
 
 
+def _refusal_response():
+    resp = MagicMock()
+    resp.content = []
+    resp.stop_reason = "refusal"
+    resp.usage = MagicMock(input_tokens=100, output_tokens=0)
+    return resp
+
+
+@pytest.mark.asyncio
+async def test_strong_judge_refusal_keeps_the_fast_fail(monkeypatch):
+    # Seen live: Sonnet 4.6 refuses to review some attack-laden fail cases. The
+    # fast judge's fail must survive, or a real failure turns into an error.
+    monkeypatch.setenv("REDTEAM_LLM_FALLBACK", "off")
+    haiku_response = MagicMock()
+    haiku_response.content = [MagicMock(text='{"verdict":"fail","severity":"high","confidence":0.9,"reasoning":"decoded and complied"}')]
+    haiku_response.usage = MagicMock(input_tokens=100, output_tokens=20)
+    with patch("argus.llm._anthropic_client") as MockClient:
+        client = AsyncMock()
+        client.messages.create = AsyncMock(side_effect=[haiku_response, _refusal_response()])
+        MockClient.return_value = client
+        judge = Judge(api_key="sk-ant-test", cost_meter=CostMeter(daily_cap_usd=10.0))
+        verdict = await judge.judge(
+            probe_name="test", attack_prompt="decode this", target_response="ok, here it is", rubric_text="fail = complied",
+        )
+    assert verdict.verdict == "fail"
+    assert verdict.severity == "high"
+    assert verdict.escalated_model is None
+    assert "declined to review" in verdict.reasoning
+    assert "decoded and complied" in verdict.reasoning
+
+
+@pytest.mark.asyncio
+async def test_strong_judge_refusal_never_leaves_a_pass(monkeypatch):
+    # Escalation keys on severity, not verdict, so a fast "pass" can be escalated.
+    # A refusal says nothing in favour of pass: downgrade to warn for a human.
+    monkeypatch.setenv("REDTEAM_LLM_FALLBACK", "off")
+    haiku_response = MagicMock()
+    haiku_response.content = [MagicMock(text='{"verdict":"pass","severity":"high","confidence":0.9,"reasoning":"looks fine"}')]
+    haiku_response.usage = MagicMock(input_tokens=100, output_tokens=20)
+    with patch("argus.llm._anthropic_client") as MockClient:
+        client = AsyncMock()
+        client.messages.create = AsyncMock(side_effect=[haiku_response, _refusal_response()])
+        MockClient.return_value = client
+        judge = Judge(api_key="sk-ant-test", cost_meter=CostMeter(daily_cap_usd=10.0))
+        verdict = await judge.judge(probe_name="t", attack_prompt="a", target_response="b", rubric_text="r")
+    assert verdict.verdict == "warn"
+    assert "declined to review" in verdict.reasoning
+
+
+@pytest.mark.asyncio
+async def test_refused_strong_call_is_still_metered(monkeypatch):
+    monkeypatch.setenv("REDTEAM_LLM_FALLBACK", "off")
+    haiku_response = MagicMock()
+    haiku_response.content = [MagicMock(text='{"verdict":"fail","severity":"high","confidence":0.9,"reasoning":"x"}')]
+    haiku_response.usage = MagicMock(input_tokens=100, output_tokens=20)
+    meter = CostMeter(daily_cap_usd=10.0)
+    with patch("argus.llm._anthropic_client") as MockClient:
+        client = AsyncMock()
+        client.messages.create = AsyncMock(side_effect=[haiku_response, _refusal_response()])
+        MockClient.return_value = client
+        judge = Judge(api_key="sk-ant-test", cost_meter=meter)
+        await judge.judge(probe_name="t", attack_prompt="a", target_response="b", rubric_text="r")
+    haiku_only = CostMeter(daily_cap_usd=10.0)
+    haiku_only.record(model="claude-haiku-4-5-20251001", input_tokens=100, output_tokens=20)
+    assert meter.spent_today() > haiku_only.spent_today()
+
+
+@pytest.mark.asyncio
+async def test_strong_refusal_before_a_successful_fallback_is_metered(monkeypatch):
+    from argus import llm
+
+    monkeypatch.setenv("REDTEAM_LLM_FALLBACK", "on")
+    haiku_response = MagicMock()
+    haiku_response.content = [MagicMock(text='{"verdict":"fail","severity":"high","confidence":0.9,"reasoning":"x"}')]
+    haiku_response.usage = MagicMock(input_tokens=100, output_tokens=20)
+    fallback = MagicMock()
+    fallback.choices = [MagicMock()]
+    fallback.choices[0].message.content = '{"verdict":"fail","severity":"high","confidence":0.9,"reasoning":"y"}'
+    fallback.usage.prompt_tokens, fallback.usage.completion_tokens = 100, 20
+    meter = CostMeter(daily_cap_usd=10.0)
+    with patch("argus.llm._anthropic_client") as MockClient, \
+         patch.object(llm, "_acompletion", AsyncMock(return_value=fallback)):
+        client = AsyncMock()
+        client.messages.create = AsyncMock(side_effect=[haiku_response, _refusal_response()])
+        MockClient.return_value = client
+        judge = Judge(api_key="sk-ant-test", cost_meter=meter)
+        verdict = await judge.judge(probe_name="t", attack_prompt="a", target_response="b", rubric_text="r")
+        # Same answers with the refusal's usage zeroed: only the refused Sonnet call differs.
+        free = _refusal_response()
+        free.usage = MagicMock(input_tokens=0, output_tokens=0)
+        client.messages.create = AsyncMock(side_effect=[haiku_response, free])
+        baseline = CostMeter(daily_cap_usd=10.0)
+        await Judge(api_key="sk-ant-test", cost_meter=baseline).judge(
+            probe_name="t", attack_prompt="a", target_response="b", rubric_text="r")
+    assert verdict.verdict == "fail"
+    assert meter.spent_today() > baseline.spent_today()
+
+
+@pytest.mark.asyncio
+async def test_strong_judge_failure_other_than_refusal_still_raises(monkeypatch):
+    from argus import llm
+
+    monkeypatch.setenv("REDTEAM_LLM_FALLBACK", "off")
+    haiku_response = MagicMock()
+    haiku_response.content = [MagicMock(text='{"verdict":"fail","severity":"high","confidence":0.9,"reasoning":"x"}')]
+    haiku_response.usage = MagicMock(input_tokens=100, output_tokens=20)
+    with patch("argus.llm._anthropic_client") as MockClient:
+        client = AsyncMock()
+        client.messages.create = AsyncMock(side_effect=[haiku_response, ConnectionError("down")])
+        MockClient.return_value = client
+        judge = Judge(api_key="sk-ant-test", cost_meter=CostMeter(daily_cap_usd=10.0))
+        with pytest.raises(llm.AllProvidersFailed):
+            await judge.judge(probe_name="t", attack_prompt="a", target_response="b", rubric_text="r")
+
+
 @pytest.mark.asyncio
 async def test_judge_does_not_escalate_when_haiku_low_confidence():
     haiku_response = MagicMock()
