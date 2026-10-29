@@ -36,9 +36,9 @@ Tell `argus-probe run` which set via `--probes <list>`, or pass `all` on its own
 | **RAG-augmented agent** | ~60 s | ~$0.08 |
 | **Tool-using agent** | ~75 s | ~$0.10 |
 | **Browser / computer-use agent** | ~90 s | ~$0.15 |
-| **Full sweep** (`--probes all`) | ~3 min | up to $0.50 (a chat target needs `--per-run-cap 2.00`: the pre-run gate budgets one judge call for each of its 518 prompts) |
+| **Full sweep** (`--probes all`) | ~3 min | a chat target needs `--per-run-cap 5.32` with the default Anthropic judge: the pre-run estimate budgets a fast and a strong judge call for each of its 403 judged prompts (2026-10-29 library) |
 
-Cost figures are approximate; they scale with your agent's response length. The `--per-run-cap` flag enforces a hard ceiling — runs that would exceed your cap are rejected *before* any LLM cost is incurred.
+Cost figures are approximate; they scale with your agent's response length. A run whose estimate is above `--per-run-cap` does not start, and with `--local` the run stops when Argus's judge spend reaches the cap.
 
 > Curated probe-id lists for each use case ship with your design-partner welcome email. To enumerate everything currently loaded for your account: `argus-probe list-probes`; `argus-probe list-probes --target argus-target.json` shows only the probes that fit your target.
 

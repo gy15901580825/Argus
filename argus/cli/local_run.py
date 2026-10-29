@@ -23,7 +23,7 @@ class LocalRunResult(NamedTuple):
 
 def run_local_and_render(
     spec: dict, probe_ids: list[str], per_run_cap: float | None, report_format: str,
-    secret_values: Iterable[str] = (), fail_on: str | None = None,
+    secret_values: Iterable[str] = (), fail_on: str | None = None, skip_judged: bool = False,
 ) -> LocalRunResult:
     """Run the probes, print one line per finding, return the rendered report and findings.
 
@@ -39,7 +39,7 @@ def run_local_and_render(
 
     async def _consume() -> None:
         nonlocal coverage
-        async for event in run_local(spec, probe_ids, per_run_cap_usd=per_run_cap):
+        async for event in run_local(spec, probe_ids, per_run_cap_usd=per_run_cap, skip_judged=skip_judged):
             if event.get("type") == "coverage":
                 coverage = event.get("coverage")
                 continue

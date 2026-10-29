@@ -41,8 +41,13 @@ async def run_local(
     mode: str = "static",
     per_run_cap_usd: float | None = None,
     env: Mapping[str, str] | None = None,
+    skip_judged: bool = False,
 ) -> AsyncIterator[dict]:
-    """Yield finding dicts, then one {"type": "coverage", "coverage": dict} event."""
+    """Yield warning events and finding dicts, then one {"type": "coverage", "coverage": dict} event.
+
+    skip_judged: without a judge key, report the probes that need the judge as
+    skipped and run the rest, instead of refusing the run.
+    """
     env = os.environ if env is None else env
 
     # Same credential rule as POST /redteam/run: the configured provider decides
@@ -75,35 +80,53 @@ async def run_local(
     if (unknown := api.unknown_probe_ids(requested)):
         raise LocalRunError(unknown, code="usage")
 
-    # Assertion-backed probes are decided from evidence and never call the judge.
-    # Without a judge key the judged ones are reported as skipped and the rest run.
+    # Assertion-backed probes are decided from evidence and never call the judge, and a
+    # probe the target cannot run is skipped by the runner, so neither needs a key.
     by_id = {p.id: p for p in load_probe_library(api.PROBES_DIR)}
-    judged = requested if mode == "deep" else [pid for pid in requested if not by_id[pid].assertions]
+    fits = set(api.compatible_probe_ids(target_obj))
+    runs = requested if mode == "deep" else [pid for pid in requested if pid in fits]
+    judged = runs if mode == "deep" else [pid for pid in runs if not by_id[pid].assertions]
     skipped: list[dict] = []
+    warnings: list[str] = []
     err = llm.credential_error(cfg) if judged else None
     if err:
-        runnable = [pid for pid in requested if pid not in set(judged)]
-        # Deep mode needs the attacker LLM for every probe; an all-skipped run would exit 0 untested.
-        if mode == "deep" or not runnable:
-            n = len(requested)
-            head = "the selected probe needs" if n == 1 else f"all {n} selected probes need"
-            raise LocalRunError(f"{head} an LLM judge: {err}", code="config")
-        reason = f"{NO_JUDGE_KEY}: {cfg.missing_credential()} is not set; this probe needs an LLM judge"
+        key = cfg.missing_credential()
+        n, m = len(judged), len(runs)
+        # Without --skip-judged a missing key refuses the run: skipping silently would let
+        # a CI gate pass on a fraction of the probes. Deep mode needs the attacker LLM too.
+        if mode == "deep" or not skip_judged or n == m:
+            if mode != "deep" and n < m:
+                hint = (f"Set a key, or pass --skip-judged to run only the {m - n} "
+                        f"probe{'' if m - n == 1 else 's'} decided by deterministic checks.")
+            elif skip_judged and mode != "deep":
+                hint = "Set a key; --skip-judged would leave nothing to run."
+            else:
+                hint = "Set a key."
+            raise LocalRunError(f"{n} of {m} selected probes need an LLM judge: {key} is not set. "
+                                f"{hint} {_KEY_HELP}", code="config")
+        reason = f"{NO_JUDGE_KEY}: {key} is not set; skipped by --skip-judged"
         skipped = [api.finding_dict(skipped_finding(by_id[pid], reason)) for pid in judged]
-        requested, judged = runnable, []
+        requested = [pid for pid in requested if pid not in set(judged)]
+        judged = []
+    elif skip_judged and cfg.missing_credential() is None:
+        warnings.append("--skip-judged has no effect: a judge key is set, so every probe runs.")
     req = req.model_copy(update={"probe_ids": requested})
 
     try:
         api._COST_METER.check_or_abort_pre_run(
             probe_ids=requested,
             target_kind=api._resolve_target_kind(target),
-            total_exchanges=api._judged_exchanges(req, requested),
+            # A probe the runner will skip for this target sends nothing and calls no judge.
+            total_exchanges=api._judged_exchanges(
+                req, requested if mode == "deep" else [pid for pid in requested if pid in fits]),
             deep=mode == "deep",
             per_run_cap_override=per_run_cap_usd,
         )
     except CostExceededError as e:
         raise LocalRunError(_cost_message(e), code="cost") from e
 
+    for message in warnings:
+        yield {"type": "warning", "message": message}
     if judged and cfg.provider == llm.PROVIDER_LITELLM:
         yield {
             "type": "warning",
@@ -120,16 +143,19 @@ async def run_local(
         yield finding
     probes = api._run_probes(req, anthropic_api_key)
     try:
-        while True:
-            # browser_use targets serve their trap page from this process. The flag is
-            # set per step so it never stays set in the caller across our yield.
-            with local_browser_mode():
-                try:
-                    finding = await probes.__anext__()
-                except StopAsyncIteration:
-                    break
-            emitted.append(finding)
-            yield finding
+        # The per-run cap holds during the run too: record() refuses the judge or attacker
+        # call that would take this run's spend past it (issue #15).
+        with api._COST_METER.run_scope("local", deep=mode == "deep", per_run_cap_usd=per_run_cap_usd):
+            while True:
+                # browser_use targets serve their trap page from this process. The flag is
+                # set per step so it never stays set in the caller across our yield.
+                with local_browser_mode():
+                    try:
+                        finding = await probes.__anext__()
+                    except StopAsyncIteration:
+                        break
+                emitted.append(finding)
+                yield finding
     except CostExceededError as e:
         # Raised by cost_meter.record() once the run is underway. Other mid-run
         # exceptions propagate unchanged for the CLI to report.
@@ -144,8 +170,12 @@ async def run_local(
     }
 
 
+_KEY_HELP = ("Judge keys: ANTHROPIC_API_KEY or OPENAI_API_KEY, or set REDTEAM_MODEL_PROVIDER "
+             "to azure or litellm (see the README).")
+
+
 def _cost_message(e: CostExceededError) -> str:
-    """The meter's reason, plus the --per-run-cap value that would let the run start."""
+    """The meter's reason, plus a --per-run-cap at or above the estimate."""
     estimate = getattr(e, "estimated_usd", None)
     if estimate is None:
         return str(e)

@@ -219,6 +219,11 @@ def skipped_finding(probe, reasoning: str) -> Finding:
     )
 
 
+def aborted_finding(probe, reasoning: str) -> Finding:
+    """The probe that was running when the cost cap stopped the run."""
+    return replace(skipped_finding(probe, reasoning), verdict=VERDICT_ABORTED)
+
+
 class Runner:
     def __init__(self, target, judge, rubrics_dir: Path) -> None:
         self._target = target

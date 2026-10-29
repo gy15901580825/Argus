@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 from argus import llm
 from argus.coverage import build_coverage
-from argus.cost_meter import CostMeter
+from argus.cost_meter import CostExceededError, CostMeter
 from argus.judge import Judge
 from argus.probe import load_probe_library
 from argus.persona_strategy import (
@@ -30,7 +30,7 @@ from argus.persona_strategy import (
     build_deep_probes,
 )
 from argus.persona_loader import default_personas, default_strategies
-from argus.runner import Runner
+from argus.runner import Runner, aborted_finding
 from argus.suites import derive_suites
 from argus.targets import build_target
 
@@ -73,13 +73,16 @@ def _resolve_target_kind(target: Any) -> str:
 def compatible_probe_ids(target_obj: Any) -> list[str]:
     """Library probes this built target can run; the runner would skip the rest.
 
-    Same rule as Runner.run_probe: no declared classes on either side means compatible.
-    Reads the instance, because testbed_agent sets its classes per spec.
+    Same two skip rules as Runner.run_probe: the target class (no declared classes
+    on either side means compatible) and conversation history. Reads the instance,
+    because testbed_agent sets its classes per spec and its history per inner target.
     """
     classes = getattr(target_obj, "compatible_classes", frozenset())
+    history = getattr(target_obj, "supports_history", False)
     return [
         p.id for p in load_probe_library(PROBES_DIR)
-        if not classes or not p.target_class or set(p.target_class) & classes
+        if (not classes or not p.target_class or set(p.target_class) & classes)
+        and (history or not getattr(p, "conversation", False))
     ]
 
 
@@ -224,8 +227,13 @@ async def _run_probes(req: RunRequest, anthropic_api_key: str) -> AsyncIterator[
         to_run = selected
 
     for probe in to_run:
-        async for finding in runner.run_probe(probe):
-            yield finding_dict(finding)
+        try:
+            async for finding in runner.run_probe(probe):
+                yield finding_dict(finding)
+        except CostExceededError as e:
+            # The cap stops the run; name the probe it stopped in, then let the caller see why.
+            yield finding_dict(aborted_finding(probe, f"cost cap reached: {e}"))
+            raise
 
 
 def finding_dict(finding) -> dict:

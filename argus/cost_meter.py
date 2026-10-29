@@ -130,6 +130,7 @@ class CostMeter:
         self._spent_today_deep = 0.0
         self._spent_in_run: Optional[float] = None  # None when no run is active
         self._run_is_deep = False
+        self._run_cap: Optional[float] = None
         self._last_alert_ts = 0.0
 
     @property
@@ -169,7 +170,11 @@ class CostMeter:
         return self._spent_in_run or 0.0
 
     @contextlib.contextmanager
-    def run_scope(self, run_id: str, deep: bool = False):
+    def run_scope(self, run_id: str, deep: bool = False, per_run_cap_usd: float | None = None):
+        """Meter one run: record() refuses a call that would take its spend past the cap.
+
+        per_run_cap_usd overrides the applicable per-run cap for this run (the CLI's --per-run-cap).
+        """
         if self._spent_in_run is not None:
             raise RuntimeError(f"run_scope is non-reentrant; another run is active")
         if deep and not self.can_start_deep_run():
@@ -181,11 +186,13 @@ class CostMeter:
             )
         self._spent_in_run = 0.0
         self._run_is_deep = deep
+        self._run_cap = per_run_cap_usd
         try:
             yield
         finally:
             self._spent_in_run = None
             self._run_is_deep = False
+            self._run_cap = None
 
     def record(self, model: str, input_tokens: int, output_tokens: int) -> float:
         self._maybe_reset_day()
@@ -200,6 +207,8 @@ class CostMeter:
         # record cannot push the per-run total above the applicable cap.
         if self._spent_in_run is not None:
             cap = self.deep_per_run_cap_usd if self._run_is_deep else self.per_run_cap_usd
+            if self._run_cap is not None:
+                cap = self._run_cap
             label = "deep per_run" if self._run_is_deep else "per_run"
             if self._spent_in_run + cost > cap:
                 raise CostExceededError(
@@ -257,25 +266,33 @@ class CostMeter:
         LLM that drives every deep round.
         """
         self._maybe_reset_day()
-        # Only Argus's own LLM calls cost Argus money: one judge call per judged
-        # exchange, plus the attacker in deep mode. Sends to the target are the
-        # target's bill. Strong-model escalation is conditional and not counted.
-        calls_per_round = 2 if deep else 1
-        # Char-based heuristic with safety margin
+        # Only Argus's own LLM calls are counted: per judged exchange a fast judge
+        # call and, as if every verdict escalated, a strong one; deep mode adds the
+        # attacker (fast role). Sends to the target are the target's bill.
         est_input_tokens = (_AVG_PROMPT_CHARS / _CHARS_PER_TOKEN) * _SAFETY_MARGIN
         est_output_tokens = (_AVG_RESPONSE_CHARS / _CHARS_PER_TOKEN) * _SAFETY_MARGIN
-        # Price at the configured fast judge model; a bad provider setting falls back
-        # to Haiku here and is reported by the credential check.
+
+        def _call_usd(prices: dict) -> float:
+            return (est_input_tokens / 1_000_000) * prices["input"] + (
+                est_output_tokens / 1_000_000
+            ) * prices["output"]
+
+        # Price at the configured judge models; a bad provider setting falls back
+        # to the Anthropic defaults here and is reported by the credential check.
         from argus import llm
         try:
-            prices = _price_for(llm.resolve_config().fast_model)
+            cfg = llm.resolve_config()
+            fast, strong = _price_for(cfg.fast_model), _price_for(cfg.strong_model)
+            escalates = cfg.escalation_is_meaningful
         except ValueError:
-            prices = _PRICES_PER_M_TOKENS["claude-haiku-4-5-20251001"]
-        cost_per_call = (est_input_tokens / 1_000_000) * prices["input"] + (
-            est_output_tokens / 1_000_000
-        ) * prices["output"]
+            fast = _PRICES_PER_M_TOKENS["claude-haiku-4-5-20251001"]
+            strong = _PRICES_PER_M_TOKENS["claude-sonnet-4-6"]
+            escalates = True
+        per_exchange = _call_usd(fast) + (_call_usd(strong) if escalates else 0.0)
+        if deep:
+            per_exchange += _call_usd(fast)
         exchanges = total_exchanges if total_exchanges is not None else len(probe_ids) * iterative_rounds
-        estimated = cost_per_call * exchanges * calls_per_round
+        estimated = per_exchange * exchanges
 
         default_cap = self.deep_per_run_cap_usd if deep else self.per_run_cap_usd
         cap = per_run_cap_override if per_run_cap_override is not None else default_cap

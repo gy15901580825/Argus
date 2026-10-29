@@ -297,7 +297,8 @@ def test_all_on_the_server_selects_only_compatible_probes(monkeypatch, route):
     assert sorted(captured["probe_ids"]) == sorted(
         p.id for p in load_probe_library(PROBES_DIR) if "mcp_agent" in p.target_class)
     assert 0 < len(captured["probe_ids"]) < len(load_probe_library(PROBES_DIR))
-    assert captured["total_exchanges"] == 0  # every MCP probe is assertion-judged
+    mcp = [p for p in load_probe_library(PROBES_DIR) if "mcp_agent" in p.target_class]
+    assert captured["total_exchanges"] == sum(len(p.prompts) for p in mcp if not p.assertions)
 
 
 def test_per_run_cap_usd_is_honored_at_preflight(monkeypatch):

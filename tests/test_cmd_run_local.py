@@ -45,7 +45,7 @@ def _install_fake_engine(monkeypatch, run_local):
     monkeypatch.setitem(sys.modules, "argus.local", local)
 
 
-async def _ok_run(target, probe_ids, *, mode="static", per_run_cap_usd=None, env=None):
+async def _ok_run(target, probe_ids, *, mode="static", per_run_cap_usd=None, env=None, skip_judged=False):
     yield FAIL_FINDING
     yield {"type": "coverage", "coverage": FAKE_COVERAGE}
 
@@ -86,7 +86,7 @@ def test_local_fail_on_exits_3(tmp_path, monkeypatch):
 def test_local_passes_probes_and_cap_through(tmp_path, monkeypatch):
     seen = {}
 
-    async def _spy(target, probe_ids, *, mode="static", per_run_cap_usd=None, env=None):
+    async def _spy(target, probe_ids, *, mode="static", per_run_cap_usd=None, env=None, skip_judged=False):
         seen.update(target=target, probe_ids=probe_ids, cap=per_run_cap_usd)
         yield {"type": "coverage", "coverage": {}}
 
@@ -218,7 +218,7 @@ def test_local_missing_transitive_dependency_is_not_the_install_hint(tmp_path, m
 
 
 def test_warning_event_goes_to_stderr_not_report(tmp_path, monkeypatch):
-    async def _warn(target, probe_ids, *, mode="static", per_run_cap_usd=None, env=None):
+    async def _warn(target, probe_ids, *, mode="static", per_run_cap_usd=None, env=None, skip_judged=False):
         yield {"type": "warning", "message": "Judge model x is small."}
         yield FAIL_FINDING
         yield {"type": "coverage", "coverage": FAKE_COVERAGE}
@@ -516,7 +516,7 @@ def test_run_exit_code_precedence():
 
 # --- no judge key: skipped, not incomplete -------------------------------------------------------
 
-_NO_KEY = "no judge key: ANTHROPIC_API_KEY is not set; this probe needs an LLM judge"
+_NO_KEY = "no judge key: ANTHROPIC_API_KEY is not set; skipped by --skip-judged"
 _SKIP_LINE = ("2 of 3 probes skipped: no judge key. To run them, set ANTHROPIC_API_KEY or OPENAI_API_KEY, "
               "or set REDTEAM_MODEL_PROVIDER to azure or litellm.")
 
@@ -560,7 +560,44 @@ def test_other_skips_print_no_judge_key_line(tmp_path, monkeypatch):
     assert "notes" not in json.loads(out.read_text())
 
 
-def test_local_help_no_longer_says_a_key_is_required():
+def test_skip_note_reaches_every_report_format(tmp_path, monkeypatch):
+    for fmt, name in (("sarif", "r.sarif"), ("junit", "r.xml"), ("html", "r.html")):
+        _install_fake_engine(monkeypatch, _no_key_engine())
+        out = tmp_path / name
+        result = _invoke(tmp_path, "--format", fmt, "--out", str(out))
+        assert result.exit_code == 0, (fmt, result.output)
+        text = out.read_text()
+        if fmt == "sarif":
+            inv = json.loads(text)["runs"][0]["invocations"][0]
+            assert inv["toolExecutionNotifications"] == [{"level": "note", "message": {"text": _SKIP_LINE}}]
+            assert inv["executionSuccessful"] is True
+        else:
+            assert _SKIP_LINE in text, fmt
+    assert "This run is incomplete." not in (tmp_path / "r.html").read_text()
+
+
+def test_skip_judged_reaches_the_engine_only_when_passed(tmp_path, monkeypatch):
+    seen = []
+
+    async def _spy(target, probe_ids, **kw):
+        seen.append(kw["skip_judged"])
+        yield {"type": "coverage", "coverage": FAKE_COVERAGE}
+
+    _install_fake_engine(monkeypatch, _spy)
+    _invoke(tmp_path, "--out", str(tmp_path / "a.html"))
+    _invoke(tmp_path, "--out", str(tmp_path / "b.html"), "--skip-judged")
+    assert seen == [False, True]
+
+
+def test_skip_judged_needs_local(tmp_path):
+    result = CliRunner().invoke(cmd_run, ["--target", _target(tmp_path), "--probes", "p", "--out",
+                                          str(tmp_path / "r.html"), "--api-url", "https://x", "--token", "t",
+                                          "--skip-judged"])
+    assert result.exit_code == 2
+    assert "--skip-judged needs --local" in result.output
+
+
+def test_local_help_names_skip_judged():
     result = CliRunner().invoke(cmd_run, ["--help"])
     assert "Needs a judge API key" not in result.output
-    assert "skipped" in result.output
+    assert "--skip-judged" in result.output

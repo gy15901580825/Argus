@@ -88,9 +88,9 @@ In local mode, add `--local` to the same command and drop the server variables.
 
 The CLI submits the run to that server, polls for completion (typically ~10–30 s), then writes the chosen format to disk.
 
-Add `--per-run-cap 0.50` to enforce a hard cost ceiling (checked before any LLM call in both modes; an over-cap run exits with code 4).
+Add `--per-run-cap 0.50` to limit what Argus spends on judge calls. A run whose estimate is above the cap does not start, in both modes; with `--local` the run also stops when spend reaches the cap. Either way the command exits 4.
 
-The pre-run estimate counts one judge call for every prompt of every selected probe that needs the judge (and, in deep mode, which the CLI and API do not expose yet, every persona × strategy thread at its full round budget). Requests to your agent are not counted. `--probes all` against a chat target is estimated at about $1.71 with the default Anthropic judge, so it needs `--per-run-cap 2.00`; when a run is over the cap, the error names the value that would fit.
+The pre-run estimate counts a fast and a strong judge call for every prompt of every selected probe that needs the judge (and, in deep mode, which the CLI and API do not expose yet, every persona × strategy thread at its full round budget). Requests to your agent are not counted. On 2026-10-29, `--probes all` against a chat target was estimated at $5.32 with the default Anthropic judge, so it needs `--per-run-cap 5.32`; when a run is over the cap, the error names a cap at or above the estimate. Most verdicts do not escalate to the strong model, so a run usually costs well under its estimate.
 
 ## 6. Read the report
 
@@ -113,7 +113,7 @@ argus-probe run --target argus-target.json --probes owasp_07_system_prompt_leaka
 | Use case | `--probes` value |
 |---|---|
 | Quick smoke (1 probe, 3 prompts) | `owasp_07_system_prompt_leakage` |
-| Full sweep: every probe that fits the target kind (a chat target needs `--per-run-cap 2.00`, see step 5) | `all` |
+| Full sweep: every probe that fits the target kind (a chat target needs `--per-run-cap 5.32`, see step 5) | `all` |
 
 See [Threat coverage overview](./probe-id-cheatsheet.md) for the categories the library covers and recommended use-case → probe-set mappings.
 
@@ -135,7 +135,7 @@ argus-probe scan-skill --sample key-grab
   - `pass` — agent resisted the attack
   - `fail` — agent fell for the attack (look at `severity`: critical/high/medium/low)
   - `blocked_by_target` — the target answered the attack prompt with a 4xx such as a content filter's 400 or 403, or its content filter withheld the reply; counted as blocked
-  - `skipped` — probe target_class incompatible with adapter, or, in local mode, the probe needs the judge and no judge key is set (no LLM cost incurred; the exit code does not change)
+  - `skipped` — probe target_class incompatible with adapter, or, in local mode with `--skip-judged`, the probe needs the judge and no judge key is set (no LLM cost incurred; the exit code does not change)
   - `error` — the probe reached no verdict: 401/404/422/429, 5xx, timeout, connection error, an empty reply or a missing rubric. The run continues, the report is marked incomplete, and `run` exits 1
   - `aborted_cost` — an iterative attack (TAP, PAIR or deep mode) stopped at the cost cap; `run` exits 4
 
@@ -160,7 +160,8 @@ Each command's `--help` lists its flags. The most common flags on `run`:
 | `--format` | `html` / `sarif` / `junit` |
 | `--out` | output report file path |
 | `--per-run-cap` | USD cap; over-budget runs exit with code 4 (default $0.50) |
-| `--local` | run probes in this process, no `--api-url`/`--token`; without a judge key, judged probes are skipped |
+| `--local` | run probes in this process, no `--api-url`/`--token`; needs a judge key when a selected probe is judged |
+| `--skip-judged` | with `--local` and no judge key, skip the judged probes and run the rest |
 | `--fail-on` | `info` / `low` / `medium` / `high` / `critical`; exit 3 when a failing finding is at or above it |
 | `--token` | API token (or set `ARGUS_API_TOKEN`) |
 | `--max-wait` | how long to poll for run completion (default 1800 s) |
