@@ -126,7 +126,8 @@ _VALUE_FLAGS = {
 _PROSE_WORDS = frozenset(
     "might may can could will would should must fails fail takes take on in at while is are was "
     "a an requires require needs need installs gives shows error permission sudo linux macos "
-    "windows because since usually often sometimes also not no does doesn't".split()
+    "windows because since usually often sometimes also not no does doesn't "
+    "first these those them all everything above below following before after".split()
 )
 _PROSE_STOP = frozenset("and or then to you which that for with the so but if when it is are".split())
 # `.js` is absent on purpose: chart.js and highlight.js are real npm packages.

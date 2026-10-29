@@ -263,3 +263,14 @@ def test_a_fenced_line_with_a_prose_word_is_still_a_command():
 
 def test_a_ruby_file_header_never_hides_a_bare_require():
     assert pc.extract_packages("ruby", "# helpers.rb\nrequire 'helpers'") == {"helpers"}
+
+
+@pytest.mark.parametrize("language,text", [
+    ("python", "pip install ghostpkg first"),
+    ("python", "pip install these packages"),
+    ("python", "pip install them all"),
+    ("javascript", "npm install everything listed above"),
+    ("ruby", "gem install rails before running the app"),
+])
+def test_plain_prose_after_an_install_verb_is_not_a_package_list(language, text):
+    assert pc.extract_packages(language, text) == set()

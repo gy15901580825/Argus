@@ -83,7 +83,7 @@ async def test_deep_mode_leakreplay_thread_is_judged_on_the_reply_not_errored(tm
     base = BY_ID["garak_leakreplay_guardiancloze"]
     persona, strategy = load_personas(PERSONAS_DIR)[0], load_strategies(STRATEGIES_DIR)[0]
     deep = PersonaStrategyProbe(base=base, persona=persona, strategy=strategy)
-    runner = Runner(_TextTarget("I refuse."), _NoJudge(), tmp_path)
+    runner = Runner(_TextTarget("I refuse."), _NoJudge(), RUBRICS_DIR)
     clean = await runner._assertion_finding(deep, "attacker prompt", "I refuse.", 1.0, None)
     leaked = await runner._assertion_finding(deep, "attacker prompt", "It is Turkey.", 1.0, None)
     assert clean.verdict == "pass"
@@ -135,7 +135,7 @@ class _NoJudge:
 
 
 async def _run(probe, target, tmp_path):
-    return [f async for f in Runner(target, _NoJudge(), tmp_path).run_probe(probe)]
+    return [f async for f in Runner(target, _NoJudge(), RUBRICS_DIR).run_probe(probe)]
 
 
 async def test_leakreplay_probe_end_to_end_fails_on_replay_and_passes_otherwise(tmp_path):
@@ -295,7 +295,7 @@ async def test_generator_name_is_rendered_before_sending(tmp_path, model, expect
             from argus.judge import Verdict
             return Verdict("pass", "info", 1.0, "r", "m", None)
 
-    findings = [f async for f in Runner(target, Judge(), tmp_path).run_probe(probe)]
+    findings = [f async for f in Runner(target, Judge(), RUBRICS_DIR).run_probe(probe)]
     assert target.sent and not any("{generator.name}" in s for s in target.sent)
     assert all(expected in s for s in target.sent)
     assert not any("{generator.name}" in f.attack_prompt for f in findings)
@@ -371,7 +371,7 @@ async def test_report_prompt_has_the_testbed_url_filled_in(tmp_path):
             return {"interaction_count": 1, "tool_calls": [], "shadow_tool_names": []}
 
     target = Target()
-    findings = [f async for f in Runner(target, _NoJudge(), tmp_path).run_probe(probe)]
+    findings = [f async for f in Runner(target, _NoJudge(), RUBRICS_DIR).run_probe(probe)]
     assert findings and all("{mcp_url}" not in f.attack_prompt for f in findings)
     assert all("http://tb/s/s1/mcp" in f.attack_prompt for f in findings)
     assert [f.attack_prompt for f in findings] == target.sent
@@ -442,7 +442,7 @@ async def test_deep_mode_attacker_is_not_shown_the_generator_placeholder(tmp_pat
 
     deep = PersonaStrategyProbe(base=BY_ID["garak_dan_dan_6_0"], persona=load_personas(PERSONAS_DIR)[0],
                                 strategy=load_strategies(STRATEGIES_DIR)[0])
-    runner = Runner(_TextTarget("x", model="gpt-4o-mini"), _RecordingJudge(), tmp_path)
+    runner = Runner(_TextTarget("x", model="gpt-4o-mini"), _RecordingJudge(), RUBRICS_DIR)
     async for _ in runner.run_probe(deep):
         break
     assert seen and "{generator.name}" not in seen[0] and "gpt-4o-mini" in seen[0]
@@ -455,7 +455,7 @@ async def test_deep_leakreplay_checks_only_the_passage_the_attacker_was_given(tm
     base = BY_ID["garak_leakreplay_pottercloze"]  # expected: Gringotts, dragon, Leaky, ...
     deep = PersonaStrategyProbe(base=base, persona=load_personas(PERSONAS_DIR)[0],
                                 strategy=load_strategies(STRATEGIES_DIR)[0])
-    runner = Runner(_TextTarget("x"), _NoJudge(), tmp_path)
+    runner = Runner(_TextTarget("x"), _NoJudge(), RUBRICS_DIR)
     other = await runner._assertion_finding(deep, "p", "A dragon guards the vault.", 1.0, None)
     own = await runner._assertion_finding(deep, "p", "The bank is Gringotts.", 1.0, None)
     assert other.verdict == "pass"
