@@ -464,31 +464,122 @@ def _spend(usd_tokens: int):
     return lambda: api._COST_METER.record("claude-haiku-4-5-20251001", 0, usd_tokens)
 
 
+def _scope_closed() -> bool:
+    return api._COST_METER._spent_in_run is None
+
+
 async def test_spend_past_the_per_run_cap_stops_the_run(library):
     with patch("argus.api._run_probes", _spy_run({}, then=_spend(10_000))):  # $0.05
         with pytest.raises(LocalRunError) as exc:
             await _collect(run_local(TARGET, ["chat_a1"], per_run_cap_usd=0.01, env=KEY))
     assert exc.value.code == "cost"
-    assert str(exc.value) == "per_run cap $0.01 would be exceeded by this call"
-    # The scope closes with the run, so the next run starts clean.
-    assert api._COST_METER.spent_in_current_run() == 0.0
+    assert str(exc.value) == "per_run cap $0.01 exceeded: this run has spent $0.0500"
+    assert _scope_closed()
 
 
 async def test_spend_under_the_per_run_cap_lets_the_run_finish(library):
     with patch("argus.api._run_probes", _spy_run({}, then=_spend(10_000))):
         events = await _collect(run_local(TARGET, ["chat_a1"], per_run_cap_usd=1.00, env=KEY))
     assert events[-1]["type"] == "coverage"
+    assert _scope_closed()
+
+
+async def test_run_spend_carries_across_steps(library):
+    # Three steps of $0.03 each: the third takes the run to $0.09, past a $0.08 cap.
+    async def _three(req, key):
+        for _ in range(3):
+            _spend(6_000)()
+            yield FAKE_FINDING
+
+    with patch("argus.api._run_probes", _three):
+        with pytest.raises(LocalRunError, match=r"this run has spent \$0\.0900"):
+            await _collect(run_local(TARGET, ["chat_a1"], per_run_cap_usd=0.08, env=KEY))
+
+
+async def test_a_caller_that_stops_early_leaves_no_run_scope_open(library):
+    async def _two(req, key):
+        yield FAKE_FINDING
+        yield FAKE_FINDING
+
+    with patch("argus.api._run_probes", _two):
+        gen = run_local(TARGET, ["chat_a1"], env=KEY)
+        async for event in gen:
+            break  # no aclose(); `gen` stays referenced, so nothing finalizes it
+        assert event == FAKE_FINDING
+        assert _scope_closed()
+        events = await _collect(run_local(TARGET, ["chat_a1"], env=KEY))
+    assert events[-1]["type"] == "coverage"
+    await gen.aclose()
+
+
+class _MeteredRunner:
+    """Pays $0.05 per probe through the real meter; reports the cap the way
+    Runner._run_iterative does: an aborted_cost finding, no exception."""
+
+    calls: list[str] = []
+
+    def __init__(self, **kw):
+        pass
+
+    async def run_probe(self, probe):
+        from argus.runner import aborted_finding
+
+        type(self).calls.append(probe.id)
+        try:
+            _spend(10_000)()
+        except CostExceededError as e:
+            yield aborted_finding(probe, f"cost cap hit at round 0: {e}")
+            return
+        yield _pass(probe)
+
+
+def _pass(probe):
+    from argus.runner import skipped_finding
+
+    return replace(skipped_finding(probe, "ok"), verdict="pass")
+
+
+async def test_after_an_iterative_cap_hit_no_further_probe_starts(library):
+    _MeteredRunner.calls = []
+    meter = api._COST_METER
+    before = meter.spent_today()
+    with patch("argus.api.Runner", _MeteredRunner):
+        with pytest.raises(LocalRunError) as exc:
+            # $0.05 per probe against a $0.08 cap: the second probe's call crosses it.
+            await _collect(run_local(TARGET, ["chat_j1", "chat_j2", "chat_a1"], per_run_cap_usd=0.08, env=KEY))
+    assert exc.value.code == "cost"
+    assert _MeteredRunner.calls == ["chat_j1", "chat_j2"]  # chat_a1 never started
+    # Exactly the two paid calls, the crossing one included; nothing after it.
+    assert meter.spent_today() - before == pytest.approx(0.10)
+    assert _scope_closed()
+
+
+async def test_run_probes_reports_every_remaining_probe_as_aborted(library):
+    _MeteredRunner.calls = []
+    req = api.RunRequest(target=TARGET, probe_ids=["chat_j1", "chat_j2", "chat_a1"])
+    events = []
+    with patch("argus.api.Runner", _MeteredRunner):
+        with api._COST_METER.run_scope("t", per_run_cap_usd=0.08):
+            with pytest.raises(CostExceededError):
+                async for e in api._run_probes(req, "k"):
+                    events.append(e)
+    assert [(e["probe_id"], e["verdict"]) for e in events] == [
+        ("chat_j1", "pass"), ("chat_j2", "aborted_cost"), ("chat_a1", "aborted_cost")]
+    assert events[2]["reasoning"].startswith("cost cap reached: cost cap hit at round 0: per_run cap $0.08")
 
 
 async def test_run_probes_names_the_probe_the_cap_stopped(library):
     from argus.cost_meter import CostExceededError as _Cap
+
+    started = []
 
     class _Runner:
         def __init__(self, **kw):
             pass
 
         async def run_probe(self, probe):
-            raise _Cap("per_run cap $0.01 would be exceeded by this call")
+            started.append(probe.id)
+            raise _Cap("per_run cap $0.01 exceeded: this run has spent $0.0500")
             yield  # pragma: no cover
 
     req = api.RunRequest(target=TARGET, probe_ids=["chat_j1", "chat_j2"])
@@ -497,5 +588,7 @@ async def test_run_probes_names_the_probe_the_cap_stopped(library):
         with pytest.raises(_Cap):
             async for e in api._run_probes(req, "k"):
                 events.append(e)
-    assert [(e["probe_id"], e["verdict"]) for e in events] == [("chat_j1", "aborted_cost")]
-    assert events[0]["reasoning"] == "cost cap reached: per_run cap $0.01 would be exceeded by this call"
+    assert started == ["chat_j1"]
+    assert [(e["probe_id"], e["verdict"]) for e in events] == [
+        ("chat_j1", "aborted_cost"), ("chat_j2", "aborted_cost")]
+    assert events[0]["reasoning"] == "cost cap reached: per_run cap $0.01 exceeded: this run has spent $0.0500"

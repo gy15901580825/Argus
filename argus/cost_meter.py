@@ -2,7 +2,7 @@
 
 Strategy C semantics (Plan 4):
 - daily_cap_usd: global; > cap rejects all new runs and any further `record` calls
-- per_run_cap_usd: per-run; record() raises CostExceededError when next call would exceed
+- per_run_cap_usd: per-run; record() counts a finished call, then raises CostExceededError once spend is past the cap
 - predictive abort: pre-run estimator refuses runs whose estimated cost > per_run_cap or > daily remaining
 - alert_threshold: at this fraction of daily_cap, fire one email alert; cooldown to avoid flood
 """
@@ -170,10 +170,12 @@ class CostMeter:
         return self._spent_in_run or 0.0
 
     @contextlib.contextmanager
-    def run_scope(self, run_id: str, deep: bool = False, per_run_cap_usd: float | None = None):
-        """Meter one run: record() refuses a call that would take its spend past the cap.
+    def run_scope(self, run_id: str, deep: bool = False, per_run_cap_usd: float | None = None,
+                  spent_usd: float = 0.0):
+        """Meter one run: record() raises once a call takes the run's spend past the cap.
 
         per_run_cap_usd overrides the applicable per-run cap for this run (the CLI's --per-run-cap).
+        spent_usd resumes a run metered in steps, so a scope never has to stay open across a yield.
         """
         if self._spent_in_run is not None:
             raise RuntimeError(f"run_scope is non-reentrant; another run is active")
@@ -184,7 +186,7 @@ class CostMeter:
                 f"is exhausted; ${self.deep_budget_remaining():.2f} remains. "
                 "Static runs are unaffected."
             )
-        self._spent_in_run = 0.0
+        self._spent_in_run = spent_usd
         self._run_is_deep = deep
         self._run_cap = per_run_cap_usd
         try:
@@ -195,36 +197,35 @@ class CostMeter:
             self._run_cap = None
 
     def record(self, model: str, input_tokens: int, output_tokens: int) -> float:
+        """Count one finished call, then raise if it took spend past a cap.
+
+        Callers record after the call has returned, so its cost is real: it is
+        counted even when it crosses a cap, and the error stops the next call.
+        """
         self._maybe_reset_day()
-        if self._spent_today >= self.daily_cap_usd:
-            raise CostExceededError(
-                f"daily cap ${self.daily_cap_usd:.2f} already reached on {self._day}"
-            )
         prices = _price_for(model)
         cost = (input_tokens / 1_000_000) * prices["input"] + (output_tokens / 1_000_000) * prices["output"]
-
-        # Per-run check uses pre-call accounting (lookahead): the next call to
-        # record cannot push the per-run total above the applicable cap.
+        was_over_daily = self._spent_today >= self.daily_cap_usd
+        self._spent_today += cost
+        over: str | None = None
+        if was_over_daily:
+            over = f"daily cap ${self.daily_cap_usd:.2f} already reached on {self._day}"
         if self._spent_in_run is not None:
             cap = self.deep_per_run_cap_usd if self._run_is_deep else self.per_run_cap_usd
             if self._run_cap is not None:
                 cap = self._run_cap
             label = "deep per_run" if self._run_is_deep else "per_run"
-            if self._spent_in_run + cost > cap:
-                raise CostExceededError(
-                    f"{label} cap ${cap:.2f} would be exceeded by this call"
-                )
-            if self._run_is_deep and self._spent_today_deep + cost > self.deep_daily_cap_usd:
-                raise CostExceededError(
-                    f"deep daily budget ${self.deep_daily_cap_usd:.2f} would be exceeded "
-                    "by this call; static runs are unaffected"
-                )
             self._spent_in_run += cost
             if self._run_is_deep:
                 self._spent_today_deep += cost
-
-        self._spent_today += cost
+            if over is None and self._spent_in_run > cap:
+                over = f"{label} cap ${cap:.2f} exceeded: this run has spent ${self._spent_in_run:.4f}"
+            if over is None and self._run_is_deep and self._spent_today_deep > self.deep_daily_cap_usd:
+                over = (f"deep daily budget ${self.deep_daily_cap_usd:.2f} exceeded; "
+                        "static runs are unaffected")
         self._maybe_alert()
+        if over is not None:
+            raise CostExceededError(over)
         return cost
 
     def _maybe_alert(self) -> None:

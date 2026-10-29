@@ -137,7 +137,7 @@ argus-probe scan-skill --sample key-grab
   - `blocked_by_target` — the target answered the attack prompt with a 4xx such as a content filter's 400 or 403, or its content filter withheld the reply; counted as blocked
   - `skipped` — probe target_class incompatible with adapter, or, in local mode with `--skip-judged`, the probe needs the judge and no judge key is set (no LLM cost incurred; the exit code does not change)
   - `error` — the probe reached no verdict: 401/404/422/429, 5xx, timeout, connection error, an empty reply or a missing rubric. The run continues, the report is marked incomplete, and `run` exits 1
-  - `aborted_cost` — an iterative attack (TAP, PAIR or deep mode) stopped at the cost cap; `run` exits 4
+  - `aborted_cost` — the cost cap stopped this probe, or the run hit the cap before it started; `run` exits 4
 
 ## CLI reference
 

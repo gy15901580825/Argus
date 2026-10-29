@@ -142,20 +142,23 @@ async def run_local(
         emitted.append(finding)
         yield finding
     probes = api._run_probes(req, anthropic_api_key)
+    spent = 0.0
     try:
-        # The per-run cap holds during the run too: record() refuses the judge or attacker
-        # call that would take this run's spend past it (issue #15).
-        with api._COST_METER.run_scope("local", deep=mode == "deep", per_run_cap_usd=per_run_cap_usd):
-            while True:
-                # browser_use targets serve their trap page from this process. The flag is
-                # set per step so it never stays set in the caller across our yield.
-                with local_browser_mode():
-                    try:
-                        finding = await probes.__anext__()
-                    except StopAsyncIteration:
-                        break
-                emitted.append(finding)
-                yield finding
+        while True:
+            # browser_use targets serve their trap page from this process, and the per-run
+            # cap holds during the run (issue #15). Both are entered per step, so neither
+            # stays set in the caller across our yield, even if the caller stops iterating.
+            with local_browser_mode(), api._COST_METER.run_scope(
+                "local", deep=mode == "deep", per_run_cap_usd=per_run_cap_usd, spent_usd=spent,
+            ):
+                try:
+                    finding = await probes.__anext__()
+                except StopAsyncIteration:
+                    break
+                finally:
+                    spent = api._COST_METER.spent_in_current_run()
+            emitted.append(finding)
+            yield finding
     except CostExceededError as e:
         # Raised by cost_meter.record() once the run is underway. Other mid-run
         # exceptions propagate unchanged for the CLI to report.

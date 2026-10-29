@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))  # fixture loader shared with the test suite
 
 from argus import llm  # noqa: E402
-from argus.cost_meter import CostExceededError, CostMeter, _price_for, estimate_call_usd  # noqa: E402
+from argus.cost_meter import CostExceededError, CostMeter, estimate_call_usd  # noqa: E402
 from argus.judge import ESCALATION_SEVERITIES, Judge, build_judge_prompts  # noqa: E402
 from rubric_cases import Case, load_all_cases, rubric_text  # noqa: E402
 
@@ -128,31 +128,16 @@ async def _run_case(judge: Judge, c: Case, sem: asyncio.Semaphore, stop: asyncio
     return rec
 
 
-class _BenchMeter(CostMeter):
-    """Also counts the call that trips the cap: the provider already billed it."""
-
-    def __init__(self, **kw) -> None:
-        super().__init__(**kw)
-        self.over_cap_usd = 0.0
-
-    def record(self, model: str, input_tokens: int, output_tokens: int) -> float:
-        try:
-            return super().record(model, input_tokens, output_tokens)
-        except CostExceededError:
-            p = _price_for(model)
-            self.over_cap_usd += (input_tokens * p["input"] + output_tokens * p["output"]) / 1_000_000
-            raise
-
-
 async def run_benchmark(cfg: llm.LLMConfig, cases: list[Case], cap: float, concurrency: int):
     # Infinite daily cap keeps the cost-alert email silent (same as scan-mcp); --per-run-cap is the limit.
-    meter = _BenchMeter(daily_cap_usd=float("inf"), per_run_cap_usd=cap)
+    meter = CostMeter(daily_cap_usd=float("inf"), per_run_cap_usd=cap)
     judge = Judge("", meter, cfg)
     judge._decider = None  # no third-party decider: it is unmetered and would blend into the numbers
     sem, stop = asyncio.Semaphore(concurrency), asyncio.Event()
     with meter.run_scope("judge-benchmark"):
         records = await asyncio.gather(*(_run_case(judge, c, sem, stop) for c in cases))
-        spent = meter.spent_in_current_run() + meter.over_cap_usd
+        # Includes the call that tripped the cap: the meter counts it before raising.
+        spent = meter.spent_in_current_run()
     return records, spent, stop.is_set()
 
 

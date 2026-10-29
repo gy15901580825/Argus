@@ -232,3 +232,39 @@ def test_run_scope_cap_override_applies_to_record():
     with m.run_scope("r"):  # no override: the meter's own cap
         with pytest.raises(CostExceededError, match=r"per_run cap \$0\.50"):
             m.record("claude-haiku-4-5-20251001", 0, 200_000)  # $1.00
+
+
+def test_the_call_that_crosses_the_cap_is_counted_before_the_error():
+    # record() runs after the call has returned: that money is spent, so it is counted.
+    m = CostMeter(daily_cap_usd=100.0, per_run_cap_usd=0.08)
+    with m.run_scope("r"):
+        m.record("claude-haiku-4-5-20251001", 0, 10_000)  # $0.05
+        with pytest.raises(CostExceededError, match=r"per_run cap \$0\.08 exceeded: this run has spent \$0\.1000"):
+            m.record("claude-haiku-4-5-20251001", 0, 10_000)
+        assert m.spent_in_current_run() == pytest.approx(0.10)
+    assert m.spent_today() == pytest.approx(0.10)
+
+
+def test_a_call_after_the_daily_cap_is_counted_and_refused():
+    m = CostMeter(daily_cap_usd=0.05)
+    m.record("claude-haiku-4-5-20251001", 0, 10_000)  # $0.05: reaches the cap
+    with pytest.raises(CostExceededError, match="daily cap"):
+        m.record("claude-haiku-4-5-20251001", 0, 10_000)
+    assert m.spent_today() == pytest.approx(0.10)
+
+
+def test_deep_crossing_call_counts_toward_the_deep_slice():
+    m = CostMeter(daily_cap_usd=100.0, deep_per_run_cap_usd=0.08)
+    with m.run_scope("r", deep=True):
+        m.record("claude-haiku-4-5-20251001", 0, 10_000)
+        with pytest.raises(CostExceededError, match="deep per_run cap"):
+            m.record("claude-haiku-4-5-20251001", 0, 10_000)
+    assert m.spent_today_deep() == pytest.approx(0.10)
+
+
+def test_run_scope_resumes_from_spent_usd():
+    m = CostMeter(daily_cap_usd=100.0, per_run_cap_usd=0.08)
+    with m.run_scope("r", spent_usd=0.05):
+        with pytest.raises(CostExceededError, match=r"spent \$0\.1000"):
+            m.record("claude-haiku-4-5-20251001", 0, 10_000)
+    assert m._spent_in_run is None
