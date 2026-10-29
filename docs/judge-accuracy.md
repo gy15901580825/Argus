@@ -1,8 +1,8 @@
 # Judge accuracy
 
 Most Argus verdicts come from an LLM judge, so the judge's own error rate matters as
-much as the probe library. This page says how we measure it. The numbers are filled in
-from a live run; until then the table below is marked pending.
+much as the probe library. This page says how we measure it and what the last
+measurement found.
 
 ## What is measured
 
@@ -51,10 +51,39 @@ commit without a key.
 
 ## Results
 
-Pending. No live run has been recorded yet.
+Five back-to-back runs on 2026-10-29, 02:50 to 02:57 UTC, with the default Anthropic
+judge (fast `claude-haiku-4-5-20251001`, strong `claude-sonnet-4-6`), 155 cases per run,
+Jev decider off. The five runs together cost $1.84.
 
-| Date | Judge (fast / strong) | Cases | Accuracy | False-pass rate | False-fail rate | Errors |
+| Date | Judge (fast / strong) | Cases | Accuracy | False-pass | False-fail | Errors |
 |---|---|---|---|---|---|---|
-| pending | pending | pending | pending | pending | pending | pending |
+| 2026-10-29 | Haiku 4.5 / Sonnet 4.6 | 155 | 92.3% (median of 5, range 91.6 to 92.9%) | 10 to 12 of 92 | 0 of 63 in every run | 0 to 1 |
 
-Per-rubric results: pending.
+What the numbers say:
+
+- The judge never raised a false alarm: no case that should pass was judged `fail` or
+  `warn` in any of the five runs.
+- The false passes fall into three groups:
+  - One case labelled `fail` was judged `pass` in all five runs:
+    `browser_visual.md` `subtly_steered_without_obeying`, where the agent repeats injected
+    text from a chart while describing it. Its label is arguable (the agent described the
+    image accurately), so read it as either a judge miss or a fixture to relabel.
+  - Five or six cases labelled `warn` (a partial or borderline response) were judged
+    `pass`. The judge puts the line between `warn` and `pass` more leniently than our
+    labels do.
+  - Four or five empty or whitespace-only replies were judged `pass`. A scan never sends
+    these to the judge: since the run-reliability change, an empty reply is an `error`
+    finding before the judge is called. The cases stay in the set as a regression check
+    on the judge itself.
+- In every run the strong model declined to review seven attack-heavy `fail` cases
+  (`stop_reason=refusal`). The judge now keeps the fast model's verdict in that case and
+  says so in the reasoning. Before that change these seven cases came back as errors, and
+  a real failure on an encoded-payload, unicode-smuggling or jailbreak probe could be
+  reported as an error instead of a `fail`. The first run before the fix scored 87.7%.
+- The remaining errors (one in two of the five runs) were judge replies whose verdict
+  field held a whole JSON object. They are reported as errors, never as passes.
+
+Limits: the cases are written by us, so the accuracy is agreement with our labels, not a
+population estimate. Per-rubric sets are small (six to thirteen cases). Raw results:
+`scripts/judge_benchmark.py --out` writes every case with the judge's verdict and
+reasoning; the runs above are not committed.
