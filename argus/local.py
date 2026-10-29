@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 import os
-from typing import AsyncIterator, Mapping
+from typing import AsyncIterator, Mapping, NamedTuple
 
 from fastapi import HTTPException
 
@@ -34,7 +34,16 @@ class LocalRunError(Exception):
         self.code = code
 
 
-async def run_local(
+class _Plan(NamedTuple):
+    req: api.RunRequest
+    cfg: llm.LLMConfig
+    anthropic_api_key: str | None
+    skipped: list[dict]
+    warnings: list[str]
+    judged: list[str]
+
+
+def check_run(
     target: dict,
     probe_ids: list[str],
     *,
@@ -42,12 +51,14 @@ async def run_local(
     per_run_cap_usd: float | None = None,
     env: Mapping[str, str] | None = None,
     skip_judged: bool = False,
-) -> AsyncIterator[dict]:
-    """Yield warning events and finding dicts, then one {"type": "coverage", "coverage": dict} event.
+) -> None:
+    """Raise LocalRunError when run_local would refuse to start (target, probe ids, key, cost).
 
-    skip_judged: without a judge key, report the probes that need the judge as
-    skipped and run the rest, instead of refusing the run.
-    """
+    Calls nothing over the network, so a caller can run it before starting anything for the run."""
+    _prepare(target, probe_ids, mode=mode, per_run_cap_usd=per_run_cap_usd, env=env, skip_judged=skip_judged)
+
+
+def _prepare(target, probe_ids, *, mode, per_run_cap_usd, env, skip_judged) -> _Plan:
     env = os.environ if env is None else env
 
     # Same credential rule as POST /redteam/run: the configured provider decides
@@ -105,7 +116,7 @@ async def run_local(
             raise LocalRunError(f"{n} of {m} selected probes need an LLM judge: {key} is not set. "
                                 f"{hint} {_KEY_HELP}", code="config")
         reason = f"{NO_JUDGE_KEY}: {key} is not set; skipped by --skip-judged"
-        skipped = [api.finding_dict(skipped_finding(by_id[pid], reason)) for pid in judged]
+        skipped = [api.finding_dict(skipped_finding(by_id[pid], reason), by_id[pid]) for pid in judged]
         requested = [pid for pid in requested if pid not in set(judged)]
         judged = []
     elif skip_judged and cfg.missing_credential() is None:
@@ -124,6 +135,26 @@ async def run_local(
         )
     except CostExceededError as e:
         raise LocalRunError(_cost_message(e), code="cost") from e
+
+    return _Plan(req, cfg, anthropic_api_key, skipped, warnings, judged)
+
+
+async def run_local(
+    target: dict,
+    probe_ids: list[str],
+    *,
+    mode: str = "static",
+    per_run_cap_usd: float | None = None,
+    env: Mapping[str, str] | None = None,
+    skip_judged: bool = False,
+) -> AsyncIterator[dict]:
+    """Yield warning events and finding dicts, then one {"type": "coverage", "coverage": dict} event.
+
+    skip_judged: without a judge key, report the probes that need the judge as
+    skipped and run the rest, instead of refusing the run.
+    """
+    req, cfg, anthropic_api_key, skipped, warnings, judged = _prepare(
+        target, probe_ids, mode=mode, per_run_cap_usd=per_run_cap_usd, env=env, skip_judged=skip_judged)
 
     for message in warnings:
         yield {"type": "warning", "message": message}

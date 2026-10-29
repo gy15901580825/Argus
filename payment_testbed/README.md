@@ -6,6 +6,8 @@ insecure demo agent to point the probes at.
 Nothing here touches a blockchain. `requirements.txt` declares no web3 or RPC
 client at all, so real settlement is absent rather than disabled.
 
+A copy of `testbed/` and `demo_agent/` ships in `argus/demo/payment_testbed/`, so `argus-probe run --local` can start the testbed for a target with `"testbed_url": "local"`. `tests/test_redteam_demo.py` fails when the copy and this directory differ, so change both together. Use relative imports inside `testbed/` so the same files work in both places.
+
 ## Two services
 
 | Service | What it is |

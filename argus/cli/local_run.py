@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from typing import Iterable, NamedTuple
 
@@ -29,8 +30,30 @@ def run_local_and_render(
 
     Re-raises argus.local.LocalRunError when the run cannot start. A failure after
     findings exist still renders them, with status "incomplete" and `stopped_by` set.
-    `secret_values` are masked in every format.
+    `secret_values` are masked in every format. A spec with `testbed_url: "local"` runs against
+    the bundled testbed, started on 127.0.0.1 for this call only.
     """
+    if isinstance(spec, dict) and spec.get("testbed_url") == "local":
+        from argus.demo import servers
+        from argus.local import check_run
+
+        # A run the engine would refuse (bad spec, no key, over the cap) must not start a testbed.
+        check_run(spec, probe_ids, per_run_cap_usd=per_run_cap, skip_judged=skip_judged)
+        env, testbed = servers.local_environment(spec), servers.local_testbed(spec)
+    else:
+        # Nothing to start, so the demo servers stay unimported.
+        env, testbed = None, nullcontext(spec)
+    with testbed as resolved:
+        if env:
+            click.echo(f"Started the bundled {servers.LABELS[env]} testbed on {resolved['testbed_url']} for this "
+                       "run. The agent under test must be able to reach that address.")
+        return _run_and_render(resolved, probe_ids, per_run_cap, report_format, secret_values, fail_on, skip_judged)
+
+
+def _run_and_render(
+    spec: dict, probe_ids: list[str], per_run_cap: float | None, report_format: str,
+    secret_values: Iterable[str], fail_on: str | None, skip_judged: bool,
+) -> LocalRunResult:
     from argus.local import LocalRunError, run_local
 
     started_at = datetime.now(timezone.utc)

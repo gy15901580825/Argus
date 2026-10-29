@@ -83,6 +83,8 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
     if skip_judged:
         # In server mode the server holds the judge key, so only it knows whether one is missing.
         raise click.UsageError("--skip-judged needs --local; in server mode the server holds the judge key")
+    if spec.get("testbed_url") == "local":
+        raise click.UsageError('testbed_url "local" starts the bundled testbed in this process; it needs --local')
     if spec.get("kind") == "browser_use":
         _check_browser_spec(spec)
     if report_format == "json":

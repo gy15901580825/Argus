@@ -1,21 +1,12 @@
 """`argus-probe quickstart`: a real report against a bundled demo agent, no API key."""
 from __future__ import annotations
 
-import os
 import sys
 
 import click
 
 from argus.cli.local_run import run_local_and_render
-
-
-def _bypass_proxy_for_localhost() -> None:
-    # The demo servers are on 127.0.0.1; a proxied shell must not route them out.
-    for name in ("NO_PROXY", "no_proxy"):
-        current = os.environ.get(name, "")
-        hosts = [h.strip() for h in current.split(",") if h.strip()]
-        if "127.0.0.1" not in hosts:
-            os.environ[name] = f"{current},127.0.0.1" if current else "127.0.0.1"
+from argus.demo import bypass_proxy_for_localhost
 
 
 @click.command("quickstart")
@@ -23,7 +14,7 @@ def _bypass_proxy_for_localhost() -> None:
               type=click.Path(dir_okay=False), help="Where to write the HTML report.")
 def cmd_quickstart(out: str) -> None:
     """Run 12 MCP probes against a built-in vulnerable demo agent. No API key needed."""
-    _bypass_proxy_for_localhost()
+    bypass_proxy_for_localhost()
     from argus.demo.servers import PROBE_IDS, start_mcp_demo
 
     click.echo("Starting the demo MCP agent and a hostile MCP testbed on 127.0.0.1 (no API key needed) ...")

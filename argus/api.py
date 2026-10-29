@@ -20,7 +20,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from argus import llm
+from argus import llm, remediation
 from argus.coverage import build_coverage
 from argus.cost_meter import CostExceededError, CostMeter
 from argus.judge import Judge
@@ -233,27 +233,28 @@ async def _run_probes(req: RunRequest, anthropic_api_key: str) -> AsyncIterator[
     for probe in to_run:
         if cap_hit is not None:
             yield finding_dict(aborted_finding(
-                probe, f"{NOT_STARTED_AT_CAP}: the run had stopped at the cost cap ({cap_hit})"))
+                probe, f"{NOT_STARTED_AT_CAP}: the run had stopped at the cost cap ({cap_hit})"), probe)
             continue
         try:
             async for finding in runner.run_probe(probe):
-                yield finding_dict(finding)
+                yield finding_dict(finding, probe)
                 # An iterative thread reports the cap as aborted_cost instead of raising.
                 if finding.verdict == VERDICT_ABORTED and cap_hit is None:
                     m = re.match(r"cost cap hit at round \d+: (.*)", finding.reasoning, re.S)
                     cap_hit = CostExceededError(m.group(1) if m else finding.reasoning)
         except CostExceededError as e:
-            yield finding_dict(aborted_finding(probe, f"cost cap reached: {e}"))
+            yield finding_dict(aborted_finding(probe, f"cost cap reached: {e}"), probe)
             cap_hit = e
     if cap_hit is not None:
         raise cap_hit
 
 
-def finding_dict(finding) -> dict:
-    """A Finding as the JSON-ready dict every run path emits."""
+def finding_dict(finding, probe) -> dict:
+    """A Finding as the JSON-ready dict every run path emits, with the probe's remediation."""
     # asdict() recurses dataclasses but does NOT convert UUIDs/datetimes.
     # When adding Finding fields, ensure they're JSON-serializable here.
     d = asdict(finding)
+    d["remediation"] = remediation.for_probe(probe)
     d["id"] = str(finding.id)
     d["probed_at"] = finding.probed_at.isoformat()
     d["created_at"] = finding.created_at.isoformat()

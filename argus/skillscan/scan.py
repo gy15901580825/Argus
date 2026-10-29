@@ -308,6 +308,7 @@ def _normalise(f: dict, probed_at: str) -> dict:
             f[k] = v
     for k in ("judge_model", "escalated_model"):
         f.setdefault(k, None)
+    f.setdefault("remediation", "")  # skill rules are not library probes, so no fix-it text
     for k in ("atlas_id", "owasp_id", "nist_id", "eu_ai_act_id"):
         if not isinstance(f.get(k), list):
             f[k] = []

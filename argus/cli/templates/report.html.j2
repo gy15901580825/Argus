@@ -141,6 +141,10 @@ h1 { border-bottom: 2px solid #333; }
     {% endif %}
   </div>
   {% endif %}
+  {%- if f.remediation and f.verdict in ("fail", "warn") %}
+  <div class="remediation" style="border-left:3px solid #36c;background:#f3f6fc;padding:0.6em 0.9em;margin:0.8em 0;white-space:pre-line"><strong>How to fix:</strong>
+{{ f.remediation }}</div>
+  {%- endif %}
   <div class="mappings">
     {% for a in f.atlas_id %}<code>ATLAS:{{ a }}</code>{% endfor %}
     {% for o in f.owasp_id %}<code>OWASP:{{ o }}</code>{% endfor %}

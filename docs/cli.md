@@ -109,6 +109,36 @@ Server mode talks to any server implementing the `/api/v1/redteam` API: set `ARG
 
 Full configuration reference: [target spec cookbook](https://github.com/gy15901580825/Argus/blob/main/docs/onboarding/target-spec-cookbook.md).
 
+### The bundled testbed for MCP and payment agents
+
+`mcp_agent`, `payment_agent` and `testbed_agent` run each probe inside a testbed: a hostile MCP server, or a mock x402 merchant that takes no real money. The testbed records what your agent did there, and the probe judges that record. Set `"testbed_url": "local"` and `run --local` starts the testbed that ships with `argus-probe`, so you need no clone and no container:
+
+```json
+{
+  "kind": "mcp_agent",
+  "testbed_url": "local",
+  "sandbox": true,
+  "inner": {"kind": "openai_compat", "endpoint_url": "http://127.0.0.1:8093/v1/chat/completions", "model": "my-agent"}
+}
+```
+
+The testbed listens on 127.0.0.1, on a free port, for this run only. The console prints its address. Argus stops it when the run ends, including when the run fails or you press Ctrl-C. run.json records the address the run used in `target_spec.testbed_url`. `argus-probe init` writes `"local"` by default. Server mode (`run` without `--local`) stops with a usage error, because the testbed starts in this process.
+
+Each probe's prompt gives your agent a URL on that address, so your agent must be able to reach it:
+
+- An agent on the same machine can reach it. If the agent sends HTTP through a proxy, add `127.0.0.1` to its `NO_PROXY`. Argus already does this for its own requests.
+- An agent that only talks to allowlisted origins needs a fixed port. Set `ARGUS_TESTBED_PORT=8092` and allow `http://127.0.0.1:8092`.
+- An agent on another host or in a container cannot reach 127.0.0.1 on your machine. Run the testbed yourself on an address the agent can reach, and put that URL in `testbed_url` instead of `"local"`:
+
+```bash
+# MCP testbed. For the payment testbed use argus.demo.payment_testbed.testbed.app:app.
+# TESTBED_PUBLIC_URL is the base URL the agent is told to use.
+TESTBED_PUBLIC_URL=http://host.docker.internal:8092 \
+  python -m uvicorn argus.demo.mcp_testbed.testbed.app:app --host 0.0.0.0 --port 8092
+```
+
+  Then set `"testbed_url": "http://127.0.0.1:8092"`. Binding `0.0.0.0` exposes the testbed to your network, so bind the one address the agent uses when you can.
+
 ## What it does
 
 Without `--local`, `argus-probe` is a thin client: it submits the target spec and probe selection over HTTPS to a server implementing the `/api/v1/redteam` API; that server runs the probes against your agent and returns the report. With `--local` the same engine runs in this process and calls the judge model directly with your key.
@@ -120,6 +150,8 @@ Secret references in your target spec (`${OPENAI_API_KEY}`, etc.) are resolved f
 - `html` — human-readable report
 - `sarif` — SARIF 2.1.0, uploads cleanly to GitHub code-scanning (Security tab)
 - `junit` — JUnit XML for any CI tool that parses test results
+
+Each finding from a library probe says how to fix the weakness it tests: the probe's own text when it has one (the MCP server and vLLM probes do), else a few lines for each attack class the probe covers. `scan-skill` findings have an empty `remediation`. You find it under "How to fix" on `fail` and `warn` findings in HTML, as the rule's `help` in SARIF, on the last line of the `<failure>` text in JUnit, and in the `remediation` field in run.json.
 
 ## CI integration
 
@@ -136,7 +168,7 @@ Use [`argus-probe-action`](https://github.com/marketplace/actions/argus-agent-re
     fail-on: critical
 ```
 
-The job needs `permissions: security-events: write` for the SARIF upload. `argus-probe init --workflow` writes a complete workflow file with that set. Pull requests from forks and Dependabot do not receive repository secrets, so `ANTHROPIC_API_KEY` is empty and the job fails on them.
+The job needs `permissions: security-events: write` for the SARIF upload. `argus-probe init --workflow` writes a complete workflow file with that set. Its `probes` are two judged chat probes for `openai_compat`, `anthropic_native` and `custom_http`, and `all` for every other kind, because the chat probes do not apply to those targets. It also sets `argus-version` to the version that wrote it, because the action otherwise installs its own default version, which may not know `testbed_url: "local"` or select the probes that fit the target. With `all`, an `mcp_agent` target needs no judge key: all 12 MCP probes are decided from the testbed's record. A `payment_agent` target needs `ANTHROPIC_API_KEY` for the 4 `pay_wallet_key_exfil*` probes; the action has no `--skip-judged` input, so without the key the run stops with exit 1.
 
 `--fail-on <severity>` exits 3 when a failing finding is at or above that level; the SARIF is written first. `--compare-to <base branch>` makes `--fail-on` count only failures that are new relative to the latest run on that branch. It is server mode only, because it needs run history, so the action does not offer it; see the target-spec cookbook for a server-mode workflow.
 
@@ -161,6 +193,8 @@ These count as `blocked_by_target`, not as errors:
 - other 4xx answers, such as a content filter's 400 or a 403, with the reason `target returned HTTP <code> to the attack prompt; counted as blocked`;
 - an HTTP 200 from `openai_compat` whose choice has `finish_reason: "content_filter"` and no text (Azure OpenAI's output filter), with the reason `target's content filter withheld the reply; counted as blocked`;
 - an `anthropic_native` reply with `stop_reason: "refusal"` and no text.
+
+The MCP and payment probes that judge the testbed's record are the exception. If the agent blocks one of these before it sends a single request to its testbed, the probe never ran, so it is an `error` with the reason `agent returned HTTP <code> and never reached the testbed, ...`. This is what you see when the agent cannot reach the testbed address or only allows another origin. A block after the agent used the testbed stays `blocked_by_target`.
 
 When at least 5 findings, and at least 90% of the findings that were sent (skipped probes do not count), were blocked with the same HTTP code, the console prints `Warning: every probe was blocked with HTTP <code>; check the request format` (`almost every` below 100%). In local mode the warning also goes into the report notes. The exit code does not change.
 

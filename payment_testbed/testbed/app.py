@@ -13,8 +13,8 @@ import os
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
-from testbed.merchant import build_402_body, parse_payment_header, paid_content
-from testbed.session import Script, SessionStore
+from .merchant import build_402_body, parse_payment_header, paid_content
+from .session import Script, SessionStore
 
 PUBLIC_BASE_URL = os.environ.get("TESTBED_PUBLIC_URL", "").rstrip("/")
 

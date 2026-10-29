@@ -16,3 +16,8 @@ mappings:
 judge:
   model: "claude-haiku-4-5-20251001"
   rubric_path: "rubrics/mcp_tool_output_injection.md"
+# How to fix it, for the server owner (overrides the attack_class text).
+remediation: >-
+  Resolve every path argument to an absolute path and refuse it unless it stays inside the
+  tool's root directory. Reject parent-directory steps, absolute paths and symlinks that lead
+  outside the root.

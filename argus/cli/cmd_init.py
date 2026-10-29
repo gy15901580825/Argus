@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 import click
@@ -36,7 +37,7 @@ _KIND_QUESTIONS: dict[str, list[tuple[str, str, str | None]]] = {
         ("scenario_kind", "Scenario kind (dom_injection/ui_phishing/visual_injection/os_cmd)", "dom_injection"),
     ],
     "payment_agent": [
-        ("testbed_url", "Payment testbed URL", "http://127.0.0.1:8090"),
+        ("testbed_url", "Payment testbed URL (\"local\" starts the bundled one on 127.0.0.1 for each run)", "local"),
         (
             "inner_json",
             "Inner target spec (JSON) for the transport that talks to your agent",
@@ -44,7 +45,7 @@ _KIND_QUESTIONS: dict[str, list[tuple[str, str, str | None]]] = {
         ),
     ],
     "mcp_agent": [
-        ("testbed_url", "MCP testbed URL", "http://127.0.0.1:8092"),
+        ("testbed_url", "MCP testbed URL (\"local\" starts the bundled one on 127.0.0.1 for each run)", "local"),
         (
             "inner_json",
             "Inner target spec (JSON) for the transport that talks to your agent",
@@ -53,7 +54,7 @@ _KIND_QUESTIONS: dict[str, list[tuple[str, str, str | None]]] = {
     ],
     "testbed_agent": [
         ("environment", "Environment (mcp/payment)", "mcp"),
-        ("testbed_url", "Testbed URL", "http://127.0.0.1:8092"),
+        ("testbed_url", "Testbed URL (\"local\" starts the bundled one on 127.0.0.1 for each run)", "local"),
         (
             "inner_json",
             "Inner target spec (JSON) for the transport that talks to your agent",
@@ -68,6 +69,16 @@ _KIND_QUESTIONS: dict[str, list[tuple[str, str, str | None]]] = {
         ("render_url_jsonpath", "Render URL JSONPath (extracts the render URL from the upload response)", "$.url"),
     ],
 }
+
+# Chat kinds get a small judged set. Every other kind gets `all`, because the chat probes do not
+# apply to it and would be skipped, leaving a job that tests nothing. Assumes `all` fits the target (PR5a).
+_CHAT_PROBES = "owasp_01_prompt_injection_basic,syscard_crescendo"
+_CHAT_KINDS = frozenset({"openai_compat", "anthropic_native", "custom_http"})
+
+
+def _probes_for(kind: str) -> str:
+    return _CHAT_PROBES if kind in _CHAT_KINDS else "all"
+
 
 _WORKFLOW_TEMPLATE = """\
 # .github/workflows/argus-probe.yml
@@ -97,9 +108,16 @@ jobs:
           ANTHROPIC_API_KEY: ${{{{ secrets.ANTHROPIC_API_KEY }}}}
 {target_env}        with:
           target: {target_path}
-          probes: owasp_01_prompt_injection_basic,syscard_crescendo
+          probes: {probes}
           fail-on: critical
-"""
+{version_line}"""
+
+
+def _installed_version() -> str | None:
+    try:
+        return version("argus-probe")
+    except PackageNotFoundError:  # a source tree that was never installed
+        return None
 
 
 @click.command("init")
@@ -176,10 +194,17 @@ def init_command(kind: str, output: str, workflow: bool | None) -> None:
         if env_var and env_var != "ANTHROPIC_API_KEY":
             # The target spec reads this key at run time.
             target_env = f"          {env_var}: ${{{{ secrets.{env_var} }}}}\n"
-        wf_path.write_text(_WORKFLOW_TEMPLATE.format(target_path=target_path.name, target_env=target_env))
+        # The Action installs its own default version otherwise, which may predate this spec's
+        # features (testbed_url "local", target-fitting `all`).
+        v = _installed_version()
+        version_line = f'          argus-version: "{v}"\n' if v else ""
+        wf_path.write_text(_WORKFLOW_TEMPLATE.format(
+            target_path=target_path.name, target_env=target_env, probes=_probes_for(kind),
+            version_line=version_line))
         click.echo(f"✅ Wrote {wf_path}")
 
     click.echo("")
-    click.echo(f"Next: argus-probe run --local --target {target_path} --out argus-report.html")
+    click.echo(f"Next: argus-probe run --local --target {target_path} --probes {_probes_for(kind)} "
+               "--out argus-report.html")
     if workflow:
         click.echo("Add ANTHROPIC_API_KEY as a repository secret for the workflow's LLM judge.")

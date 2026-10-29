@@ -68,6 +68,8 @@ def render_sarif(run: dict) -> str:
                     "eu_ai_act": f.get("eu_ai_act_id", []),
                 },
             }
+            if f.get("remediation"):
+                rules[rid]["help"] = {"text": f["remediation"]}
         results.append({
             "ruleId": rid,
             "level": sev_to_level.get(f.get("severity", "info"), "note"),
@@ -186,6 +188,8 @@ def render_junit(run: dict) -> str:
                 f"response: {f.get('target_response','')[:500]}\n"
                 f"reasoning: {f.get('reasoning','')}"
             )
+            if f.get("remediation"):
+                failure.text += f"\nremediation: {f['remediation']}"
         elif f.get("verdict") == "warn":
             sysout = ET.SubElement(case, "system-out")
             sysout.text = f"warn ({f.get('severity')}): {f.get('reasoning','')}"

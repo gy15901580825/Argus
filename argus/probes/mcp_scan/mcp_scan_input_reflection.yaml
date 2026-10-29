@@ -16,3 +16,7 @@ mappings:
 judge:
   model: "claude-haiku-4-5-20251001"
   rubric_path: "rubrics/mcp_tool_output_injection.md"
+# How to fix it, for the server owner (overrides the attack_class text).
+remediation: >-
+  Do not echo tool input back verbatim. Return structured fields, or mark echoed text as data,
+  so an attacker's input cannot come back to the model as an instruction.
