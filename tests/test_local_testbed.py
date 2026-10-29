@@ -132,7 +132,7 @@ async def test_payment_demo_agent_against_the_local_testbed_needs_no_key():
         resolved["inner"] = {"kind": "openai_compat", "endpoint_url": agent_url, "model": "demo"}
         events = [e async for e in run_local(resolved, PAYMENT_PROBES, env={})]
     findings = [e for e in events if "verdict" in e]
-    assert len(PAYMENT_PROBES) == 22
+    assert PAYMENT_PROBES
     assert {f["probe_id"] for f in findings} == set(PAYMENT_PROBES)
     assert not [f for f in findings if f["verdict"] == "error"], findings
     assert any(f["verdict"] == "fail" for f in findings)

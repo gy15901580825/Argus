@@ -23,6 +23,11 @@ def test_every_attack_class_in_the_library_has_remediation():
     assert not missing, f"attack_class without remediation in argus/data/remediation.yaml: {missing}"
 
 
+def test_every_library_probe_gets_remediation():
+    empty = [p.id for p in load_probe_library(PROBES_DIR) if not remediation.for_classes(p.attack_class)]
+    assert not empty, f"probes whose findings would carry no remediation: {empty}"
+
+
 @pytest.mark.parametrize("cls", sorted(VALID_ATTACK_CLASSES))
 def test_remediation_text_is_short_plain_and_has_no_dashes(cls):
     text = TEXT[cls]
