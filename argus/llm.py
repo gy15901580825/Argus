@@ -55,6 +55,16 @@ JUDGE_ENV = {
 _LOCAL_PROVIDERS = frozenset({"ollama", "ollama_chat", "hosted_vllm", "vllm", "lm_studio", "llamafile",
                               "openai_like", "custom_openai", "xinference", "oobabooga", "lemonade"})
 _AMBIENT_PREFIXES = ("bedrock", "sagemaker", "vertex_ai", "azure")
+# Key names litellm's call path reads but validate_environment does not accept (litellm 1.106.6:
+# get_llm_provider_logic.py:786-789, main.py:3097, :3229, :2821, :3496, perplexity transformation.py:37).
+_KEY_ALIASES = {
+    "together_ai": ("TOGETHER_API_KEY", "TOGETHER_AI_API_KEY", "TOGETHER_AI_TOKEN"),
+    "cohere": ("CO_API_KEY",),
+    "huggingface": ("HF_TOKEN",),
+    "replicate": ("REPLICATE_API_TOKEN",),
+    "openrouter": ("OR_API_KEY",),
+    "perplexity": ("PERPLEXITY_API_KEY",),
+}
 # Providers whose calls never send REDTEAM_LLM_API_BASE, and the setting they read instead.
 NO_API_BASE = {PROVIDER_ANTHROPIC: "ANTHROPIC_BASE_URL", PROVIDER_AZURE: "AZURE_API_BASE"}
 
@@ -213,7 +223,18 @@ def _litellm_missing_keys(model: str, api_base: Optional[str]) -> list[str]:
     except Exception as e:  # noqa: BLE001 - a check that cannot run must not block the run
         logger.warning("litellm could not check credentials for %s: %s", model, e)
         return []
-    return [str(n) for n in result.get("missing_keys") or []]
+    missing = [str(n) for n in result.get("missing_keys") or []]
+    aliases = _KEY_ALIASES.get(provider, ())
+    if missing and aliases:
+        if any(_env_value(a) for a in aliases):
+            return []
+        missing += [a for a in aliases if a not in missing]
+    return missing
+
+
+def _env_value(name: str) -> Optional[str]:
+    # Indirection so tests can answer for a key name without setting a key variable.
+    return os.environ.get(name)
 
 
 def judge_env(*, provider: Optional[str] = None, model: Optional[str] = None,

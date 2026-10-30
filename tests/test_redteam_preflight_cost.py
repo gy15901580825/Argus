@@ -11,6 +11,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from argus import api
 from argus.api import PROBES_DIR
 from argus.cost_meter import CostMeter
 from argus.persona_strategy import DEFAULT_MAX_ROUNDS
@@ -80,6 +81,13 @@ def test_streaming_run_uses_the_same_estimate_as_preflight(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     captured = _capture(monkeypatch)
     probe_ids = _multi_prompt_probe_ids(2)
+
+    async def no_run(*args, **kwargs):
+        # Only the pre-run estimate is under test; a real deep run would call the attacker model.
+        return
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(api, "_run_probes", no_run)
 
     TestClient(app).post(
         "/redteam/run",

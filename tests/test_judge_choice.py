@@ -209,6 +209,31 @@ def test_a_cloud_provider_without_its_key_is_still_refused(monkeypatch):
     assert llm._litellm_missing_keys("gemini/gemini-2.5-flash", None) == ["GOOGLE_API_KEY", "GEMINI_API_KEY"]
 
 
+# litellm's env check accepts one name; its call path also reads these (litellm 1.106.6 source).
+ALIASES = [
+    ("together_ai/meta-llama/Llama-3-8b", "TOGETHERAI_API_KEY", ("TOGETHER_API_KEY", "TOGETHER_AI_API_KEY",
+                                                                 "TOGETHER_AI_TOKEN")),
+    ("cohere/command-r", "COHERE_API_KEY", ("CO_API_KEY",)),
+    ("huggingface/meta-llama/x", "HUGGINGFACE_API_KEY", ("HF_TOKEN",)),
+    ("replicate/meta/llama", "REPLICATE_API_KEY", ("REPLICATE_API_TOKEN",)),
+    ("openrouter/openai/gpt-4o", "OPENROUTER_API_KEY", ("OR_API_KEY",)),
+    ("perplexity/sonar", "PERPLEXITYAI_API_KEY", ("PERPLEXITY_API_KEY",)),
+]
+
+
+@pytest.mark.parametrize("model, checked, aliases", ALIASES)
+def test_refusal_names_every_key_name_litellm_accepts(model, checked, aliases):
+    assert llm._litellm_missing_keys(model, None) == [checked, *aliases]
+
+
+@pytest.mark.parametrize("model, checked, aliases", ALIASES)
+def test_any_accepted_alias_satisfies_the_check(monkeypatch, model, checked, aliases):
+    for alias in aliases:
+        # The lookup is patched, so no key variable is ever set in this process.
+        monkeypatch.setattr(llm, "_env_value", lambda name, alias=alias: "set" if name == alias else None)
+        assert llm._litellm_missing_keys(model, None) == []
+
+
 def test_provider_lookup_crash_does_not_block(monkeypatch):
     import litellm
 
@@ -347,12 +372,22 @@ def test_api_base_flag_with_a_provider_that_ignores_it_is_a_usage_error(tmp_path
     assert setting in r.output
 
 
-def test_one_price_for_two_models_warns(tmp_path):
-    r = CliRunner().invoke(main, ["judge-check", "--judge-provider", "anthropic", "--judge-price", "1,5"])
+def test_one_price_for_two_models_warns(monkeypatch):
+    calls = []
+
+    async def recorder(**kw):
+        calls.append(kw)
+        raise AssertionError("no judge call expected")
+
+    monkeypatch.setattr(llm, "_acompletion", recorder)
+    # --per-run-cap 0 stops every check at the estimate (exit 4), before any judge call.
+    r = CliRunner().invoke(main, ["judge-check", "--judge-provider", "anthropic", "--judge-price", "1,5",
+                                  "--per-run-cap", "0"])
     assert "--judge-price sets the same price for claude-haiku-4-5-20251001 and claude-sonnet-4-6" in r.output
     same = CliRunner().invoke(main, ["judge-check", "--judge-provider", "litellm", "--judge-model", "mistral/m",
-                                     "--judge-price", "1,5"])
+                                     "--judge-price", "1,5", "--per-run-cap", "0"])
     assert "same price" not in same.output
+    assert calls == []
 
 
 @pytest.mark.parametrize("raised", [KeyboardInterrupt(), RuntimeError("boom"), SystemExit(5)])
