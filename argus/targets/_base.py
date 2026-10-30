@@ -101,3 +101,11 @@ class Target(ABC):
         of on the judge's reading of the reply text.
         """
         return {}
+
+    async def aclose(self) -> None:
+        """The run is over; release what this adapter holds (a browser, a connection).
+
+        Called once after the run's last probe. Defaults to a no-op for adapters
+        that hold nothing.
+        """
+        return None
