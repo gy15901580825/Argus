@@ -477,7 +477,7 @@ v1 limits:
 ```
 argus-probe quickstart          Run the MCP probes against a built-in demo agent, no key
 argus-probe init                Interactive target.json generator
-argus-probe validate-target     Sanity-check target reachability
+argus-probe validate-target     Send one prompt to a chat target and check it answers
 argus-probe list-probes         List probe ids (local library, or a server with --api-url); --target / --target-class filter them
 argus-probe run                 Submit a run + write the report
 argus-probe report              Re-render a run stored on a server

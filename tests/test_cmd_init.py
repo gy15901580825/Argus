@@ -339,3 +339,24 @@ def test_workflow_leaves_the_version_to_the_action_from_an_uninstalled_tree(tmp_
     workflow = yaml.safe_load((tmp_path / ".github/workflows/argus-probe.yml").read_text())
     step = next(s for s in workflow["jobs"]["redteam"]["steps"] if "with" in s)
     assert "argus-version" not in step["with"]
+
+
+def test_every_known_kind_has_init_questions():
+    # --kind offers every known kind, so a kind without questions crashes init.
+    from argus.cli.cmd_init import _KIND_QUESTIONS
+    from argus.cli.target_loader import _KNOWN_KINDS
+
+    assert set(_KIND_QUESTIONS) == set(_KNOWN_KINDS)
+
+
+@pytest.mark.parametrize("kind,url", [
+    ("mcp_server", "http://127.0.0.1:3001/mcp"),
+    ("vllm_server", "http://10.0.0.5:8000"),
+])
+def test_init_server_kinds_write_a_loadable_spec(tmp_path, monkeypatch, kind, url):
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(init_command, ["--kind", kind, "--no-workflow"], input=f"{url}\n")
+    assert result.exit_code == 0, result.output
+    spec = json.loads((tmp_path / "argus-target.json").read_text())
+    assert spec == {"kind": kind, "url": url}
+    assert load_target_spec(str(tmp_path / "argus-target.json")) == spec

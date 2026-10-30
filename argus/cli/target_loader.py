@@ -95,6 +95,11 @@ def load_target_spec_with_secrets(target_arg: str) -> tuple[dict[str, Any], list
         spec = json.loads(text)
     except json.JSONDecodeError as e:
         raise TargetLoadError(f"target JSON malformed: {e}") from e
+    return check_target_spec(spec)
+
+
+def check_target_spec(spec: Any) -> tuple[dict[str, Any], list[str]]:
+    """Validate a parsed spec and expand its $VAR references, as load_target_spec_with_secrets does."""
     if not isinstance(spec, dict):
         raise TargetLoadError("target must be a JSON object")
     if "kind" not in spec:
