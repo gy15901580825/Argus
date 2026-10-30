@@ -72,6 +72,11 @@ def judge_options(f):
     @functools.wraps(f)
     def wrapper(*args, judge_provider, judge_model, judge_strong_model, judge_api_base, judge_price, **kwargs):
         overrides: dict[str, str] = {}
+        typed = typed_flags(click.get_current_context())
+        # `run` without --local: the server chooses its judge, so say that before judging the flags.
+        if typed and kwargs.get("local") is False:
+            verb = "needs" if len(typed) == 1 else "need"
+            raise click.UsageError(f"{', '.join(typed)} {verb} --local; in server mode the server chooses the judge")
         if any(v is not None for v in (judge_provider, judge_model, judge_strong_model, judge_api_base, judge_price)):
             provider = judge_provider or os.environ.get(llm.JUDGE_ENV["provider"], "")
             if provider.strip().lower() == llm.PROVIDER_LITELLM and not (
@@ -83,6 +88,13 @@ def judge_options(f):
                                           api_base=judge_api_base, price=judge_price)
             except ValueError as e:
                 raise click.UsageError(str(e)) from None
+            cfg = llm.resolve_config({**os.environ, **overrides})
+            if judge_api_base is not None and cfg.provider in llm.NO_API_BASE:
+                raise click.UsageError(f"--judge-api-base applies to openai and litellm judges; the {cfg.provider} "
+                                       f"judge reads its endpoint from {llm.NO_API_BASE[cfg.provider]}")
+            if judge_price is not None and cfg.fast_model != cfg.strong_model:
+                click.echo(f"Warning: --judge-price sets the same price for {cfg.fast_model} and {cfg.strong_model}. "
+                           "If they differ, declare each with REDTEAM_PRICE_<MODEL>_INPUT and _OUTPUT.", err=True)
         with _env_applied(overrides):
             return f(*args, **kwargs)
 

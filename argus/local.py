@@ -149,8 +149,8 @@ async def run_local(
 ) -> AsyncIterator[dict]:
     """Yield events and finding dicts, then one {"type": "coverage", "coverage": dict} event.
 
-    Before any finding: {"type": "judge", "judge": llm.describe(cfg)} when a probe will be
-    judged, then {"type": "warning", "message": str} events.
+    Before any finding: {"type": "judge", "judge": llm.describe(cfg), "record": llm.judge_record(cfg)}
+    when a probe will be judged, then {"type": "warning", "message": str} events.
 
     skip_judged: without a judge key, report the probes that need the judge as
     skipped and run the rest, instead of refusing the run.
@@ -159,7 +159,7 @@ async def run_local(
         target, probe_ids, mode=mode, per_run_cap_usd=per_run_cap_usd, env=env, skip_judged=skip_judged)
 
     if judged:
-        yield {"type": "judge", "judge": llm.describe(cfg)}
+        yield {"type": "judge", "judge": llm.describe(cfg), "record": llm.judge_record(cfg)}
     for message in warnings:
         yield {"type": "warning", "message": message}
     if judged and cfg.provider == llm.PROVIDER_LITELLM:

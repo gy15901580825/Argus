@@ -36,6 +36,7 @@ _PRICES_PER_M_TOKENS = {
 
 
 _WARNED_UNPRICED: set[str] = set()
+_WARNED_BAD_PRICE: set[tuple] = set()
 
 
 def price_env_names(model: str) -> tuple[str, str]:
@@ -60,6 +61,10 @@ def _declared_price(model: str) -> dict | None:
     except (TypeError, ValueError):
         values = []
     if len(values) != 2 or not all(math.isfinite(v) and v >= 0 for v in values):
+        # Once per declaration: an estimate or a run prices the same model hundreds of times.
+        if (names, tuple(raw)) in _WARNED_BAD_PRICE:
+            return None
+        _WARNED_BAD_PRICE.add((names, tuple(raw)))
         logger.warning("ignoring the declared price for %r: set both %s and %s to a number >= 0 "
                        "(USD per 1M tokens)", model, *names)
         return None

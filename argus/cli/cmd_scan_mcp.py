@@ -308,6 +308,8 @@ def cmd_scan_mcp(argv: tuple[str, ...], call_tools, tool_args: dict, headers: tu
         "findings": result.findings,
         "notes": [*result.notes, *judged_by],
     }
+    if judge_config is not None:
+        run["judge"] = llm.judge_record(judge_config)
     for f in result.findings:
         if f.get("verdict") == "fail":
             say(_console_line(f, clean))

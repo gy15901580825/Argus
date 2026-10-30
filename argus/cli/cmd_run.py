@@ -11,7 +11,7 @@ from click.core import ParameterSource
 
 from argus.cli import api_client, git_context, run_json
 from argus.cli.baseline_key import baseline_key
-from argus.cli.judge_options import judge_options, typed_flags
+from argus.cli.judge_options import judge_options
 from argus.cli.local_run import run_local_and_render
 from argus.cli.severity import (
     SEVERITY_ORDER, blocked_warning, findings_at_or_above, hit_cost_cap, incomplete_lines, judge_skip_line,
@@ -85,9 +85,6 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
     if skip_judged:
         # In server mode the server holds the judge key, so only it knows whether one is missing.
         raise click.UsageError("--skip-judged needs --local; in server mode the server holds the judge key")
-    if typed := typed_flags(click.get_current_context()):
-        verb = "needs" if len(typed) == 1 else "need"
-        raise click.UsageError(f"{', '.join(typed)} {verb} --local; in server mode the server chooses the judge")
     if spec.get("testbed_url") == "local":
         raise click.UsageError('testbed_url "local" starts the bundled testbed in this process; it needs --local')
     if spec.get("kind") == "browser_use":

@@ -124,18 +124,39 @@ def test_all_runs_every_case(monkeypatch):
     assert f"Cases: {n}" in every
 
 
-def test_unusable_reply_is_an_error_and_still_exit_0(monkeypatch):
-    monkeypatch.setattr(judge_bench, "load_all_cases",
-                        lambda: [Case("default.md", "pass_case", "p", "a", "held", expect_verdict="pass")])
+def test_unusable_reply_is_an_error_and_still_exit_0_when_something_was_measured(monkeypatch):
+    monkeypatch.setattr(judge_bench, "load_all_cases", lambda: [
+        Case("default.md", "pass_case", "p", "a", "REPLY-GARBAGE", expect_verdict="pass"),
+        Case("default.md", "fail_case", "p", "a", "REPLY-OK", expect_verdict="fail"),
+    ])
 
-    async def garbage(**kw):
-        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="not json"))],
-                               usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1))
+    async def replies(**kw):
+        if "REPLY-GARBAGE" in kw["messages"][1]["content"]:
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="not json"))],
+                                   usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1))
+        return _reply("fail")
 
-    monkeypatch.setattr(llm, "_acompletion", garbage)
+    monkeypatch.setattr(llm, "_acompletion", replies)
     r = _invoke(*OLLAMA)
     assert r.exit_code == 0, r.output
     assert "Errors: 1" in r.output and "default.md pass_case: expected pass, got error" in r.output
+
+
+def test_every_case_erroring_exits_1_with_one_warning_and_the_cause(monkeypatch, caplog):
+    monkeypatch.setattr(judge_bench, "load_all_cases", lambda: [
+        Case("default.md", f"c{i}", "p", "a", f"REPLY-{i}", expect_verdict="pass") for i in range(3)])
+
+    async def down(**kw):
+        raise ConnectionError("Connection refused to 127.0.0.1:11434")
+
+    monkeypatch.setattr(llm, "_acompletion", down)
+    with caplog.at_level("WARNING"):
+        r = _invoke(*OLLAMA, "--all")
+    assert r.exit_code == 1, r.output
+    assert "All 3 cases errored" in r.output
+    assert len([x for x in caplog.records if "redteam LLM call failed" in x.getMessage()]) == 1
+    wrong = r.output[r.output.index("Wrong"):]
+    assert wrong.count("Connection refused to 127.0.0.1:11434") == 3
 
 
 @pytest.mark.parametrize("flag", ["--judge-provider", "--judge-model", "--judge-strong-model", "--judge-api-base",

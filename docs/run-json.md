@@ -14,7 +14,7 @@ If a run stops partway, for example when the daily cost cap is crossed, the targ
 
 ## Fields
 
-The top-level keys always appear in this order. `incomplete_reason` and `notes` appear only when they apply:
+The top-level keys always appear in this order. `incomplete_reason`, `notes` and `judge` appear only when they apply:
 
 | Key | Type | Meaning |
 |---|---|---|
@@ -29,6 +29,7 @@ The top-level keys always appear in this order. `incomplete_reason` and `notes` 
 | `coverage` | object or null | The coverage summary per standard, as the engine reports it. Null if the engine sent none. |
 | `findings` | array | One object per probe result. |
 | `notes` | array of strings | Only when there is something to say: the incomplete reasons, and the warning when almost every probe was blocked with one HTTP code. `run` writes it; `mcp-trap` and `scan-mcp` do not. |
+| `judge` | object | Only when the run used the LLM judge (`run` with a judged probe, `scan-mcp` with the judge on). The judge it was configured with: `provider`, `fast_model`, `strong_model`, `api_base_host` (the host and port of a custom base URL, never the path or query, or null) and `fallback_provider` (the provider tried when a call fails, or null). Each finding's `judge_model` says which model gave that verdict. |
 
 Each finding has the same keys as the engine's `Finding` record: `id`, `probe_id`, `attack_prompt`, `target_response`, `target_latency_ms`, `probed_at`, `verdict`, `severity`, `confidence`, `reasoning`, `judge_model`, `escalated_model`, `atlas_id`, `owasp_id`, `nist_id`, `eu_ai_act_id`, `created_at`, `evidence` and `remediation`.
 

@@ -71,7 +71,7 @@ def judge_skip_line(findings: list[dict]) -> str | None:
         return None
     total = len({f.get("probe_id") for f in findings})
     return (f"{len(skipped)} of {total} probes skipped: no judge key. To run them, set ANTHROPIC_API_KEY "
-            "or OPENAI_API_KEY, or set REDTEAM_MODEL_PROVIDER to azure or litellm.")
+            "or OPENAI_API_KEY, or choose another judge with --judge-provider and --judge-model.")
 
 
 def hit_cost_cap(findings: list[dict]) -> bool:

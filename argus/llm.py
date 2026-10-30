@@ -49,9 +49,14 @@ JUDGE_ENV = {
     "api_base": "REDTEAM_LLM_API_BASE",
 }
 
-# litellm's env check cannot see these credentials: a local server needs none, and AWS
-# profiles/roles and Google ADC live outside env vars. Such models are not blocked.
-_UNCHECKED_PREFIXES = ("ollama/", "ollama_chat/", "bedrock/", "sagemaker/", "vertex_ai/", "vertex_ai_beta/")
+# litellm providers whose credentials its env check cannot see, so a refusal could be wrong:
+# local servers need none; AWS profiles/roles, Google ADC and Azure AD or AZURE_OPENAI_API_KEY
+# live outside the variables it checks. The pre-check refuses only when it is sure.
+_LOCAL_PROVIDERS = frozenset({"ollama", "ollama_chat", "hosted_vllm", "vllm", "lm_studio", "llamafile",
+                              "openai_like", "custom_openai", "xinference", "oobabooga", "lemonade"})
+_AMBIENT_PREFIXES = ("bedrock", "sagemaker", "vertex_ai", "azure")
+# Providers whose calls never send REDTEAM_LLM_API_BASE, and the setting they read instead.
+NO_API_BASE = {PROVIDER_ANTHROPIC: "ANTHROPIC_BASE_URL", PROVIDER_AZURE: "AZURE_API_BASE"}
 
 # Defaults per provider. Anthropic's are the models the judge shipped with; the
 # defaults must not change behaviour for an operator who sets nothing.
@@ -189,12 +194,20 @@ def credential_error(cfg: LLMConfig) -> Optional[str]:
 
 
 def _litellm_missing_keys(model: str, api_base: Optional[str]) -> list[str]:
-    """Env vars litellm says `model` needs and cannot find; [] when litellm cannot tell."""
-    if api_base or model.startswith(_UNCHECKED_PREFIXES):
-        return []
+    """Env vars litellm says `model` needs and cannot find; [] whenever the answer could be wrong."""
     import litellm
 
     litellm.suppress_debug_info = True  # an unknown model would print litellm's provider list
+    try:
+        provider = litellm.get_llm_provider(model=model)[1]
+    except Exception:  # noqa: BLE001 - litellm cannot route the name, so it cannot say what it needs
+        return []
+    if not provider or provider in _LOCAL_PROVIDERS or provider.startswith(_AMBIENT_PREFIXES):
+        return []
+    # A custom base usually means a gateway with its own auth, except on the openai route:
+    # its SDK client refuses to start without OPENAI_API_KEY whatever the base.
+    if api_base and provider != "openai":
+        return []
     try:
         result = litellm.validate_environment(model=model)
     except Exception as e:  # noqa: BLE001 - a check that cannot run must not block the run
@@ -224,20 +237,32 @@ def judge_env(*, provider: Optional[str] = None, model: Optional[str] = None,
     return out
 
 
-def describe(cfg: LLMConfig) -> str:
-    """One line naming the judge. The api base shows its host only: the URL can carry a key."""
-    parts = [cfg.provider, f"fast {cfg.fast_model}", f"strong {cfg.strong_model}"]
-    if cfg.api_base:
+def judge_record(cfg: LLMConfig) -> dict:
+    """The judge as data, for run.json. The api base keeps its host only: the URL can carry a key."""
+    host = None
+    # anthropic and azure never send REDTEAM_LLM_API_BASE, so naming it would record an unused endpoint.
+    if cfg.api_base and cfg.provider not in NO_API_BASE:
         base = cfg.api_base if "//" in cfg.api_base else "//" + cfg.api_base
         try:
             u = urllib.parse.urlsplit(base)
             host = (u.hostname or "") + (f":{u.port}" if u.port else "")
         except ValueError:
             host = ""
-        parts.append(f"api base {host or 'set'}")
-    if cfg.fallback_enabled and cfg.fallback_provider:
-        parts.append(f"falls back to {cfg.fallback_provider}")
-    return ", ".join(parts)
+        host = host or "set"
+    fallback = cfg.fallback_provider if cfg.fallback_enabled else None
+    return {"provider": cfg.provider, "fast_model": cfg.fast_model, "strong_model": cfg.strong_model,
+            "api_base_host": host, "fallback_provider": fallback}
+
+
+def describe(cfg: LLMConfig) -> str:
+    """One line naming the judge, for the console and the report notes."""
+    r = judge_record(cfg)
+    text = f"{r['provider']}, fast {r['fast_model']}, strong {r['strong_model']}"
+    if r["api_base_host"]:
+        text += f", api base {r['api_base_host']}"
+    if r["fallback_provider"]:
+        text += f" (falls back to {r['fallback_provider']})"
+    return text
 
 
 def resolve_config(env: Optional[Mapping[str, str]] = None) -> LLMConfig:
