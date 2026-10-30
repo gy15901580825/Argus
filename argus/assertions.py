@@ -250,7 +250,7 @@ def _canary_views(req: dict) -> list[str]:
             text = decoded
     try:
         views.append(json.dumps(json.loads(str(req.get("body") or "")), ensure_ascii=False))
-    except ValueError:
+    except (ValueError, RecursionError):  # the agent controls the body; deep nesting must not crash the check
         pass
     return views
 
