@@ -23,13 +23,17 @@ class _Target:
     compatible_classes = frozenset({"browser-using"})
     supports_history = False
 
-    def __init__(self, evidence):
+    def __init__(self, evidence, reply="I visited the page"):
+        # A list of evidence dicts is served one per collect_evidence call (one per round).
         self._evidence = evidence
+        self._reply = reply
 
     async def send_prompt(self, prompt, history=()):
-        return "I visited the page", 5.0
+        return self._reply, 5.0
 
     async def collect_evidence(self):
+        if isinstance(self._evidence, list):
+            return self._evidence.pop(0) if len(self._evidence) > 1 else self._evidence[0]
         return self._evidence
 
 
@@ -44,6 +48,20 @@ class _Judge:
     async def judge(self, **kwargs):
         self.calls.append(kwargs)
         return self._v
+
+
+class _SeqJudge(_Judge):
+    """Returns one verdict per call, in order (the last repeats)."""
+
+    def __init__(self, *verdicts):
+        super().__init__()
+        self._seq = list(verdicts)
+
+    async def judge(self, **kwargs):
+        self.calls.append(kwargs)
+        v = self._seq.pop(0) if len(self._seq) > 1 else self._seq[0]
+        return Verdict(verdict=v, severity="medium", confidence=0.7,
+                       reasoning=f"judge {v}", judge_model="judge-m")
 
 
 def _probe(tmp_path, **kw):
@@ -252,3 +270,67 @@ async def test_local_skip_judged_skips_the_hybrid_probe_and_runs_the_determinist
         events = await _collect(run_local(TARGET, ["det", "hyb"], env={}, skip_judged=True))
     assert seen["probe_ids"] == ["det"]
     assert [e["probe_id"] for e in events if e.get("verdict") == "skipped"] == ["hyb"]
+
+
+# --- fix round 1 ----------------------------------------------------------------
+
+@pytest.mark.parametrize("reply", ["", "   ", None])
+async def test_hybrid_clean_evidence_with_a_blank_reply_is_an_error_and_not_judged(tmp_path, reply):
+    from argus.runner import _no_text_reason
+    judge = _Judge(verdict="pass")
+    target = _Target(CLEAN, reply=reply)
+    [f] = await _run(target, judge, _probe(tmp_path), tmp_path)
+    assert f.verdict == VERDICT_ERROR
+    assert f.reasoning == _no_text_reason(target)
+    assert f.evidence == CLEAN
+    assert judge.calls == []
+
+
+async def test_hybrid_sink_hit_with_a_blank_reply_still_fails(tmp_path):
+    [f] = await _run(_Target(HIT, reply=""), _Judge(), _probe(tmp_path), tmp_path)
+    assert f.verdict == "fail"
+
+
+async def test_pure_assertion_probe_still_accepts_a_blank_reply(tmp_path):
+    [f] = await _run(_Target(CLEAN, reply=""), _Judge(), _probe(tmp_path, judge_when_assertions_pass=False),
+                     tmp_path)
+    assert f.verdict == "pass"
+
+
+async def test_deep_hybrid_blank_reply_is_an_error_and_not_judged(tmp_path):
+    from argus.runner import _no_text_reason
+    judge = _Judge(verdict="pass")
+    target = _Target(CLEAN, reply="")
+    findings = await _run_deep(target, judge, _deep(_probe(tmp_path)), tmp_path)
+    assert [f.verdict for f in findings] == ["error"]
+    assert findings[0].reasoning == f"round 1: {_no_text_reason(target)}"  # ties go to the later round
+    assert judge.calls == []
+
+
+async def test_deep_hybrid_keeps_the_worst_verdict_across_rounds(tmp_path):
+    judge = _SeqJudge("warn", "pass")
+    findings = await _run_deep(_Target(CLEAN), judge, _deep(_probe(tmp_path), rounds=2), tmp_path)
+    assert len(judge.calls) == 2
+    assert [f.verdict for f in findings] == ["warn"]
+    assert findings[0].reasoning.endswith("judge warn")
+
+
+async def test_deep_hybrid_a_worse_later_round_replaces_the_earlier_one(tmp_path):
+    judge = _SeqJudge("pass", "warn")
+    findings = await _run_deep(_Target(CLEAN), judge, _deep(_probe(tmp_path), rounds=2), tmp_path)
+    assert [f.verdict for f in findings] == ["warn"]
+
+
+async def test_deep_hybrid_clean_round_then_a_sink_hit_is_a_fail(tmp_path):
+    judge = _SeqJudge("pass")
+    findings = await _run_deep(_Target([CLEAN, HIT]), judge, _deep(_probe(tmp_path), rounds=2), tmp_path)
+    assert [f.verdict for f in findings] == ["fail"]
+    assert findings[0].evidence == HIT
+    assert len(judge.calls) == 1  # only the clean round reached the judge
+
+
+async def test_deep_non_hybrid_assertion_probe_still_reports_the_last_round(tmp_path):
+    # The worst-verdict rule is for hybrid probes only; evidence is cumulative so the last round is the state.
+    findings = await _run_deep(_Target([CLEAN, HIT]), _Judge(), _deep(
+        _probe(tmp_path, judge_when_assertions_pass=False)), tmp_path)
+    assert [f.verdict for f in findings] == ["fail"]

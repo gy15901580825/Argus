@@ -32,6 +32,10 @@ def _rubric_candidate(rubrics_dir: Path, rubric_path: str) -> Path:
     return candidate
 
 
+# Worst-first order for keeping one finding across the rounds of a hybrid thread.
+_VERDICT_RANK = {"pass": 0, "error": 1, "warn": 2, "fail": 3}
+
+
 def _is_hybrid(probe) -> bool:
     return bool(getattr(probe, "judge_when_assertions_pass", False))
 
@@ -523,13 +527,20 @@ class Runner:
             evidence=evidence or None,
         )
 
-    async def _hybrid_finding(self, probe, rubric_text, clean: Finding) -> Finding:
+    async def _hybrid_finding(self, probe, rubric_text, clean: Finding, *, round_n: int | None = None) -> Finding:
         """The judge's verdict for a probe whose assertions all passed.
 
         Clean evidence only rules out the failures the assertions know how to see,
         so the judge decides; its finding carries the evidence and says why it ran.
         May raise ValueError for an unusable judge reply: the callers own that policy.
         """
+        # Same rule as a judged probe: a blank reply is a broken response path, and a judge would read it as a pass.
+        if _blank(clean.target_response):
+            reason = _no_text_reason(self._target)
+            return replace(
+                clean, verdict=VERDICT_ERROR, severity="info", confidence=1.0,
+                reasoning=reason if round_n is None else f"round {round_n}: {reason}",
+            )
         verdict = await self._judge.judge(
             probe_name=probe.name,
             attack_prompt=self._shown(clean.attack_prompt),
@@ -623,6 +634,7 @@ class Runner:
                 # be mistaken for the last turn.
                 if conversation and idx != len(probe.prompts) - 1:
                     continue
+                # A hybrid conversation probe is judged on its final turn only; the estimate counts every prompt.
                 f = await self._assertion_finding(probe, prompt, response_text, latency_ms, probed_at)
                 if f.verdict == VERDICT_PASS and _is_hybrid(probe):
                     try:
@@ -742,27 +754,33 @@ class Runner:
                     )
                     return
                 if assertions:
-                    pending = await self._assertion_finding(
+                    current = await self._assertion_finding(
                         probe, prompt, response_text, latency_ms, probed_at
                     )
-                    if pending.verdict == VERDICT_PASS and _is_hybrid(probe):
+                    if current.verdict == VERDICT_PASS and _is_hybrid(probe):
                         try:
-                            pending = await self._hybrid_finding(probe, rubric_text, pending)
+                            current = await self._hybrid_finding(probe, rubric_text, current, round_n=round_n)
                         except ValueError as e:
                             # Same as the judged branch below: the next round needs this verdict.
                             yield self._finding(
                                 probe, prompt, response_text, latency_ms, probed_at,
                                 verdict=VERDICT_ERROR, severity="info", confidence=1.0,
                                 reasoning=f"judge reply could not be used: {str(e)[:200]}",
-                                evidence=pending.evidence,
+                                evidence=current.evidence,
                             )
                             return
+                    # Only the last pending finding is reported, so a hybrid thread keeps its worst
+                    # round: a later judge pass must not erase an earlier warn.
+                    if not _is_hybrid(probe) or pending is None or (
+                        _VERDICT_RANK.get(current.verdict, 1) >= _VERDICT_RANK.get(pending.verdict, 1)
+                    ):
+                        pending = current
                     # Fed back as a Verdict purely so the attacker LLM and
                     # should_halt see the round the way they see a judged one.
                     verdict = Verdict(
-                        verdict=pending.verdict, severity=pending.severity,
-                        confidence=pending.confidence, reasoning=pending.reasoning,
-                        judge_model=pending.judge_model, escalated_model=pending.escalated_model,
+                        verdict=current.verdict, severity=current.severity,
+                        confidence=current.confidence, reasoning=current.reasoning,
+                        judge_model=current.judge_model, escalated_model=current.escalated_model,
                     )
                 else:
                     try:
