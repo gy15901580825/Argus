@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fixture chat</title>
+<style>
+  .msg { margin: 4px 0; }
+  .user { color: #333; }
+  .assistant { color: #036; }
+</style>
+</head>
+<body>
+<!--
+  Test page for argus/targets/web_chat.py. Query params:
+    pause=1    the stream stops for 1.5 s half way, with #stop still visible
+    silent=1   never answers
+    auth=1     the chat renders only when the cookie session=ok is set
+    persist=1  the conversation survives a reload (localStorage); #new-chat clears it
+  Every reply is "turn N (via): echo PROMPT - ..." where N counts this
+  conversation's user messages and via is "click" or "enter".
+-->
+<p id="login" hidden>Please log in.</p>
+<div id="app">
+  <button id="new-chat" type="button">New chat</button>
+  <div id="log"></div>
+  <button id="stop" type="button" hidden>Stop</button>
+  <textarea id="input" rows="2" cols="60"></textarea>
+  <button id="send" type="button">Send</button>
+</div>
+<script>
+const q = new URLSearchParams(location.search);
+const PERSIST = q.has("persist"), PAUSE = q.has("pause"), SILENT = q.has("silent");
+const KEY = "fixture-chat";
+const WORD_MS = 80, THINK_MS = 100, BUBBLE_MS = 100, PAUSE_MS = 1500;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+const app = document.getElementById("app");
+const log = document.getElementById("log");
+const input = document.getElementById("input");
+const stop = document.getElementById("stop");
+
+if (q.has("auth") && !document.cookie.split("; ").includes("session=ok")) {
+  app.remove();
+  document.getElementById("login").hidden = false;
+}
+
+let messages = [];
+if (PERSIST) {
+  try { messages = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch (e) { messages = []; }
+}
+function save() { if (PERSIST) localStorage.setItem(KEY, JSON.stringify(messages)); }
+function bubble(role, text) {
+  const el = document.createElement("div");
+  el.className = "msg " + role;
+  el.textContent = text;
+  log.appendChild(el);
+  return el;
+}
+for (const m of messages) bubble(m.role, m.text);
+
+async function send(via) {
+  const prompt = input.value;
+  if (!prompt.trim()) return;
+  input.value = "";
+  messages.push({role: "user", text: prompt});
+  save();
+  bubble("user", prompt);
+  if (SILENT) return;
+  const turn = messages.filter(m => m.role === "user").length;
+  const reply = `turn ${turn} (${via}): echo ${prompt} - streamed word by word`;
+  const words = reply.split(" ");
+  stop.hidden = false;
+  await sleep(BUBBLE_MS);
+  const el = bubble("assistant", "Thinking…");
+  await sleep(THINK_MS);
+  for (let i = 1; i <= words.length; i++) {
+    el.textContent = words.slice(0, i).join(" ");
+    await sleep(PAUSE && i === Math.floor(words.length / 2) ? PAUSE_MS : WORD_MS);
+  }
+  stop.hidden = true;
+  messages.push({role: "assistant", text: reply});
+  save();
+}
+
+document.getElementById("send").addEventListener("click", () => send("click"));
+input.addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send("enter"); }
+});
+document.getElementById("new-chat").addEventListener("click", () => {
+  messages = [];
+  save();
+  log.replaceChildren();
+});
+</script>
+</body>
+</html>
