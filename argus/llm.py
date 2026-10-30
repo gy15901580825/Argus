@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import logging
 import os
+import urllib.parse
 from dataclasses import dataclass, replace
 from typing import Mapping, Optional
 
@@ -37,6 +38,35 @@ PROVIDER_AZURE = "azure"
 PROVIDER_OPENAI = "openai"
 PROVIDER_LITELLM = "litellm"
 _VALID_PROVIDERS = (PROVIDER_ANTHROPIC, PROVIDER_AZURE, PROVIDER_OPENAI, PROVIDER_LITELLM)
+PROVIDERS = _VALID_PROVIDERS
+
+# The judge settings and the env vars they live in. CLI flags are written over these,
+# so resolve_config stays the only place a judge is chosen.
+JUDGE_ENV = {
+    "provider": "REDTEAM_MODEL_PROVIDER",
+    "model": "REDTEAM_FAST_MODEL",
+    "strong_model": "REDTEAM_STRONG_MODEL",
+    "api_base": "REDTEAM_LLM_API_BASE",
+}
+
+# litellm providers whose credentials its env check cannot see, so a refusal could be wrong:
+# local servers need none; AWS profiles/roles, Google ADC and Azure AD or AZURE_OPENAI_API_KEY
+# live outside the variables it checks. The pre-check refuses only when it is sure.
+_LOCAL_PROVIDERS = frozenset({"ollama", "ollama_chat", "hosted_vllm", "vllm", "lm_studio", "llamafile",
+                              "openai_like", "custom_openai", "xinference", "oobabooga", "lemonade"})
+_AMBIENT_PREFIXES = ("bedrock", "sagemaker", "vertex_ai", "azure")
+# Key names litellm's call path reads but validate_environment does not accept (litellm 1.106.6:
+# get_llm_provider_logic.py:786-789, main.py:3097, :3229, :2821, :3496, perplexity transformation.py:37).
+_KEY_ALIASES = {
+    "together_ai": ("TOGETHER_API_KEY", "TOGETHER_AI_API_KEY", "TOGETHER_AI_TOKEN"),
+    "cohere": ("CO_API_KEY",),
+    "huggingface": ("HF_TOKEN",),
+    "replicate": ("REPLICATE_API_TOKEN",),
+    "openrouter": ("OR_API_KEY",),
+    "perplexity": ("PERPLEXITY_API_KEY",),
+}
+# Providers whose calls never send REDTEAM_LLM_API_BASE, and the setting they read instead.
+NO_API_BASE = {PROVIDER_ANTHROPIC: "ANTHROPIC_BASE_URL", PROVIDER_AZURE: "AZURE_API_BASE"}
 
 # Defaults per provider. Anthropic's are the models the judge shipped with; the
 # defaults must not change behaviour for an operator who sets nothing.
@@ -107,11 +137,16 @@ class LLMConfig:
         return None
 
     def missing_credential(self) -> Optional[str]:
-        """Name of the env var the chosen provider needs but lacks, else None."""
+        """Name(s) of the env vars the chosen provider needs but lacks, comma-separated, else None."""
         if self.provider == PROVIDER_ANTHROPIC and not self.anthropic_api_key:
             return "ANTHROPIC_API_KEY"
         if self.provider == PROVIDER_OPENAI and not self.openai_api_key:
             return "OPENAI_API_KEY"
+        if self.provider == PROVIDER_LITELLM:
+            names: list[str] = []
+            for model in dict.fromkeys((self.fast_model, self.strong_model)):
+                names += [n for n in _litellm_missing_keys(model, self.api_base) if n not in names]
+            return ", ".join(names) or None
         return None
 
     @property
@@ -142,16 +177,113 @@ class Completion:
     refusals: tuple = ()
 
 
-def credential_error(cfg: LLMConfig) -> Optional[str]:
-    """Message for the missing credential of cfg's provider, or None. Shared by /redteam/run and run_local."""
+def missing_text(cfg: LLMConfig) -> Optional[str]:
+    """`<NAME> is not set`, naming the model for litellm; None when nothing is missing."""
     name = cfg.missing_credential()
     if name is None:
         return None
+    if cfg.provider == PROVIDER_LITELLM:
+        models = " and ".join(dict.fromkeys((cfg.fast_model, cfg.strong_model)))
+        # litellm lists every variable a provider can read (Gemini: either key will do).
+        return f"litellm finds no credentials for {models}; it looks for {name}"
+    return f"{name} is not set"
+
+
+def credential_error(cfg: LLMConfig) -> Optional[str]:
+    """Message for the missing credential of cfg's provider, or None. Shared by /redteam/run and run_local."""
+    text = missing_text(cfg)
+    if text is None:
+        return None
+    if cfg.provider == PROVIDER_LITELLM:
+        return f"{text}. Set the variable your provider needs, or choose another judge (see the README)."
     return (
-        f"{name} is not set (REDTEAM_MODEL_PROVIDER={cfg.provider}). "
+        f"{text} (REDTEAM_MODEL_PROVIDER={cfg.provider}). "
         "Set ANTHROPIC_API_KEY or OPENAI_API_KEY, or set REDTEAM_MODEL_PROVIDER "
         "to azure or litellm (see the README)."
     )
+
+
+def _litellm_missing_keys(model: str, api_base: Optional[str]) -> list[str]:
+    """Env vars litellm says `model` needs and cannot find; [] whenever the answer could be wrong."""
+    import litellm
+
+    litellm.suppress_debug_info = True  # an unknown model would print litellm's provider list
+    try:
+        provider = litellm.get_llm_provider(model=model)[1]
+    except Exception:  # noqa: BLE001 - litellm cannot route the name, so it cannot say what it needs
+        return []
+    if not provider or provider in _LOCAL_PROVIDERS or provider.startswith(_AMBIENT_PREFIXES):
+        return []
+    # A custom base usually means a gateway with its own auth, except on the openai route:
+    # its SDK client refuses to start without OPENAI_API_KEY whatever the base.
+    if api_base and provider != "openai":
+        return []
+    try:
+        result = litellm.validate_environment(model=model)
+    except Exception as e:  # noqa: BLE001 - a check that cannot run must not block the run
+        logger.warning("litellm could not check credentials for %s: %s", model, e)
+        return []
+    missing = [str(n) for n in result.get("missing_keys") or []]
+    aliases = _KEY_ALIASES.get(provider, ())
+    if missing and aliases:
+        if any(_env_value(a) for a in aliases):
+            return []
+        missing += [a for a in aliases if a not in missing]
+    return missing
+
+
+def _env_value(name: str) -> Optional[str]:
+    # Indirection so tests can answer for a key name without setting a key variable.
+    return os.environ.get(name)
+
+
+def judge_env(*, provider: Optional[str] = None, model: Optional[str] = None,
+              strong_model: Optional[str] = None, api_base: Optional[str] = None,
+              price: Optional[tuple[float, float]] = None,
+              env: Optional[Mapping[str, str]] = None) -> dict[str, str]:
+    """The env overrides for a judge chosen by flags; unset flags leave the env alone.
+
+    `price` (USD per 1M tokens, input and output) is declared for the fast and strong
+    models this choice resolves to. Raises ValueError when resolve_config would reject it.
+    """
+    from argus.cost_meter import price_env_names
+
+    env = os.environ if env is None else env
+    given = {"provider": provider, "model": model, "strong_model": strong_model, "api_base": api_base}
+    out = {JUDGE_ENV[k]: v for k, v in given.items() if v is not None}
+    cfg = resolve_config({**env, **out})
+    if price is not None:
+        for m in dict.fromkeys((cfg.fast_model, cfg.strong_model)):
+            out.update(zip(price_env_names(m), (str(price[0]), str(price[1]))))
+    return out
+
+
+def judge_record(cfg: LLMConfig) -> dict:
+    """The judge as data, for run.json. The api base keeps its host only: the URL can carry a key."""
+    host = None
+    # anthropic and azure never send REDTEAM_LLM_API_BASE, so naming it would record an unused endpoint.
+    if cfg.api_base and cfg.provider not in NO_API_BASE:
+        base = cfg.api_base if "//" in cfg.api_base else "//" + cfg.api_base
+        try:
+            u = urllib.parse.urlsplit(base)
+            host = (u.hostname or "") + (f":{u.port}" if u.port else "")
+        except ValueError:
+            host = ""
+        host = host or "set"
+    fallback = cfg.fallback_provider if cfg.fallback_enabled else None
+    return {"provider": cfg.provider, "fast_model": cfg.fast_model, "strong_model": cfg.strong_model,
+            "api_base_host": host, "fallback_provider": fallback}
+
+
+def describe(cfg: LLMConfig) -> str:
+    """One line naming the judge, for the console and the report notes."""
+    r = judge_record(cfg)
+    text = f"{r['provider']}, fast {r['fast_model']}, strong {r['strong_model']}"
+    if r["api_base_host"]:
+        text += f", api base {r['api_base_host']}"
+    if r["fallback_provider"]:
+        text += f" (falls back to {r['fallback_provider']})"
+    return text
 
 
 def resolve_config(env: Optional[Mapping[str, str]] = None) -> LLMConfig:

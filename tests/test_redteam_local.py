@@ -36,10 +36,11 @@ async def test_run_local_yields_findings_then_coverage(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     with patch("argus.api._run_probes", _fake_run):
         events = await _collect(run_local(TARGET, ["owasp_01_prompt_injection_basic"]))
-    assert events[0] == FAKE_FINDING
+    assert events[0]["type"] == "judge"  # a judged probe: the judge is named first
+    assert events[1] == FAKE_FINDING
     assert events[-1]["type"] == "coverage"
     assert isinstance(events[-1]["coverage"], dict)
-    assert len(events) == 2
+    assert len(events) == 3
 
 
 async def test_run_local_passes_the_key_to_run_probes(monkeypatch):
@@ -155,7 +156,8 @@ async def test_run_local_azure_provider_needs_no_anthropic_key(monkeypatch):
                 env={"REDTEAM_MODEL_PROVIDER": "azure"},
             )
         )
-    assert events[0] == FAKE_FINDING
+    assert events[0]["judge"].startswith("azure, fast gpt-5.4-mini")
+    assert events[1] == FAKE_FINDING
     assert events[-1]["type"] == "coverage"
 
 
@@ -199,10 +201,11 @@ async def test_litellm_judge_yields_warning_first():
         events = await _collect(
             run_local(TARGET, ["owasp_01_prompt_injection_basic"], env=env)
         )
-    assert events[0]["type"] == "warning"
-    assert "ollama/qwen2.5:32b" in events[0]["message"]
-    assert "61%" in events[0]["message"]
-    assert events[1] == FAKE_FINDING
+    assert events[0]["type"] == "judge"
+    assert events[1]["type"] == "warning"
+    assert "ollama/qwen2.5:32b" in events[1]["message"]
+    assert "61%" in events[1]["message"]
+    assert events[2] == FAKE_FINDING
 
 
 async def test_default_judge_yields_no_warning():
@@ -395,7 +398,7 @@ async def test_skip_judged_with_a_key_is_a_noop_with_a_warning(library):
         events = await _collect(run_local(TARGET, [], env=KEY, skip_judged=True))
     assert seen["probe_ids"] == ["chat_j1", "chat_j2", "chat_a1"]
     assert _verdicts(events, "skipped") == []
-    assert events[0] == {"type": "warning",
+    assert events[1] == {"type": "warning",
                          "message": "--skip-judged has no effect: a judge key is set, so every probe runs."}
 
 

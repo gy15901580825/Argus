@@ -36,4 +36,5 @@ def cmd_quickstart(out: str) -> None:
     click.echo("The demo agent is deliberately insecure. To test your own agent:")
     click.echo("  argus-probe init")
     click.echo("  argus-probe run --local --target argus-target.json --probes owasp_07_system_prompt_leakage --out report.html")
-    click.echo("Judged probes (prompt injection, data leakage, ...) need ANTHROPIC_API_KEY or OPENAI_API_KEY.")
+    click.echo("Judged probes (prompt injection, data leakage, ...) need ANTHROPIC_API_KEY or OPENAI_API_KEY, "
+               "or another judge chosen with --judge-provider and --judge-model.")

@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import math
+import os
+import re
 import time as _time
 from datetime import date
 from typing import Optional
@@ -19,7 +22,7 @@ logger = logging.getLogger(__name__)
 # USD per 1M tokens. Anthropic list prices; Azure entries are the operator's
 # negotiated rates and MUST be confirmed against the Azure agreement — the values
 # here are placeholders chosen so the cap errs high, not billing facts. Override
-# per-deployment with REDTEAM_PRICE_<MODEL>_INPUT / _OUTPUT if they differ.
+# any model with REDTEAM_PRICE_<MODEL>_INPUT / _OUTPUT (see price_env_names).
 _PRICES_PER_M_TOKENS = {
     "claude-haiku-4-5-20251001": {"input": 1.0, "output": 5.0},
     "claude-sonnet-4-6": {"input": 3.0, "output": 15.0},
@@ -32,14 +35,53 @@ _PRICES_PER_M_TOKENS = {
 }
 
 
+_WARNED_UNPRICED: set[str] = set()
+_WARNED_BAD_PRICE: set[tuple] = set()
+
+
+def price_env_names(model: str) -> tuple[str, str]:
+    """The env vars that declare `model`'s price, USD per 1M tokens: (input, output).
+
+    <MODEL> is the model string upper-cased, with every run of characters other than
+    A-Z and 0-9 replaced by one underscore: gemini/gemini-2.5-flash ->
+    REDTEAM_PRICE_GEMINI_GEMINI_2_5_FLASH_INPUT and ..._OUTPUT.
+    """
+    stem = re.sub(r"[^A-Z0-9]+", "_", model.upper()).strip("_")
+    return f"REDTEAM_PRICE_{stem}_INPUT", f"REDTEAM_PRICE_{stem}_OUTPUT"
+
+
+def _declared_price(model: str) -> dict | None:
+    """The operator's price for `model` from the env, or None. A half or malformed declaration is ignored, loudly."""
+    names = price_env_names(model)
+    raw = [os.environ.get(n) for n in names]
+    if raw == [None, None]:
+        return None
+    try:
+        values = [float(v) for v in raw]  # float(None) raises TypeError: one side missing
+    except (TypeError, ValueError):
+        values = []
+    if len(values) != 2 or not all(math.isfinite(v) and v >= 0 for v in values):
+        # Once per declaration: an estimate or a run prices the same model hundreds of times.
+        if (names, tuple(raw)) in _WARNED_BAD_PRICE:
+            return None
+        _WARNED_BAD_PRICE.add((names, tuple(raw)))
+        logger.warning("ignoring the declared price for %r: set both %s and %s to a number >= 0 "
+                       "(USD per 1M tokens)", model, *names)
+        return None
+    return {"input": values[0], "output": values[1]}
+
+
 def _price_for(model: str) -> dict:
-    """Price lookup for `model`, pessimistic on a miss.
+    """Price lookup for `model`: the declared price, else the table, else pessimistic.
 
     The previous behaviour fell back to the CHEAPEST entry, so an unregistered
     model was silently under-counted and the daily cap permitted real spend past
     its limit. For a safety limit the fallback must over-estimate: an unknown
     model is billed at the most expensive known rate, and says so.
     """
+    declared = _declared_price(model)
+    if declared is not None:
+        return declared
     known = _PRICES_PER_M_TOKENS.get(model)
     if known is not None:
         return known
@@ -49,11 +91,15 @@ def _price_for(model: str) -> dict:
         "input": max(p["input"] for p in _PRICES_PER_M_TOKENS.values()),
         "output": max(p["output"] for p in _PRICES_PER_M_TOKENS.values()),
     }
+    # Once per model: an estimate or a run prices the same model hundreds of times.
+    if model in _WARNED_UNPRICED:
+        return worst
+    _WARNED_UNPRICED.add(model)
     logger.warning(
         "no price registered for model %r — billing at the most expensive known rate "
         "(in=$%.2f/out=$%.2f per 1M tokens) so the cap cannot be undershot. "
-        "Add it to _PRICES_PER_M_TOKENS.",
-        model, worst["input"], worst["output"],
+        "Declare its price with --judge-price INPUT,OUTPUT or %s and %s (USD per 1M tokens).",
+        model, worst["input"], worst["output"], *price_env_names(model),
     )
     return worst
 

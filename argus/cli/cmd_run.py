@@ -11,6 +11,7 @@ from click.core import ParameterSource
 
 from argus.cli import api_client, git_context, run_json
 from argus.cli.baseline_key import baseline_key
+from argus.cli.judge_options import judge_options
 from argus.cli.local_run import run_local_and_render
 from argus.cli.severity import (
     SEVERITY_ORDER, blocked_warning, findings_at_or_above, hit_cost_cap, incomplete_lines, judge_skip_line,
@@ -44,6 +45,7 @@ EXIT_COST_CAP = 4
                    "run the rest, instead of refusing the run. Skipped probes do not change the exit code.")
 @click.option("--compare-to", "compare_to", default=None,
               help="Base branch: report and gate only on failures that are new relative to the latest run on it. Needs run history on a server implementing the /api/v1/redteam API.")
+@judge_options
 def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, token: str | None, api_url: str | None, max_wait: float, per_run_cap: float | None, fail_on: str | None, local: bool, compare_to: str | None, skip_judged: bool = False):
     """Submit a red-team run and write the report to disk."""
     try:

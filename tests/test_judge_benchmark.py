@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from argus import llm
+from argus import judge_bench, llm
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("judge_benchmark", ROOT / "scripts" / "judge_benchmark.py")
@@ -17,7 +17,7 @@ sys.modules["judge_benchmark"] = jb
 spec.loader.exec_module(jb)
 
 from argus.cost_meter import CostMeter  # noqa: E402
-from rubric_cases import Case  # noqa: E402
+from argus.judge_bench import Case  # noqa: E402
 
 
 def _rec(rubric, expects_pass, verdict, status="ok", expected_ok=None):
@@ -177,13 +177,13 @@ async def test_benchmark_turns_the_decider_off_and_counts_the_call_that_trips_th
     monkeypatch.setenv("TYPESAFE_API_KEY", "x")
     cfg = llm.resolve_config({"ANTHROPIC_API_KEY": "k"})
     seen = {}
-    real = jb.Judge
+    real = judge_bench.Judge
 
     def spy(*a, **k):
         seen["judge"] = real(*a, **k)
         return seen["judge"]
 
-    monkeypatch.setattr(jb, "Judge", spy)
+    monkeypatch.setattr(judge_bench, "Judge", spy)
     # Each call is ~$0.00125; a $0.002 cap lets one through and trips on the second, which is still billed.
     with patch("argus.llm._anthropic_client", return_value=_client("pass", "pass", "pass")):
         records, spent, capped = await jb.run_benchmark(cfg, CASES, cap=0.002, concurrency=1)

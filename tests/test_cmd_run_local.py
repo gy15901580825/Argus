@@ -518,7 +518,7 @@ def test_run_exit_code_precedence():
 
 _NO_KEY = "no judge key: ANTHROPIC_API_KEY is not set; skipped by --skip-judged"
 _SKIP_LINE = ("2 of 3 probes skipped: no judge key. To run them, set ANTHROPIC_API_KEY or OPENAI_API_KEY, "
-              "or set REDTEAM_MODEL_PROVIDER to azure or litellm.")
+              "or choose another judge with --judge-provider and --judge-model.")
 
 
 def _no_key_engine(*extra):

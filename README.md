@@ -104,13 +104,21 @@ What Argus does:
   response (Anthropic Haiku 4.5 by default); a strong model (Sonnet 4.6)
   re-judges when the first pass says high/critical with confidence ≥ 0.7.
   Set `OPENAI_API_KEY` to use OpenAI (picked automatically when it is the
-  only key set), `REDTEAM_MODEL_PROVIDER=azure` for Azure OpenAI, or
-  `REDTEAM_MODEL_PROVIDER=litellm` with `REDTEAM_FAST_MODEL=ollama/qwen2.5:32b`
-  for a local model (`REDTEAM_LLM_API_BASE` sets a non-default host). Small
-  local judges miss many jailbreaks, so the CLI warns when you use one. Azure
-  OpenAI's default content filter blocks judge calls because the judge reads
-  attack text; use a custom filter policy with jailbreak detection turned off
-  for that deployment.
+  only key set), or choose any model litellm can call with the judge flags:
+  `--judge-provider litellm --judge-model gemini/gemini-2.5-flash` (also
+  Bedrock, Mistral, Azure OpenAI, Ollama, or your own OpenAI-compatible
+  server with `--judge-api-base`). Each flag has an environment variable
+  (`REDTEAM_MODEL_PROVIDER`, `REDTEAM_FAST_MODEL`, `REDTEAM_STRONG_MODEL`,
+  `REDTEAM_LLM_API_BASE`), and `--judge-price INPUT,OUTPUT` declares the price
+  of a model Argus does not know, for the cost cap. Argus checks the model's
+  credentials before the run, prints the judge it uses, and names it in the
+  report. With a cloud provider, attack prompts and your agent's replies go to
+  that provider. Small local judges miss many jailbreaks, so the CLI warns when
+  you use one. Run `argus-probe judge-check` with the same flags to see how a
+  judge scores on Argus's labelled cases before you trust it. Details:
+  [Choosing a judge](docs/cli.md#choosing-a-judge). Azure OpenAI's default
+  content filter blocks judge calls because the judge reads attack text; use a
+  custom filter policy with jailbreak detection turned off for that deployment.
   The target's reply goes to the judge inside a delimited block marked as
   untrusted, and a judge verdict outside `pass` / `warn` / `fail` becomes an
   `error` finding, never a pass. How accurate the judge is on our fixtures:
@@ -423,7 +431,7 @@ judge:
   rubric_path: "rubrics/prompt_injection.md"   # which rubric the judge applies
 ```
 
-The judge model is not set per probe. It comes from the orchestrator's
+The judge model is not set per probe. It comes from the judge flags or the
 `REDTEAM_MODEL_PROVIDER`, `REDTEAM_FAST_MODEL` and `REDTEAM_STRONG_MODEL`
 environment variables; a `judge.model` key in a probe is read but ignored.
 

@@ -59,12 +59,17 @@ def _run_and_render(
     started_at = datetime.now(timezone.utc)
     findings: list[dict] = []
     coverage: dict | None = None
+    judge: dict | None = None
 
     async def _consume() -> None:
-        nonlocal coverage
+        nonlocal coverage, judge
         async for event in run_local(spec, probe_ids, per_run_cap_usd=per_run_cap, skip_judged=skip_judged):
             if event.get("type") == "coverage":
                 coverage = event.get("coverage")
+                continue
+            if event.get("type") == "judge":
+                judge = event
+                click.echo(f"Judge: {judge['judge']}")
                 continue
             if event.get("type") == "warning":
                 click.echo(f"Warning: {event['message']}", err=True)
@@ -100,6 +105,8 @@ def _run_and_render(
         notes.append(warning)
     if skip_note := judge_skip_line(findings):
         notes.append(skip_note)
+    if judge:
+        notes.append(f"Judged by {judge['judge']}")
     run = {
         "id": str(uuid.uuid4()),
         "status": "incomplete" if incomplete else "completed",
@@ -109,6 +116,8 @@ def _run_and_render(
         "coverage": coverage,
         "findings": findings,
     }
+    if judge:
+        run["judge"] = judge["record"]
     exit_code = run_exit_code(findings, stopped_by, fail_on)
     # SARIF's exitCode; render_json leaves it out of run.json.
     run["exit_code"] = exit_code

@@ -12,6 +12,7 @@ from argus.cli.cmd_quickstart import cmd_quickstart
 from argus.cli.cmd_scan_skill import cmd_scan_skill
 from argus.cli.cmd_mcp_trap import cmd_mcp_trap
 from argus.cli.cmd_scan_mcp import cmd_scan_mcp
+from argus.cli.cmd_judge_check import cmd_judge_check
 
 
 @click.group()
@@ -31,6 +32,7 @@ main.add_command(cmd_quickstart, "quickstart")
 main.add_command(cmd_scan_skill, "scan-skill")
 main.add_command(cmd_mcp_trap, "mcp-trap")
 main.add_command(cmd_scan_mcp, "scan-mcp")
+main.add_command(cmd_judge_check, "judge-check")
 
 
 if __name__ == "__main__":
