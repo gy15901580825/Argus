@@ -99,9 +99,8 @@ def _prepare(target, probe_ids, *, mode, per_run_cap_usd, env, skip_judged) -> _
     judged = runs if mode == "deep" else [pid for pid in runs if not by_id[pid].assertions]
     skipped: list[dict] = []
     warnings: list[str] = []
-    err = llm.credential_error(cfg) if judged else None
-    if err:
-        key = cfg.missing_credential()
+    missing = llm.missing_text(cfg) if judged else None
+    if missing:
         n, m = len(judged), len(runs)
         # Without --skip-judged a missing key refuses the run: skipping silently would let
         # a CI gate pass on a fraction of the probes. Deep mode needs the attacker LLM too.
@@ -113,9 +112,9 @@ def _prepare(target, probe_ids, *, mode, per_run_cap_usd, env, skip_judged) -> _
                 hint = "Set a key; --skip-judged would leave nothing to run."
             else:
                 hint = "Set a key."
-            raise LocalRunError(f"{n} of {m} selected probes need an LLM judge: {key} is not set. "
+            raise LocalRunError(f"{n} of {m} selected probes need an LLM judge: {missing}. "
                                 f"{hint} {_KEY_HELP}", code="config")
-        reason = f"{NO_JUDGE_KEY}: {key} is not set; skipped by --skip-judged"
+        reason = f"{NO_JUDGE_KEY}: {missing}; skipped by --skip-judged"
         skipped = [api.finding_dict(skipped_finding(by_id[pid], reason), by_id[pid]) for pid in judged]
         requested = [pid for pid in requested if pid not in set(judged)]
         judged = []
@@ -148,7 +147,10 @@ async def run_local(
     env: Mapping[str, str] | None = None,
     skip_judged: bool = False,
 ) -> AsyncIterator[dict]:
-    """Yield warning events and finding dicts, then one {"type": "coverage", "coverage": dict} event.
+    """Yield events and finding dicts, then one {"type": "coverage", "coverage": dict} event.
+
+    Before any finding: {"type": "judge", "judge": llm.describe(cfg)} when a probe will be
+    judged, then {"type": "warning", "message": str} events.
 
     skip_judged: without a judge key, report the probes that need the judge as
     skipped and run the rest, instead of refusing the run.
@@ -156,6 +158,8 @@ async def run_local(
     req, cfg, anthropic_api_key, skipped, warnings, judged = _prepare(
         target, probe_ids, mode=mode, per_run_cap_usd=per_run_cap_usd, env=env, skip_judged=skip_judged)
 
+    if judged:
+        yield {"type": "judge", "judge": llm.describe(cfg)}
     for message in warnings:
         yield {"type": "warning", "message": message}
     if judged and cfg.provider == llm.PROVIDER_LITELLM:
@@ -205,8 +209,8 @@ async def run_local(
     }
 
 
-_KEY_HELP = ("Judge keys: ANTHROPIC_API_KEY or OPENAI_API_KEY, or set REDTEAM_MODEL_PROVIDER "
-             "to azure or litellm (see the README).")
+_KEY_HELP = ("Judge keys: ANTHROPIC_API_KEY or OPENAI_API_KEY, or choose another judge with "
+             "--judge-provider (azure or litellm) and --judge-model (see the README).")
 
 
 def _cost_message(e: CostExceededError) -> str:

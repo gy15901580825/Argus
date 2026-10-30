@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import logging
 import os
+import urllib.parse
 from dataclasses import dataclass, replace
 from typing import Mapping, Optional
 
@@ -37,6 +38,20 @@ PROVIDER_AZURE = "azure"
 PROVIDER_OPENAI = "openai"
 PROVIDER_LITELLM = "litellm"
 _VALID_PROVIDERS = (PROVIDER_ANTHROPIC, PROVIDER_AZURE, PROVIDER_OPENAI, PROVIDER_LITELLM)
+PROVIDERS = _VALID_PROVIDERS
+
+# The judge settings and the env vars they live in. CLI flags are written over these,
+# so resolve_config stays the only place a judge is chosen.
+JUDGE_ENV = {
+    "provider": "REDTEAM_MODEL_PROVIDER",
+    "model": "REDTEAM_FAST_MODEL",
+    "strong_model": "REDTEAM_STRONG_MODEL",
+    "api_base": "REDTEAM_LLM_API_BASE",
+}
+
+# litellm's env check cannot see these credentials: a local server needs none, and AWS
+# profiles/roles and Google ADC live outside env vars. Such models are not blocked.
+_UNCHECKED_PREFIXES = ("ollama/", "ollama_chat/", "bedrock/", "sagemaker/", "vertex_ai/", "vertex_ai_beta/")
 
 # Defaults per provider. Anthropic's are the models the judge shipped with; the
 # defaults must not change behaviour for an operator who sets nothing.
@@ -107,11 +122,16 @@ class LLMConfig:
         return None
 
     def missing_credential(self) -> Optional[str]:
-        """Name of the env var the chosen provider needs but lacks, else None."""
+        """Name(s) of the env vars the chosen provider needs but lacks, comma-separated, else None."""
         if self.provider == PROVIDER_ANTHROPIC and not self.anthropic_api_key:
             return "ANTHROPIC_API_KEY"
         if self.provider == PROVIDER_OPENAI and not self.openai_api_key:
             return "OPENAI_API_KEY"
+        if self.provider == PROVIDER_LITELLM:
+            names: list[str] = []
+            for model in dict.fromkeys((self.fast_model, self.strong_model)):
+                names += [n for n in _litellm_missing_keys(model, self.api_base) if n not in names]
+            return ", ".join(names) or None
         return None
 
     @property
@@ -142,16 +162,82 @@ class Completion:
     refusals: tuple = ()
 
 
-def credential_error(cfg: LLMConfig) -> Optional[str]:
-    """Message for the missing credential of cfg's provider, or None. Shared by /redteam/run and run_local."""
+def missing_text(cfg: LLMConfig) -> Optional[str]:
+    """`<NAME> is not set`, naming the model for litellm; None when nothing is missing."""
     name = cfg.missing_credential()
     if name is None:
         return None
+    if cfg.provider == PROVIDER_LITELLM:
+        models = " and ".join(dict.fromkeys((cfg.fast_model, cfg.strong_model)))
+        # litellm lists every variable a provider can read (Gemini: either key will do).
+        return f"litellm finds no credentials for {models}; it looks for {name}"
+    return f"{name} is not set"
+
+
+def credential_error(cfg: LLMConfig) -> Optional[str]:
+    """Message for the missing credential of cfg's provider, or None. Shared by /redteam/run and run_local."""
+    text = missing_text(cfg)
+    if text is None:
+        return None
+    if cfg.provider == PROVIDER_LITELLM:
+        return f"{text}. Set the variable your provider needs, or choose another judge (see the README)."
     return (
-        f"{name} is not set (REDTEAM_MODEL_PROVIDER={cfg.provider}). "
+        f"{text} (REDTEAM_MODEL_PROVIDER={cfg.provider}). "
         "Set ANTHROPIC_API_KEY or OPENAI_API_KEY, or set REDTEAM_MODEL_PROVIDER "
         "to azure or litellm (see the README)."
     )
+
+
+def _litellm_missing_keys(model: str, api_base: Optional[str]) -> list[str]:
+    """Env vars litellm says `model` needs and cannot find; [] when litellm cannot tell."""
+    if api_base or model.startswith(_UNCHECKED_PREFIXES):
+        return []
+    import litellm
+
+    litellm.suppress_debug_info = True  # an unknown model would print litellm's provider list
+    try:
+        result = litellm.validate_environment(model=model)
+    except Exception as e:  # noqa: BLE001 - a check that cannot run must not block the run
+        logger.warning("litellm could not check credentials for %s: %s", model, e)
+        return []
+    return [str(n) for n in result.get("missing_keys") or []]
+
+
+def judge_env(*, provider: Optional[str] = None, model: Optional[str] = None,
+              strong_model: Optional[str] = None, api_base: Optional[str] = None,
+              price: Optional[tuple[float, float]] = None,
+              env: Optional[Mapping[str, str]] = None) -> dict[str, str]:
+    """The env overrides for a judge chosen by flags; unset flags leave the env alone.
+
+    `price` (USD per 1M tokens, input and output) is declared for the fast and strong
+    models this choice resolves to. Raises ValueError when resolve_config would reject it.
+    """
+    from argus.cost_meter import price_env_names
+
+    env = os.environ if env is None else env
+    given = {"provider": provider, "model": model, "strong_model": strong_model, "api_base": api_base}
+    out = {JUDGE_ENV[k]: v for k, v in given.items() if v is not None}
+    cfg = resolve_config({**env, **out})
+    if price is not None:
+        for m in dict.fromkeys((cfg.fast_model, cfg.strong_model)):
+            out.update(zip(price_env_names(m), (str(price[0]), str(price[1]))))
+    return out
+
+
+def describe(cfg: LLMConfig) -> str:
+    """One line naming the judge. The api base shows its host only: the URL can carry a key."""
+    parts = [cfg.provider, f"fast {cfg.fast_model}", f"strong {cfg.strong_model}"]
+    if cfg.api_base:
+        base = cfg.api_base if "//" in cfg.api_base else "//" + cfg.api_base
+        try:
+            u = urllib.parse.urlsplit(base)
+            host = (u.hostname or "") + (f":{u.port}" if u.port else "")
+        except ValueError:
+            host = ""
+        parts.append(f"api base {host or 'set'}")
+    if cfg.fallback_enabled and cfg.fallback_provider:
+        parts.append(f"falls back to {cfg.fallback_provider}")
+    return ", ".join(parts)
 
 
 def resolve_config(env: Optional[Mapping[str, str]] = None) -> LLMConfig:

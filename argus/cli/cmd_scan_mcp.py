@@ -19,6 +19,7 @@ import click
 
 from argus.cli import reports, run_json
 from argus.cli.cmd_run import _apply_fail_on, _check_out_dir, _count_fail_on, _write_report
+from argus.cli.judge_options import judge_options
 from argus.cli.mcp_sdk import CONTROL_RE, STOP_MESSAGES, cancel_on_stop_signals, sdk_problem
 from argus.cli.severity import SEVERITY_ORDER
 
@@ -174,6 +175,7 @@ def _console_line(f: dict, clean) -> str:
 @click.option("--format", "report_format", type=click.Choice(list(_EXTENSIONS)), default="html", show_default=True)
 @click.option("--fail-on", "fail_on", type=click.Choice(SEVERITY_ORDER), default=None,
               help="Exit 3 when any finding has verdict=fail and severity at or above this level.")
+@judge_options
 def cmd_scan_mcp(argv: tuple[str, ...], call_tools, tool_args: dict, headers: tuple[tuple[str, str], ...],
                  env_names: tuple[str, ...], on_host: bool, timeout_s: float, max_runtime_s: float, per_run_cap: float,
                  out_file: str | None, report_format: str, fail_on: str | None) -> None:
@@ -255,6 +257,9 @@ def cmd_scan_mcp(argv: tuple[str, ...], call_tools, tool_args: dict, headers: tu
                           judge_off_reason=judge_off, transport="http" if url is not None else "stdio-host")
     if on_host:
         say(_HOST_NOTE)
+    judged_by = [f"Judged by {llm.describe(judge_config)}"] if judge_config is not None else []
+    if judge_config is not None:
+        say(f"Judge: {llm.describe(judge_config)}")
     started_at = datetime.now(timezone.utc)
     try:
         with _sdk_logs(say):
@@ -301,7 +306,7 @@ def cmd_scan_mcp(argv: tuple[str, ...], call_tools, tool_args: dict, headers: tu
         "target_spec": target_spec,
         "coverage": build_coverage([*load_all_probes(scan.SCAN_PROBES_DIR), *server_probes()], result.findings),
         "findings": result.findings,
-        "notes": result.notes,
+        "notes": [*result.notes, *judged_by],
     }
     for f in result.findings:
         if f.get("verdict") == "fail":

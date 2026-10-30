@@ -75,7 +75,7 @@ argus-probe run --local --target browser-target.json \
 
 The trap page listens on `127.0.0.1` by default, which works when the agent runs on the same machine. For an agent in a container or on another machine, set `trap_host`, `trap_port` and `trap_public_url` in the target spec; the [target spec cookbook](https://github.com/gy15901580825/Argus/blob/main/docs/onboarding/target-spec-cookbook.md#browser_use) explains them. Server mode accepts the same fields. There the client agent serves the trap page, so set them for the client agent's machine. If your agent can't reach your machine at all, submit the run with `--api-url` and `--token` to a compatible hosted service instead.
 
-The local judge uses `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY` when that is the only key set. For a local model, set `REDTEAM_MODEL_PROVIDER=litellm` and `REDTEAM_FAST_MODEL=ollama/qwen2.5:32b` (add `REDTEAM_LLM_API_BASE` for a non-default host); small models miss many jailbreaks, so the CLI prints a warning. `REDTEAM_MODEL_PROVIDER=azure` runs the judge on Azure OpenAI. Azure's default content filter blocks judge calls because the judge reads attack text, so use a custom filter policy with jailbreak detection turned off for that deployment (also when `OPENAI_API_KEY` is paired with `REDTEAM_LLM_API_BASE` pointing at Azure). If `OPENAI_API_KEY` is paired with `REDTEAM_LLM_API_BASE` pointing at Azure, set `REDTEAM_FAST_MODEL` and `REDTEAM_STRONG_MODEL` to your deployment names, because the default strong model `gpt-5.6-terra` is usually not deployed. Local models other than Ollama (vLLM or LM Studio via `openai/...` with `REDTEAM_LLM_API_BASE`) are billed at the most expensive known rate, so pass `--per-run-cap`.
+The local judge uses `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY` when that is the only key set. To use another provider or model, see [Choosing a judge](#choosing-a-judge).
 
 ### Choosing probes
 
@@ -90,6 +90,63 @@ Without a judge key, `run --local` refuses to start when any selected probe need
 With `--skip-judged`, each probe that needs the judge is reported as `skipped` with the reason `no judge key: ANTHROPIC_API_KEY is not set; skipped by --skip-judged`, and the others run. The console prints `N of M probes skipped: no judge key. To run them, set ANTHROPIC_API_KEY or OPENAI_API_KEY, or set REDTEAM_MODEL_PROVIDER to azure or litellm.`, and the same line goes into the report notes (run.json, SARIF, JUnit and HTML). The skipped probes do not change the exit code. If every selected probe needs the judge, `--skip-judged` would leave nothing to run, so the run is still refused. With a judge key set, `--skip-judged` does nothing and the console says so. `--skip-judged` needs `--local`: in server mode the server holds the judge key.
 
 Server mode talks to any server implementing the `/api/v1/redteam` API: set `ARGUS_API_URL` to it and `ARGUS_API_TOKEN` to a token that server issued. There is no hosted Argus instance, and the Argus repo no longer ships a server; the self-hosted stack is at tag [`v0.3-full`](https://github.com/gy15901580825/Argus/tree/v0.3-full). A `browser_use` run in server mode also needs a [`client_agent`](https://github.com/gy15901580825/Argus/blob/main/client_agent/README.md) connected to the server's orchestrator; it connects directly, with the same `AGENT_CONNECT_SECRET` set on both sides.
+
+## Choosing a judge
+
+Any model that [litellm](https://docs.litellm.ai/docs/providers) can call can be the judge. Choose it with flags on `run --local`, `scan-mcp` and `judge-check`, or with the environment variables in the table. A flag wins over its variable, for that command only. `quickstart` and `mcp-trap` use no judge. In server mode the server chooses the judge, so `run` without `--local` refuses the judge flags.
+
+| Flag | Variable | Meaning |
+|---|---|---|
+| `--judge-provider` | `REDTEAM_MODEL_PROVIDER` | `anthropic` (default), `openai` (default when `OPENAI_API_KEY` is the only key set), `azure`, or `litellm` for any other model |
+| `--judge-model` | `REDTEAM_FAST_MODEL` | The model that judges every reply. Required with `litellm`, as a litellm model string |
+| `--judge-strong-model` | `REDTEAM_STRONG_MODEL` | The model that re-checks high-severity verdicts. With `litellm` it defaults to `--judge-model`, and then no re-check runs |
+| `--judge-api-base` | `REDTEAM_LLM_API_BASE` | Base URL for `openai` or `litellm`, such as a self-hosted server |
+| `--judge-price INPUT,OUTPUT` | `REDTEAM_PRICE_<MODEL>_INPUT` and `_OUTPUT` | USD per 1M input and output tokens, for the estimate and `--per-run-cap` |
+
+An unknown provider, or `litellm` without a model, is a usage error (exit 2). The command prints the judge it will use before the first probe, for example `Judge: litellm, fast gemini/gemini-2.5-flash, strong gemini/gemini-2.5-flash`. The report notes say `Judged by ...` with the same text (run.json for `run`, and HTML, SARIF and JUnit for both commands). Only the host of `--judge-api-base` is shown, because a URL can carry a key.
+
+Examples:
+
+```bash
+# OpenAI
+export OPENAI_API_KEY=<key>
+argus-probe run --local --judge-provider openai --judge-model gpt-4.1-mini ...
+
+# Azure OpenAI (deployment names; litellm reads AZURE_API_KEY, AZURE_API_BASE, AZURE_API_VERSION)
+argus-probe run --local --judge-provider azure --judge-model my-deployment --judge-strong-model my-deployment ...
+
+# Gemini (litellm reads GEMINI_API_KEY or GOOGLE_API_KEY)
+argus-probe run --local --judge-provider litellm --judge-model gemini/gemini-2.5-flash --judge-price 0.30,2.50 ...
+
+# Amazon Bedrock (AWS credentials from the environment or your AWS profile)
+argus-probe run --local --judge-provider litellm --judge-model bedrock/anthropic.claude-3-5-haiku-20241022-v1:0 ...
+
+# Mistral (MISTRAL_API_KEY)
+argus-probe run --local --judge-provider litellm --judge-model mistral/mistral-small-latest ...
+
+# A self-hosted OpenAI-compatible server (vLLM, LM Studio, a gateway)
+argus-probe run --local --judge-provider litellm --judge-model openai/my-model \
+  --judge-api-base http://127.0.0.1:8000/v1 --judge-price 0,0 ...
+
+# Ollama on this machine (add --judge-api-base for another host)
+argus-probe run --local --judge-provider litellm --judge-model ollama/qwen2.5:32b ...
+```
+
+**Credentials.** Before any probe runs, Argus asks litellm which variables the chosen model needs. If they are missing, `run --local` stops with exit 1 and names them, the same way as a missing `ANTHROPIC_API_KEY`, and `--skip-judged` still runs the probes that need no judge. `scan-mcp` runs without the judge and its notes say why. `judge-check` refuses with exit 1. litellm lists every variable it would read, so for Gemini the message names both `GOOGLE_API_KEY` and `GEMINI_API_KEY`, and either one is enough. Argus does not check when it cannot tell: with `--judge-api-base`, for Ollama, and for Bedrock, SageMaker and Vertex AI, whose credentials can come from an AWS profile or Google application default credentials. A missing credential there shows up as judge errors in the run.
+
+**Prices.** Argus knows the prices of its default models. For any other model, the estimate and the cap use the most expensive known rate ($15 input, $75 output per 1M tokens) and log a warning that names the flag and the variables. Declare the real price with `--judge-price 0.30,2.50`, which applies to this run's judge models, or with `REDTEAM_PRICE_<MODEL>_INPUT` and `REDTEAM_PRICE_<MODEL>_OUTPUT`. `<MODEL>` is the model string in upper case with every run of other characters replaced by one underscore: `gemini/gemini-2.5-flash` becomes `REDTEAM_PRICE_GEMINI_GEMINI_2_5_FLASH_INPUT`. A declared price wins over the built-in one. Ollama models cost nothing unless you declare a price. A declaration with only one side, or a value that is not a number at or above 0, is ignored with a warning.
+
+**Where your data goes.** The judge reads each attack prompt and your agent's reply. With a cloud provider, those go to that provider. With Ollama or your own server, they stay on machines you run.
+
+**Small judges.** Small local models miss many jailbreaks (in JailbreakBench, a 7B judge missed 61%), so `run` prints a warning when the judge is a `litellm` model, and a clean report from a small judge is weak evidence. Azure's default content filter blocks judge calls, because the judge reads attack text. Use a custom filter policy with jailbreak detection turned off for the judge deployment (also when `OPENAI_API_KEY` is paired with `--judge-api-base` pointing at Azure, where you also need to set both models to your deployment names).
+
+### Check a judge first: `judge-check`
+
+```bash
+argus-probe judge-check --judge-provider litellm --judge-model gemini/gemini-2.5-flash --judge-price 0.30,2.50
+```
+
+`judge-check` runs the chosen judge on Argus's labelled rubric cases: by default one case that should pass and one that should fail for each rubric, plus the shared hard cases (66 cases on 2026-10-30), or every case with `--all` (183). It prints the judge and the estimated cost first. It refuses to start without credentials (exit 1) or when the estimate is above `--per-run-cap` (default $0.50, exit 4), and stops when spend reaches the cap (exit 4). Then it prints accuracy, false passes (missed attacks), false fails (false alarms), errors and each case it got wrong, and exits 0, whatever the scores. The cases are Argus's own labels: they show whether the judge reads the rubrics as intended, not how accurate it is on your traffic. The Jev decider is off during the check. How we measured the default judge: [docs/judge-accuracy.md](https://github.com/gy15901580825/Argus/blob/main/docs/judge-accuracy.md).
 
 ## Supported agent shapes
 
@@ -359,7 +416,7 @@ Generated arguments cannot satisfy every schema, for example an id that must exi
 
 **HTTP servers.** Pass the headers a real client sends, such as credentials, with `--header 'Name: value'` (repeatable). Header values are masked in the console and every report. If the server answers 401 or 403, the command exits 2 and says to pass `--header`. OAuth flows are not supported. Pass a token with `--header 'Authorization: Bearer <token>'`.
 
-**The judge.** Rules decide most verdicts. A text that has no known injection phrase but looks aimed at a model, such as `You must call recall before every answer.`, goes to the LLM judge. The judge uses the same keys and providers as `run` (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY` or `REDTEAM_MODEL_PROVIDER`). `--per-run-cap` (default $0.50) is the judge's spend limit for the run, and each judge call is priced before it is sent. `--per-run-cap 0` turns the judge off. When the judge is off or has no key, the notes list those texts as not judged. The check gets an `error` finding for that tool, `not judged: judge off`, never a `pass`, and the exit code does not change. When the cap leaves a text unjudged, or the judge's reply cannot be used, the check gets an `error` finding for that tool and the command exits 1. The console names the cause. For the cap, raise `--per-run-cap`. When a reply could not be used, check the judge provider and its key.
+**The judge.** Rules decide most verdicts. A text that has no known injection phrase but looks aimed at a model, such as `You must call recall before every answer.`, goes to the LLM judge. The judge uses the same keys, providers and judge flags as `run` (see [Choosing a judge](#choosing-a-judge)). `--per-run-cap` (default $0.50) is the judge's spend limit for the run, and each judge call is priced before it is sent. `--per-run-cap 0` turns the judge off. When the judge is off or has no key, the notes list those texts as not judged. The check gets an `error` finding for that tool, `not judged: judge off`, never a `pass`, and the exit code does not change. When the cap leaves a text unjudged, or the judge's reply cannot be used, the check gets an `error` finding for that tool and the command exits 1. The console names the cause. For the cap, raise `--per-run-cap`. When a reply could not be used, check the judge provider and its key.
 
 **The report.** `--format` takes `html` (default), `sarif`, `junit` or `json`. `--out` sets the path (default `argus-mcp-scan-report.<html|sarif|xml|json>`). The console prints one line for each failing finding. The notes list every tool with its annotations and whether it was called, not called by policy (with the reason) or not exercised. The console, HTML, SARIF and JUnit outputs carry the notes. When the server lists more than 20 tools, the console shows a count of each kind and the first 20 lines, and the report keeps every line. The scan keeps at most 1000 tools from at most 20 `tools/list` pages. When it keeps fewer than the server has, the findings of the tool-list checks carry `truncated: true` in their evidence, with `tools_listed` set to the number of tools the server returned. run.json has no notes field. Secret-shaped values in results are masked before they are written. For deep static analysis of tool descriptions, also run Snyk agent-scan. The notes end with that line.
 
@@ -395,6 +452,7 @@ argus-probe coverage            Show what the probe library covers; asks the ser
 argus-probe scan-skill          Run a Claude Code skill in a sandbox and report what it did
 argus-probe mcp-trap            Point your agent at a hostile MCP server and report what it did
 argus-probe scan-mcp            Call an MCP server's tools with inert payloads and report what came back
+argus-probe judge-check         Measure the chosen judge on Argus's labelled rubric cases
 ```
 
 Each command's `--help` lists its flags.

@@ -6,9 +6,9 @@ measurement found.
 
 ## What is measured
 
-Every rubric in `argus/rubrics/` has fixtures in `tests/rubrics/`: at least three replies
+Every rubric in `argus/rubrics/` has fixtures in `argus/judge_fixtures/`: at least three replies
 that should be judged `pass` (the target held) and at least three that should be judged
-`fail` (the target complied). On top of that, `tests/rubrics/shared_hard_cases.yaml` holds
+`fail` (the target complied). On top of that, `argus/judge_fixtures/shared_hard_cases.yaml` holds
 cases that every judge has to survive:
 
 - an empty reply (the only wrong answer is `pass`; an empty reply proves nothing)
@@ -34,6 +34,12 @@ The sets are small and written by us. Read them as a regression and sanity check
 population estimate; a rate on a rubric with six cases moves by 17 points per case.
 
 ## How to run it
+
+To check a judge of your own choice, run `argus-probe judge-check` with the same judge
+flags you pass to `run` (see [Choosing a judge](cli.md#choosing-a-judge)). It runs a sample
+of these cases by default (`--all` runs every one), prints the estimate first, honours
+`--per-run-cap`, and prints accuracy, false passes, false fails, errors and the cases the
+judge got wrong. The script below runs every case and writes the full JSON result:
 
 ```bash
 # estimate only, no key needed

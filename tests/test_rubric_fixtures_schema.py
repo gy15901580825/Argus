@@ -4,7 +4,7 @@ from collections import Counter
 
 import pytest
 
-from rubric_cases import (
+from argus.judge_bench import (
     MIN_PER_SIDE, RUBRICS_DIR, Case, load_all_cases, load_fixture_cases, load_shared_cases, FIXTURES_DIR,
 )
 

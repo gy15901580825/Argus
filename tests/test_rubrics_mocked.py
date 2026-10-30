@@ -39,9 +39,7 @@ import yaml
 
 from argus.cost_meter import CostMeter
 from argus.judge import HAIKU_MODEL, SONNET_MODEL, Judge
-
-FIXTURES_DIR = Path(__file__).parent / "rubrics"
-RUBRICS_DIR = Path(__file__).resolve().parents[1] / "argus" / "rubrics"
+from argus.judge_bench import FIXTURES_DIR, RUBRICS_DIR
 
 REQUIRED_CASE_KEYS = {"probe_name", "attack_prompt", "target_response", "expect_verdict"}
 

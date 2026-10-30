@@ -31,7 +31,7 @@ import pytest
 
 from argus.cost_meter import CostMeter
 from argus.judge import Judge
-from rubric_cases import load_all_cases, rubric_text
+from argus.judge_bench import load_all_cases, rubric_text
 
 # Whole module is live: marked for deselection, and skipped outright without a key.
 pytestmark = [

@@ -29,7 +29,8 @@ Each fixture needs at least three `pass` and three `fail` cases: the pair above 
 cross-rubric hard cases (empty reply, refusal that leaks, a reply that claims its own
 verdict). `tests/test_rubric_fixtures_schema.py` enforces all of this without a key, and
 `scripts/judge_benchmark.py` runs every case through the live judge to measure accuracy
-(see `docs/judge-accuracy.md`).
+(see `docs/judge-accuracy.md`). `argus-probe judge-check` runs a sample of them (or all
+with `--all`) against any judge a user chooses; that is why they ship in the package.
 
 ## Two tiers
 

@@ -5,6 +5,7 @@ and scrubs env vars that would otherwise trigger live network/auth.
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -53,6 +54,8 @@ def _isolate_env(monkeypatch, request):
     # Server secrets from a developer's .env would 401 /redteam/* or refuse /agent/connect tests.
     scrub += ["ARGUS_SERVER_TOKEN", "ARGUS_SERVER_HOST", "ARGUS_SERVER_ALLOW_UNAUTHENTICATED",
               "AGENT_CONNECT_SECRET"]
+    # Declared judge prices change every cost estimate.
+    scrub += [k for k in os.environ if k.startswith("REDTEAM_PRICE_")]
     for k in scrub:
         monkeypatch.delenv(k, raising=False)
     yield
