@@ -39,7 +39,7 @@ async def _call_planner_llm(system_prompt: str, user_prompt: str) -> str:
     """
     try:
         out = await llm.complete(
-            llm.resolve_config(),
+            llm.text_config(),
             role="fast",
             system=system_prompt,
             user=user_prompt,

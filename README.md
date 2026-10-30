@@ -114,7 +114,10 @@ What Argus does:
   credentials before the run, prints the judge it uses, and names it in the
   report. With a cloud provider, attack prompts and your agent's replies go to
   that provider. Small local judges miss many jailbreaks, so the CLI warns when
-  you use one. Run `argus-probe judge-check` with the same flags to see how a
+  you use one. `--judge-provider jev` uses TypeSafe's Jev (needs
+  `TYPESAFE_API_KEY`): it picks pass, warn or fail with a confidence, an unsure
+  pass becomes warn, and `--judge-explain-model` adds a written reason. Run
+  `argus-probe judge-check` with the same flags to see how a
   judge scores on Argus's labelled cases before you trust it. Details:
   [Choosing a judge](docs/cli.md#choosing-a-judge). Azure OpenAI's default
   content filter blocks judge calls because the judge reads attack text; use a

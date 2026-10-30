@@ -97,13 +97,14 @@ Any model that [litellm](https://docs.litellm.ai/docs/providers) can call can be
 
 | Flag | Variable | Meaning |
 |---|---|---|
-| `--judge-provider` | `REDTEAM_MODEL_PROVIDER` | `anthropic` (default), `openai` (default when `OPENAI_API_KEY` is the only key set), `azure`, or `litellm` for any other model |
+| `--judge-provider` | `REDTEAM_MODEL_PROVIDER` | `anthropic` (default), `openai` (default when `OPENAI_API_KEY` is the only key set), `azure`, `litellm` for any other model, or `jev` for TypeSafe's Jev (see [Jev as the judge](#jev-as-the-judge)) |
 | `--judge-model` | `REDTEAM_FAST_MODEL` | The model that judges every reply. Required with `litellm`, as a litellm model string |
-| `--judge-strong-model` | `REDTEAM_STRONG_MODEL` | The model that re-checks high-severity verdicts. With `litellm` it defaults to `--judge-model`, and then no re-check runs |
-| `--judge-api-base` | `REDTEAM_LLM_API_BASE` | Base URL for `openai` or `litellm`, such as a self-hosted server. With `anthropic` or `azure` the flag is a usage error: set `ANTHROPIC_BASE_URL` or `AZURE_API_BASE` instead |
+| `--judge-strong-model` | `REDTEAM_STRONG_MODEL` | The model that re-checks high-severity verdicts. With `litellm` it defaults to `--judge-model`, and then no re-check runs. Not used with `jev` |
+| `--judge-api-base` | `REDTEAM_LLM_API_BASE` | Base URL for `openai` or `litellm`, such as a self-hosted server. With `anthropic`, `azure` or `jev` the flag is a usage error: set `ANTHROPIC_BASE_URL`, `AZURE_API_BASE` or `TYPESAFE_API_URL` instead |
 | `--judge-price INPUT,OUTPUT` | `REDTEAM_PRICE_<MODEL>_INPUT` and `_OUTPUT` | USD per 1M input and output tokens, for the estimate and `--per-run-cap`. The flag sets the same price for the fast and the strong model |
+| `--judge-explain-model` | `REDTEAM_EXPLAIN_MODEL` | `jev` only: a litellm model string that writes a reason for each `fail` and `warn` verdict and drives deep mode's attacker. A usage error with other providers |
 
-An unknown provider, or `litellm` without a model, is a usage error (exit 2). The command prints the judge it will use before the first probe, for example `Judge: litellm, fast gemini/gemini-2.5-flash, strong gemini/gemini-2.5-flash`, or `Judge: anthropic, fast claude-haiku-4-5-20251001, strong claude-sonnet-4-6 (falls back to azure)` when a fallback provider is on. The report notes say `Judged by ...` with the same text (run.json for `run`, and HTML, SARIF and JUnit for both commands), and run.json has a `judge` object with the same facts (see [run.json](https://github.com/gy15901580825/Argus/blob/main/docs/run-json.md)). Only the host of `--judge-api-base` is shown, because a URL can carry a key.
+An unknown provider, or `litellm` without a model, is a usage error (exit 2). The command prints the judge it will use before the first probe, and the line after it says where the judge sends what it reads, for example `Judge: litellm, fast gemini/gemini-2.5-flash, strong gemini/gemini-2.5-flash`, or `Judge: anthropic, fast claude-haiku-4-5-20251001, strong claude-sonnet-4-6 (falls back to azure)` when a fallback provider is on. The report notes say `Judged by ...` with the same text (run.json for `run`, and HTML, SARIF and JUnit for both commands), and run.json has a `judge` object with the same facts (see [run.json](https://github.com/gy15901580825/Argus/blob/main/docs/run-json.md)). Only the host of `--judge-api-base` is shown, because a URL can carry a key.
 
 Examples:
 
@@ -136,9 +137,31 @@ argus-probe run --local --judge-provider litellm --judge-model ollama/qwen2.5:32
 
 **Prices.** Argus knows the prices of its default models. For any other model, the estimate and the cap use the most expensive known rate ($15 input, $75 output per 1M tokens) and log a warning that names the flag and the variables. Declare the real price with `--judge-price 0.30,2.50`, or with `REDTEAM_PRICE_<MODEL>_INPUT` and `REDTEAM_PRICE_<MODEL>_OUTPUT`. `<MODEL>` is the model string in upper case with every run of other characters replaced by one underscore: `gemini/gemini-2.5-flash` becomes `REDTEAM_PRICE_GEMINI_GEMINI_2_5_FLASH_INPUT`. A declared price wins over the built-in one. `--judge-price` sets one price for both the fast and the strong model, also over a built-in price. When the two models differ, the command warns, and you can declare each one with its variables instead. Ollama models cost nothing unless you declare a price. A declaration with only one side, or a value that is not a number at or above 0, is ignored with a warning.
 
-**Where your data goes.** The judge reads each attack prompt and your agent's reply. With a cloud provider, those go to that provider. With Ollama or your own server, they stay on machines you run. `anthropic` and `azure` fall back to each other by default: when a judge call fails and the other provider's credentials are set, the same text goes to the second vendor. The `Judge:` line says so with `(falls back to ...)`. Set `REDTEAM_LLM_FALLBACK=off` to keep the judge on one vendor. `openai` and `litellm` never fall back.
+**Where your data goes.** The judge reads each attack prompt and your agent's reply. With a cloud provider, those go to that provider, and the console says which one before the first probe, for example `Target replies, attack prompts and rubrics are sent to Google Gemini for judging.` With Ollama or your own server, they stay on machines you run. `anthropic` and `azure` fall back to each other by default: when a judge call fails and the other provider's credentials are set, the same text goes to the second vendor. The `Judge:` line says so with `(falls back to ...)`. Set `REDTEAM_LLM_FALLBACK=off` to keep the judge on one vendor. `openai` and `litellm` never fall back.
 
 **Small judges.** Small local models miss many jailbreaks (in JailbreakBench, a 7B judge missed 61%), so `run` prints a warning when the judge is a `litellm` model, and a clean report from a small judge is weak evidence. Azure's default content filter blocks judge calls, because the judge reads attack text. Use a custom filter policy with jailbreak detection turned off for the judge deployment (also when `OPENAI_API_KEY` is paired with `--judge-api-base` pointing at Azure, where you also need to set both models to your deployment names).
+
+### Jev as the judge
+
+[TypeSafe](https://typesafe.ai)'s Jev answers typed questions with a choice and a calibrated confidence instead of writing text. With `--judge-provider jev`, Argus asks it one question per reply: which rubric verdict applies, `pass`, `warn` or `fail`. The question carries the full rubric, the probe name, the attack prompt and the target's reply in a block marked as untrusted, each cut at 8,000 characters.
+
+```bash
+export TYPESAFE_API_KEY=<key>
+argus-probe judge-check --judge-provider jev
+argus-probe run --local --judge-provider jev ...
+
+# With a text model that explains fail and warn findings
+argus-probe run --local --judge-provider jev --judge-explain-model gpt-4.1-mini ...
+```
+
+- **Key and endpoint.** It needs `TYPESAFE_API_KEY`; without it `run --local` stops with exit 1, as with any missing judge key. `--judge-model` picks the model (default `jev-latest`). The endpoint is `https://api.typesafe.ai/v1/systemone`, or `TYPESAFE_API_URL`, the same setting the [Jev decider](https://github.com/gy15901580825/Argus/blob/main/docs/operations/judge-decider.md) reads.
+- **Verdicts.** Jev's confidence becomes the finding's confidence. A `pass` with confidence below 0.5 becomes `warn` with the note `judge unsure; needs human review`, never `pass`. A `fail` or `warn` takes the probe's declared severity, and a `pass` is `info`. There is no second model re-checking high-severity verdicts, and the Jev decider is off, because there is nothing for it to settle.
+- **Reasoning.** Jev writes no text, so a finding's reasoning reads `jev(<model>): <choice> p=<probability> conf=<confidence>`. With `--judge-explain-model`, a text model (any litellm model string, such as `gpt-4.1-mini`, `claude-haiku-4-5-20251001` or `ollama/qwen2.5:32b`) writes one or two sentences for each `fail` and `warn` finding, given the rubric, the reply and Jev's verdict. The reason is added after Jev's line. It never changes the verdict, and if the call fails the finding keeps Jev's line and the failure is logged. Argus checks the explain model's credentials before the run the same way it checks a `litellm` judge, and meters and prices its calls like any judge call (declare its price with `REDTEAM_PRICE_<MODEL>_INPUT` and `_OUTPUT`).
+- **Deep mode.** The deep-mode attacker writes attack prompts, which Jev cannot do. With `jev`, the attacker uses the explain model. A deep run with `jev` and no explain model is refused before it starts.
+- **Price.** TypeSafe lists Jev at $0.042 per 1M input tokens, with output tokens free ([docs.typesafe.ai/models](https://docs.typesafe.ai/models), read 2026-10-30). Argus uses that for `jev-latest`, `jev-preview`, `jev-1.14.0` and `jev-1.13.0`. For another model name, declare the price with `--judge-price`.
+- **scan-mcp.** `scan-mcp --judge-provider jev` asks the same question with the tool-text rubric. scan-mcp counts only `pass` and `fail`, so a `warn`, including an unsure `pass`, leaves the text as not judged.
+- **Your data.** Rubrics, attack prompts and target replies go to TypeSafe at `api.typesafe.ai`, and the console says so before the first probe. With an explain model, `fail` and `warn` findings also go to that model's provider.
+- **Accuracy.** Run `judge-check --judge-provider jev` first. Our measurement is in [docs/judge-accuracy.md](https://github.com/gy15901580825/Argus/blob/main/docs/judge-accuracy.md).
 
 ### Check a judge first: `judge-check`
 

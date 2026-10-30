@@ -98,3 +98,15 @@ Limits: the cases are written by us, so the accuracy is agreement with our label
 population estimate. Per-rubric sets are small (six to thirteen cases). Raw results:
 `scripts/judge_benchmark.py --out` writes every case with the judge's verdict and
 reasoning; the runs above are not committed.
+
+## Jev as the judge
+
+Status: pending. The measurement of `--judge-provider jev` through `argus-probe
+judge-check --all` and `scripts/judge_benchmark.py` has not been run on this code yet;
+this section will hold its date, cases, accuracy, false passes, false fails and errors
+in the same form as the table above.
+
+Before this code existed, a stand-alone script sent the same 155 cases to Jev with the
+request Argus now sends (full rubric in the question's state, generic pass/warn/fail
+criteria). Those runs are not reproduced here, because they did not go through Argus's
+judge code path.

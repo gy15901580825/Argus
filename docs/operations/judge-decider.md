@@ -30,3 +30,18 @@ Any decider error (HTTP status, timeout, malformed answer, unknown choice) chang
 
 No schema change. `escalated_model` holds the Jev model name, and `reasoning` ends with
 `| jev(<model>): <choice> p=<prob> conf=<conf> gate=<gate> -> <acted|review>`.
+
+## Decider or judge
+
+Jev can play two parts, and they do not mix.
+
+| | Decider (`REDTEAM_DECIDER=jev`) | Judge (`--judge-provider jev`) |
+|---|---|---|
+| What judges every reply | Your LLM judge (Anthropic, OpenAI, Azure or litellm) | Jev |
+| When Jev is called | Only when the strong judge's reply cannot be parsed or disagrees with the fast judge | Once for every judged reply |
+| Question | `fail`, `pass` or `insufficient_evidence`, given both judges' verdicts | `pass`, `warn` or `fail`, given the rubric and the reply |
+| Below its threshold | `warn` when confidence is under `REDTEAM_DECIDER_GATE` (0.8) | A `pass` with confidence under 0.5 becomes `warn` |
+| Reasoning | The judges' reasoning plus `jev(...) ... gate=... -> acted/review` | `jev(<model>): <choice> p=... conf=...`, plus a reason from `--judge-explain-model` if set |
+| Cost | Not metered, so `scan-mcp` and `judge-check` switch it off | Metered and priced like any judge call |
+
+Both read `TYPESAFE_API_KEY` and `TYPESAFE_API_URL`. When Jev is the judge, the decider is off even if `REDTEAM_DECIDER=jev` is set. See [Jev as the judge](../cli.md#jev-as-the-judge).

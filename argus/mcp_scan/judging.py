@@ -51,7 +51,9 @@ def _role_usd(config: llm.LLMConfig, role: str, chars: int) -> float:
 def call_estimate_usd(config: llm.LLMConfig, chars: int) -> float:
     """Worst-case price of one judge() call: the fast pass plus, when it can happen, the strong escalation."""
     usd = _role_usd(config, "fast", chars)
-    return usd + (_role_usd(config, "strong", chars) if config.escalation_is_meaningful else 0.0)
+    usd += _role_usd(config, "strong", chars) if config.escalation_is_meaningful else 0.0
+    text_cfg = llm.explain_config(config)  # a jev explain model writes a reason for a fail
+    return usd + (estimate_call_usd(text_cfg.fast_model, chars, JUDGE_MAX_TOKENS) if text_cfg else 0.0)
 
 
 class JudgeGate:

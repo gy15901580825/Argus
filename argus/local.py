@@ -67,6 +67,9 @@ def _prepare(target, probe_ids, *, mode, per_run_cap_usd, env, skip_judged) -> _
         cfg = llm.resolve_config(env)
     except ValueError as e:
         raise LocalRunError(str(e), code="config") from e
+    if mode == "deep" and llm.explain_config(cfg) is None and cfg.provider == llm.PROVIDER_JEV:
+        # The attacker writes prompts; Jev cannot, and nothing may quietly stand in for it.
+        raise LocalRunError(llm.NEEDS_TEXT_MODEL, code="config")
     anthropic_api_key = env.get("ANTHROPIC_API_KEY")
 
     if not isinstance(target, dict):
@@ -149,8 +152,8 @@ async def run_local(
 ) -> AsyncIterator[dict]:
     """Yield events and finding dicts, then one {"type": "coverage", "coverage": dict} event.
 
-    Before any finding: {"type": "judge", "judge": llm.describe(cfg), "record": llm.judge_record(cfg)}
-    when a probe will be judged, then {"type": "warning", "message": str} events.
+    Before any finding: {"type": "judge", "judge": llm.describe(cfg), "record": llm.judge_record(cfg),
+    "disclosure": llm.disclosure(cfg)} when a probe will be judged, then {"type": "warning", "message": str} events.
 
     skip_judged: without a judge key, report the probes that need the judge as
     skipped and run the rest, instead of refusing the run.
@@ -159,7 +162,8 @@ async def run_local(
         target, probe_ids, mode=mode, per_run_cap_usd=per_run_cap_usd, env=env, skip_judged=skip_judged)
 
     if judged:
-        yield {"type": "judge", "judge": llm.describe(cfg), "record": llm.judge_record(cfg)}
+        yield {"type": "judge", "judge": llm.describe(cfg), "record": llm.judge_record(cfg),
+               "disclosure": llm.disclosure(cfg)}
     for message in warnings:
         yield {"type": "warning", "message": message}
     if judged and cfg.provider == llm.PROVIDER_LITELLM:
@@ -210,7 +214,7 @@ async def run_local(
 
 
 _KEY_HELP = ("Judge keys: ANTHROPIC_API_KEY or OPENAI_API_KEY, or choose another judge with "
-             "--judge-provider (azure or litellm) and --judge-model (see the README).")
+             "--judge-provider (azure, litellm or jev) and --judge-model (see the README).")
 
 
 def _cost_message(e: CostExceededError) -> str:

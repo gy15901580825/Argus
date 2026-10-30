@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING, Optional
 
 import httpx
 
+from argus import typesafe
+
 if TYPE_CHECKING:  # judge imports this module; avoid the cycle
     from argus.judge import Verdict
 
@@ -25,7 +27,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_MODEL = "jev-latest"
 DEFAULT_GATE = 0.8
 DEFAULT_TIMEOUT_S = 20.0
-DEFAULT_URL = "https://api.typesafe.ai/v1/systemone"
+DEFAULT_URL = typesafe.DEFAULT_URL
 
 MAX_FIELD_CHARS = 8000
 _TRUNCATION_MARKER = "\n[truncated]"
@@ -99,12 +101,7 @@ class Decider:
         self._url = url
 
     async def _post(self, body: dict) -> httpx.Response:
-        async with httpx.AsyncClient(timeout=self._timeout_s) as client:
-            return await client.post(
-                self._url,
-                json=body,
-                headers={"Authorization": f"Bearer {self._api_key}"},
-            )
+        return await typesafe.send(self._url, self._api_key, body, self._timeout_s)
 
     async def decide(
         self,
@@ -160,7 +157,7 @@ class Decider:
 def from_env() -> Optional[Decider]:
     if os.environ.get("REDTEAM_DECIDER", "").strip().lower() != "jev":
         return None
-    api_key = os.environ.get("TYPESAFE_API_KEY", "").strip()
+    api_key = typesafe.api_key()
     if not api_key:
         return None
     return Decider(
@@ -168,5 +165,5 @@ def from_env() -> Optional[Decider]:
         model=os.environ.get("REDTEAM_DECIDER_MODEL", "").strip() or DEFAULT_MODEL,
         gate=_float_env("REDTEAM_DECIDER_GATE", DEFAULT_GATE, max_value=1.0),
         timeout_s=_float_env("REDTEAM_DECIDER_TIMEOUT_S", DEFAULT_TIMEOUT_S),
-        url=os.environ.get("TYPESAFE_API_URL", "").strip() or DEFAULT_URL,
+        url=typesafe.api_url(),
     )

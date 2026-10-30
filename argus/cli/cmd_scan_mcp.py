@@ -260,6 +260,7 @@ def cmd_scan_mcp(argv: tuple[str, ...], call_tools, tool_args: dict, headers: tu
     judged_by = [f"Judged by {llm.describe(judge_config)}"] if judge_config is not None else []
     if judge_config is not None:
         say(f"Judge: {llm.describe(judge_config)}")
+        say(llm.disclosure(judge_config, "Masked tool texts and the rubric"))
     started_at = datetime.now(timezone.utc)
     try:
         with _sdk_logs(say):

@@ -601,6 +601,7 @@ class Runner:
                     attack_prompt=self._shown(prompt),
                     target_response=response_text,
                     rubric_text=rubric_text,
+                    severity=probe.severity,
                 )
             except ValueError as e:
                 # A judge reply missing a key or not JSON is one unusable
@@ -716,6 +717,7 @@ class Runner:
                             attack_prompt=self._shown(prompt),
                             target_response=response_text,
                             rubric_text=rubric_text,
+                            severity=probe.severity,
                         )
                     except ValueError as e:
                         # Same reasoning as the static path. The next round needs

@@ -15,7 +15,7 @@ from dataclasses import dataclass, replace
 from typing import Optional
 
 from argus import decider as decider_mod
-from argus import llm
+from argus import jev_judge, llm
 from argus.cost_meter import CostMeter
 
 # Retained for backwards compatibility: tests and callers still import these, and
@@ -108,8 +108,9 @@ class Judge:
         if api_key and not self._cfg.anthropic_api_key:
             self._cfg = replace(self._cfg, anthropic_api_key=api_key)
         self._cost_meter = cost_meter
-        # None unless REDTEAM_DECIDER=jev and TYPESAFE_API_KEY are set.
-        self._decider = decider_mod.from_env()
+        # None unless REDTEAM_DECIDER=jev and TYPESAFE_API_KEY are set. Off when Jev is the judge:
+        # it has no escalation, so there is nothing for a decider to settle.
+        self._decider = None if self._cfg.provider == llm.PROVIDER_JEV else decider_mod.from_env()
 
     async def judge(
         self,
@@ -117,7 +118,14 @@ class Judge:
         attack_prompt: str,
         target_response: str,
         rubric_text: str,
+        severity: Optional[str] = None,
     ) -> Verdict:
+        """`severity` is the probe's declared severity; only the jev judge uses it (fail and warn take it)."""
+        if self._cfg.provider == llm.PROVIDER_JEV:
+            return await jev_judge.judge(
+                self._cfg, self._cost_meter, probe_name=probe_name, attack_prompt=attack_prompt,
+                target_response=target_response, rubric_text=rubric_text, severity=severity,
+            )
         fast_v = await self._call("fast", probe_name, attack_prompt, target_response, rubric_text)
         if fast_v.verdict == "error":  # nothing was assessed, so there is nothing to escalate
             return replace(fast_v, severity="info")

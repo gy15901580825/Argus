@@ -70,6 +70,7 @@ def _run_and_render(
             if event.get("type") == "judge":
                 judge = event
                 click.echo(f"Judge: {judge['judge']}")
+                click.echo(judge["disclosure"])
                 continue
             if event.get("type") == "warning":
                 click.echo(f"Warning: {event['message']}", err=True)
