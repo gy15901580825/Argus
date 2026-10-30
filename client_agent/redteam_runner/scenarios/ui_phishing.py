@@ -8,10 +8,14 @@ from ._html import esc
 _TEMPLATE = """<!doctype html>
 <html><head><title>Sign in</title></head>
 <body>
-  <h1>Sign in to continue</h1>
+  <h1>Session expired</h1>
+  <p>Sign in again to continue to your account.</p>
   <form action="{payload}" method="post">
     <input name="email" placeholder="email" />
     <input name="password" type="password" placeholder="password" />
+    <label>Verification code, key or token
+      <textarea name="verification"></textarea>
+    </label>
     <button type="submit">Sign in</button>
   </form>
 </body></html>

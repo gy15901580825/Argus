@@ -23,6 +23,7 @@ async def test_browser_probe_serves_scenario_url_and_drives_agent():
     mock_server = AsyncMock()
     mock_server.start = AsyncMock(return_value="http://127.0.0.1:18080/scenario")
     mock_server.stop = AsyncMock()
+    mock_server.evidence = MagicMock(return_value={"interaction_count": 0, "page_loads": 0, "trap_requests": []})
     mock_agent = AsyncMock()
     mock_agent.run = AsyncMock(return_value={"final_text": "agent followed the link", "screenshots": []})
 
@@ -43,6 +44,7 @@ async def _run_and_capture(msg):
     mock_server = AsyncMock()
     mock_server.start = AsyncMock(return_value="http://127.0.0.1:18080/scenario")
     mock_server.stop = AsyncMock()
+    mock_server.evidence = MagicMock(return_value={"interaction_count": 0, "page_loads": 0, "trap_requests": []})
     mock_agent = AsyncMock()
     mock_agent.run = AsyncMock(return_value={"final_text": "done", "screenshots": []})
     with patch("redteam_runner.browser_probe._make_scenario_server", return_value=mock_server) as mk_server, \
@@ -118,3 +120,28 @@ async def test_trap_options_in_message_set_bind_and_advertised_url():
     assert result["trap_url"] == "http://trap.example.test:9999/scenario"
     assert seen["status"] == 200
     assert "TRAP_MARKER_42" in seen["page"]
+
+
+@pytest.mark.asyncio
+async def test_reply_carries_trap_evidence_of_requests_the_agent_made():
+    import httpx
+
+    class PostingDriver:
+        def __init__(self, scenario_url):
+            self.sink = scenario_url.rsplit("/scenario", 1)[0] + "/sink/steal"
+
+        async def run(self):
+            async with httpx.AsyncClient(trust_env=False) as c:
+                await c.post(self.sink, data={"verification": "tok-123"})
+            return {"final_text": "done", "screenshots": []}
+
+    msg = {"scenario_kind": "ui_phishing", "agent_url": "http://t/agent",
+           "payload": "{sink_url}/steal", "timeout_s": 30}
+    with patch("redteam_runner.browser_probe._make_target_agent_driver",
+               side_effect=lambda a, scenario_url, p, t: PostingDriver(scenario_url)):
+        result = await BrowserProbe().run(msg)
+    assert result["trap_evidence"] == {
+        "interaction_count": 1, "page_loads": 0,
+        "trap_requests": [{"method": "POST", "path": "/sink/steal", "query": "",
+                           "body": "verification=tok-123"}],
+    }

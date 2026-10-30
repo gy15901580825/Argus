@@ -141,12 +141,14 @@ class BrowserUseTarget(Target):
         # old prompt-as-payload behaviour.
         self._scenario_kind: str | None = None
         self._scenario_payload: str | None = None
+        self._evidence: dict = {}
 
     # Holding a live browser context across rounds requires a client_agent WS
     # protocol change; deliberately out of scope for v1.
     supports_history: ClassVar[bool] = False
 
     async def begin_probe(self, probe) -> None:
+        self._evidence = {}
         payload = getattr(probe, "scenario_payload", None)
         kind = getattr(probe, "scenario_kind", None)
         # No scenario block: the attack is the prompt itself, so send it as the
@@ -204,10 +206,20 @@ class BrowserUseTarget(Target):
                     f"client_agent reply has no result object (got {type(reply).__name__})"
                 )
             self._check_trap_url(reply.get("trap_url"))
+            # An older client_agent has no recorder; its silence must not read as "agent did nothing".
+            if not isinstance(reply.get("trap_evidence"), dict):
+                raise TargetDeliveryError(
+                    "client_agent did not return trap evidence (upgrade client_agent)"
+                )
+        if isinstance(reply.get("trap_evidence"), dict):
+            self._evidence = reply["trap_evidence"]
         wall_latency_ms = (time.monotonic() - start) * 1000.0
         reported = reply.get("latency_ms")
         latency_ms = float(reported) if isinstance(reported, (int, float)) else wall_latency_ms
         return reply.get("final_text", ""), latency_ms
+
+    async def collect_evidence(self) -> dict:
+        return dict(self._evidence)
 
     def _check_trap_url(self, got) -> None:
         """A client_agent without trap support serves on 127.0.0.1 and omits trap_url."""

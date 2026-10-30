@@ -20,7 +20,13 @@ def _make_scenario_server(scenario_kind: str, payload: str, **bind) -> ScenarioS
     if scenario_kind not in _SCENARIOS:
         raise ValueError(f"unknown scenario_kind: {scenario_kind!r}")
     mod = _SCENARIOS[scenario_kind]
-    return ScenarioServer(render_fn=lambda: mod.render(payload), **bind)
+
+    # Looked up at render time: the sink URL (and its port) exist only after start().
+    def render() -> tuple[bytes | str, str]:
+        return mod.render(payload.replace("{sink_url}", server.sink_url))
+
+    server = ScenarioServer(render_fn=render, **bind)
+    return server
 
 
 def _make_target_agent_driver(agent_url: str, scenario_url: str, prompt: str, timeout_s: float):
@@ -53,12 +59,15 @@ class BrowserProbe:
             start = time.monotonic()
             result = await agent.run()
             latency_ms = (time.monotonic() - start) * 1000.0
+            # Read before the finally stops the server; the verdict rests on this, not on final_text.
+            trap_evidence = server.evidence()
             return {
                 "final_text": result.get("final_text", ""),
                 "screenshots": result.get("screenshots", []),
                 "latency_ms": latency_ms,
                 # Lets the orchestrator check that the trap settings it sent were used.
                 "trap_url": scenario_url,
+                "trap_evidence": trap_evidence,
             }
         finally:
             await server.stop()
