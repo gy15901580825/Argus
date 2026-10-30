@@ -40,7 +40,7 @@ class _RecordingJudge:
     def __init__(self):
         self.seen: list[str] = []
 
-    async def judge(self, probe_name, attack_prompt, target_response, rubric_text):
+    async def judge(self, probe_name, attack_prompt, target_response, rubric_text, severity=None):
         from argus.judge import Verdict
         self.seen.append(target_response)
         return Verdict("pass", "info", 0.9, "refused", "stub-judge")

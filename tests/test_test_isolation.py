@@ -44,6 +44,22 @@ async def test_an_unmocked_llm_call_is_refused_and_recorded(llm_call_guard):
     llm_call_guard.clear()  # the guard fails a test that made such a call; this one expected it
 
 
+async def test_an_unmocked_typesafe_call_is_refused_and_recorded(llm_call_guard):
+    from argus import jev_judge, llm, typesafe
+
+    cfg = llm.resolve_config({"REDTEAM_MODEL_PROVIDER": "jev", "TYPESAFE_API_KEY": "unused"})
+    with pytest.raises(RuntimeError, match="real LLM call"):
+        await typesafe.send(cfg.api_base, "unused", {"model": "jev-latest"}, 1.0)
+    with pytest.raises(RuntimeError, match="real LLM call"):
+        await jev_judge.judge(cfg, None, probe_name="p", attack_prompt="a", target_response="r", rubric_text="x")
+    custom = "https://ts.example.com/v1/systemone"
+    with pytest.raises(RuntimeError, match="real LLM call"):
+        await typesafe.send(custom, "unused", {"model": "jev-latest"}, 1.0)
+    assert llm_call_guard and all(c["model"].startswith("typesafe ") for c in llm_call_guard)
+    assert {c["model"] for c in llm_call_guard} == {"typesafe api.typesafe.ai", "typesafe ts.example.com"}
+    llm_call_guard.clear()
+
+
 def test_litellm_uses_its_bundled_price_map():
     # Without this, importing litellm downloads the map from GitHub and the suite needs the network.
     assert os.environ.get("LITELLM_LOCAL_MODEL_COST_MAP") == "True"

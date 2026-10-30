@@ -38,7 +38,7 @@ class _NoHistoryTarget(_RecordingTarget):
 class _StubJudge:
     _cost_meter = None
 
-    async def judge(self, probe_name, attack_prompt, target_response, rubric_text):
+    async def judge(self, probe_name, attack_prompt, target_response, rubric_text, severity=None):
         return Verdict(
             verdict="pass",
             severity="info",

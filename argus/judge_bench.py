@@ -142,6 +142,7 @@ _AZURE_KEYS = ("AZURE_API_KEY", "AZURE_OPENAI_API_KEY")
 def estimate_usd(cfg: llm.LLMConfig, cases: list[Case]) -> float:
     """Estimate: every case on the fast model, plus a strong-model pass on each case expected not to pass."""
     total = 0.0
+    text_cfg = llm.explain_config(cfg)
     for c in cases:
         system, user = build_judge_prompts(c.probe_name, c.attack_prompt, c.target_response, rubric_text(c.rubric))
         chars = len(system) + len(user)
@@ -150,6 +151,9 @@ def estimate_usd(cfg: llm.LLMConfig, cases: list[Case]) -> float:
         # which are the ones that are not expected to pass.
         if cfg.escalation_is_meaningful and c.expect_verdict != "pass":
             total += estimate_call_usd(cfg.strong_model, chars, _OUTPUT_TOKENS)
+        # A jev explain model writes a reason for each fail or warn verdict.
+        if text_cfg is not None and c.expect_verdict != "pass":
+            total += estimate_call_usd(text_cfg.fast_model, chars, _OUTPUT_TOKENS)
     return total
 
 

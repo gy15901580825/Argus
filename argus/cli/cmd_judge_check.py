@@ -75,6 +75,7 @@ def cmd_judge_check(all_cases: bool, per_run_cap: float) -> None:
     every = judge_bench.load_all_cases()
     cases = every if all_cases else judge_bench.sample_cases(every)
     click.echo(f"Judge: {llm.describe(cfg)}")
+    click.echo(llm.disclosure(cfg, "The fixture cases (Argus's own text, no target data)"))
     scope = "" if all_cases else (f" (one pass and one fail case per rubric, plus the shared hard cases; "
                                   f"--all runs all {len(every)})")
     click.echo(f"Cases: {len(cases)}{scope}")

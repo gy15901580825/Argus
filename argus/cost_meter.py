@@ -32,6 +32,11 @@ _PRICES_PER_M_TOKENS = {
     # OpenAI judge defaults.
     "gpt-5.6-luna": {"input": 0.20, "output": 1.20},
     "gpt-5.6-terra": {"input": 2.00, "output": 12.00},
+    # TypeSafe Jev: $0.042 per 1M input tokens, output tokens free (docs.typesafe.ai/models, read 2026-10-30).
+    "jev-latest": {"input": 0.042, "output": 0.0},
+    "jev-preview": {"input": 0.042, "output": 0.0},
+    "jev-1.14.0": {"input": 0.042, "output": 0.0},
+    "jev-1.13.0": {"input": 0.042, "output": 0.0},
 }
 
 
@@ -98,7 +103,8 @@ def _price_for(model: str) -> dict:
     logger.warning(
         "no price registered for model %r — billing at the most expensive known rate "
         "(in=$%.2f/out=$%.2f per 1M tokens) so the cap cannot be undershot. "
-        "Declare its price with --judge-price INPUT,OUTPUT or %s and %s (USD per 1M tokens).",
+        "Declare its price with --judge-price INPUT,OUTPUT (--judge-explain-price for a jev explain model) "
+        "or %s and %s (USD per 1M tokens).",
         model, worst["input"], worst["output"], *price_env_names(model),
     )
     return worst
@@ -110,6 +116,11 @@ _CHARS_PER_TOKEN = 4
 _SAFETY_MARGIN = 1.2
 
 _DEFAULT_ITERATIVE_ROUNDS = 1
+
+
+def estimate_input_tokens(input_chars: int) -> int:
+    """Input tokens for `input_chars` by the pre-run estimate's rule (chars/4 with the safety margin)."""
+    return math.ceil(input_chars / _CHARS_PER_TOKEN * _SAFETY_MARGIN)
 
 
 def estimate_call_usd(model: str, input_chars: int, output_tokens: int) -> float:
@@ -336,17 +347,23 @@ class CostMeter:
         # Price at the configured judge models; a bad provider setting falls back
         # to the Anthropic defaults here and is reported by the credential check.
         from argus import llm
+        explain = None
         try:
             cfg = llm.resolve_config()
             fast, strong = _price_for(cfg.fast_model), _price_for(cfg.strong_model)
             escalates = cfg.escalation_is_meaningful
+            # A jev run's text model explains fail/warn findings and drives deep mode's attacker.
+            text_cfg = llm.explain_config(cfg)
+            explain = _price_for(text_cfg.fast_model) if text_cfg is not None else None
         except ValueError:
             fast = _PRICES_PER_M_TOKENS["claude-haiku-4-5-20251001"]
             strong = _PRICES_PER_M_TOKENS["claude-sonnet-4-6"]
             escalates = True
         per_exchange = _call_usd(fast) + (_call_usd(strong) if escalates else 0.0)
+        if explain is not None:
+            per_exchange += _call_usd(explain)  # as if every verdict were fail or warn
         if deep:
-            per_exchange += _call_usd(fast)
+            per_exchange += _call_usd(explain or fast)
         exchanges = total_exchanges if total_exchanges is not None else len(probe_ids) * iterative_rounds
         estimated = per_exchange * exchanges
 

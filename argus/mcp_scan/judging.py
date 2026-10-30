@@ -19,6 +19,8 @@ JUDGE_MAX_TOKENS = 400  # what Judge._call asks for
 _PROMPT_FRAME_CHARS = 1000
 CAP_REASON = "not judged: cost cap"
 ERROR_REASON = "not judged: judge reply unusable"
+# A warn, such as a jev pass below its confidence floor: scan-mcp counts only pass and fail.
+UNSURE_REASON = "not judged: judge unsure, needs human review"
 OFF_REASON = "not judged: judge off"
 
 
@@ -37,6 +39,7 @@ def default_judge_factory(meter: CostMeter, config: llm.LLMConfig) -> Judge:
     judge = Judge("", meter, config)
     # The decider's spend never reaches the cost meter and has no price to estimate, so the cap could not hold.
     judge._decider = None
+    judge._explain_verdicts = ("fail",)  # a warn is dropped below, so its explanation would be paid for nothing
     return judge
 
 
@@ -51,7 +54,9 @@ def _role_usd(config: llm.LLMConfig, role: str, chars: int) -> float:
 def call_estimate_usd(config: llm.LLMConfig, chars: int) -> float:
     """Worst-case price of one judge() call: the fast pass plus, when it can happen, the strong escalation."""
     usd = _role_usd(config, "fast", chars)
-    return usd + (_role_usd(config, "strong", chars) if config.escalation_is_meaningful else 0.0)
+    usd += _role_usd(config, "strong", chars) if config.escalation_is_meaningful else 0.0
+    text_cfg = llm.explain_config(config)  # a jev explain model writes a reason for a fail
+    return usd + (estimate_call_usd(text_cfg.fast_model, chars, JUDGE_MAX_TOKENS) if text_cfg else 0.0)
 
 
 class JudgeGate:
@@ -104,6 +109,8 @@ class JudgeGate:
             logger.warning("scan-mcp judge failed on %s %s: %s", cand.probe_id, show_text(cand.tool),
                            type(e).__name__)
             return JudgeOutcome(cand, "error", reasoning=ERROR_REASON)
+        if v.verdict == "warn":
+            return JudgeOutcome(cand, "error", reasoning=UNSURE_REASON)
         if v.verdict not in ("pass", "fail"):
             return JudgeOutcome(cand, "error", reasoning=ERROR_REASON)
         return JudgeOutcome(cand, "judged", verdict=v.verdict, confidence=v.confidence, reasoning=v.reasoning,

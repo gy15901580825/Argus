@@ -78,7 +78,7 @@ def _isolate_env(monkeypatch, request, _test_home):
     # Judge provider auto-detect reads these; a developer's shell must not change results.
     # The live rubric and scan-skill tiers need the real ANTHROPIC_API_KEY.
     scrub = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "REDTEAM_MODEL_PROVIDER",
-             "REDTEAM_FAST_MODEL", "REDTEAM_STRONG_MODEL", "REDTEAM_LLM_API_BASE"]
+             "REDTEAM_FAST_MODEL", "REDTEAM_STRONG_MODEL", "REDTEAM_LLM_API_BASE", "REDTEAM_EXPLAIN_MODEL"]
     if request.node.get_closest_marker("rubric_live") or request.node.get_closest_marker("live_skillscan"):
         scrub.remove("ANTHROPIC_API_KEY")
     # Server secrets from a developer's .env would 401 /redteam/* or refuse /agent/connect tests.
@@ -93,9 +93,10 @@ def _isolate_env(monkeypatch, request, _test_home):
 
 @pytest.fixture(autouse=True)
 def llm_call_guard(request, monkeypatch):
-    """Refuse and record any real judge/attacker call (litellm or the Anthropic client); the test then fails.
+    """Refuse and record any real judge/attacker call (litellm, the Anthropic client or TypeSafe); the test then fails.
 
-    Tests mock argus.llm._acompletion / argus.llm._anthropic_client. Request this fixture to inspect attempts.
+    Tests mock argus.llm._acompletion / argus.llm._anthropic_client / argus.typesafe.send (or use httpx_mock).
+    Request this fixture to inspect attempts.
     """
     attempts: list[dict] = []
     if _is_live(request):
@@ -103,12 +104,14 @@ def llm_call_guard(request, monkeypatch):
         return
     import litellm
 
+    import httpx
+
     from argus import llm
 
     def refuse(*args, **kwargs):
         attempts.append(kwargs)
         raise RuntimeError(f"test made a real LLM call (model={kwargs.get('model')!r}); "
-                           "mock argus.llm._acompletion or argus.llm._anthropic_client")
+                           "mock argus.llm._acompletion, argus.llm._anthropic_client or argus.typesafe.send")
 
     async def refuse_async(*args, **kwargs):
         return refuse(*args, **kwargs)
@@ -119,6 +122,15 @@ def llm_call_guard(request, monkeypatch):
     monkeypatch.setattr(litellm, "acompletion", refuse_async)
     monkeypatch.setattr(litellm, "completion", refuse)
     monkeypatch.setattr(llm, "_anthropic_client", refuse_anthropic)
+    # TypeSafe is refused at the transport, under any test-level mock (typesafe.send, AsyncClient.post, httpx_mock).
+    real_handle = httpx.AsyncHTTPTransport.handle_async_request
+
+    async def refuse_typesafe(transport, req):
+        if req.url.host.endswith("typesafe.ai") or req.url.path.endswith("/systemone"):
+            return refuse(model=f"typesafe {req.url.host}")
+        return await real_handle(transport, req)
+
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", refuse_typesafe)
     yield attempts
     assert not attempts, f"unmocked LLM call(s) to {[a.get('model') for a in attempts]}"
 

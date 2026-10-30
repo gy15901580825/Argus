@@ -37,7 +37,9 @@ PROVIDER_ANTHROPIC = "anthropic"
 PROVIDER_AZURE = "azure"
 PROVIDER_OPENAI = "openai"
 PROVIDER_LITELLM = "litellm"
-_VALID_PROVIDERS = (PROVIDER_ANTHROPIC, PROVIDER_AZURE, PROVIDER_OPENAI, PROVIDER_LITELLM)
+# TypeSafe Jev answers a typed verdict question; it writes no text (see argus/jev_judge.py).
+PROVIDER_JEV = "jev"
+_VALID_PROVIDERS = (PROVIDER_ANTHROPIC, PROVIDER_AZURE, PROVIDER_OPENAI, PROVIDER_LITELLM, PROVIDER_JEV)
 PROVIDERS = _VALID_PROVIDERS
 
 # The judge settings and the env vars they live in. CLI flags are written over these,
@@ -47,6 +49,7 @@ JUDGE_ENV = {
     "model": "REDTEAM_FAST_MODEL",
     "strong_model": "REDTEAM_STRONG_MODEL",
     "api_base": "REDTEAM_LLM_API_BASE",
+    "explain_model": "REDTEAM_EXPLAIN_MODEL",
 }
 
 # litellm providers whose credentials its env check cannot see, so a refusal could be wrong:
@@ -66,7 +69,11 @@ _KEY_ALIASES = {
     "perplexity": ("PERPLEXITY_API_KEY",),
 }
 # Providers whose calls never send REDTEAM_LLM_API_BASE, and the setting they read instead.
-NO_API_BASE = {PROVIDER_ANTHROPIC: "ANTHROPIC_BASE_URL", PROVIDER_AZURE: "AZURE_API_BASE"}
+NO_API_BASE = {PROVIDER_ANTHROPIC: "ANTHROPIC_BASE_URL", PROVIDER_AZURE: "AZURE_API_BASE",
+               PROVIDER_JEV: "TYPESAFE_API_URL"}
+# The text model a jev run uses for explanations and for the deep-mode attacker.
+NEEDS_TEXT_MODEL = ("the jev judge writes no text, so deep mode's attacker needs a text model: "
+                    "pass --judge-explain-model MODEL (a litellm model string, env REDTEAM_EXPLAIN_MODEL)")
 
 # Defaults per provider. Anthropic's are the models the judge shipped with; the
 # defaults must not change behaviour for an operator who sets nothing.
@@ -77,6 +84,8 @@ _DEFAULTS = {
     # `escalation_is_meaningful`.
     PROVIDER_AZURE: {"fast": "gpt-5.4-mini", "strong": "gpt-5.4-mini"},
     PROVIDER_OPENAI: {"fast": "gpt-5.6-luna", "strong": "gpt-5.6-terra"},
+    # One model, no escalation: Jev is a single judge.
+    PROVIDER_JEV: {"fast": "jev-latest", "strong": "jev-latest"},
     # No litellm entry: the model string is user-supplied (REDTEAM_FAST_MODEL).
 }
 
@@ -126,6 +135,9 @@ class LLMConfig:
     anthropic_api_key: Optional[str]
     openai_api_key: Optional[str] = None
     api_base: Optional[str] = None
+    # jev only: the TypeSafe key, and the litellm model that explains findings and drives deep mode.
+    typesafe_api_key: Optional[str] = None
+    explain_model: Optional[str] = None
 
     @property
     def fallback_provider(self) -> Optional[str]:
@@ -147,6 +159,11 @@ class LLMConfig:
             for model in dict.fromkeys((self.fast_model, self.strong_model)):
                 names += [n for n in _litellm_missing_keys(model, self.api_base) if n not in names]
             return ", ".join(names) or None
+        if self.provider == PROVIDER_JEV:
+            if not self.typesafe_api_key:
+                return "TYPESAFE_API_KEY"
+            if self.explain_model:
+                return ", ".join(_litellm_missing_keys(self.explain_model, None)) or None
         return None
 
     @property
@@ -186,6 +203,8 @@ def missing_text(cfg: LLMConfig) -> Optional[str]:
         models = " and ".join(dict.fromkeys((cfg.fast_model, cfg.strong_model)))
         # litellm lists every variable a provider can read (Gemini: either key will do).
         return f"litellm finds no credentials for {models}; it looks for {name}"
+    if cfg.provider == PROVIDER_JEV and name != "TYPESAFE_API_KEY":
+        return f"litellm finds no credentials for the explain model {cfg.explain_model}; it looks for {name}"
     return f"{name} is not set"
 
 
@@ -194,7 +213,7 @@ def credential_error(cfg: LLMConfig) -> Optional[str]:
     text = missing_text(cfg)
     if text is None:
         return None
-    if cfg.provider == PROVIDER_LITELLM:
+    if cfg.provider in (PROVIDER_LITELLM, PROVIDER_JEV):
         return f"{text}. Set the variable your provider needs, or choose another judge (see the README)."
     return (
         f"{text} (REDTEAM_MODEL_PROVIDER={cfg.provider}). "
@@ -239,7 +258,8 @@ def _env_value(name: str) -> Optional[str]:
 
 def judge_env(*, provider: Optional[str] = None, model: Optional[str] = None,
               strong_model: Optional[str] = None, api_base: Optional[str] = None,
-              price: Optional[tuple[float, float]] = None,
+              price: Optional[tuple[float, float]] = None, explain_model: Optional[str] = None,
+              explain_price: Optional[tuple[float, float]] = None,
               env: Optional[Mapping[str, str]] = None) -> dict[str, str]:
     """The env overrides for a judge chosen by flags; unset flags leave the env alone.
 
@@ -249,40 +269,137 @@ def judge_env(*, provider: Optional[str] = None, model: Optional[str] = None,
     from argus.cost_meter import price_env_names
 
     env = os.environ if env is None else env
-    given = {"provider": provider, "model": model, "strong_model": strong_model, "api_base": api_base}
+    given = {"provider": provider, "model": model, "strong_model": strong_model, "api_base": api_base,
+             "explain_model": explain_model}
     out = {JUDGE_ENV[k]: v for k, v in given.items() if v is not None}
     cfg = resolve_config({**env, **out})
+    if explain_model is not None and cfg.provider != PROVIDER_JEV:
+        raise ValueError("--judge-explain-model applies to the jev judge only; other judges write their own reasons")
+    if strong_model is not None and cfg.provider == PROVIDER_JEV:
+        raise ValueError("--judge-strong-model does not apply to the jev judge: it is a single judge with no "
+                         "escalation step")
     if price is not None:
         for m in dict.fromkeys((cfg.fast_model, cfg.strong_model)):
             out.update(zip(price_env_names(m), (str(price[0]), str(price[1]))))
+    if explain_price is not None:
+        if cfg.provider != PROVIDER_JEV or not cfg.explain_model:
+            raise ValueError("--judge-explain-price needs the jev judge with --judge-explain-model "
+                             "(or REDTEAM_EXPLAIN_MODEL)")
+        out.update(zip(price_env_names(cfg.explain_model), (str(explain_price[0]), str(explain_price[1]))))
     return out
+
+
+def _host(url: str) -> str:
+    """Host and port of a URL, never userinfo, path or query: the URL can carry a key."""
+    base = url if "//" in url else "//" + url
+    try:
+        u = urllib.parse.urlsplit(base)
+        host = (u.hostname or "") + (f":{u.port}" if u.port else "")
+    except ValueError:
+        host = ""
+    return host or "set"
 
 
 def judge_record(cfg: LLMConfig) -> dict:
     """The judge as data, for run.json. The api base keeps its host only: the URL can carry a key."""
     host = None
     # anthropic and azure never send REDTEAM_LLM_API_BASE, so naming it would record an unused endpoint.
-    if cfg.api_base and cfg.provider not in NO_API_BASE:
-        base = cfg.api_base if "//" in cfg.api_base else "//" + cfg.api_base
-        try:
-            u = urllib.parse.urlsplit(base)
-            host = (u.hostname or "") + (f":{u.port}" if u.port else "")
-        except ValueError:
-            host = ""
-        host = host or "set"
+    # jev's api_base is the TypeSafe URL it does use.
+    if cfg.api_base and (cfg.provider not in NO_API_BASE or cfg.provider == PROVIDER_JEV):
+        host = _host(cfg.api_base)
     fallback = cfg.fallback_provider if cfg.fallback_enabled else None
-    return {"provider": cfg.provider, "fast_model": cfg.fast_model, "strong_model": cfg.strong_model,
-            "api_base_host": host, "fallback_provider": fallback}
+    record = {"provider": cfg.provider, "fast_model": cfg.fast_model, "strong_model": cfg.strong_model,
+              "api_base_host": host, "fallback_provider": fallback}
+    if cfg.explain_model:
+        record["explain_model"] = cfg.explain_model
+    return record
 
 
 def describe(cfg: LLMConfig) -> str:
     """One line naming the judge, for the console and the report notes."""
     r = judge_record(cfg)
+    if cfg.provider == PROVIDER_JEV:
+        text = f"jev, model {r['fast_model']}, api base {r['api_base_host']}"
+        if cfg.explain_model:
+            text += f", explained by {cfg.explain_model}"
+        return text
     text = f"{r['provider']}, fast {r['fast_model']}, strong {r['strong_model']}"
     if r["api_base_host"]:
         text += f", api base {r['api_base_host']}"
     if r["fallback_provider"]:
         text += f" (falls back to {r['fallback_provider']})"
+    return text
+
+
+_LITELLM_NAMES = {"gemini": "Google Gemini", "vertex_ai": "Google Vertex AI", "bedrock": "AWS Bedrock",
+                  "mistral": "Mistral", "openai": "OpenAI", "anthropic": "Anthropic", "azure": "Azure OpenAI"}
+
+
+def _litellm_destination(model: str, api_base: Optional[str]) -> str:
+    if api_base:
+        return _host(api_base)
+    import litellm
+
+    litellm.suppress_debug_info = True
+    try:
+        provider = litellm.get_llm_provider(model=model)[1] or ""
+    except Exception:  # noqa: BLE001 - litellm cannot route it; say so rather than guess
+        return "the provider litellm picks for it"
+    if provider in _LOCAL_PROVIDERS:
+        return f"a local {provider} server"
+    return _LITELLM_NAMES.get(provider, provider)
+
+
+def destination(cfg: LLMConfig) -> str:
+    """Where the judge sends rubrics, attack prompts and target replies, for the console."""
+    if cfg.provider == PROVIDER_JEV:
+        return f"TypeSafe ({_host(cfg.api_base or '')})"
+    if cfg.provider == PROVIDER_ANTHROPIC:
+        where = "Anthropic"
+    elif cfg.provider == PROVIDER_AZURE:
+        where = "Azure OpenAI"
+    elif cfg.provider == PROVIDER_OPENAI:
+        where = _host(cfg.api_base) if cfg.api_base else "OpenAI"
+    else:
+        where = " and ".join(dict.fromkeys(_litellm_destination(m, cfg.api_base)
+                                           for m in (cfg.fast_model, cfg.strong_model)))
+    if cfg.fallback_enabled and cfg.fallback_provider:
+        where += f", or {'Azure OpenAI' if cfg.fallback_provider == PROVIDER_AZURE else 'Anthropic'} when that fails"
+    return where
+
+
+def disclosure(cfg: LLMConfig, what: str = "Target replies, attack prompts and rubrics",
+               decider: bool = False) -> str:
+    """`decider`: the Jev decider is on (REDTEAM_DECIDER=jev with a key); a jev judge turns it off."""
+    text = f"{what} are sent to {destination(cfg)} for judging"
+    if cfg.provider == PROVIDER_JEV and cfg.explain_model:
+        text += (f"; fail and warn findings also go to {_litellm_destination(cfg.explain_model, None)} "
+                 f"({cfg.explain_model}) for an explanation")
+    if decider and cfg.provider != PROVIDER_JEV:
+        from argus import typesafe
+
+        text += f"; conflicting verdicts also go to TypeSafe ({_host(typesafe.api_url())}) for the Jev decider"
+    return text + "."
+
+
+def explain_config(cfg: LLMConfig) -> Optional[LLMConfig]:
+    """The litellm config for a jev run's text model, or None when there is none."""
+    if cfg.provider != PROVIDER_JEV or not cfg.explain_model:
+        return None
+    return LLMConfig(provider=PROVIDER_LITELLM, fast_model=cfg.explain_model, strong_model=cfg.explain_model,
+                     fallback_enabled=False, anthropic_api_key=cfg.anthropic_api_key,
+                     openai_api_key=cfg.openai_api_key)
+
+
+def text_config(env: Optional[Mapping[str, str]] = None) -> LLMConfig:
+    """The config for calls that generate text (the deep-mode attackers). Jev writes none, so a jev
+    run uses its explain model; without one this raises ValueError rather than send text work to Jev."""
+    cfg = resolve_config(env)
+    if cfg.provider != PROVIDER_JEV:
+        return cfg
+    text = explain_config(cfg)
+    if text is None:
+        raise ValueError(NEEDS_TEXT_MODEL)
     return text
 
 
@@ -305,6 +422,16 @@ def resolve_config(env: Optional[Mapping[str, str]] = None) -> LLMConfig:
         if not fast:
             raise ValueError("REDTEAM_MODEL_PROVIDER=litellm requires REDTEAM_FAST_MODEL")
         strong = env.get("REDTEAM_STRONG_MODEL") or fast
+    elif provider == PROVIDER_JEV:
+        from argus import typesafe
+
+        fast = env.get("REDTEAM_FAST_MODEL") or _DEFAULTS[provider]["fast"]
+        return LLMConfig(
+            provider=provider, fast_model=fast, strong_model=fast, fallback_enabled=False,
+            anthropic_api_key=env.get("ANTHROPIC_API_KEY"), openai_api_key=env.get("OPENAI_API_KEY"),
+            api_base=typesafe.api_url(env), typesafe_api_key=typesafe.api_key(env),
+            explain_model=(env.get("REDTEAM_EXPLAIN_MODEL") or "").strip() or None,
+        )
     else:
         defaults = _DEFAULTS[provider]
         fast = env.get("REDTEAM_FAST_MODEL") or defaults["fast"]
@@ -412,11 +539,17 @@ async def _call_litellm(cfg: LLMConfig, model: str, system: str, user: str, max_
     )
 
 
+async def _call_jev(cfg: LLMConfig, model: str, system: str, user: str, max_tokens: int) -> Completion:
+    # Backstop: callers that need text use text_config(), so nothing reaches here silently.
+    raise RuntimeError("the jev judge answers verdict questions and writes no text; " + NEEDS_TEXT_MODEL)
+
+
 _DISPATCH = {
     PROVIDER_ANTHROPIC: _call_anthropic,
     PROVIDER_AZURE: _call_azure,
     PROVIDER_OPENAI: _call_litellm,
     PROVIDER_LITELLM: _call_litellm,
+    PROVIDER_JEV: _call_jev,
 }
 
 

@@ -98,3 +98,33 @@ Limits: the cases are written by us, so the accuracy is agreement with our label
 population estimate. Per-rubric sets are small (six to thirteen cases). Raw results:
 `scripts/judge_benchmark.py --out` writes every case with the judge's verdict and
 reasoning; the runs above are not committed.
+
+## Jev as the judge
+
+Five back-to-back runs of `scripts/judge_benchmark.py` with `REDTEAM_MODEL_PROVIDER=jev`
+(`jev-latest`) on 2026-10-30, 07:43 to 07:46 UTC, through Argus's judge code. Each run
+cost about $0.0066.
+
+| Cases | Accuracy | False-pass | False-fail | Errors |
+|---|---|---|---|---|
+| The same 155 cases as the Claude table above | 91.6% in all 5 runs | 9 of 92 | 2 of 63 | 0 |
+| All 183 cases (adds the snowball, ANSI-escape and glitch rubrics) | 90.7% (median, range 90.2 to 90.7%) | 10 to 11 of 108 | 5 of 75 | 0 |
+
+What the numbers say:
+
+- On the cases both judges saw, Jev and the Claude judge are close: 91.6% against a
+  median of 92.3%, with fewer false passes (9 against 10 to 12).
+- The 2 false fails on those cases come from Argus's rule for Jev, not from wrong
+  answers: Jev said pass with confidence below 0.5, and Argus turns an unsure pass into
+  `warn` for human review. The benchmark counts a `warn` on a case labelled `pass` as a
+  false fail.
+- The other 3 false fails on the full set are all on the glitch-token rubric, where Jev
+  answered `fail` or `warn` with confidence between 0.2 and 0.38. Treat Jev's verdicts on
+  that rubric with care.
+- Jev's verdict changed between runs on 2 of the 183 cases, and it never returned an
+  unusable answer.
+- Jev gives no reason and no severity. Fail and warn findings take the probe's declared
+  severity; `--judge-explain-model` adds a written reason.
+
+The Claude judge has not been measured on the 28 cases added since its table; the
+Anthropic account ran out of credit before it could be.

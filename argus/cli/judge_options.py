@@ -11,7 +11,8 @@ from click.core import ParameterSource
 
 from argus import llm
 
-PARAMS = ("judge_provider", "judge_model", "judge_strong_model", "judge_api_base", "judge_price")
+PARAMS = ("judge_provider", "judge_model", "judge_strong_model", "judge_api_base", "judge_price",
+          "judge_explain_model", "judge_explain_price")
 
 
 def _parse_price(ctx: click.Context, param: click.Parameter, value: str | None):
@@ -30,7 +31,8 @@ def _parse_price(ctx: click.Context, param: click.Parameter, value: str | None):
 _OPTIONS = [
     click.option("--judge-provider", "judge_provider", type=click.Choice(llm.PROVIDERS), default=None,
                  help="Judge provider (env REDTEAM_MODEL_PROVIDER). Default: anthropic, or openai when only "
-                      "OPENAI_API_KEY is set. litellm reaches any model litellm supports and needs --judge-model."),
+                      "OPENAI_API_KEY is set. litellm reaches any model litellm supports and needs --judge-model. "
+                      "jev is TypeSafe's Jev and needs TYPESAFE_API_KEY."),
     click.option("--judge-model", "judge_model", default=None, metavar="MODEL",
                  help="Judge model for every verdict (env REDTEAM_FAST_MODEL). With litellm, a litellm model "
                       "string such as gemini/gemini-2.5-flash or ollama/qwen2.5:32b."),
@@ -43,6 +45,14 @@ _OPTIONS = [
     click.option("--judge-price", "judge_price", default=None, callback=_parse_price, metavar="INPUT,OUTPUT",
                  help="USD per 1M input and output tokens for this run's judge models, for the cost estimate "
                       "and --per-run-cap (env REDTEAM_PRICE_<MODEL>_INPUT and _OUTPUT)."),
+    click.option("--judge-explain-model", "judge_explain_model", default=None, metavar="MODEL",
+                 help="jev judge only: a litellm model string, such as gpt-4.1-mini, that writes a short reason "
+                      "for each fail and warn verdict and drives deep mode's attacker "
+                      "(env REDTEAM_EXPLAIN_MODEL). It never changes a verdict."),
+    click.option("--judge-explain-price", "judge_explain_price", default=None, callback=_parse_price,
+                 metavar="INPUT,OUTPUT",
+                 help="USD per 1M input and output tokens for the explain model, for the cost estimate and "
+                      "--per-run-cap (env REDTEAM_PRICE_<MODEL>_INPUT and _OUTPUT)."),
 ]
 
 
@@ -70,14 +80,16 @@ def judge_options(f):
     llm.resolve_config, which every judge, attacker and estimate reads, sees them."""
 
     @functools.wraps(f)
-    def wrapper(*args, judge_provider, judge_model, judge_strong_model, judge_api_base, judge_price, **kwargs):
+    def wrapper(*args, judge_provider, judge_model, judge_strong_model, judge_api_base, judge_price,
+                judge_explain_model, judge_explain_price, **kwargs):
         overrides: dict[str, str] = {}
         typed = typed_flags(click.get_current_context())
         # `run` without --local: the server chooses its judge, so say that before judging the flags.
         if typed and kwargs.get("local") is False:
             verb = "needs" if len(typed) == 1 else "need"
             raise click.UsageError(f"{', '.join(typed)} {verb} --local; in server mode the server chooses the judge")
-        if any(v is not None for v in (judge_provider, judge_model, judge_strong_model, judge_api_base, judge_price)):
+        if any(v is not None for v in (judge_provider, judge_model, judge_strong_model, judge_api_base, judge_price,
+                                       judge_explain_model, judge_explain_price)):
             provider = judge_provider or os.environ.get(llm.JUDGE_ENV["provider"], "")
             if provider.strip().lower() == llm.PROVIDER_LITELLM and not (
                     judge_model or os.environ.get(llm.JUDGE_ENV["model"])):
@@ -85,7 +97,8 @@ def judge_options(f):
                                        "gemini/gemini-2.5-flash (or set REDTEAM_FAST_MODEL)")
             try:
                 overrides = llm.judge_env(provider=judge_provider, model=judge_model, strong_model=judge_strong_model,
-                                          api_base=judge_api_base, price=judge_price)
+                                          api_base=judge_api_base, price=judge_price,
+                                          explain_model=judge_explain_model, explain_price=judge_explain_price)
             except ValueError as e:
                 raise click.UsageError(str(e)) from None
             cfg = llm.resolve_config({**os.environ, **overrides})

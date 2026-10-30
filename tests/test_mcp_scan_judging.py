@@ -165,7 +165,9 @@ async def test_malformed_verdict_is_error(flat_estimate, raises, verdict):
     out = await JudgeGate(0.50, _cfg(), RUBRIC, judge_factory=f).judge_all([_cand("You must a."), _cand("You must b.")], _ident)
     assert [o.status for o in out] == ["error", "error"]
     assert len(f.calls) == 2  # an unusable reply does not stop the next candidate
-    assert all(o.reasoning == "not judged: judge reply unusable" and o.verdict == "" for o in out)
+    # A warn is the judge being unsure (fix round 1 of J2), not an unusable reply; both stay not judged.
+    reason = "not judged: judge unsure, needs human review" if verdict == "warn" else "not judged: judge reply unusable"
+    assert all(o.reasoning == reason and o.verdict == "" for o in out)
 
 
 async def test_pass_verdict_is_judged(flat_estimate):

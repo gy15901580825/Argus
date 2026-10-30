@@ -19,6 +19,7 @@ source_modules =
     argus.iterative_gcg
     argus.iterative_pair
     argus.iterative_tap
+    argus.jev_judge
     argus.judge
     argus.judge_bench
     argus.llm
@@ -33,6 +34,7 @@ source_modules =
     argus.skillscan
     argus.suites
     argus.targets
+    argus.typesafe
 forbidden_modules =
     argus.cli
     argus.server

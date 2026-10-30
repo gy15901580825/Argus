@@ -316,6 +316,8 @@ async def run(req: RunRequest):
     err = llm.credential_error(cfg)
     if err:
         raise HTTPException(status_code=500, detail=err)
+    if req.mode == "deep" and cfg.provider == llm.PROVIDER_JEV and llm.explain_config(cfg) is None:
+        raise HTTPException(status_code=500, detail=llm.NEEDS_TEXT_MODEL)
 
     if not isinstance(req.target, dict):
         raise HTTPException(status_code=422, detail="target must be a JSON object")
