@@ -71,6 +71,7 @@ _NO_TEXT_HINTS = {
     "custom_http": "check response_jsonpath or the endpoint",
     "openai_compat": "the endpoint returned no message content",
     "anthropic_native": "the endpoint returned no message content",
+    "web_chat": "check response_selector",
 }
 
 

@@ -37,6 +37,13 @@ pip install 'argus-probe[scan-mcp]'
 
 Each extra exists because the MCP SDK the command needs (`mcp` 2.3 or newer) requires `pydantic>=2.12` and several other packages. Keeping it out of the base install leaves the pydantic floor at 2.5 for everyone else.
 
+`web_chat` targets and `web-login` need Playwright and its Chromium:
+
+```bash
+pip install 'argus-probe[web]'
+playwright install chromium
+```
+
 From a clone of the repo: `pip install .`.
 
 The engine is importable as `argus`, for example `from argus.targets import build_target`. Code written against `orchestrator.redteam` (the `argus-orchestrator` package, 0.3.x) needs one change: replace `orchestrator.redteam` with `argus` in its imports.
@@ -79,7 +86,7 @@ The local judge uses `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY` when that is the o
 
 ### Choosing probes
 
-`--probes all` selects every probe the target can run: the probes whose `target_class` matches the target kind, less any `conversation` probe when the target cannot carry a conversation (for example an `mcp_agent` whose `inner` target is `grpc`). In the bundled library (230 probes, counted on 2026-10-29) that is 139 for `openai_compat`, `anthropic_native` and `custom_http`, 25 for `grpc`, 37 for `browser_use`, 12 for `mcp_agent` and 26 for `payment_agent`. `argus-probe list-probes --target argus-target.json` prints that list, and `argus-probe list-probes --target-class <class>` lists the probes that declare one class. A probe id you name yourself runs as given; one that does not fit the target is reported as `skipped`.
+`--probes all` selects every probe the target can run: the probes whose `target_class` matches the target kind, less any `conversation` probe when the target cannot carry a conversation (for example an `mcp_agent` whose `inner` target is `grpc`). In the bundled library (230 probes, counted on 2026-10-29) that is 139 for `openai_compat`, `anthropic_native`, `custom_http` and `web_chat`, 25 for `grpc`, 37 for `browser_use`, 12 for `mcp_agent` and 26 for `payment_agent`. `argus-probe list-probes --target argus-target.json` prints that list, and `argus-probe list-probes --target-class <class>` lists the probes that declare one class. A probe id you name yourself runs as given; one that does not fit the target is reported as `skipped`.
 
 ### Without a judge key
 
@@ -184,6 +191,7 @@ argus-probe judge-check --judge-provider litellm --judge-model gemini/gemini-2.5
 | `custom_http` | Production agents wrapping an LLM behind their own HTTP shape (Jinja2 request templates + JSONPath response selectors) |
 | `grpc` | gRPC services with server reflection enabled |
 | `browser_use` | Browser-using agents driving Playwright / computer-use / browser-use |
+| `web_chat` | Agents reachable only through a web chat page. Argus types the prompts into the page in Chromium |
 | `payment_agent` | Agents that spend money on a user's behalf (e.g. x402), run against a payment testbed |
 | `mcp_agent` | Agents that connect to MCP tool servers, run against a hostile MCP testbed |
 | `testbed_agent` | Generic form of `mcp_agent` / `payment_agent`; `environment` picks the testbed |
@@ -250,7 +258,7 @@ Use [`argus-probe-action`](https://github.com/marketplace/actions/argus-agent-re
     fail-on: critical
 ```
 
-The job needs `permissions: security-events: write` for the SARIF upload. `argus-probe init --workflow` writes a complete workflow file with that set. Its `probes` are two judged chat probes for `openai_compat`, `anthropic_native` and `custom_http`, and `all` for every other kind, because the chat probes do not apply to those targets. It also sets `argus-version` to the version that wrote it, because the action otherwise installs its own default version, which may not know `testbed_url: "local"` or select the probes that fit the target. With `all`, an `mcp_agent` target needs no judge key: all 12 MCP probes are decided from the testbed's record. A `payment_agent` target needs `ANTHROPIC_API_KEY` for the 4 `pay_wallet_key_exfil*` probes; without the key the run stops with exit 1, unless you add `skip-judged: "true"` to run only the other 22. The action's `@v2` tag installs 0.7.0 and has that input; `@v1` installs 0.4.0.
+The job needs `permissions: security-events: write` for the SARIF upload. `argus-probe init --workflow` writes a complete workflow file with that set. Its `probes` are two judged chat probes for `openai_compat`, `anthropic_native`, `custom_http` and `web_chat`, and `all` for every other kind, because the chat probes do not apply to those targets. It also sets `argus-version` to the version that wrote it, because the action otherwise installs its own default version, which may not know `testbed_url: "local"` or select the probes that fit the target. With `all`, an `mcp_agent` target needs no judge key: all 12 MCP probes are decided from the testbed's record. A `payment_agent` target needs `ANTHROPIC_API_KEY` for the 4 `pay_wallet_key_exfil*` probes; without the key the run stops with exit 1, unless you add `skip-judged: "true"` to run only the other 22. The action's `@v2` tag installs 0.7.0 and has that input; `@v1` installs 0.4.0.
 
 `--fail-on <severity>` exits 3 when a failing finding is at or above that level; the SARIF is written first. `--compare-to <base branch>` makes `--fail-on` count only failures that are new relative to the latest run on that branch. It is server mode only, because it needs run history, so the action does not offer it; see the target-spec cookbook for a server-mode workflow.
 
@@ -282,7 +290,7 @@ When at least 5 findings, and at least 90% of the findings that were sent (skipp
 
 In a `conversation: true` probe, the first turn that is blocked or errors ends the conversation. Later turns are not sent, because they mean nothing without it.
 
-**How long a dead target can take.** Chat adapters wait up to `timeout_s` for each reply: 120 seconds by default for `openai_compat`, `anthropic_native` and `custom_http`. `anthropic_native` retries once, so one prompt can take up to 2 x `timeout_s`. When 5 probes in a row get no answer to any of their prompts (every send failed with one of the errors above, not a block, or the testbed did not answer while the probe was set up), the run stops with `target unreachable: 5 probes in a row failed (<last reason>)`. A library probe has at most 5 prompts, and an iterative attack ends at its first failed round, so before that stop a target that never answers costs at most 25 x `timeout_s` (about 50 minutes at the default, 100 minutes for `anthropic_native`).
+**How long a dead target can take.** Chat adapters wait up to `timeout_s` for each reply: 120 seconds by default for `openai_compat`, `anthropic_native`, `custom_http` and `web_chat`. `anthropic_native` retries once, so one prompt can take up to 2 x `timeout_s`. When 5 probes in a row get no answer to any of their prompts (every send failed with one of the errors above, not a block, or the testbed did not answer while the probe was set up), the run stops with `target unreachable: 5 probes in a row failed (<last reason>)`. A library probe has at most 5 prompts, and an iterative attack ends at its first failed round, so before that stop a target that never answers costs at most 25 x `timeout_s` (about 50 minutes at the default, 100 minutes for `anthropic_native`).
 
 When any finding is `error` or `aborted_cost`, the run is incomplete. The console prints `N of M probes errored; run incomplete` and up to three distinct reasons, or `N probe(s) stopped at the cost cap; run incomplete` (`... and M not started` when the cap also kept probes from starting). The report says the run is incomplete: a banner and notes in HTML, notes in SARIF and JUnit, `executionSuccessful: false` in SARIF (whose `exitCode` is the command's real exit code), and `"status": "incomplete"` with an `incomplete_reason` in run.json. If the run stops early, for example because the target is unreachable or the judge fails unexpectedly, the report is still written with the findings so far and the console says why the run stopped. A probe that is `blocked_by_target` or `skipped` does not make a run incomplete.
 
@@ -478,6 +486,7 @@ argus-probe scan-skill          Run a Claude Code skill in a sandbox and report 
 argus-probe mcp-trap            Point your agent at a hostile MCP server and report what it did
 argus-probe scan-mcp            Call an MCP server's tools with inert payloads and report what came back
 argus-probe judge-check         Measure the chosen judge on Argus's labelled rubric cases
+argus-probe web-login           Log in to a chat page by hand and save the session for a web_chat target
 ```
 
 Each command's `--help` lists its flags.
