@@ -203,7 +203,7 @@ async def test_local_mode_runs_in_process_and_never_touches_the_ws_bridge(agent)
 
 async def test_server_mode_still_uses_the_ws_bridge():
     ws = AsyncMock()
-    ws.send_and_wait = AsyncMock(return_value={"final_text": "via ws", "latency_ms": 7.0, "trap_evidence": {}})
+    ws.send_and_wait = AsyncMock(return_value={"final_text": "via ws", "latency_ms": 7.0, "trap_evidence": {"interaction_count": 0, "page_loads": 0, "trap_requests": []}})
     target = BrowserUseTarget(BrowserUseSpec(agent_url="http://t/agent", scenario_kind="dom_injection"))
     with patch("argus.targets.browser_use._get_client_agent_ws", return_value=ws), \
             patch("argus.browser_runner.browser_probe.BrowserProbe.run",
@@ -231,7 +231,7 @@ _BRIDGE_MSG = {
 ], ids=["unset", "all-set", "port-only", "explicit-defaults"])
 async def test_server_mode_sends_only_the_trap_options_that_are_set(trap, extra, trap_url):
     ws = AsyncMock()
-    reply = {"final_text": "via ws", "latency_ms": 7.0, "trap_evidence": {}}
+    reply = {"final_text": "via ws", "latency_ms": 7.0, "trap_evidence": {"interaction_count": 0, "page_loads": 0, "trap_requests": []}}
     if trap_url:
         reply["trap_url"] = trap_url
     ws.send_and_wait = AsyncMock(return_value=reply)
@@ -264,7 +264,7 @@ _MISMATCH = "client_agent did not use the trap settings (upgrade client_agent)"
         "host-match", "host-mismatch", "garbled", "unset-with-url", "unset-without-url"])
 async def test_server_mode_checks_the_client_agent_used_the_trap_settings(trap, trap_url, ok):
     from argus.targets._base import TargetDeliveryError
-    reply = {"final_text": "via ws", "latency_ms": 7.0, "trap_evidence": {}}
+    reply = {"final_text": "via ws", "latency_ms": 7.0, "trap_evidence": {"interaction_count": 0, "page_loads": 0, "trap_requests": []}}
     if trap_url:
         reply["trap_url"] = trap_url
     ws = AsyncMock()

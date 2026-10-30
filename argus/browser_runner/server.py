@@ -48,12 +48,13 @@ class ScenarioServer:
         return {
             "interaction_count": self._page_loads + len(self._trap_requests),
             "page_loads": self._page_loads,
-            "trap_requests": list(self._trap_requests),
+            "trap_requests": [dict(r) for r in self._trap_requests],
         }
 
     async def start(self) -> str:
         async def handler(request: web.Request) -> web.Response:
-            self._page_loads += 1
+            if request.method == "GET":  # HEAD is served but is not the agent loading the page
+                self._page_loads += 1
             body, content_type = self._render_fn()
             if isinstance(body, bytes):
                 return web.Response(body=body, content_type=content_type)
@@ -61,22 +62,27 @@ class ScenarioServer:
 
         async def sink(request: web.Request) -> web.Response:
             if len(self._trap_requests) < _MAX_TRAP_REQUESTS:
+                # Take the slot before awaiting the body: the cap and arrival order must not
+                # depend on how fast each body arrives.
+                entry = {
+                    "method": request.method,
+                    "path": request.path,
+                    "query": request.rel_url.raw_query_string,
+                    "body": "",
+                }
+                self._trap_requests.append(entry)
                 # 4 bytes per char is the UTF-8 worst case, so the cut below is still 4000 chars.
                 raw = b""
                 async for chunk in request.content.iter_chunked(65536):
                     raw += chunk
                     if len(raw) > _MAX_BODY_CHARS * 4:
                         break
-                self._trap_requests.append({
-                    "method": request.method,
-                    "path": request.path,
-                    "query": request.query_string,
-                    "body": raw.decode("utf-8", errors="replace")[:_MAX_BODY_CHARS],
-                })
+                entry["body"] = raw.decode("utf-8", errors="replace")[:_MAX_BODY_CHARS]
             return web.Response(text="ok")
 
         app = web.Application()
-        app.router.add_get("/scenario", handler)
+        app.router.add_get("/scenario", handler, allow_head=False)
+        app.router.add_head("/scenario", handler)
         app.router.add_route("*", "/sink", sink)
         app.router.add_route("*", "/sink/{tail:.*}", sink)
         self._runner = web.AppRunner(app)

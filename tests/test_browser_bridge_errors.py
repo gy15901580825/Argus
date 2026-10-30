@@ -60,7 +60,7 @@ def _target(timeout_s: float = 60.0) -> BrowserUseTarget:
 @pytest.mark.parametrize("exc, expected", BRIDGE_ERRORS)
 async def test_bridge_failure_errors_one_probe_and_the_next_probe_runs(exc, expected):
     ws = MagicMock()
-    ws.send_and_wait = AsyncMock(side_effect=[exc, {"final_text": "ok", "latency_ms": 1.0, "trap_evidence": {}}])
+    ws.send_and_wait = AsyncMock(side_effect=[exc, {"final_text": "ok", "latency_ms": 1.0, "trap_evidence": {"interaction_count": 0, "page_loads": 0, "trap_requests": []}}])
     runner = Runner(target=_target(), judge=_judge(), rubrics_dir=ARGUS_DIR / "rubrics")
     findings = []
     with patch("argus.targets.browser_use._get_client_agent_ws", return_value=ws):
@@ -93,7 +93,7 @@ async def test_bridge_error_message_is_bounded():
 @pytest.mark.parametrize("reply", [None, "ok", ["ok"]])
 async def test_reply_without_a_result_object_errors_one_probe(reply):
     ws = MagicMock()
-    ws.send_and_wait = AsyncMock(side_effect=[reply, {"final_text": "ok", "latency_ms": 1.0, "trap_evidence": {}}])
+    ws.send_and_wait = AsyncMock(side_effect=[reply, {"final_text": "ok", "latency_ms": 1.0, "trap_evidence": {"interaction_count": 0, "page_loads": 0, "trap_requests": []}}])
     runner = Runner(target=_target(), judge=_judge(), rubrics_dir=ARGUS_DIR / "rubrics")
     findings = []
     with patch("argus.targets.browser_use._get_client_agent_ws", return_value=ws):
@@ -171,7 +171,7 @@ class _Conn:
         if self.reply:
             async def _reply():
                 await asyncio.sleep(self.delay)
-                self.mgr.handle_response({"id": envelope["id"], "result": {"final_text": "late ok", "trap_evidence": {}}})
+                self.mgr.handle_response({"id": envelope["id"], "result": {"final_text": "late ok", "trap_evidence": {"interaction_count": 0, "page_loads": 0, "trap_requests": []}}})
             asyncio.get_running_loop().create_task(_reply())
 
 
@@ -187,7 +187,7 @@ async def test_reply_inside_the_grace_period_is_accepted_in_both_modes():
 
     async def _late(self, msg):
         await asyncio.sleep(2.0)
-        return {"final_text": "late ok", "trap_evidence": {}}
+        return {"final_text": "late ok", "trap_evidence": {"interaction_count": 0, "page_loads": 0, "trap_requests": []}}
 
     with patch.object(BrowserUseTarget, "_run_in_process", _late), local_browser_mode():
         text, _ = await _target(timeout_s=1.0).send_prompt("hi")
@@ -355,7 +355,7 @@ async def test_cancellation_still_propagates():
 async def test_server_mode_trap_settings_reach_the_client_agent():
     ws = MagicMock()
     ws.send_and_wait = AsyncMock(return_value={
-        "final_text": "ok", "trap_evidence": {}, "latency_ms": 1.0, "trap_url": "http://127.0.0.1:8765/scenario",
+        "final_text": "ok", "trap_evidence": {"interaction_count": 0, "page_loads": 0, "trap_requests": []}, "latency_ms": 1.0, "trap_url": "http://127.0.0.1:8765/scenario",
     })
     target = BrowserUseTarget(BrowserUseSpec(
         agent_url="https://t.example.com/agent", scenario_kind="dom_injection", trap_port=8765,
@@ -371,7 +371,7 @@ async def test_server_mode_trap_settings_reach_the_client_agent():
 async def test_old_client_agent_ignoring_trap_settings_errors_the_probe():
     # A client_agent without trap support replies with no trap_url.
     ws = MagicMock()
-    ws.send_and_wait = AsyncMock(return_value={"final_text": "ok", "latency_ms": 1.0, "trap_evidence": {}})
+    ws.send_and_wait = AsyncMock(return_value={"final_text": "ok", "latency_ms": 1.0, "trap_evidence": {"interaction_count": 0, "page_loads": 0, "trap_requests": []}})
     target = BrowserUseTarget(BrowserUseSpec(
         agent_url="https://t.example.com/agent", scenario_kind="dom_injection", trap_port=8765,
     ))
@@ -401,7 +401,7 @@ async def test_unreachable_http_target_errors_the_probe_too():
 async def test_iterative_bridge_failure_ends_the_thread_with_an_error_finding():
     ws = MagicMock()
     ws.send_and_wait = AsyncMock(side_effect=[
-        {"final_text": "ok", "latency_ms": 1.0, "trap_evidence": {}},
+        {"final_text": "ok", "latency_ms": 1.0, "trap_evidence": {"interaction_count": 0, "page_loads": 0, "trap_requests": []}},
         NoClientAgentError("No client_agent connected for redteam bridge"),
     ])
     probe = MagicMock()
@@ -445,7 +445,7 @@ def test_sse_stream_ends_normally_when_one_browser_probe_fails(monkeypatch):
     ws = MagicMock()
     ws.send_and_wait = AsyncMock(side_effect=[
         NoClientAgentError("No client_agent connected for redteam bridge"),
-        {"final_text": "ok", "latency_ms": 1.0, "trap_evidence": {}},
+        {"final_text": "ok", "latency_ms": 1.0, "trap_evidence": {"interaction_count": 0, "page_loads": 0, "trap_requests": []}},
     ])
     body = {
         "target": {"kind": "browser_use", "agent_url": "https://t.example.com/agent", "scenario_kind": "dom_injection"},

@@ -145,3 +145,36 @@ async def test_reply_carries_trap_evidence_of_requests_the_agent_made():
         "trap_requests": [{"method": "POST", "path": "/sink/steal", "query": "",
                            "body": "verification=tok-123"}],
     }
+
+
+@pytest.mark.asyncio
+async def test_trap_server_cap_order_head_and_raw_query():
+    import asyncio
+
+    import httpx
+    from redteam_runner.server import ScenarioServer
+
+    async def slow(delay, data):
+        await asyncio.sleep(delay)
+        yield data
+
+    server = ScenarioServer(render_fn=lambda: ("<p>x</p>", "text/html"))
+    base = (await server.start()).rsplit("/scenario", 1)[0]
+    try:
+        async with httpx.AsyncClient(trust_env=False, timeout=30) as c:
+            await c.head(f"{base}/scenario")
+            first = asyncio.create_task(c.post(f"{base}/sink/first", content=slow(0.5, b"late")))
+            await asyncio.sleep(0.2)
+            await c.get(f"{base}/sink/second?q=a%26b%3Dc%40")
+            await first
+            await asyncio.gather(*(
+                c.post(f"{base}/sink/n{i}", content=slow(0.2, b"x")) for i in range(80)
+            ))
+        ev = server.evidence()
+    finally:
+        await server.stop()
+    assert ev["page_loads"] == 0
+    assert [r["path"] for r in ev["trap_requests"]][:2] == ["/sink/first", "/sink/second"]
+    assert len(ev["trap_requests"]) == 50
+    assert ev["trap_requests"][0]["body"] == "late"
+    assert ev["trap_requests"][1]["query"] == "q=a%26b%3Dc%40"

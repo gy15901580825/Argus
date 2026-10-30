@@ -21,6 +21,9 @@ from argus.targets._base import Target, TargetDeliveryError, Turn
 
 _SCENARIO_KINDS = frozenset({"dom_injection", "ui_phishing", "visual_injection", "os_cmd"})
 
+# Same cap as the trap server's, so evidence summed over rounds stays bounded.
+_MAX_TRAP_REQUESTS = 50
+
 # Set only by run_local. Server mode never runs the trap page in-process.
 _LOCAL_RUN: contextvars.ContextVar[bool] = contextvars.ContextVar("browser_local_run", default=False)
 
@@ -104,6 +107,16 @@ class BrowserUseSpec:
         return (self.trap_host, self.trap_port, self.trap_public_url) != ("127.0.0.1", 0, "")
 
 
+def _valid_evidence(ev) -> bool:
+    """Fail closed: an empty or misshapen record must not read as "the agent did nothing"."""
+    return (
+        isinstance(ev, dict)
+        and all(isinstance(ev.get(k), int) and not isinstance(ev.get(k), bool)
+                for k in ("interaction_count", "page_loads"))
+        and isinstance(ev.get("trap_requests"), list)
+    )
+
+
 def _is_delivery_failure(e: Exception) -> bool:
     """True for the bridge and transport failures; caller bugs must propagate."""
     from argus.connection_manager import NoClientAgentError
@@ -184,6 +197,8 @@ class BrowserUseTarget(Target):
             reply = await asyncio.wait_for(
                 self._run_in_process(msg), timeout=self.spec.timeout_s + 5.0
             )
+            if not _valid_evidence(reply.get("trap_evidence")):
+                raise TargetDeliveryError("the trap server returned no evidence")
         else:
             # Send only the trap settings that differ from the default; never null.
             msg.update({f.name: getattr(self.spec, f.name) for f in fields(self.spec)
@@ -207,12 +222,11 @@ class BrowserUseTarget(Target):
                 )
             self._check_trap_url(reply.get("trap_url"))
             # An older client_agent has no recorder; its silence must not read as "agent did nothing".
-            if not isinstance(reply.get("trap_evidence"), dict):
+            if not _valid_evidence(reply.get("trap_evidence")):
                 raise TargetDeliveryError(
                     "client_agent did not return trap evidence (upgrade client_agent)"
                 )
-        if isinstance(reply.get("trap_evidence"), dict):
-            self._evidence = reply["trap_evidence"]
+        self._merge_evidence(reply["trap_evidence"])
         wall_latency_ms = (time.monotonic() - start) * 1000.0
         reported = reply.get("latency_ms")
         latency_ms = float(reported) if isinstance(reported, (int, float)) else wall_latency_ms
@@ -220,6 +234,17 @@ class BrowserUseTarget(Target):
 
     async def collect_evidence(self) -> dict:
         return dict(self._evidence)
+
+    def _merge_evidence(self, new: dict) -> None:
+        """Rounds of one probe add up; begin_probe starts over."""
+        old = self._evidence
+        requests = (old.get("trap_requests", []) + new["trap_requests"])[:_MAX_TRAP_REQUESTS]
+        page_loads = old.get("page_loads", 0) + new["page_loads"]
+        self._evidence = {
+            "interaction_count": page_loads + len(requests),
+            "page_loads": page_loads,
+            "trap_requests": requests,
+        }
 
     def _check_trap_url(self, got) -> None:
         """A client_agent without trap support serves on 127.0.0.1 and omits trap_url."""

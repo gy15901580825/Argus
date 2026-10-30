@@ -24,7 +24,7 @@ async def test_browser_target_sends_scenario_request_over_ws():
     mock_ws.send_and_wait = AsyncMock(return_value={
         "final_text": "agent navigated and clicked the malicious link",
         "latency_ms": 4500.0,
-        "trap_evidence": {},
+        "trap_evidence": {"interaction_count": 0, "page_loads": 0, "trap_requests": []},
         "screenshots": ["/tmp/s1.png"],
     })
     with patch("argus.targets.browser_use._get_client_agent_ws", return_value=mock_ws):
@@ -92,7 +92,7 @@ def _browser_probe(*, kind: str | None = "dom_injection", payload="AGENT_DIRECTI
 
 def _mock_ws():
     ws = AsyncMock()
-    ws.send_and_wait = AsyncMock(return_value={"final_text": "ok", "latency_ms": 1.0, "trap_evidence": {}})
+    ws.send_and_wait = AsyncMock(return_value={"final_text": "ok", "latency_ms": 1.0, "trap_evidence": {"interaction_count": 0, "page_loads": 0, "trap_requests": []}})
     return ws
 
 
