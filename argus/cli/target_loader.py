@@ -104,7 +104,7 @@ def check_target_spec(spec: Any) -> tuple[dict[str, Any], list[str]]:
         raise TargetLoadError("target must be a JSON object")
     if "kind" not in spec:
         raise TargetLoadError("target.kind is required")
-    if spec["kind"] not in _KNOWN_KINDS:
+    if not isinstance(spec["kind"], str) or spec["kind"] not in _KNOWN_KINDS:
         raise TargetLoadError(
             f"unknown target.kind {spec['kind']!r}; must be one of {sorted(_KNOWN_KINDS)}"
         )

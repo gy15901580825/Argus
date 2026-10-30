@@ -127,4 +127,87 @@ def test_validate_target_reports_network_error(tmp_path, httpx_mock):
     httpx_mock.add_exception(httpx.ConnectError("refused"), url=URL)
     result = _invoke(target_file)
     assert result.exit_code == 1
-    assert "network error: refused" in result.output
+    assert "network error: ConnectError: refused" in result.output
+
+
+def test_validate_target_names_a_timeout_with_no_message(tmp_path, httpx_mock):
+    target_file = tmp_path / "t.yaml"
+    target_file.write_text(f"endpoint_url: {URL}\nmodel: m\n")
+    httpx_mock.add_exception(httpx.ReadTimeout(""), url=URL)
+    result = _invoke(target_file)
+    assert result.exit_code == 1
+    assert "network error: ReadTimeout" in result.output
+
+
+@pytest.mark.parametrize("exc,expected", [
+    (RuntimeError("boom"), "target request failed: RuntimeError: boom"),
+    (type("APIStatusError", (Exception,), {"status_code": 403})("forbidden"), "target returned 403: forbidden"),
+])
+def test_validate_target_reports_adapter_failures(tmp_path, exc, expected):
+    from argus.targets._base import TargetBlockedError
+
+    target_file = tmp_path / "t.json"
+    target_file.write_text(json.dumps({"kind": "anthropic_native", "model": "claude-x", "api_key": "k"}))
+    for raised, text in ((exc, expected), (TargetBlockedError("refusal"), "target withheld its reply: refusal")):
+        with patch("argus.targets.anthropic_native.AnthropicNativeTarget.send_prompt",
+                   AsyncMock(side_effect=raised)):
+            result = _invoke(target_file)
+        assert result.exit_code == 1
+        assert text in result.output
+
+
+@pytest.mark.parametrize("content,expected", [
+    ("endpoint_url: [unclosed\n", "cannot read the target file"),
+    ("", "must be a JSON object"),
+    ("- a\n- b\n", "must be a JSON object"),
+    ('{"kind": "nope"}', "unknown target.kind"),
+    ('{"kind": ["openai_compat"]}', "unknown target.kind"),
+    (json.dumps({**CUSTOM_HTTP, "response_jsonpath": "$[["}), "target spec invalid"),
+    (f"endpoint_url: {URL}\nmodel: m\nmax_tokens: 10\n", "target spec invalid"),
+])
+def test_validate_target_reports_bad_specs_without_a_traceback(tmp_path, content, expected, httpx_mock):
+    target_file = tmp_path / "t.json"
+    target_file.write_text(content)
+    result = _invoke(target_file)
+    assert result.exit_code == 1, result.output
+    assert expected in result.output
+    assert isinstance(result.exception, SystemExit)
+    assert httpx_mock.get_requests() == []
+
+
+def test_validate_target_reports_unreadable_files(tmp_path):
+    binary = tmp_path / "t.bin"
+    binary.write_bytes(b"\xff\xfe\x00bad")
+    result = _invoke(binary)
+    assert result.exit_code == 1
+    assert "cannot read the target file" in result.output
+    # A directory is a usage error from click, not a traceback.
+    assert _invoke(tmp_path).exit_code == 2
+
+
+def test_validate_target_reads_tab_indented_json_like_run(tmp_path, httpx_mock):
+    # YAML forbids tabs; run reads JSON, so validate-target must too.
+    target_file = tmp_path / "t.json"
+    target_file.write_text('{\n\t"kind": "openai_compat",\n\t"endpoint_url": "%s",\n\t"model": "m"\n}' % URL)
+    httpx_mock.add_response(url=URL, method="POST", json=_ok_json())
+    assert _invoke(target_file).exit_code == 0
+
+
+def test_validate_target_masks_secrets_like_run(tmp_path, httpx_mock, monkeypatch):
+    # The expanded URL and an error body that echoes the key must not reach CI logs.
+    monkeypatch.setenv("ARGUS_TEST_URL_KEY", "url-secret-value")
+    url = "https://agent.example/chat?key=url-secret-value"
+    target_file = tmp_path / "t.json"
+    target_file.write_text(json.dumps({**CUSTOM_HTTP, "request_url": "https://agent.example/chat?key=${ARGUS_TEST_URL_KEY}",
+                                       "api_key": "literal-key-value"}))
+    httpx_mock.add_response(url=url, method="POST", json={"output": "pong"})
+    result = _invoke(target_file)
+    assert result.exit_code == 0, result.output
+    assert "url-secret-value" not in result.output
+    assert "${ARGUS_TEST_URL_KEY}" in result.output
+    httpx_mock.add_response(url=url, method="POST", status_code=401,
+                            text="bad key literal-key-value for url-secret-value")
+    result = _invoke(target_file)
+    assert result.exit_code == 1
+    assert "target returned 401" in result.output
+    assert "literal-key-value" not in result.output and "url-secret-value" not in result.output
