@@ -13,7 +13,7 @@ from argus.cli.target_loader import TargetLoadError, check_target_spec
 
 # Kinds that answer a chat prompt. The others (MCP and vLLM servers, testbed agents, uploads)
 # are checked by their probes, so a ping proves nothing about them.
-_CHAT_KINDS = ("openai_compat", "anthropic_native", "custom_http")
+_CHAT_KINDS = ("openai_compat", "anthropic_native", "custom_http", "web_chat")
 
 
 def _failure(exc: Exception) -> str:
@@ -30,6 +30,14 @@ def _failure(exc: Exception) -> str:
     if isinstance(exc, httpx.RequestError):
         return f"network error: {_named(exc)}"
     return f"target request failed: {_named(exc)}"
+
+
+async def _ping(target) -> str:
+    try:
+        text, _ = await target.send_prompt("ping")
+        return text
+    finally:
+        await target.aclose()  # web_chat holds a browser
 
 
 def _parse(text: str):
@@ -73,10 +81,10 @@ def cmd_validate_target(target_file: str):
     except Exception as e:  # spec values the adapter rejects (a bad JSONPath, a wrong type)
         fail(f"target spec invalid: {type(e).__name__}: {e}")
     try:
-        text, _ = asyncio.run(target.send_prompt("ping"))
+        text = asyncio.run(_ping(target))
     except Exception as e:  # every failure is the answer this command exists to give
         fail(_failure(e))
     if not text.strip():
         fail("target replied, but the reply text is empty; check the response shape or path")
-    where = raw.get("endpoint_url") or raw.get("request_url") or f"anthropic {raw['model']}"
+    where = raw.get("endpoint_url") or raw.get("request_url") or raw.get("url") or f"anthropic {raw['model']}"
     click.echo(run_json.mask_text(f"OK — target {where} replied with {len(text)} chars", secrets))

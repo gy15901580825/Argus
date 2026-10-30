@@ -1,3 +1,4 @@
+import importlib.util
 import json
 from unittest.mock import AsyncMock, patch
 
@@ -211,3 +212,22 @@ def test_validate_target_masks_secrets_like_run(tmp_path, httpx_mock, monkeypatc
     assert result.exit_code == 1
     assert "target returned 401" in result.output
     assert "literal-key-value" not in result.output and "url-secret-value" not in result.output
+
+
+@pytest.mark.skipif(importlib.util.find_spec("playwright") is None, reason="Playwright is not installed")
+@pytest.mark.parametrize("send,code", [
+    (AsyncMock(return_value=("hi there", 1.0)), 0),
+    (AsyncMock(side_effect=RuntimeError("page gone")), 1),
+])
+def test_validate_target_web_chat_closes_the_browser(tmp_path, send, code):
+    target_file = tmp_path / "t.json"
+    target_file.write_text(json.dumps({"kind": "web_chat", "url": "https://chat.example/",
+                                       "input_selector": "#in", "response_selector": ".bot"}))
+    aclose = AsyncMock()
+    with patch("argus.targets.web_chat.WebChatTarget.send_prompt", send), \
+         patch("argus.targets.web_chat.WebChatTarget.aclose", aclose):
+        result = _invoke(target_file)
+    assert result.exit_code == code, result.output
+    if code == 0:
+        assert "OK — target https://chat.example/ replied with 8 chars" in result.output
+    aclose.assert_awaited_once()
