@@ -32,6 +32,14 @@ def _rubric_candidate(rubrics_dir: Path, rubric_path: str) -> Path:
     return candidate
 
 
+def _is_hybrid(probe) -> bool:
+    return bool(getattr(probe, "judge_when_assertions_pass", False))
+
+
+def _needs_judge(probe) -> bool:
+    return not getattr(probe, "assertions", ()) or _is_hybrid(probe)
+
+
 # Verdict constants (Plan 4 T7) — used in Finding.verdict and report renderers.
 VERDICT_PASS = "pass"
 VERDICT_FAIL = "fail"
@@ -335,7 +343,7 @@ class Runner:
 
         # A judged probe with no rubric file would be judged against nothing. Error
         # before any send or attacker call; evidence-judged probes need no rubric.
-        if rubric_text is None and not getattr(probe, "assertions", ()):
+        if rubric_text is None and _needs_judge(probe):
             yield self._finding(
                 probe, "", "", 0.0, datetime.now(timezone.utc),
                 verdict=VERDICT_ERROR, severity="info", confidence=1.0,
@@ -515,6 +523,28 @@ class Runner:
             evidence=evidence or None,
         )
 
+    async def _hybrid_finding(self, probe, rubric_text, clean: Finding) -> Finding:
+        """The judge's verdict for a probe whose assertions all passed.
+
+        Clean evidence only rules out the failures the assertions know how to see,
+        so the judge decides; its finding carries the evidence and says why it ran.
+        May raise ValueError for an unusable judge reply: the callers own that policy.
+        """
+        verdict = await self._judge.judge(
+            probe_name=probe.name,
+            attack_prompt=self._shown(clean.attack_prompt),
+            target_response=clean.target_response,
+            rubric_text=rubric_text,
+            severity=probe.severity,
+        )
+        return replace(
+            clean,
+            verdict=verdict.verdict, severity=verdict.severity,
+            confidence=verdict.confidence,
+            reasoning=f"evidence clean ({clean.reasoning}); judge: {verdict.reasoning}",
+            judge_model=verdict.judge_model, escalated_model=verdict.escalated_model,
+        )
+
     def _finding(self, probe, prompt, response_text, latency_ms, probed_at,
                  *, verdict, severity, confidence, reasoning, evidence) -> Finding:
         return Finding(
@@ -593,7 +623,18 @@ class Runner:
                 # be mistaken for the last turn.
                 if conversation and idx != len(probe.prompts) - 1:
                     continue
-                yield await self._assertion_finding(probe, prompt, response_text, latency_ms, probed_at)
+                f = await self._assertion_finding(probe, prompt, response_text, latency_ms, probed_at)
+                if f.verdict == VERDICT_PASS and _is_hybrid(probe):
+                    try:
+                        f = await self._hybrid_finding(probe, rubric_text, f)
+                    except ValueError as e:
+                        f = self._finding(
+                            probe, prompt, response_text, latency_ms, probed_at,
+                            verdict=VERDICT_ERROR, severity="info", confidence=1.0,
+                            reasoning=f"judge reply could not be used: {str(e)[:200]}",
+                            evidence=f.evidence,
+                        )
+                yield f
                 continue
 
             try:
@@ -704,12 +745,24 @@ class Runner:
                     pending = await self._assertion_finding(
                         probe, prompt, response_text, latency_ms, probed_at
                     )
+                    if pending.verdict == VERDICT_PASS and _is_hybrid(probe):
+                        try:
+                            pending = await self._hybrid_finding(probe, rubric_text, pending)
+                        except ValueError as e:
+                            # Same as the judged branch below: the next round needs this verdict.
+                            yield self._finding(
+                                probe, prompt, response_text, latency_ms, probed_at,
+                                verdict=VERDICT_ERROR, severity="info", confidence=1.0,
+                                reasoning=f"judge reply could not be used: {str(e)[:200]}",
+                                evidence=pending.evidence,
+                            )
+                            return
                     # Fed back as a Verdict purely so the attacker LLM and
                     # should_halt see the round the way they see a judged one.
                     verdict = Verdict(
                         verdict=pending.verdict, severity=pending.severity,
                         confidence=pending.confidence, reasoning=pending.reasoning,
-                        judge_model="", escalated_model=None,
+                        judge_model=pending.judge_model, escalated_model=pending.escalated_model,
                     )
                 else:
                     try:

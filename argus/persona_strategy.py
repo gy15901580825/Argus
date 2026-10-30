@@ -99,6 +99,7 @@ class PersonaStrategyProbe(IterativeProbe):
     scenario_payload: str = ""
     assertions: tuple[dict, ...] = ()
     requires_interaction: bool = True
+    judge_when_assertions_pass: bool = False
     remediation: str = ""
 
     def __post_init__(self) -> None:
@@ -135,6 +136,7 @@ class PersonaStrategyProbe(IterativeProbe):
         self.scenario_payload = self.base.scenario_payload
         self.assertions = tuple(self.base.assertions)
         self.requires_interaction = self.base.requires_interaction
+        self.judge_when_assertions_pass = self.base.judge_when_assertions_pass
         # The base's own fix-it text; without it a server-facing probe falls back to agent-side advice.
         self.remediation = getattr(self.base, "remediation", "")
 

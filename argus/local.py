@@ -94,12 +94,13 @@ def _prepare(target, probe_ids, *, mode, per_run_cap_usd, env, skip_judged) -> _
     if (unknown := api.unknown_probe_ids(requested)):
         raise LocalRunError(unknown, code="usage")
 
-    # Assertion-backed probes are decided from evidence and never call the judge, and a
-    # probe the target cannot run is skipped by the runner, so neither needs a key.
+    # Assertion-backed probes are decided from evidence and never call the judge (hybrid
+    # ones do: needs_judge), and a probe the target cannot run is skipped by the runner,
+    # so neither needs a key.
     by_id = {p.id: p for p in load_probe_library(api.PROBES_DIR)}
     fits = set(api.compatible_probe_ids(target_obj))
     runs = requested if mode == "deep" else [pid for pid in requested if pid in fits]
-    judged = runs if mode == "deep" else [pid for pid in runs if not by_id[pid].assertions]
+    judged = runs if mode == "deep" else [pid for pid in runs if by_id[pid].needs_judge]
     skipped: list[dict] = []
     warnings: list[str] = []
     missing = llm.missing_text(cfg) if judged else None

@@ -194,7 +194,7 @@ def _judged_exchanges(req: RunRequest, probe_ids: list[str]) -> int:
 
     An assertion-backed probe is decided from evidence and never reaches the
     judge, so billing it for a judge call would over-estimate the run and reject
-    scans that cost nothing to judge.
+    scans that cost nothing to judge. A hybrid probe judges when its evidence is clean.
     """
     if req.mode == "deep":
         return _estimate_exchanges(req, probe_ids)
@@ -202,7 +202,7 @@ def _judged_exchanges(req: RunRequest, probe_ids: list[str]) -> int:
     return sum(
         len(by_id[pid].prompts) if pid in by_id else 1
         for pid in probe_ids
-        if not (pid in by_id and by_id[pid].assertions)
+        if pid not in by_id or by_id[pid].needs_judge
     )
 
 
