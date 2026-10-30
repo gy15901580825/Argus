@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import os
 from unittest.mock import MagicMock, patch
 
@@ -834,3 +835,15 @@ def test_the_rewrite_is_linear_time(text):
     start = time.perf_counter()
     jev_judge._neutralise(text)
     assert time.perf_counter() - start < 2.0
+
+
+@pytest.mark.parametrize("sep", ["\x01", "\x7f", "\x90", "⠀", "\x00", "\x1b"])
+def test_control_and_braille_blank_separators_are_rewritten(sep):
+    # They render as nothing between brackets, so ">\x01>\x01>" reads as ">>>".
+    assert jev_judge._neutralise(sep.join(">>>")) == "&gt;&gt;&gt;"
+
+
+def test_the_separator_class_holds_no_letters_digits_or_brackets():
+    sep = re.compile(jev_judge._separator_class())
+    for ch in "aZ09_<>＞＜é一١" + "".join(chr(c) for c in range(0x21, 0x7f)):
+        assert not sep.fullmatch(ch), repr(ch)

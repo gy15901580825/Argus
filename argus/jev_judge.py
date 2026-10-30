@@ -54,19 +54,20 @@ _B = "[" + "".join(_BRACKETS) + "]"
 
 
 # Hangul fillers are letters (Lo) that render blank.
-_BLANK_LETTERS = frozenset("\u115f\u1160\u3164\uffa0")
+_BLANK_LETTERS = frozenset("\u115f\u1160\u3164\uffa0\u2800")  # Hangul fillers and the Braille blank
 
 
 def _separator_class() -> str:
-    """Any whitespace except a line break, any format (Cf) or combining (Mn, Me) character, and the Hangul
-    fillers, as a regex class. Planes 0, 1 and 14 hold every such character; the others are ideographs and
+    """Any whitespace or control (Cc) character except a line break, any format (Cf) or combining (Mn, Me)
+    character, and the blank letters, as a regex class. Planes 0, 1 and 14 hold every such character; the others are ideographs and
     private use."""
     ranges: list[list[int]] = []
     for plane in (0, 1, 14):
         for cp in range(plane << 16, (plane + 1) << 16):
             ch = chr(cp)
-            blank = ch.isspace() and len(f"a{ch}b".splitlines()) == 1
-            if blank or ch in _BLANK_LETTERS or unicodedata.category(ch) in ("Cf", "Mn", "Me"):
+            cat = unicodedata.category(ch)
+            blank = (ch.isspace() or cat == "Cc") and len(f"a{ch}b".splitlines()) == 1
+            if blank or ch in _BLANK_LETTERS or cat in ("Cf", "Mn", "Me"):
                 if ranges and ranges[-1][1] == cp - 1:
                     ranges[-1][1] = cp
                 else:
