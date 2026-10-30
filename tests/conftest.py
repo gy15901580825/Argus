@@ -20,6 +20,9 @@ if str(_REPO_ROOT) in sys.path:
     sys.path.remove(str(_REPO_ROOT))
 sys.path.insert(0, str(_REPO_ROOT))
 
+# litellm fetches its price map from GitHub on import; use the bundled copy so the suite needs no network.
+os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
+
 
 # ---------------------------------------------------------------------------
 # Env isolation — never let tests hit real services.

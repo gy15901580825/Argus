@@ -42,3 +42,8 @@ async def test_an_unmocked_llm_call_is_refused_and_recorded(llm_call_guard):
                            max_tokens=1)
     assert [c["model"] for c in llm_call_guard] == ["mistral/m", "mistral/m", "anthropic client", "azure/gpt-5.4-mini"]
     llm_call_guard.clear()  # the guard fails a test that made such a call; this one expected it
+
+
+def test_litellm_uses_its_bundled_price_map():
+    # Without this, importing litellm downloads the map from GitHub and the suite needs the network.
+    assert os.environ.get("LITELLM_LOCAL_MODEL_COST_MAP") == "True"
