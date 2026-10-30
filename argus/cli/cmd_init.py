@@ -68,12 +68,19 @@ _KIND_QUESTIONS: dict[str, list[tuple[str, str, str | None]]] = {
         ("upload_content_type", "Upload content type", "image/svg+xml"),
         ("render_url_jsonpath", "Render URL JSONPath (extracts the render URL from the upload response)", "$.url"),
     ],
+    "web_chat": [
+        ("url", "Chat page URL", None),
+        ("input_selector", "CSS selector of the message box", "textarea"),
+        ("response_selector", "CSS selector matching every assistant message", None),
+        # An empty answer is valid: the target then presses Enter in the message box.
+        ("send_selector", "CSS selector of the send button (empty: press Enter)", ""),
+    ],
 }
 
 # Chat kinds get a small judged set. Every other kind gets `all`, because the chat probes do not
 # apply to it and would be skipped, leaving a job that tests nothing. Assumes `all` fits the target (PR5a).
 _CHAT_PROBES = "owasp_01_prompt_injection_basic,syscard_crescendo"
-_CHAT_KINDS = frozenset({"openai_compat", "anthropic_native", "custom_http"})
+_CHAT_KINDS = frozenset({"openai_compat", "anthropic_native", "custom_http", "web_chat"})
 
 
 def _probes_for(kind: str) -> str:

@@ -18,6 +18,7 @@ from argus.targets.openai_compat import OpenAICompatSpec, OpenAICompatTarget
 from argus.targets.payment_agent import PaymentAgentSpec, PaymentAgentTarget
 from argus.targets.testbed_agent import GenericTestbedAgentTarget, TestbedAgentSpec
 from argus.targets.vllm_server import VLLMServerSpec, VLLMServerTarget
+from argus.targets.web_chat import WebChatSpec, WebChatTarget
 
 _BUILDERS = {
     "anthropic_native": (AnthropicNativeSpec, AnthropicNativeTarget),
@@ -31,6 +32,7 @@ _BUILDERS = {
     "payment_agent": (PaymentAgentSpec, PaymentAgentTarget),
     "testbed_agent": (TestbedAgentSpec, GenericTestbedAgentTarget),
     "vllm_server": (VLLMServerSpec, VLLMServerTarget),
+    "web_chat": (WebChatSpec, WebChatTarget),
 }
 
 logger = logging.getLogger(__name__)

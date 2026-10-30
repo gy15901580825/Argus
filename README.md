@@ -71,10 +71,11 @@ What Argus does:
   (see RESULTS.md), and 99 [garak](https://github.com/NVIDIA/garak)
   wrappers for NVIDIA's existing catalog. Exact per-standard counts are
   generated, not hand-maintained — see [`docs/probe-mapping.md`](docs/probe-mapping.md).
-- **11 target adapters**: `openai_compat`, `anthropic_native`, `custom_http`
+- **12 target adapters**: `openai_compat`, `anthropic_native`, `custom_http`
   (Jinja2 + JSONPath), `grpc` (with reflection auto-discovery), `http_upload`
   (file-upload-and-render sinks), `browser_use` (Playwright-driven
-  full-browser flows), `payment_agent` (x402 wallet-carrying agents, runs
+  full-browser flows), `web_chat` (an agent reachable only through its chat
+  page; Argus types into the page in Chromium), `payment_agent` (x402 wallet-carrying agents, runs
   against the payment testbed), `mcp_agent` (MCP tool-server abuse, runs
   against the hostile MCP testbed; `"testbed_url": "local"` starts either
   testbed for the run), `mcp_server` (an MCP server's own HTTP exposure:
@@ -219,7 +220,7 @@ writes a starter one. `${VAR}` references are expanded from the environment:
 
 Other `kind` values: `anthropic_native`, `custom_http` (with Jinja2 body
 templates and JSONPath response extractors), `grpc`, `http_upload`,
-`browser_use`, `payment_agent`, `mcp_agent`, `testbed_agent`, `vllm_server`. Full target-spec cookbook in
+`browser_use`, `web_chat`, `payment_agent`, `mcp_agent`, `testbed_agent`, `vllm_server`. Full target-spec cookbook in
 [`docs/onboarding/target-spec-cookbook.md`](docs/onboarding/target-spec-cookbook.md).
 
 Install the `argus-probe` CLI from PyPI (Python 3.11+). The package
@@ -338,6 +339,7 @@ argus-probe scan-skill --sample key-grab
 │                  │  mcp_agent       │                                   │
 │                  │  testbed_agent   │                                   │
 │                  │  vllm_server     │                                   │
+│                  │  web_chat ───────┼──▶ your chat page in Chromium     │
 │                  │  browser_use ────┼──▶ local trap page, or            │
 │                  │                  │    client_agent in server mode    │
 │                  └──────┬───────────┘                                   │

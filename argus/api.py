@@ -209,44 +209,52 @@ def _judged_exchanges(req: RunRequest, probe_ids: list[str]) -> int:
 async def _run_probes(req: RunRequest, anthropic_api_key: str) -> AsyncIterator[dict]:
     # build_target() validates the dict and selects the right adapter — C1 fix.
     target = await asyncio.to_thread(build_target, req.target)
-    judge = Judge(api_key=anthropic_api_key, cost_meter=_COST_METER)
-    runner = Runner(target=target, judge=judge, rubrics_dir=RUBRICS_DIR)
+    # Released however the run ends: normally, on a raise, or when the consumer
+    # closes this generator early (run_local's probes.aclose()). Plugin targets
+    # need not subclass Target, so aclose is optional like the runner's hooks.
+    try:
+        judge = Judge(api_key=anthropic_api_key, cost_meter=_COST_METER)
+        runner = Runner(target=target, judge=judge, rubrics_dir=RUBRICS_DIR)
 
-    requested = set(_resolve_request_probe_ids(req, target))
-    selected = [p for p in load_probe_library(PROBES_DIR) if p.id in requested]
+        requested = set(_resolve_request_probe_ids(req, target))
+        selected = [p for p in load_probe_library(PROBES_DIR) if p.id in requested]
 
-    if req.mode == "deep":
-        personas, strategies = default_personas(), default_strategies()
-        to_run = [
-            dp
-            for base in selected
-            for dp in build_deep_probes(
-                base, personas, strategies, deep_pairs=req.deep_pairs
-            )
-        ]
-    else:
-        to_run = selected
+        if req.mode == "deep":
+            personas, strategies = default_personas(), default_strategies()
+            to_run = [
+                dp
+                for base in selected
+                for dp in build_deep_probes(
+                    base, personas, strategies, deep_pairs=req.deep_pairs
+                )
+            ]
+        else:
+            to_run = selected
 
-    # Once a cap is hit, no further probe or deep thread starts: each remaining one is
-    # reported as aborted_cost without another paid call, then the caller sees why.
-    cap_hit: CostExceededError | None = None
-    for probe in to_run:
+        # Once a cap is hit, no further probe or deep thread starts: each remaining one is
+        # reported as aborted_cost without another paid call, then the caller sees why.
+        cap_hit: CostExceededError | None = None
+        for probe in to_run:
+            if cap_hit is not None:
+                yield finding_dict(aborted_finding(
+                    probe, f"{NOT_STARTED_AT_CAP}: the run had stopped at the cost cap ({cap_hit})"), probe)
+                continue
+            try:
+                async for finding in runner.run_probe(probe):
+                    yield finding_dict(finding, probe)
+                    # An iterative thread reports the cap as aborted_cost instead of raising.
+                    if finding.verdict == VERDICT_ABORTED and cap_hit is None:
+                        m = re.match(r"cost cap hit at round \d+: (.*)", finding.reasoning, re.S)
+                        cap_hit = CostExceededError(m.group(1) if m else finding.reasoning)
+            except CostExceededError as e:
+                yield finding_dict(aborted_finding(probe, f"cost cap reached: {e}"), probe)
+                cap_hit = e
         if cap_hit is not None:
-            yield finding_dict(aborted_finding(
-                probe, f"{NOT_STARTED_AT_CAP}: the run had stopped at the cost cap ({cap_hit})"), probe)
-            continue
-        try:
-            async for finding in runner.run_probe(probe):
-                yield finding_dict(finding, probe)
-                # An iterative thread reports the cap as aborted_cost instead of raising.
-                if finding.verdict == VERDICT_ABORTED and cap_hit is None:
-                    m = re.match(r"cost cap hit at round \d+: (.*)", finding.reasoning, re.S)
-                    cap_hit = CostExceededError(m.group(1) if m else finding.reasoning)
-        except CostExceededError as e:
-            yield finding_dict(aborted_finding(probe, f"cost cap reached: {e}"), probe)
-            cap_hit = e
-    if cap_hit is not None:
-        raise cap_hit
+            raise cap_hit
+    finally:
+        close = getattr(target, "aclose", None)
+        if close is not None:
+            await close()
 
 
 def finding_dict(finding, probe) -> dict:

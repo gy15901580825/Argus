@@ -2,10 +2,10 @@
 
 Argus needs to know how to reach your AI agent. The "target spec" is a small JSON file (`argus-target.json`) that describes the agent endpoint and how to authenticate against it.
 
-The fastest way to generate it is interactively, for any of the 9 kinds `init` knows how to ask questions about (`openai_compat`, `anthropic_native`, `custom_http`, `grpc`, `browser_use`, `payment_agent`, `mcp_agent`, `testbed_agent`, `http_upload`):
+The fastest way to generate it is interactively, for any of the 10 kinds `init` knows how to ask questions about (`openai_compat`, `anthropic_native`, `custom_http`, `grpc`, `browser_use`, `web_chat`, `payment_agent`, `mcp_agent`, `testbed_agent`, `http_upload`):
 
 ```bash
-argus-probe init --kind <one of those 9>
+argus-probe init --kind <one of those 10>
 ```
 
 Below are copy-paste templates for each supported agent shape, plus the gotchas we've run into in real deployments.
@@ -177,6 +177,72 @@ With `0.0.0.0`, anyone on your network can open the trap page while the run last
 Server mode accepts the same three options. There the client agent serves the trap page, so `trap_host` is an address on the client agent's machine, and your agent must be able to open `trap_public_url` from where it runs. If the client agent runs in Docker, set `trap_host` to `0.0.0.0` and publish `trap_port` from its container. An older client agent ignores these options, and each browser probe then ends as an `error` finding that asks you to upgrade it.
 
 If your agent can't reach your machine at all, submit the run with `--api-url` and `--token` to a compatible hosted service instead.
+
+---
+
+## web_chat
+
+**Use this for**: an agent you can reach only through its chat page in a browser, with no API to call. Argus opens the page in Chromium, types each prompt into the message box and reads the reply off the page. This differs from `browser_use`. There, the agent under test is the one that browses, and Argus gives it a trap page to open. Here, Argus does the browsing, and the agent sits behind the chat page.
+
+Install Playwright and its Chromium first:
+
+```bash
+pip install 'argus-probe[web]'
+playwright install chromium
+```
+
+```json
+{
+  "kind": "web_chat",
+  "url": "https://chat.staging.example/",
+  "input_selector": "textarea#prompt",
+  "send_selector": "button[type=submit]",
+  "response_selector": ".message.assistant",
+  "busy_selector": "button.stop",
+  "new_chat_selector": "button.new-chat",
+  "storage_state": "~/.config/argus/chat-staging.json"
+}
+```
+
+| Field | Default | Meaning |
+|---|---|---|
+| `url` | required | The chat page, `http` or `https`. |
+| `input_selector` | required | CSS selector of the message box: a `textarea`, an `input` or a `contenteditable` element. |
+| `response_selector` | required | CSS selector that matches every assistant message on the page, not only the latest one. |
+| `send_selector` | empty | The send button. When empty, Argus presses Enter in the message box. |
+| `new_chat_selector` | empty | Clicked after the page loads, to start a new conversation. When empty, loading `url` must be enough to start one. |
+| `busy_selector` | empty | While any visible element matches it, the reply is not finished. A stop button or a typing indicator works. |
+| `storage_state` | empty | A Playwright storage state file holding your login, written by `argus-probe web-login`. `~` is expanded. |
+| `headless` | `true` | Set `false` to watch the browser while the probes run. It must be a JSON boolean. |
+| `settle_ms` | `2000` | How long the reply text must stay unchanged before Argus treats it as finished. |
+| `timeout_s` | `120` | Time allowed for one turn, from sending the prompt to the finished reply. The first turn of a conversation also loads the page within this time. |
+
+**How Argus decides a reply is finished.** Before it sends a prompt, Argus counts the elements that match `response_selector`. The reply is the text of every matching element that appears after the send, joined with newlines. Argus reads it as finished when all of these hold:
+
+- at least one new element appeared, and its text is not empty;
+- the text has not changed for `settle_ms`;
+- no element matching `busy_selector` is visible. The `settle_ms` wait starts again each time the text changes or a busy element shows.
+
+Set `busy_selector` when the app shows a placeholder such as "Thinking..." before the answer, or when its stream can pause for longer than `settle_ms`. Without it, a placeholder that stays on screen for `settle_ms` is taken as the whole reply, and a stream that stalls mid-sentence is cut at the stall. Pick an element that is visible only while the app is answering, such as its stop button.
+
+If no finished reply arrives within `timeout_s`, the probe gets an `error` finding. The reason says what Argus saw (no new message, a busy element still visible, or text still changing) and quotes the first 200 characters of the reply so far. A selector that matches nothing, or a page that fails to load, is also an `error` that names the field.
+
+**Starting a new conversation.** Each prompt that does not continue a conversation starts a new one by loading `url`. Some apps restore the last conversation when the page reloads, so the next prompt would land in the old chat, after the previous attack. For those apps, set `new_chat_selector` to the app's "New chat" button. Multi-turn probes continue in the same page.
+
+**One conversation at a time.** Argus keeps one browser page and sends one prompt at a time. It can continue only the conversation the page is showing, and it never retypes earlier prompts to rebuild one, because the judge would then read replies the agent never gave. The browser closes when the run ends.
+
+**Logging in.** For a chat page behind a login, save a session once and point `storage_state` at it:
+
+```bash
+argus-probe web-login https://chat.staging.example/ --out ~/.config/argus/chat-staging.json
+```
+
+`web-login` opens a visible Chromium at the URL. Log in as you normally do, then press Enter in the terminal. Argus writes the browser's cookies and local storage to `--out`, readable only by your user (mode 0600). It refuses to overwrite an existing file unless you pass `--force`. Anyone who has the file is logged in as you. Keep it out of the repo and out of CI logs. Run `web-login` again when the session expires.
+
+**Limits:**
+- Argus does not solve CAPTCHAs, pass bot checks or hide that the browser is automated. This is by design. Test your own deployment, with the test machine's IP allowlisted in its bot protection, or point `url` at a staging environment that has none.
+- Argus reads only the text of the reply. Images, attachments and buttons in it are ignored.
+- Selectors depend on the page's markup. After the app's front end changes, check them again.
 
 ---
 

@@ -173,6 +173,51 @@ def test_init_http_upload_writes_target_json(tmp_path, monkeypatch):
     load_target_spec(str(tmp_path / "argus-target.json"))
 
 
+@pytest.mark.parametrize("send_answer,send_selector", [
+    ("button#send", "button#send"),
+    ("", ""),  # empty means press Enter
+])
+def test_init_web_chat_writes_target_json(tmp_path, monkeypatch, send_answer, send_selector):
+    from argus.targets.web_chat import WebChatSpec
+
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(
+        init_command,
+        ["--kind", "web_chat", "--no-workflow"],
+        input=f"https://chat.example/\n\n.msg.assistant\n{send_answer}\n",
+    )
+    assert result.exit_code == 0, result.output
+    spec = json.loads((tmp_path / "argus-target.json").read_text())
+    assert spec == {
+        "kind": "web_chat",
+        "url": "https://chat.example/",
+        "input_selector": "textarea",
+        "response_selector": ".msg.assistant",
+        "send_selector": send_selector,
+    }
+    load_target_spec(str(tmp_path / "argus-target.json"))
+    WebChatSpec(**spec)  # the engine accepts the scaffold too
+
+
+def test_init_web_chat_gets_the_chat_probes(tmp_path, monkeypatch):
+    # Checked against the class, not build_target: the main CI job has no Playwright.
+    from argus.api import PROBES_DIR
+    from argus.probe import load_probe_library
+    from argus.targets.web_chat import WebChatTarget
+
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(init_command, ["--kind", "web_chat", "--workflow"],
+                                input="https://chat.example/\n\n.reply\n\n")
+    assert result.exit_code == 0, result.output
+    workflow = yaml.safe_load((tmp_path / ".github/workflows/argus-probe.yml").read_text())
+    step = next(s for s in workflow["jobs"]["redteam"]["steps"] if "with" in s)
+    probes = "owasp_01_prompt_injection_basic,syscard_crescendo"
+    assert step["with"]["probes"] == probes
+    assert f"--probes {probes} " in result.output
+    library = {p.id: p for p in load_probe_library(PROBES_DIR)}
+    assert all(set(library[i].target_class) & WebChatTarget.compatible_classes for i in probes.split(","))
+
+
 def test_init_with_workflow_writes_workflow_file(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     runner = CliRunner()
