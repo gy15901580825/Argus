@@ -274,6 +274,8 @@ _BAD_EVIDENCE = [
     {"interaction_count": 0, "page_loads": True, "trap_requests": []},
     {"interaction_count": 0, "page_loads": 0, "trap_requests": "x"},
     {"interaction_count": 0, "page_loads": 0, "trap_requests": {}},
+    {"interaction_count": -1, "page_loads": 0, "trap_requests": []},
+    {"interaction_count": 1, "page_loads": 0, "trap_requests": ["GET /sink"]},
 ]
 
 
