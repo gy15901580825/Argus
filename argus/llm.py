@@ -259,6 +259,7 @@ def _env_value(name: str) -> Optional[str]:
 def judge_env(*, provider: Optional[str] = None, model: Optional[str] = None,
               strong_model: Optional[str] = None, api_base: Optional[str] = None,
               price: Optional[tuple[float, float]] = None, explain_model: Optional[str] = None,
+              explain_price: Optional[tuple[float, float]] = None,
               env: Optional[Mapping[str, str]] = None) -> dict[str, str]:
     """The env overrides for a judge chosen by flags; unset flags leave the env alone.
 
@@ -280,6 +281,11 @@ def judge_env(*, provider: Optional[str] = None, model: Optional[str] = None,
     if price is not None:
         for m in dict.fromkeys((cfg.fast_model, cfg.strong_model)):
             out.update(zip(price_env_names(m), (str(price[0]), str(price[1]))))
+    if explain_price is not None:
+        if cfg.provider != PROVIDER_JEV or not cfg.explain_model:
+            raise ValueError("--judge-explain-price needs the jev judge with --judge-explain-model "
+                             "(or REDTEAM_EXPLAIN_MODEL)")
+        out.update(zip(price_env_names(cfg.explain_model), (str(explain_price[0]), str(explain_price[1]))))
     return out
 
 
@@ -362,11 +368,17 @@ def destination(cfg: LLMConfig) -> str:
     return where
 
 
-def disclosure(cfg: LLMConfig, what: str = "Target replies, attack prompts and rubrics") -> str:
+def disclosure(cfg: LLMConfig, what: str = "Target replies, attack prompts and rubrics",
+               decider: bool = False) -> str:
+    """`decider`: the Jev decider is on (REDTEAM_DECIDER=jev with a key); a jev judge turns it off."""
     text = f"{what} are sent to {destination(cfg)} for judging"
     if cfg.provider == PROVIDER_JEV and cfg.explain_model:
         text += (f"; fail and warn findings also go to {_litellm_destination(cfg.explain_model, None)} "
                  f"({cfg.explain_model}) for an explanation")
+    if decider and cfg.provider != PROVIDER_JEV:
+        from argus import typesafe
+
+        text += f"; conflicting verdicts also go to TypeSafe ({_host(typesafe.api_url())}) for the Jev decider"
     return text + "."
 
 

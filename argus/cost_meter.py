@@ -103,7 +103,8 @@ def _price_for(model: str) -> dict:
     logger.warning(
         "no price registered for model %r — billing at the most expensive known rate "
         "(in=$%.2f/out=$%.2f per 1M tokens) so the cap cannot be undershot. "
-        "Declare its price with --judge-price INPUT,OUTPUT or %s and %s (USD per 1M tokens).",
+        "Declare its price with --judge-price INPUT,OUTPUT (--judge-explain-price for a jev explain model) "
+        "or %s and %s (USD per 1M tokens).",
         model, worst["input"], worst["output"], *price_env_names(model),
     )
     return worst
@@ -115,6 +116,11 @@ _CHARS_PER_TOKEN = 4
 _SAFETY_MARGIN = 1.2
 
 _DEFAULT_ITERATIVE_ROUNDS = 1
+
+
+def estimate_input_tokens(input_chars: int) -> int:
+    """Input tokens for `input_chars` by the pre-run estimate's rule (chars/4 with the safety margin)."""
+    return math.ceil(input_chars / _CHARS_PER_TOKEN * _SAFETY_MARGIN)
 
 
 def estimate_call_usd(model: str, input_chars: int, output_tokens: int) -> float:

@@ -12,7 +12,7 @@ from click.core import ParameterSource
 from argus import llm
 
 PARAMS = ("judge_provider", "judge_model", "judge_strong_model", "judge_api_base", "judge_price",
-          "judge_explain_model")
+          "judge_explain_model", "judge_explain_price")
 
 
 def _parse_price(ctx: click.Context, param: click.Parameter, value: str | None):
@@ -49,6 +49,10 @@ _OPTIONS = [
                  help="jev judge only: a litellm model string, such as gpt-4.1-mini, that writes a short reason "
                       "for each fail and warn verdict and drives deep mode's attacker "
                       "(env REDTEAM_EXPLAIN_MODEL). It never changes a verdict."),
+    click.option("--judge-explain-price", "judge_explain_price", default=None, callback=_parse_price,
+                 metavar="INPUT,OUTPUT",
+                 help="USD per 1M input and output tokens for the explain model, for the cost estimate and "
+                      "--per-run-cap (env REDTEAM_PRICE_<MODEL>_INPUT and _OUTPUT)."),
 ]
 
 
@@ -77,7 +81,7 @@ def judge_options(f):
 
     @functools.wraps(f)
     def wrapper(*args, judge_provider, judge_model, judge_strong_model, judge_api_base, judge_price,
-                judge_explain_model, **kwargs):
+                judge_explain_model, judge_explain_price, **kwargs):
         overrides: dict[str, str] = {}
         typed = typed_flags(click.get_current_context())
         # `run` without --local: the server chooses its judge, so say that before judging the flags.
@@ -85,7 +89,7 @@ def judge_options(f):
             verb = "needs" if len(typed) == 1 else "need"
             raise click.UsageError(f"{', '.join(typed)} {verb} --local; in server mode the server chooses the judge")
         if any(v is not None for v in (judge_provider, judge_model, judge_strong_model, judge_api_base, judge_price,
-                                       judge_explain_model)):
+                                       judge_explain_model, judge_explain_price)):
             provider = judge_provider or os.environ.get(llm.JUDGE_ENV["provider"], "")
             if provider.strip().lower() == llm.PROVIDER_LITELLM and not (
                     judge_model or os.environ.get(llm.JUDGE_ENV["model"])):
@@ -94,7 +98,7 @@ def judge_options(f):
             try:
                 overrides = llm.judge_env(provider=judge_provider, model=judge_model, strong_model=judge_strong_model,
                                           api_base=judge_api_base, price=judge_price,
-                                          explain_model=judge_explain_model)
+                                          explain_model=judge_explain_model, explain_price=judge_explain_price)
             except ValueError as e:
                 raise click.UsageError(str(e)) from None
             cfg = llm.resolve_config({**os.environ, **overrides})

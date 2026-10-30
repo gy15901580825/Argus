@@ -14,7 +14,7 @@ from typing import AsyncIterator, Mapping, NamedTuple
 
 from fastapi import HTTPException
 
-from argus import api, llm
+from argus import api, decider, llm
 from argus.cost_meter import CostExceededError
 from argus.coverage import build_coverage
 from argus.probe import load_probe_library
@@ -163,7 +163,7 @@ async def run_local(
 
     if judged:
         yield {"type": "judge", "judge": llm.describe(cfg), "record": llm.judge_record(cfg),
-               "disclosure": llm.disclosure(cfg)}
+               "disclosure": llm.disclosure(cfg, decider=decider.from_env() is not None)}
     for message in warnings:
         yield {"type": "warning", "message": message}
     if judged and cfg.provider == llm.PROVIDER_LITELLM:

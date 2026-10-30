@@ -2,7 +2,7 @@
 
 When a strong-model escalation cannot settle a finding, the red-team judge can ask TypeSafe's Jev model (System One API) to decide. It is off unless you switch it on.
 
-**Data leaves the cluster when it is on.** Each consultation sends the probe name, the rubric, the attack prompt, the target's response and the fast/strong judges' verdicts and reasoning to `api.typesafe.ai`, a third party. Each text field is cut at 8,000 characters. No user ids, target URLs or Argus secrets are sent. Do not enable it for targets whose responses you may not share.
+**Data leaves the cluster when it is on.** `run --local` says so in the line after `Judge: ...`. Each consultation sends the probe name, the rubric, the attack prompt, the target's response and the fast/strong judges' verdicts and reasoning to `api.typesafe.ai`, a third party. Each text field is cut at 8,000 characters. No user ids, target URLs or Argus secrets are sent. Do not enable it for targets whose responses you may not share.
 
 ## Enable
 

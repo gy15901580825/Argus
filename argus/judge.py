@@ -111,6 +111,8 @@ class Judge:
         # None unless REDTEAM_DECIDER=jev and TYPESAFE_API_KEY are set. Off when Jev is the judge:
         # it has no escalation, so there is nothing for a decider to settle.
         self._decider = None if self._cfg.provider == llm.PROVIDER_JEV else decider_mod.from_env()
+        # The jev verdicts its explain model writes a reason for; scan-mcp keeps only fails.
+        self._explain_verdicts = ("fail", "warn")
 
     async def judge(
         self,
@@ -125,6 +127,7 @@ class Judge:
             return await jev_judge.judge(
                 self._cfg, self._cost_meter, probe_name=probe_name, attack_prompt=attack_prompt,
                 target_response=target_response, rubric_text=rubric_text, severity=severity,
+                explain_verdicts=self._explain_verdicts,
             )
         fast_v = await self._call("fast", probe_name, attack_prompt, target_response, rubric_text)
         if fast_v.verdict == "error":  # nothing was assessed, so there is nothing to escalate

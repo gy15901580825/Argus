@@ -19,6 +19,8 @@ JUDGE_MAX_TOKENS = 400  # what Judge._call asks for
 _PROMPT_FRAME_CHARS = 1000
 CAP_REASON = "not judged: cost cap"
 ERROR_REASON = "not judged: judge reply unusable"
+# A warn, such as a jev pass below its confidence floor: scan-mcp counts only pass and fail.
+UNSURE_REASON = "not judged: judge unsure, needs human review"
 OFF_REASON = "not judged: judge off"
 
 
@@ -37,6 +39,7 @@ def default_judge_factory(meter: CostMeter, config: llm.LLMConfig) -> Judge:
     judge = Judge("", meter, config)
     # The decider's spend never reaches the cost meter and has no price to estimate, so the cap could not hold.
     judge._decider = None
+    judge._explain_verdicts = ("fail",)  # a warn is dropped below, so its explanation would be paid for nothing
     return judge
 
 
@@ -106,6 +109,8 @@ class JudgeGate:
             logger.warning("scan-mcp judge failed on %s %s: %s", cand.probe_id, show_text(cand.tool),
                            type(e).__name__)
             return JudgeOutcome(cand, "error", reasoning=ERROR_REASON)
+        if v.verdict == "warn":
+            return JudgeOutcome(cand, "error", reasoning=UNSURE_REASON)
         if v.verdict not in ("pass", "fail"):
             return JudgeOutcome(cand, "error", reasoning=ERROR_REASON)
         return JudgeOutcome(cand, "judged", verdict=v.verdict, confidence=v.confidence, reasoning=v.reasoning,

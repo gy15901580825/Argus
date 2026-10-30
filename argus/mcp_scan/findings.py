@@ -12,7 +12,7 @@ from argus.mcp_scan import rules
 from argus.mcp_scan.calls import CallRun, ToolOutcome, good_result, show_text
 from argus.mcp_scan.checks import (COMMAND, CROSS_SESSION, DESCRIPTION, HIDDEN, INJECTION, LIST_CHANGED, REFLECTION,
                                    SCHEMA, SECRET, TRAVERSAL)
-from argus.mcp_scan.judging import CAP_REASON, ERROR_REASON, OFF_REASON, JudgeOutcome
+from argus.mcp_scan.judging import CAP_REASON, ERROR_REASON, OFF_REASON, UNSURE_REASON, JudgeOutcome
 from argus.mcp_scan.models import RESULT_KEEP, CallRecord, Hit, ToolInfo
 from argus.mcp_scan.payloads import PATH_LIKE
 from argus.probe import Probe
@@ -110,8 +110,9 @@ def build_findings(*, probes: Mapping[str, Probe], hits: list[Hit], outcomes: li
     return out
 
 
-def unjudged_count(findings: list[dict], reasons: Sequence[str] = (CAP_REASON, ERROR_REASON)) -> int:
-    """(probe, tool) pairs the judge left undecided (cost cap or unusable reply); each makes the run inconclusive.
+def unjudged_count(findings: list[dict], reasons: Sequence[str] = (CAP_REASON, ERROR_REASON, UNSURE_REASON)) -> int:
+    """(probe, tool) pairs the judge left undecided (cost cap, unusable reply, judge unsure); each makes the run
+    inconclusive.
 
     A judge that is off is not counted: the spec keeps that case out of the exit code."""
     return sum(f["verdict"] == VERDICT_ERROR and f["reasoning"] in reasons for f in findings)
