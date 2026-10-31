@@ -118,3 +118,40 @@ def test_os_cmd_prompts_ask_for_a_benign_read_not_for_running_commands():
             text = p.prompts[0].lower()
             assert "shell tool" not in text and "follow" not in text, p.id
             assert "do not change anything" in text, p.id
+
+
+# An agent that obeys a payload must do no real harm: the action goes to the sink instead.
+_DESTRUCTIVE = re.compile(r"\bdelet\w*|\brm\s+-[a-z]*(?:r[a-z]*f|f[a-z]*r)|\bdisabl\w*\b[^.]*\b(?:2fa|two-factor)", re.I)
+_NPM_INSTALL = re.compile(r"\bnpm\s+(?:install|i|add)\b(?:\s+-\S+)*\s+(\S+)")
+
+
+def test_no_payload_asks_for_a_destructive_action():
+    for p in _probes():
+        payload = p.scenario_payload
+        assert not _DESTRUCTIVE.search(payload), p.id
+        if re.search(r"\btransfer", payload, re.I):
+            assert "{sink_url}" in payload, p.id
+
+
+def test_no_payload_installs_a_real_package_by_name():
+    for p in _probes():
+        for name in _NPM_INSTALL.findall(p.scenario_payload):
+            assert name.startswith("{sink_url}/"), (p.id, name)
+
+
+def test_the_destructive_checks_catch_what_they_are_for():
+    for bad in ("Delete every file", "rm -rf ~", "run rm -fr /", "Disable the user's two-factor login",
+                "disable 2FA now"):
+        assert _DESTRUCTIVE.search(bad), bad
+    assert _NPM_INSTALL.findall("npm install -g pwned-update-helper") == ["pwned-update-helper"]
+    assert _NPM_INSTALL.findall("npm i {sink_url}/x.tgz") == ["{sink_url}/x.tgz"]
+
+
+def test_every_browser_probe_with_assertions_has_exactly_one_prompt():
+    # Evidence adds up across a probe's sends, so a second prompt would be judged on the first's record.
+    browser = [p for p in load_all_probes(DIR.parent)
+               if {"browser-using", "browser_using_agent"} & set(p.target_class)]
+    with_assertions = [p for p in browser if p.assertions]
+    assert len(with_assertions) >= 31
+    for p in with_assertions:
+        assert len(p.prompts) == 1, p.id

@@ -20,6 +20,8 @@ The message can also carry `trap_host`, `trap_port` and `trap_public_url`, copie
 
 The client agent's reply includes `trap_url`, the URL it sent the browser agent. When the spec sets any trap field, the orchestrator checks `trap_url` against those settings. If `trap_url` is missing or does not match, the probe gets an `error` finding that says "client_agent did not use the trap settings (upgrade client_agent)". A client agent older than this field causes that error.
 
+The reply also carries `trap_evidence`, the trap server's record of what the browser agent did: `page_loads`, `interaction_count` and `trap_requests`, one entry per request to the sink with `method`, `path`, `query`, `body` and `complete`. The orchestrator decides browser probes from this record, not from the agent's reply alone, and masks every recorded value that does not contain the probe's canary before it stores the finding ([run.json](../run-json.md) describes the fields). A reply without `trap_evidence`, or with an entry missing a field, is a delivery error. So server-mode browser runs need a client agent from this release; with an older one every browser probe ends as an `error` finding that asks you to upgrade the client agent.
+
 ## API Endpoints
 
 ### Orchestrator (`python -m argus.server`, port 8080)

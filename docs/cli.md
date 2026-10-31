@@ -90,7 +90,7 @@ The local judge uses `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY` when that is the o
 
 ### Without a judge key
 
-Some probes are decided by deterministic checks on what the agent did or said, not by the LLM judge, and need no key. In the bundled library (counted on 2026-10-29) that is all 12 `mcp_agent` probes, 22 of the 26 `payment_agent` probes and 23 of the 139 chat probes (the training-data replay and package-hallucination probes). `grpc` and `browser_use` probes all need the judge.
+Some probes are decided by deterministic checks on what the agent did or said, not by the LLM judge, and need no key. In the bundled library (counted on 2026-10-30) that is all 12 `mcp_agent` probes, 22 of the 26 `payment_agent` probes, 23 of the 139 chat probes (the training-data replay and package-hallucination probes) and 9 of the 37 `browser_use` probes (the UI-phishing probes, decided by the requests the trap page records). 22 more `browser_use` probes fail on a recorded request without the judge and ask the judge only when the trap saw nothing, so a `browser_use` run still needs a judge key. `grpc` probes all need the judge.
 
 Without a judge key, `run --local` refuses to start when any selected probe needs the judge, exits 1 and names the count and the key, for example `116 of 139 selected probes need an LLM judge: ANTHROPIC_API_KEY is not set. Set a key, or pass --skip-judged to run only the 23 probes decided by deterministic checks.` A probe the target cannot run never counts.
 
