@@ -79,7 +79,7 @@ def test_decode_http_json_2xx_non_result_is_undecodable():
 def test_decode_send_message_task_vs_message(body,kind):
     assert decode_response('HTTP+JSON','SendMessage',200,json.dumps(body).encode()).result_kind==kind
 
-SHAPES=[('SendMessage',{'task':{'id':'x','status':{}}}),('GetTask',{'id':'x','status':{}}),('CancelTask',{'id':'x','status':{}}),('ListTasks',{'tasks':[]}),('CreateTaskPushNotificationConfig',{'url':'https://callback.invalid'}),('DeleteTaskPushNotificationConfig',{}),('GetExtendedAgentCard',{'name':'agent'})]
+SHAPES=[('SendMessage',{'task':{'id':'x','status':{}}}),('GetTask',{'id':'x','status':{}}),('CancelTask',{'id':'x','status':{}}),('ListTasks',{'tasks':[]}),('CreateTaskPushNotificationConfig',{'url':'https://callback.invalid'}),('DeleteTaskPushNotificationConfig',{}),('GetExtendedAgentCard',{'name':'agent','skills':[],'supportedInterfaces':[]})]
 @pytest.mark.parametrize('op,body',SHAPES)
 @pytest.mark.parametrize('binding',['JSONRPC','HTTP+JSON'])
 def test_decode_checks_the_result_type_per_operation(op,body,binding):
@@ -90,3 +90,9 @@ def test_decode_checks_the_result_type_per_operation(op,body,binding):
 def test_decode_drops_error_message_text():
     def decode(text): return decode_response('JSONRPC','SendMessage',200,json.dumps({'error':{'code':-31001,'message':text}}).encode())
     assert decode('Unauthorized')==decode('OK, task created')
+
+@pytest.mark.parametrize('binding',['JSONRPC','HTTP+JSON'])
+@pytest.mark.parametrize('body',[{'name':'Unauthorized'},{'skills':[]},{'supportedInterfaces':[]},{'name':'agent','skills':{},'supportedInterfaces':[]},{'name':'','skills':[],'supportedInterfaces':[]},{'name':'agent','skills':[],'supportedInterfaces':'rpc'},{'name':'agent','skills':[],'supportedInterfaces':[],'error':{}}])
+def test_decode_extended_card_rejects_partial_and_wrong_types(binding,body):
+    wire={'result':body} if binding=='JSONRPC' else body
+    assert decode_response(binding,'GetExtendedAgentCard',200,json.dumps(wire).encode()).outcome=='undecodable'

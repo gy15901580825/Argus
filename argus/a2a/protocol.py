@@ -176,7 +176,7 @@ def _result_kind(op: Op, value: object) -> str | None:
         return 'task_list'
     elif op == 'CreateTaskPushNotificationConfig' and isinstance(value.get('url'), str):
         return 'push_config'
-    elif op == 'GetExtendedAgentCard' and 'error' not in value and any(k in value for k in ('name', 'skills', 'supportedInterfaces')):
+    elif op == 'GetExtendedAgentCard' and 'error' not in value and isinstance(value.get('name'), str) and value['name'] and isinstance(value.get('skills'), list) and isinstance(value.get('supportedInterfaces'), list):
         return 'card'
     return None
 
