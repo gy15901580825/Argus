@@ -6,8 +6,10 @@ that determines judging and reporting is INHERITED from the base probe, and pair
 selection is reproducible for a given run id.
 """
 
-import pytest
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
+
+import pytest
 
 from argus.iterative import IterationContext
 from argus.judge import Verdict
@@ -22,7 +24,7 @@ from argus.persona_strategy import (
     PersonaStrategyProbe,
     build_deep_probes,
 )
-from argus.probe import Probe, ProbeMappings
+from argus.probe import Probe, ProbeMappings, load_probe
 
 
 BASE = Probe(
@@ -84,6 +86,19 @@ def test_inherits_severity_target_class_and_judge_model():
     assert p.severity == BASE.severity
     assert p.target_class == BASE.target_class
     assert p.judge_model == BASE.judge_model
+
+
+def test_deep_wrapper_inherits_nonempty_agentic_mappings():
+    base = load_probe(
+        Path(__file__).resolve().parents[1]
+        / "argus/probes/mcp/mcp_confused_deputy_result_injection.yaml"
+    )
+    assert base.mappings.owasp_agentic == ("ASI01", "ASI02")
+
+    wrapped = PersonaStrategyProbe(base=base, persona=PERSONA, strategy=STRATEGY)
+
+    assert wrapped.mappings.owasp_agentic == ("ASI01", "ASI02")
+    assert wrapped.mappings is base.mappings
 
 
 def test_composite_id_is_traceable_back_to_its_parts():

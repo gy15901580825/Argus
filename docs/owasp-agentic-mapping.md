@@ -39,6 +39,7 @@ Jev is advisory. Its low-confidence decisions were resolved by inspection of the
 | Attack classes | Decision rule after evidence review |
 |---|---|
 | Prompt/indirect injection | Agent page/tool/merchant task redirection can qualify for ASI01. Chat-only DAN, latent injection, encoded reply changes, and system-prompt leakage remain empty. |
+| Iterative attacks (PAIR/TAP/GCG) | These defaults are chat-model jailbreaks that refine prompts or adversarial suffixes. They do not exercise agent task redirection or agent tool actions, so `owasp_agentic` remains empty. Iteration alone does not establish an agentic mechanism. |
 | Tool abuse/excessive agency | Named actions and action-specific rubrics/assertions can qualify for ASI02. A misleading URL alone has no asserted allowlist boundary. |
 | Credential extraction/data exfiltration | Protected agent keys, tokens and unauthorized delegated access qualify for ASI03. Same-authentication session canaries, unauthenticated initialization alone, training text, arbitrary PII and secret-shaped scanner strings do not. |
 | Supply chain/MCP abuse | Actual poisoned tool definitions, attacker replacements, install-time dependencies and known-vulnerable MCP components qualify for ASI04. Generic claims, benign list drift and generic model-server advisories do not. |
