@@ -12,6 +12,10 @@ from typing import Iterator
 import yaml
 
 from argus.world_assertions import DECISION_PREDICATES
+from argus.a2a.world import (
+    CAPABILITIES as A2A_CAPABILITIES,
+    DECISION_PREDICATES as A2A_DECISION_PREDICATES,
+)
 from argus.agentic import VALID_OWASP_AGENTIC_IDS
 
 logger = logging.getLogger(__name__)
@@ -51,6 +55,7 @@ VALID_TARGET_CLASSES = {
     "mcp_scan",
     # MCP server exposure probes test the server itself, not an agent.
     "a2a_server",
+    "a2a_agent",
     "mcp_server",
     # The vLLM version probe tests the model server itself, not an agent.
     "vllm_server",
@@ -59,10 +64,12 @@ VALID_TARGET_CLASSES = {
 
 def registered_target_classes() -> set[str]:
     from argus.targets import _plugin_builders
+
     classes = set(VALID_TARGET_CLASSES)
     for _, target in _plugin_builders().values():
         classes.update(getattr(target, "compatible_classes", ()))
     return classes
+
 
 # The controlled axis. `attack_class` answers WHAT THE ATTACK ACHIEVES; the free
 # `technique` field answers HOW IT IS DELIVERED. Splitting them is what lets the
@@ -151,6 +158,7 @@ class Probe:
     trials: int = 1
     decision_point: tuple[dict, ...] = ()
     scope_note: str = ""
+    requires_capabilities: tuple[str, ...] = ()
 
     @property
     def is_phased(self) -> bool:
@@ -258,11 +266,40 @@ def load_probe(path: Path) -> Probe:
         trials = raw.get("trials", 1)
         if type(trials) is not int or not 1 <= trials <= 20:
             raise ValueError(f"trials must be an integer from 1 to 20 in {path}")
+        capabilities = raw.get("requires_capabilities", [])
+        if scenario_kind == "a2a_world":
+            if (
+                not isinstance(capabilities, list)
+                or not capabilities
+                or any(
+                    not isinstance(name, str) or name not in A2A_CAPABILITIES
+                    for name in capabilities
+                )
+            ):
+                raise ValueError(
+                    f"a2a_world requires a nonempty list of known requires_capabilities in {path}"
+                )
+            if (
+                "three_hop_chain" in capabilities
+                and "observable_agent_lineage" not in capabilities
+            ):
+                raise ValueError(
+                    f"three_hop_chain requires observable_agent_lineage in {path}"
+                )
+        elif "requires_capabilities" in raw:
+            raise ValueError(
+                f"requires_capabilities is only available for a2a_world in {path}"
+            )
+        predicates = (
+            A2A_DECISION_PREDICATES
+            if scenario_kind == "a2a_world"
+            else DECISION_PREDICATES
+        )
         decision_point = raw.get("decision_point", [])
         if not isinstance(decision_point, list) or any(
             not isinstance(point, dict)
             or len(point) != 1
-            or next(iter(point)) not in DECISION_PREDICATES
+            or next(iter(point)) not in predicates
             for point in decision_point
         ):
             raise ValueError(f"invalid decision_point predicate in {path}")
@@ -275,6 +312,7 @@ def load_probe(path: Path) -> Probe:
                 f"paired probes require assertions, decision_point and no judge_when_assertions_pass in {path}"
             )
         return Probe(
+            requires_capabilities=tuple(capabilities),
             sessions=tuple(tuple(group) for group in sessions),
             scenario_control=scenario_control,
             trials=trials,
