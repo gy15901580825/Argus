@@ -160,3 +160,26 @@ def _cross_client(evidence):
     return outcome, '; '.join(reasons)
 
 _DECIDERS['cross_client_task'] = _cross_client
+
+
+def _extended_card(evidence):
+    control = _record(evidence, 'control_extended_card')
+    if control['outcome'] != 'success':
+        return 'error', 'clean_control_failed: legal extended Agent Card request did not succeed ('+_observed(control)+')'
+    attack = _record(evidence, 'attack_extended_card')
+    classification = classify_auth(attack, _auth_codes(evidence))
+    if classification == 'accepted':
+        return 'fail', 'returned the extended Agent Card without credentials'
+    if classification == 'rejected':
+        mapping = " per the target's declared jsonrpc_auth_error_codes" if attack.get('outcome') == 'jsonrpc_error' and attack.get('http_status') not in (401, 403) else ''
+        return 'pass', 'rejected the extended Agent Card request without credentials ('+_observed(attack)+')'+mapping
+    return 'error', 'could not confirm an authentication-layer rejection: '+_observed(attack)
+
+
+def _card_unsigned(evidence):
+    count = evidence['card']['signature_count']
+    if count > 0:
+        return 'pass', f'Card carries {count} JWS signature(s); Argus did not verify them'
+    return 'warn', 'Agent Card is not signed; signatures are optional in A2A 1.0'
+
+_DECIDERS.update(extended_card_auth=_extended_card, card_unsigned=_card_unsigned)

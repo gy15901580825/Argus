@@ -127,3 +127,20 @@ async def _cross_client(evidence, client, spec, facts):
         await client.call('cleanup_cancel', 'CancelTask', {'id': task_id}, 'primary', iface=iface)
 
 _FLOWS['cross_client_task'] = _cross_client
+
+
+async def _extended_card(evidence, client, spec, facts):
+    if not facts.extended_card:
+        evidence['precondition'] = {'skip': 'Card does not declare capabilities.extendedAgentCard'}
+        return
+    if _auth_precondition(evidence, facts):
+        return
+    control = await client.call('control_extended_card', 'GetExtendedAgentCard', {}, 'primary', iface=facts.interface)
+    if control.outcome == 'success':
+        await client.call('attack_extended_card', 'GetExtendedAgentCard', {}, 'none', iface=facts.interface)
+
+
+async def _card_unsigned(evidence, client, spec, facts):
+    pass
+
+_FLOWS.update(extended_card_auth=_extended_card, card_unsigned=_card_unsigned)
