@@ -36,6 +36,7 @@ source_modules =
     argus.suites
     argus.targets
     argus.typesafe
+    argus.world_assertions
 forbidden_modules =
     argus.cli
     argus.server
