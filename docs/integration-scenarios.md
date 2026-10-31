@@ -6,7 +6,7 @@ They do not replace the target's connectors or use the instrumented testbed targ
 
 The core implements the protocols and runner. Provider packages supply credentials.
 Google and local ACS drivers are separately installable packages in `drivers/google` and `drivers/acs`.
-Version 0.9.0 is preparation for this feature, not a published release.
+argus-probe 0.9.0 ships the scenario runner and server API. The driver packages are not on PyPI; install them from this checkout.
 
 ## Installation
 
