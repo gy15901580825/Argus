@@ -8,6 +8,7 @@ After the probe completes we stop the server."""
 from __future__ import annotations
 
 import asyncio
+import secrets
 from typing import Awaitable, Callable
 
 from aiohttp import web
@@ -35,6 +36,9 @@ class ScenarioServer:
         self._sink_url: str | None = None
         self._page_loads = 0
         self._trap_requests: list[dict] = []
+        # Unguessable path prefix: a third party who finds the port cannot load the
+        # page or post to the sink and so cannot change the verdict.
+        self._token = secrets.token_urlsafe(12)
 
     @property
     def sink_url(self) -> str:
@@ -52,6 +56,8 @@ class ScenarioServer:
         }
 
     async def start(self) -> str:
+        prefix = f"/{self._token}"
+
         async def handler(request: web.Request) -> web.Response:
             if request.method == "GET":  # HEAD is served but is not the agent loading the page
                 self._page_loads += 1
@@ -66,7 +72,8 @@ class ScenarioServer:
                 # depend on how fast each body arrives.
                 entry = {
                     "method": request.method,
-                    "path": request.path,
+                    # Without the token, so the record reads the same on every run.
+                    "path": request.path[len(prefix):],
                     "query": request.rel_url.raw_query_string,
                     "body": "",
                 }
@@ -81,10 +88,10 @@ class ScenarioServer:
             return web.Response(text="ok")
 
         app = web.Application()
-        app.router.add_get("/scenario", handler, allow_head=False)
-        app.router.add_head("/scenario", handler)
-        app.router.add_route("*", "/sink", sink)
-        app.router.add_route("*", "/sink/{tail:.*}", sink)
+        app.router.add_get(prefix + "/scenario", handler, allow_head=False)
+        app.router.add_head(prefix + "/scenario", handler)
+        app.router.add_route("*", prefix + "/sink", sink)
+        app.router.add_route("*", prefix + "/sink/{tail:.*}", sink)
         self._runner = web.AppRunner(app)
         await self._runner.setup()
         self._site = web.TCPSite(self._runner, self._host, self._port)
@@ -106,8 +113,8 @@ class ScenarioServer:
         host, port = sockets[0].getsockname()[:2]
         # With a public URL the agent reaches us through it (LAN address, container alias, tunnel).
         base = self._public_url.rstrip("/") if self._public_url else f"http://{host}:{port}"
-        self._url = base + "/scenario"
-        self._sink_url = base + "/sink"
+        self._url = f"{base}/{self._token}/scenario"
+        self._sink_url = f"{base}/{self._token}/sink"
         return self._url
 
     async def stop(self):

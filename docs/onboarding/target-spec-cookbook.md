@@ -182,7 +182,7 @@ Your agent must be able to open the trap page URL. By default the page listens o
 
 - `trap_host` is the IPv4 address the trap page listens on. The default is `127.0.0.1`. `0.0.0.0` listens on every interface and needs `trap_public_url`.
 - `trap_port` is the port it listens on. The default `0` picks a free port for each probe. Set a fixed port when you set `trap_public_url`.
-- `trap_public_url` is the base URL your agent opens. Argus adds `/scenario` to it. Use your LAN address, `http://host.docker.internal:8765` for an agent in Docker, or a tunnel URL that forwards to `trap_port`.
+- `trap_public_url` is the base URL your agent opens. Argus adds a random path token and `/scenario` to it, so the agent opens a URL like `http://192.168.1.20:8765/Xq3...k9/scenario`. A request without the token gets a 404 and is not recorded. Use your LAN address, `http://host.docker.internal:8765` for an agent in Docker, or a tunnel URL that forwards to `trap_port`.
 
 With `0.0.0.0`, anyone on your network can open the trap page while the run lasts. Use your machine's LAN address as `trap_host` when you can.
 

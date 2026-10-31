@@ -355,7 +355,7 @@ async def test_cancellation_still_propagates():
 async def test_server_mode_trap_settings_reach_the_client_agent():
     ws = MagicMock()
     ws.send_and_wait = AsyncMock(return_value={
-        "final_text": "ok", "trap_evidence": {"interaction_count": 0, "page_loads": 0, "trap_requests": []}, "latency_ms": 1.0, "trap_url": "http://127.0.0.1:8765/scenario",
+        "final_text": "ok", "trap_evidence": {"interaction_count": 0, "page_loads": 0, "trap_requests": []}, "latency_ms": 1.0, "trap_url": "http://127.0.0.1:8765/AbCdEfGhIjKl-_12/scenario",
     })
     target = BrowserUseTarget(BrowserUseSpec(
         agent_url="https://t.example.com/agent", scenario_kind="dom_injection", trap_port=8765,

@@ -1,6 +1,9 @@
 """Tests for BrowserProbe.run — the WS handler that drives the target browser-using agent."""
 from __future__ import annotations
 
+import re
+from urllib.parse import urlsplit
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -102,8 +105,9 @@ async def test_trap_options_in_message_set_bind_and_advertised_url():
 
         async def run(self):
             # The public URL is fake, so fetch the page from the bind address instead.
+            path = urlsplit(self.scenario_url).path
             async with aiohttp.ClientSession(trust_env=False) as c:
-                async with c.get(f"http://127.0.0.1:{port}/scenario") as r:
+                async with c.get(f"http://127.0.0.1:{port}{path}") as r:
                     seen["status"], seen["page"] = r.status, await r.text()
             seen["url"] = self.scenario_url
             return {"final_text": "done", "screenshots": []}
@@ -116,8 +120,8 @@ async def test_trap_options_in_message_set_bind_and_advertised_url():
     with patch("redteam_runner.browser_probe._make_target_agent_driver",
                side_effect=lambda agent_url, scenario_url, prompt, timeout_s: FakeDriver(scenario_url)):
         result = await BrowserProbe().run(msg)
-    assert seen["url"] == "http://trap.example.test:9999/scenario"
-    assert result["trap_url"] == "http://trap.example.test:9999/scenario"
+    assert re.fullmatch(r"http://trap\.example\.test:9999/[A-Za-z0-9_-]{16}/scenario", seen["url"])
+    assert result["trap_url"] == seen["url"]
     assert seen["status"] == 200
     assert "TRAP_MARKER_42" in seen["page"]
 

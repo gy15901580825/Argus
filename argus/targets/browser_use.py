@@ -10,6 +10,7 @@ import asyncio
 import contextlib
 import contextvars
 import ipaddress
+import re
 import time
 from dataclasses import dataclass, fields
 from typing import ClassVar
@@ -252,15 +253,18 @@ class BrowserUseTarget(Target):
         s = self.spec
         if not s.sets_trap:
             return
+        # The page sits under a random path token (secrets.token_urlsafe(12)).
+        tail = r"/[A-Za-z0-9_-]{16}/scenario"
         if s.trap_public_url:
-            expected = s.trap_public_url.rstrip("/") + "/scenario"
-            ok = got == expected
+            base = s.trap_public_url.rstrip("/")
+            expected = base + "/<token>/scenario"
+            ok = isinstance(got, str) and re.fullmatch(re.escape(base) + tail, got) is not None
         else:
-            expected = f"http://{s.trap_host}:{s.trap_port or '<any port>'}/scenario"
+            expected = f"http://{s.trap_host}:{s.trap_port or '<any port>'}/<token>/scenario"
             try:
                 parts = urlsplit(got) if isinstance(got, str) else None
                 ok = parts is not None and parts.hostname == s.trap_host \
-                    and s.trap_port in (0, parts.port)
+                    and s.trap_port in (0, parts.port) and re.fullmatch(tail, parts.path) is not None
             except ValueError:
                 ok = False
         if not ok:

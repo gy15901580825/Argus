@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, patch
 
 import asyncio
+import re
 
 import httpx
 import pytest
@@ -133,19 +134,49 @@ async def test_concurrent_slow_bodies_keep_the_cap_and_arrival_order():
         await server.stop()
 
 
+_TOKEN = r"[A-Za-z0-9_-]{16}"
+
+
 @pytest.mark.asyncio
 async def test_sink_url_uses_bound_address_or_public_url():
     server, base = await _started()
     try:
         assert server.sink_url == f"{base}/sink"
-        assert base.startswith("http://127.0.0.1:")
+        assert re.fullmatch(rf"http://127\.0\.0\.1:\d+/{_TOKEN}", base), base
     finally:
         await server.stop()
     server, _ = await _started(public_url="http://lan:9/")
     try:
-        assert server.sink_url == "http://lan:9/sink"
+        assert re.fullmatch(rf"http://lan:9/{_TOKEN}/sink", server.sink_url), server.sink_url
     finally:
         await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_requests_without_the_token_are_404_and_not_recorded():
+    server, base = await _started()
+    root = base.rsplit("/", 1)[0]
+    try:
+        async with _client() as c:
+            for path in ("/scenario", "/sink", "/sink/x", "/wrongtoken12345/sink"):
+                assert (await c.get(root + path)).status_code == 404, path
+            assert (await c.post(root + "/sink", content=b"secret")).status_code == 404
+        assert server.evidence() == {"interaction_count": 0, "page_loads": 0, "trap_requests": []}
+    finally:
+        await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_each_server_gets_its_own_token():
+    a, base_a = await _started()
+    b, base_b = await _started()
+    try:
+        tok_a, tok_b = base_a.rsplit("/", 1)[1], base_b.rsplit("/", 1)[1]
+        assert re.fullmatch(_TOKEN, tok_a) and re.fullmatch(_TOKEN, tok_b)
+        assert tok_a != tok_b
+    finally:
+        await a.stop()
+        await b.stop()
 
 
 @pytest.mark.asyncio
