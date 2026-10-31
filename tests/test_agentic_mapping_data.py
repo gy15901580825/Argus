@@ -36,6 +36,23 @@ def test_generic_chat_and_unexercised_agentic_risks_are_excluded():
     }
 
 
+def test_iterative_attacks_carry_no_agentic_mapping():
+    from argus.iterative_pair import PAIRProbe
+    from argus.iterative_tap import TAPProbe
+    from argus.iterative_gcg import GCGProbe
+
+    for probe_type in (PAIRProbe, TAPProbe, GCGProbe):
+        assert probe_type().mappings.owasp_agentic == (), probe_type.__name__
+
+
+def test_mapping_document_explains_iterative_attack_exclusion():
+    document = mapper().render_doc(ROOT)
+    rationale = next((line for line in document.splitlines() if 'PAIR/TAP/GCG' in line), '')
+    assert 'chat-model jailbreaks' in rationale
+    assert 'agent tool actions' in rationale
+    assert '`owasp_agentic` remains empty' in rationale
+
+
 def test_annotations_reject_changed_evidence_and_unknown_probes(tmp_path):
     module = mapper()
     path = tmp_path / 'argus' / 'probes' / 'changed.yaml'
