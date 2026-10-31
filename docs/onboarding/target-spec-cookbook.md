@@ -369,6 +369,71 @@ ARGUS_TESTBED_PORT=8090 argus-probe run --local --target payment-target.json --p
 
 ---
 
+## a2a_server
+
+Use this kind to check an A2A server's inbound authentication, a declared task authorization boundary, Agent Cards, and private callback registration. Argus acts as an A2A 1.0 client. The server's Card selects JSON-RPC or HTTP+JSON. Interface URLs must be absolute HTTP or HTTPS URLs without embedded credentials or fragments. gRPC is unsupported. A server that publishes only A2A 0.3 is skipped. Argus does not use the legacy Card to run checks.
+
+```json
+{
+  "kind": "a2a_server",
+  "url": "https://agent.example.com",
+  "credentials": {"headers": [["Authorization", "Bearer <primary credential>"]]},
+  "second_client": {
+    "headers": [["Authorization", "Bearer <second principal credential>"]],
+    "forbidden_on_primary_tasks": ["get", "list", "cancel"]
+  },
+  "jsonrpc_auth_error_codes": {"authentication": [-31001], "authorization": [-31003]},
+  "push_callback_policy": "deny_private",
+  "allow_send": true
+}
+```
+
+| Field | Default | Behavior when omitted |
+|---|---|---|
+| `kind` | `a2a_server` in the adapter | The CLI requires `kind` in the target spec. |
+| `url` | None | Required HTTP or HTTPS base URL. The Card is at `/.well-known/agent-card.json` under this URL. |
+| `credentials.headers` | `[]` | The legal control carries no credential headers and can fail. Headers are pairs of strings with unique names, ignoring case. |
+| `second_client` | `null` | The cross-client check is skipped. |
+| `second_client.headers` | None | Required and nonempty when `second_client` is present. |
+| `second_client.forbidden_on_primary_tasks` | `[]` | No authorization boundary is declared, so the cross-client check is skipped. Allowed entries are `get`, `list`, and `cancel`. |
+| `jsonrpc_auth_error_codes.authentication` | `[]` | Unknown custom JSON-RPC errors cannot establish authentication rejection. |
+| `jsonrpc_auth_error_codes.authorization` | `[]` | Only HTTP 401, 403, 404, and JSON-RPC `-32001` establish authorization rejection without a mapping. |
+| `push_callback_policy` | `null` | Accepted private callback configurations produce warn. `deny_private` makes acceptance fail under your declared policy. |
+| `push_control_url` | `https://argus-push-control.invalid/a2a-callback` | Argus uses a public-shaped, unresolvable control URL. You can supply your own public callback URL. Localhost, loopback, private, and link-local literal hosts are rejected in this field. |
+| `allow_send` | `false` | Checks that require state changes are skipped. |
+| `timeout_s` | `30.0` | Each HTTP request has a 30-second timeout. |
+
+Set `allow_send: true` only when you authorize the server state changes. The switch covers `SendMessage`, `CancelTask`, `CreateTaskPushNotificationConfig`, and `DeleteTaskPushNotificationConfig`, including cleanup. Reading and listing tasks are read-only operations, but those checks first need Argus to create test tasks. They are skipped without the switch. Public Card and extended Card requests need no switch.
+
+Every sent message has this fixed text:
+
+```text
+Argus security check. Reply with the word ACK. Do not take any action.
+```
+
+A random cross-client marker appears only in the message ID and metadata. Callback registration and task cancellation still change state even though the message text asks for no action.
+
+What it sends. Card discovery carries no credentials. Authentication checks send messages only when the Card requires authentication and `allow_send` is true. Each starts with a legal control request. The attack omits credential headers or replaces their values with forged tokens. The cross-client check verifies both credentials with controls, creates a marked task, and sends only your declared forbidden operations. The push check registers the control URL, then six callback URLs whose hosts are `127.0.0.1`, `localhost`, `10.0.0.1`, `172.16.0.1`, `192.168.0.1`, and `169.254.169.254`. It deletes accepted configurations before canceling the test task. Cleanup failures appear in the reason.
+
+| Probe | fail | warn | skipped | error |
+|---|---|---|---|---|
+| `a2a_server_unauthenticated_task` | An unauthenticated message gets a Task or Message. | The server returns `TASK_STATE_AUTH_REQUIRED` instead of authentication rejection. | Anonymous access is allowed, or `allow_send` is false. | The control fails, requirements are malformed, or rejection cannot be determined. |
+| `a2a_server_invalid_credentials` | Forged credentials get a Task or Message. | The server returns `TASK_STATE_AUTH_REQUIRED`. | Same conditions as the unauthenticated check. | Same conditions as the unauthenticated check. |
+| `a2a_server_cross_client_task` | A forbidden operation succeeds, or the second client's list shows the marked task. | Cancel is rejected, but the primary client then sees `TASK_STATE_CANCELED`. The cause is undetermined. | No second client or boundary, no `allow_send`, or no task. A task that finishes skips only cancel. | Credentials are identical, a control fails, the primary recheck fails, or evidence is incomplete. |
+| `a2a_server_extended_card_auth` | The server returns an extended Agent Card without credentials. | None. | No extended Card capability, or anonymous access is allowed. | A control fails, requirements are malformed, or the response is inconclusive. |
+| `a2a_server_card_unsigned` | None. | The Card has no recognizable JWS signature. Signatures are optional in 1.0. | The server publishes only 0.3. | Card discovery or parsing fails. |
+| `a2a_server_push_private_callback` | A private callback configuration is accepted under your `deny_private` policy. | A private callback configuration is accepted without a declared policy. | No push capability, no `allow_send`, or no unfinished task. | A control fails, an attack is not delivered, or registration responses are inconclusive. |
+
+Every verdict comes from deterministic assertions. These checks do not call an LLM judge. Authentication pass reports the observed rejection. Signature pass reports presence only; Argus does not verify JWS signatures. Cross-client conclusions follow your declared authorization boundary and error-code mappings. Push conclusions follow your declared callback policy. Accepting a configuration does not prove an outbound request or SSRF. Argus has no outbound-request observation point for this check.
+
+```bash
+argus-probe run --local --target a2a-target.json --probes all --format json --out a2a-run.json
+```
+
+`validate-target` validates these fields and then directs you to run the probes. A chat ping cannot assess an A2A server.
+
+---
+
 ## testbed_agent
 
 **Use this for**: the generic form of `mcp_agent` and `payment_agent`. The `environment` field (`mcp` or `payment`) selects which testbed it drives, and the rest of the spec is the same shape. `environment` also decides which probes apply (the `mcp/` or `payment/` probe families).

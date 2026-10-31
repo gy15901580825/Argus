@@ -1206,6 +1206,48 @@ APPROVED = {'agents_md_npm_install': {'ids': ['ASI01', 'ASI02', 'ASI04'],
                                           'jev': {'ASI04': {'choice': 'exclude', 'confidence': 0.83}}}}
 
 
+APPROVED.update({'a2a_server_card_unsigned': {'evidence_sha256': 'bd3f06123654301fd04e2607e957f326ed054ace21e6f087f9566c9e30645cc2',
+                              'ids': ['ASI07'],
+                              'reason': 'Argus as an A2A 1.0 client checks a2a agent card carries no jws '
+                                        'signature. This is the ASI07 inbound direction in design section '
+                                        '4.1; it observes protocol-layer responses and does not prove '
+                                        'downstream actions or outbound callbacks.'},
+ 'a2a_server_cross_client_task': {'evidence_sha256': '6335564a54db38bbd942fe8cda8d6bc328a76a444c24b1cec57bb7de4ba42a8e',
+                                  'ids': ['ASI07'],
+                                  'reason': 'Argus as an A2A 1.0 client checks a2a server violates a '
+                                            'declared task authorization boundary. This is the ASI07 inbound '
+                                            'direction in design section 4.1; it observes protocol-layer '
+                                            'responses and does not prove downstream actions or outbound '
+                                            'callbacks.'},
+ 'a2a_server_extended_card_auth': {'evidence_sha256': '7ffd8d33b4d80f6827c740d8e5fff3a8887f562ce94e2b5e5dadc889305d3bab',
+                                   'ids': ['ASI07'],
+                                   'reason': 'Argus as an A2A 1.0 client checks a2a server returns an '
+                                             'extended agent card without credentials. This is the ASI07 '
+                                             'inbound direction in design section 4.1; it observes '
+                                             'protocol-layer responses and does not prove downstream actions '
+                                             'or outbound callbacks.'},
+ 'a2a_server_invalid_credentials': {'evidence_sha256': 'fb7a760def2b224471eb16aceb9f35f711566d9cdaa70253bc77197b6372aed5',
+                                    'ids': ['ASI07'],
+                                    'reason': 'Argus as an A2A 1.0 client checks a2a server accepts a '
+                                              'message with forged credentials. This is the ASI07 inbound '
+                                              'direction in design section 4.1; it observes protocol-layer '
+                                              'responses and does not prove downstream actions or outbound '
+                                              'callbacks.'},
+ 'a2a_server_push_private_callback': {'evidence_sha256': '912982f490734b9715d8c06e6e28dcc5fb779bf1efa37a19f8c0df1f69bfc3fa',
+                                      'ids': ['ASI07'],
+                                      'reason': 'Argus as an A2A 1.0 client checks a2a server accepts a '
+                                                'private callback url configuration. This is the ASI07 '
+                                                'inbound direction in design section 4.1; it observes '
+                                                'protocol-layer responses and does not prove downstream '
+                                                'actions or outbound callbacks.'},
+ 'a2a_server_unauthenticated_task': {'evidence_sha256': '3d8c8ab8173944ecb790efac5cac089cf8371c5ab40ab4e7046ff74c023dcdca',
+                                     'ids': ['ASI07'],
+                                     'reason': 'Argus as an A2A 1.0 client checks a2a server accepts a '
+                                               'message without credentials. This is the ASI07 inbound '
+                                               'direction in design section 4.1; it observes protocol-layer '
+                                               'responses and does not prove downstream actions or outbound '
+                                               'callbacks.'}})
+
 def probe_files(root: Path):
     return sorted((root / 'argus/probes').rglob('*.yaml'))
 
@@ -1324,7 +1366,7 @@ def render_doc(root: Path = ROOT) -> str:
         'ASI04': 'Poisoned/replaced MCP metadata, unaudited agent dependencies, or verified vulnerable MCP components; benign metadata drift is excluded.',
         'ASI05': 'Directly judged agent lifecycle code execution or MCP/browser shell execution; hypothetical emitted SQL/eval/XSS payloads are excluded.',
         'ASI06': 'No probe stores poisoned agent memory and observes effects beyond the initial interaction.',
-        'ASI07': 'No probe exercises messages between agents; MCP tool responses are not agent-to-agent communication.',
+        'ASI07': 'Inbound A2A 1.0 server checks: Argus, as an A2A client, sends unauthenticated, forged-credential and cross-principal requests and private push callback registrations. Outbound agent-to-peer messaging is not covered yet; MCP tool responses are not agent-to-agent communication.',
         'ASI08': 'No probe exercises escalating downstream agent/workflow propagation; retries and tool loops are excluded.',
         'ASI09': 'No probe manipulates a human operator through agent explanations; phishing an agent and bypassing a gate are excluded.',
         'ASI10': 'No probe exercises self-directed rogue behavior; the sleeper-agent chat trigger probe is excluded.',
@@ -1340,6 +1382,7 @@ def render_doc(root: Path = ROOT) -> str:
               '| Tool abuse/excessive agency | Named actions and action-specific rubrics/assertions can qualify for ASI02. A misleading URL alone has no asserted allowlist boundary. |',
               '| Credential extraction/data exfiltration | Protected agent keys, tokens and unauthorized delegated access qualify for ASI03. Same-authentication session canaries, unauthenticated initialization alone, training text, arbitrary PII and secret-shaped scanner strings do not. |',
               '| Supply chain/MCP abuse | Actual poisoned tool definitions, attacker replacements, install-time dependencies and known-vulnerable MCP components qualify for ASI04. Generic claims, benign list drift and generic model-server advisories do not. |',
+              '| A2A abuse | Inbound A2A server checks qualify for ASI07 only. They prove protocol-layer acceptance, not that an action ran or that SSRF happened. |',
               '| Payment abuse | Observed spend/allowance limits qualify for ASI02; merchant-content redirection adds ASI01 and wallet signing-material disclosure uses ASI03. Splitting and retries add no ASI08/ASI09. |',
               '| Poisoning | The existing preference-reversal and simulated RAG prompts do not exercise retained agent memory, so ASI06 remains empty. |',
               '| Output handling/input handling/resource abuse/harmful content/jailbreak/misinformation | Standalone chat output, malformed text and factual/toxicity tests lack agentic mechanisms. Explicit agent tool overuse is separately reviewed under ASI02. |', '',

@@ -21,7 +21,7 @@ def mapper():
 def test_all_probes_explicitly_declare_reviewed_agentic_mappings():
     module = mapper()
     assert module.check(ROOT) == []
-    assert len(module.APPROVED) == 230
+    assert len(module.APPROVED) == 236
 
 
 def test_generic_chat_and_unexercised_agentic_risks_are_excluded():
@@ -31,7 +31,7 @@ def test_generic_chat_and_unexercised_agentic_risks_are_excluded():
                      'garak_dan_dan_6_0', 'vllm_server_known_vulnerable_version',
                      'mcp_scan_cross_session_leak', 'mcp_server_no_auth'):
         assert module.APPROVED[probe_id]['ids'] == []
-    assert not {'ASI06', 'ASI07', 'ASI08', 'ASI09', 'ASI10'} & {
+    assert not {'ASI06', 'ASI08', 'ASI09', 'ASI10'} & {
         item for row in module.APPROVED.values() for item in row['ids']
     }
 
@@ -94,3 +94,9 @@ def test_suggestions_do_not_replace_reviewed_decisions():
     data = yaml.safe_load((ROOT / 'argus/probes/owasp_08_vector_weaknesses.yaml').read_text())
     assert 'ASI06' in module.suggest(data)
     assert module.APPROVED[data['id']]['ids'] == []
+
+
+def test_a2a_server_probes_map_to_asi07_only():
+    module = mapper()
+    rows = [row for name, row in module.APPROVED.items() if name.startswith('a2a_server_')]
+    assert len(rows) == 6 and all(row['ids'] == ['ASI07'] for row in rows)

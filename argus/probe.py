@@ -41,6 +41,7 @@ VALID_TARGET_CLASSES = {
     # Served by `argus-probe scan-mcp`, never by a target adapter.
     "mcp_scan",
     # MCP server exposure probes test the server itself, not an agent.
+    "a2a_server",
     "mcp_server",
     # The vLLM version probe tests the model server itself, not an agent.
     "vllm_server",
@@ -57,7 +58,7 @@ VALID_ATTACK_CLASSES = frozenset({
     "prompt-injection", "indirect-injection", "jailbreak", "data-exfil",
     "credential-extraction", "output-handling", "input-handling", "tool-abuse",
     "excessive-agency", "supply-chain", "poisoning", "harmful-content",
-    "misinformation", "resource-abuse", "payment-abuse", "mcp-abuse",
+    "misinformation", "resource-abuse", "payment-abuse", "mcp-abuse", "a2a-abuse",
 })
 
 

@@ -92,6 +92,7 @@ def test_validate_target_empty_reply_is_an_error(tmp_path, httpx_mock):
 
 @pytest.mark.parametrize("spec", [
     {"kind": "mcp_server", "url": "http://127.0.0.1:3001/mcp"},
+    {"kind": "a2a_server", "url": "http://127.0.0.1:8765"},
     {"kind": "vllm_server", "url": "http://10.0.0.5:8000"},
 ])
 def test_validate_target_refuses_kinds_a_ping_cannot_check(tmp_path, spec, httpx_mock):
@@ -231,3 +232,13 @@ def test_validate_target_web_chat_closes_the_browser(tmp_path, send, code):
     if code == 0:
         assert "OK — target https://chat.example/ replied with 8 chars" in result.output
     aclose.assert_awaited_once()
+
+
+def test_validate_target_rejects_invalid_a2a_server_fields(tmp_path):
+    from click.testing import CliRunner
+    from argus.cli.cmd_validate_target import cmd_validate_target
+    target = tmp_path / 'target.json'
+    target.write_text(json.dumps({'kind':'a2a_server', 'url':'http://127.0.0.1:8765', 'second_client':{'headers':[['Authorization','Bearer bob']], 'forbidden_on_primary_tasks':['delete']}}))
+    result = CliRunner().invoke(cmd_validate_target, ['--target', str(target)])
+    assert result.exit_code == 1
+    assert 'target spec invalid' in result.output and 'Traceback' not in result.output

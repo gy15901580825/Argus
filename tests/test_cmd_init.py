@@ -351,6 +351,7 @@ def test_every_known_kind_has_init_questions():
 
 @pytest.mark.parametrize("kind,url", [
     ("mcp_server", "http://127.0.0.1:3001/mcp"),
+    ("a2a_server", "http://127.0.0.1:8765"),
     ("vllm_server", "http://10.0.0.5:8000"),
 ])
 def test_init_server_kinds_write_a_loadable_spec(tmp_path, monkeypatch, kind, url):

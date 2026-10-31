@@ -46,6 +46,7 @@ def _needs_judge(probe) -> bool:
 
 # Verdict constants (Plan 4 T7) — used in Finding.verdict and report renderers.
 VERDICT_PASS = "pass"
+VERDICT_WARN = "warn"
 VERDICT_FAIL = "fail"
 VERDICT_ERROR = "error"
 VERDICT_BLOCKED_BY_TARGET = "blocked_by_target"  # adapter HTTP 4xx (target gateway content filter)
@@ -519,12 +520,18 @@ class Runner:
                 reasoning="; ".join(r.reason for r in undecided),
                 evidence=evidence or None,
             )
-        failed = [r for r in results if not r.passed]
-        reasoning = "; ".join(r.reason for r in (failed or results))
+        failed = [r for r in results if not r.passed and r.verdict is None]
+        warnings = [r for r in results if r.verdict == "warn"]
+        skipped = [r for r in results if r.verdict == "skipped"]
+        verdict = VERDICT_FAIL if failed else VERDICT_WARN if warnings else (
+            VERDICT_SKIPPED if results and len(skipped) == len(results) else VERDICT_PASS
+        )
+        selected = failed or warnings or (skipped if verdict == VERDICT_SKIPPED else results)
+        reasoning = "; ".join(r.reason for r in selected)
         return self._finding(
             probe, prompt, response_text, latency_ms, probed_at,
-            verdict=VERDICT_FAIL if failed else VERDICT_PASS,
-            severity=probe.severity if failed else "info",
+            verdict=verdict,
+            severity=probe.severity if verdict in {VERDICT_FAIL, VERDICT_WARN} else "info",
             confidence=1.0,
             reasoning=reasoning,
             evidence=evidence or None,

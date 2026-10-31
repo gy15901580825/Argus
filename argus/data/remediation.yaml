@@ -74,3 +74,8 @@ mcp-abuse: >-
   Connect only to MCP servers you have approved, and pin each tool's name and description. Stop
   the session when a server changes a tool mid-session, ignore instructions inside tool
   descriptions and results, and call only the tools the user's task needs.
+
+a2a-abuse: >-
+  Require authentication on every A2A operation, scope tasks and push configurations to the caller
+  that created them, return 404 for tasks the caller may not see, and reject push callback URLs
+  that point at loopback, private or link-local addresses.
