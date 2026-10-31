@@ -123,3 +123,28 @@ async def test_message_only_server_skips_cross_client(binding):
 async def test_missing_second_client_is_skipped(binding):
     target,_=target_for('safe',binding)
     assert (await run_target(target,'cross_client_task'))[0][0]=='skipped'
+
+@pytest.mark.parametrize('state',[None,'TASK_STATE_UNKNOWN','TASK_STATE_UNSPECIFIED',{}])
+@pytest.mark.parametrize('binding',BINDINGS)
+async def test_rejected_cancel_requires_known_primary_task_state(binding,state):
+    target,_=target_for('safe',binding,second_client=cross_second(['cancel']))
+    original=target._transport
+    async def handler(req):
+        is_get = req.method=='GET' and '/tasks/' in req.url.path if binding=='HTTP+JSON' else req.method=='POST' and json.loads(req.content)['method']=='GetTask'
+        if is_get:
+            status={} if state is None else {'state':state}
+            body={'id':'task-3','status':status}
+            return httpx.Response(200,json={'result':body} if binding=='JSONRPC' else body)
+        return await original.handle_async_request(req)
+    target._transport=httpx.MockTransport(handler)
+    (outcome,reason),_=await run_target(target,'cross_client_task')
+    assert outcome=='error' and 'state' in reason
+
+@pytest.mark.parametrize('step',['control_a_send','attack_a_send','control_a_get'])
+def test_cancel_preconditions_require_known_task_states(step):
+    ev=subcheck_evidence('pass' if step=='control_a_get' else 'skipped','skipped','pass')
+    if step=='control_a_get':
+        next(ex for ex in ev['exchanges'] if ex['step']==step)['task_state']=None
+    else:
+        next(ex for ex in ev['exchanges'] if ex['step']==step)['task_state']='TASK_STATE_UNSPECIFIED'
+    assert decide('cross_client_task',ev)[0]=='error'

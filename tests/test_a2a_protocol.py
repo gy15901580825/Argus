@@ -96,3 +96,7 @@ def test_decode_drops_error_message_text():
 def test_decode_extended_card_rejects_partial_and_wrong_types(binding,body):
     wire={'result':body} if binding=='JSONRPC' else body
     assert decode_response(binding,'GetExtendedAgentCard',200,json.dumps(wire).encode()).outcome=='undecodable'
+
+@pytest.mark.parametrize('binding,body,want', [('HTTP+JSON',b'null','undecodable'),('HTTP+JSON',b'','success'),('HTTP+JSON',b'{}','success'),('JSONRPC',b'{"result":null}','success')])
+def test_decode_delete_empty_results_follow_binding_contract(binding,body,want):
+    assert decode_response(binding,'DeleteTaskPushNotificationConfig',200,body).outcome==want

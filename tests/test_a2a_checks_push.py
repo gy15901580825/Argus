@@ -98,3 +98,16 @@ async def test_push_incomplete_evidence_is_error():
     from tests.a2a_helpers import evidence_for,exchange
     ev=evidence_for('push_private_callback',[exchange('control_send'),exchange('control_register')])
     assert decide('push_private_callback',ev)[0]=='error'
+
+async def test_http_json_delete_null_reports_unconfirmed_cleanup():
+    target,_=target_for('safe','HTTP+JSON')
+    original=target._transport
+    app=original.app
+    async def handler(req):
+        if req.method=='DELETE': return httpx.Response(200,content=b'null')
+        return await original.handle_async_request(req)
+    target._transport=httpx.MockTransport(handler)
+    (outcome,reason),ev=await run_target(target,'push_private_callback')
+    assert outcome=='pass' and 'could not be deleted' in reason
+    assert app.state.push_configs
+    assert next(ex for ex in ev['exchanges'] if ex['step']=='cleanup_delete')['outcome']=='undecodable'

@@ -73,7 +73,7 @@ _FLOWS.update(unauthenticated_task=_authentication, invalid_credentials=_authent
 
 async def _cross_client(evidence, client, spec, facts):
     import secrets
-    from argus.a2a.protocol import message_request, TERMINAL_STATES
+    from argus.a2a.protocol import message_request, TERMINAL_STATES, KNOWN_TASK_STATES
     if spec.second_client is None:
         evidence['precondition'] = {'skip': 'no second_client configured'}
         return
@@ -114,11 +114,11 @@ async def _cross_client(evidence, client, spec, facts):
         listed = await client.call('control_a_list', 'ListTasks', {'pageSize': 100}, 'primary', iface=iface, detail={'list_has_primary_task': [task_id, marker]})
         if listed.outcome == 'success' and listed.detail.get('list_has_primary_task') is True:
             await client.call('attack_b_list', 'ListTasks', {'pageSize': 100}, 'second', iface=iface, detail={'list_has_primary_task': [task_id, marker]})
-    if 'cancel' in spec.forbidden_on_primary_tasks and control.task_state not in TERMINAL_STATES:
+    if 'cancel' in spec.forbidden_on_primary_tasks and control.task_state in KNOWN_TASK_STATES - TERMINAL_STATES:
         canceled = await client.call('control_a_cancel', 'CancelTask', {'id': control.task_id}, 'primary', iface=iface)
         if canceled.outcome != 'success':
             await client.call('control_a_recheck', 'GetTask', {'id': control.task_id}, 'primary', iface=iface)
-        elif state not in TERMINAL_STATES:
+        elif state in KNOWN_TASK_STATES - TERMINAL_STATES:
             await client.call('attack_b_cancel', 'CancelTask', {'id': task_id}, 'second', iface=iface)
             viewed = await client.call('attack_a_view', 'GetTask', {'id': task_id}, 'primary', iface=iface)
             if viewed.outcome == 'success':

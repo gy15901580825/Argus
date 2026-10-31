@@ -371,7 +371,7 @@ ARGUS_TESTBED_PORT=8090 argus-probe run --local --target payment-target.json --p
 
 ## a2a_server
 
-Use this kind to check an A2A server's inbound authentication, a declared task authorization boundary, Agent Cards, and private callback registration. Argus acts as an A2A 1.0 client. The server's Card selects JSON-RPC or HTTP+JSON. gRPC is unsupported. A server that publishes only A2A 0.3 is skipped. Argus does not use the legacy Card to run checks.
+Use this kind to check an A2A server's inbound authentication, a declared task authorization boundary, Agent Cards, and private callback registration. Argus acts as an A2A 1.0 client. The server's Card selects JSON-RPC or HTTP+JSON. Interface URLs must be absolute HTTP or HTTPS URLs without embedded credentials or fragments. gRPC is unsupported. A server that publishes only A2A 0.3 is skipped. Argus does not use the legacy Card to run checks.
 
 ```json
 {
@@ -392,7 +392,7 @@ Use this kind to check an A2A server's inbound authentication, a declared task a
 |---|---|---|
 | `kind` | `a2a_server` in the adapter | The CLI requires `kind` in the target spec. |
 | `url` | None | Required HTTP or HTTPS base URL. The Card is at `/.well-known/agent-card.json` under this URL. |
-| `credentials.headers` | `[]` | The legal control carries no credential headers and can fail. Headers are pairs of strings. |
+| `credentials.headers` | `[]` | The legal control carries no credential headers and can fail. Headers are pairs of strings with unique names, ignoring case. |
 | `second_client` | `null` | The cross-client check is skipped. |
 | `second_client.headers` | None | Required and nonempty when `second_client` is present. |
 | `second_client.forbidden_on_primary_tasks` | `[]` | No authorization boundary is declared, so the cross-client check is skipped. Allowed entries are `get`, `list`, and `cancel`. |

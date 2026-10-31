@@ -68,9 +68,9 @@ class A2AClient:
         if op in MUTATING_OPS and self.spec.allow_send is not True:
             raise MutationNotAllowed(op)
         pairs = self.spec.primary_headers if principal in ('primary', 'forged') else self.spec.second_headers if principal == 'second' else ()
-        headers = dict(pairs or ())
+        headers = httpx.Headers(pairs or ())
         if principal == 'forged':
-            headers = {name: (value.split(None, 1)[0]+' ' if len(value.split(None, 1)) == 2 else '')+'argus-forged-'+secrets.token_hex(8) for name, value in headers.items()}
+            headers = httpx.Headers({name: (value.split(None, 1)[0]+' ' if len(value.split(None, 1)) == 2 else '')+'argus-forged-'+secrets.token_hex(8) for name, value in headers.items()})
         headers.update({'A2A-Version': A2A_VERSION, 'Content-Type': 'application/json' if iface.binding == 'JSONRPC' else 'application/a2a+json'})
         self._rpc_id += 1
         wire = build_request(iface, op, args, self._rpc_id)
@@ -93,7 +93,8 @@ class A2AClient:
                 needles = facts['list_has_primary_task']
                 text = json.dumps(decoded.result)
                 facts['list_has_primary_task'] = any(needle in text for needle in needles)
+            state = task.get('status', {}).get('state') if task else None
             ex = Exchange(step, op, principal, decoded.http_status, decoded.outcome, decoded.jsonrpc_code, decoded.result_kind,
-                          task.get('id') if task else None, task.get('status', {}).get('state') if task else None, facts)
+                          task.get('id') if task else None, state if isinstance(state, str) else None, facts)
         self.exchanges.append(ex)
         return ex

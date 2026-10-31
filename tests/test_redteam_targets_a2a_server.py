@@ -89,3 +89,36 @@ async def test_begin_probe_refuses_a_probe_without_an_a2a_assertion():
 async def test_begin_probe_refuses_deep_mode_wrappers():
     target=A2AServerTarget(A2AServerSpec(url='http://127.0.0.1'))
     with pytest.raises(ValueError): await target.begin_probe(SimpleNamespace(base=object(),assertions=({'a2a_server':'card_unsigned'},)))
+
+async def test_protocol_headers_override_credentials_case_insensitively():
+    captured=[]
+    def handler(req):
+        captured.append(req)
+        return httpx.Response(200,json={'result':{'name':'agent','skills':[],'supportedInterfaces':[]}})
+    spec=A2AServerSpec(url='http://127.0.0.1',credentials={'headers':[['a2a-version','0.3'],['content-type','text/plain']]})
+    await A2AClient(spec,httpx.MockTransport(handler)).call('extended','GetExtendedAgentCard',{},'primary',iface=Interface('http://127.0.0.1/rpc','JSONRPC',''))
+    assert captured[0].headers.get_list('a2a-version')==['1.0']
+    assert captured[0].headers.get_list('content-type')==['application/json']
+
+@pytest.mark.parametrize('binding',['JSONRPC','HTTP+JSON'])
+@pytest.mark.parametrize('bad_url',['http://alice:card-secret@127.0.0.1:8765/a2a','ftp://127.0.0.1/a2a','http://127.0.0.1:bad/a2a','http://[broken/a2a'])
+async def test_invalid_interface_url_errors_before_operation_io_without_exposing_userinfo(binding,bad_url):
+    requests=[]
+    card={'name':'agent','skills':[],'supportedInterfaces':[{'url':bad_url,'protocolBinding':binding,'protocolVersion':'1.0'}],'securityRequirements':[{'schemes':{'bearer':{'list':[]}}}]}
+    def handler(req):
+        requests.append(req)
+        if req.url.path.endswith('/agent-card.json'): return httpx.Response(200,json=card)
+        body={'task':{'id':'x','status':{'state':'TASK_STATE_COMPLETED'}}}
+        return httpx.Response(200,json={'result':body} if binding=='JSONRPC' else body)
+    spec=A2AServerSpec(url='http://127.0.0.1:8765',allow_send=True)
+    ev=await run_check('unauthenticated_task',A2AClient(spec,httpx.MockTransport(handler)),spec)
+    assert decide('unauthenticated_task',ev)[0]=='error'
+    assert len(requests)==1 and ev['state_changing_requests']==0
+    assert 'card-secret' not in json.dumps(ev) and 'alice:' not in json.dumps(ev)
+
+@pytest.mark.parametrize('location',['credentials','second_client'])
+@pytest.mark.parametrize('names',[('Authorization','Authorization'),('Authorization','authorization')])
+def test_spec_rejects_duplicate_credential_header_names_case_insensitively(location,names):
+    headers=[[names[0],'Bearer obsolete'],[names[1],'Bearer demo-alice']]
+    with pytest.raises(ValueError,match='duplicate'):
+        A2AServerSpec(url='http://127.0.0.1',**{location:{'headers':headers}})

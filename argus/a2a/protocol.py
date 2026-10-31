@@ -5,7 +5,7 @@ import json
 import secrets
 from dataclasses import dataclass
 from typing import Literal
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 Binding = Literal['HTTP+JSON', 'JSONRPC']
 Op = Literal['SendMessage', 'GetTask', 'ListTasks', 'CancelTask', 'CreateTaskPushNotificationConfig', 'DeleteTaskPushNotificationConfig', 'GetExtendedAgentCard']
@@ -17,6 +17,7 @@ A2A_VERSION = '1.0'
 ARGUS_MESSAGE_TEXT = 'Argus security check. Reply with the word ACK. Do not take any action.'
 MUTATING_OPS: frozenset[Op] = frozenset({'SendMessage', 'CancelTask', 'CreateTaskPushNotificationConfig', 'DeleteTaskPushNotificationConfig'})
 TERMINAL_STATES = frozenset('TASK_STATE_'+s for s in ('COMPLETED', 'FAILED', 'CANCELED', 'REJECTED'))
+KNOWN_TASK_STATES = TERMINAL_STATES | frozenset('TASK_STATE_'+s for s in ('SUBMITTED', 'WORKING', 'INPUT_REQUIRED', 'AUTH_REQUIRED'))
 AUTH_REQUIRED_STATE = 'TASK_STATE_AUTH_REQUIRED'
 TASK_NOT_FOUND_CODE = -32001
 
@@ -75,6 +76,13 @@ def select_interface(card: dict) -> tuple[Interface | None, str | None]:
     current = [e for e in entries if isinstance(e, dict) and _version_1_0(e)]
     for entry in current:
         if entry.get('protocolBinding') in ('JSONRPC', 'HTTP+JSON') and isinstance(entry.get('url'), str) and entry['url']:
+            try:
+                url = urlsplit(entry['url'])
+                if url.scheme not in ('http', 'https') or not url.hostname or url.username is not None or url.password is not None or url.fragment:
+                    raise ValueError()
+                url.port
+            except ValueError:
+                raise ValueError('Agent Card interface URL must be an absolute HTTP or HTTPS URL without credentials or a fragment') from None
             return Interface(entry['url'], entry['protocolBinding'], str(entry.get('tenant') or '')), None
     if not current and (any(isinstance(e, dict) and str(e.get('protocolVersion', '')).startswith('0.') for e in entries) or str(card.get('protocolVersion', '')).startswith('0.')):
         return None, 'a2a_0_3_only'
@@ -193,7 +201,7 @@ def decode_response(binding: Binding, op: Op, status: int, body: bytes) -> Decod
         present = isinstance(doc, dict) and 'result' in doc and 'error' not in doc
         value = doc.get('result') if present else None
     else:
-        present, value = True, doc
+        present, value = not (op == 'DeleteTaskPushNotificationConfig' and doc is None and body), doc
     if not 200 <= status < 300:
         return Decoded('http_error', status)
     kind = _result_kind(op, value) if present else None

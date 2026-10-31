@@ -17,6 +17,9 @@ from argus.a2a.checks import ALL_CHECKS, run_check
 def _headers(value: object) -> tuple[tuple[str, str], ...]:
     if not isinstance(value, (list, tuple)) or any(not isinstance(pair, (list, tuple)) or len(pair) != 2 or any(not isinstance(v, str) for v in pair) or not pair[0] for pair in value):
         raise ValueError('headers must be pairs of strings')
+    names = [name.lower() for name, _ in value]
+    if len(names) != len(set(names)):
+        raise ValueError('duplicate credential header names are not allowed')
     return tuple(tuple(pair) for pair in value)
 
 

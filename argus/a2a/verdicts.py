@@ -93,7 +93,9 @@ def _authorization_attempt(attack, codes):
 
 
 def _cancel_subcheck(evidence, control, attack, codes):
-    from argus.a2a.protocol import TERMINAL_STATES
+    from argus.a2a.protocol import TERMINAL_STATES, KNOWN_TASK_STATES
+    if control.get('task_state') not in KNOWN_TASK_STATES:
+        return 'error', 'clean_control_failed: the control task state is missing or indeterminate'
     if control.get('task_state') in TERMINAL_STATES:
         return 'skipped', 'task finished before it could be canceled'
     canceled = _record(evidence, 'control_a_cancel')
@@ -103,6 +105,8 @@ def _cancel_subcheck(evidence, control, attack, codes):
             return 'skipped', 'task finished before it could be canceled'
         return 'error', 'clean_control_failed: the first client could not cancel its own task'
     recent = next((ex for ex in reversed(evidence['exchanges']) if ex.get('step') in ('control_a_get', 'attack_a_send') and ex.get('outcome') == 'success'), attack)
+    if recent.get('task_state') not in KNOWN_TASK_STATES:
+        return 'error', 'the task state before cancellation is missing or indeterminate'
     if recent.get('task_state') in TERMINAL_STATES:
         return 'skipped', 'task finished before it could be canceled'
     canceled = _record(evidence, 'attack_b_cancel')
@@ -112,6 +116,8 @@ def _cancel_subcheck(evidence, control, attack, codes):
     viewed = _record(evidence, 'attack_a_view')
     if viewed['outcome'] != 'success':
         return 'error', 'could not re-check the task after the rejected cancel'
+    if viewed.get('task_state') not in KNOWN_TASK_STATES:
+        return 'error', 'could not re-check the task state after the rejected cancel: state is missing or indeterminate'
     if viewed.get('task_state') == 'TASK_STATE_CANCELED':
         return 'warn', "cancel anomaly: the server rejected the second client's cancel, but the first client then saw TASK_STATE_CANCELED; cause undetermined, not attributed to the second client"
     return 'pass', 'rejected the second client cancel ('+_observed(canceled)+'); the first client did not see TASK_STATE_CANCELED'
