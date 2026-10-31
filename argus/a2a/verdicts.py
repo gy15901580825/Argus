@@ -183,3 +183,41 @@ def _card_unsigned(evidence):
     return 'warn', 'Agent Card is not signed; signatures are optional in A2A 1.0'
 
 _DECIDERS.update(extended_card_auth=_extended_card, card_unsigned=_card_unsigned)
+
+
+def classify_push(ex: dict):
+    if ex.get('outcome') == 'success':
+        return 'accepted'
+    if ex.get('outcome') == 'jsonrpc_error':
+        return 'rejected'
+    if ex.get('outcome') == 'http_error' and isinstance(ex.get('http_status'), int) and 400 <= ex['http_status'] < 500:
+        return 'rejected'
+    return 'undetermined'
+
+
+def _push_private_callback(evidence):
+    from argus.a2a.checks import PRIVATE_CALLBACK_URLS
+    for step in ('control_send', 'control_register'):
+        control = _record(evidence, step)
+        if control['outcome'] != 'success':
+            return 'error', 'clean_control_failed: '+step+' did not succeed ('+_observed(control)+')'
+    attacks = [ex for ex in evidence['exchanges'] if ex.get('step') == 'attack_register']
+    if len(attacks) != len(PRIVATE_CALLBACK_URLS) or {ex.get('detail', {}).get('callback_url') for ex in attacks} != set(PRIVATE_CALLBACK_URLS):
+        return 'error', 'incomplete evidence: not all private callback URLs were tested'
+    accepted = [ex['detail']['callback_url'] for ex in attacks if classify_push(ex) == 'accepted']
+    if accepted:
+        urls = ', '.join(accepted)
+        if evidence.get('config', {}).get('push_callback_policy') == 'deny_private':
+            result = 'fail', "violated the target's declared callback policy deny_private: accepted "+urls
+        else:
+            result = 'warn', f'accepted a private callback URL configuration ({urls}); SSRF protection not proven; Argus observed no outbound request'
+    elif any(classify_push(ex) == 'undetermined' for ex in attacks):
+        result = 'error', 'could not determine private callback registration result: '+', '.join(_observed(ex) for ex in attacks if classify_push(ex) == 'undetermined')
+    else:
+        result = 'pass', 'rejected all six private callback URL configurations'
+    leftovers = sum(ex.get('step') == 'cleanup_delete' and ex.get('outcome') != 'success' for ex in evidence['exchanges'])
+    if leftovers:
+        return result[0], result[1]+f'; cleanup: {leftovers} push config(s) could not be deleted'
+    return result
+
+_DECIDERS['push_private_callback'] = _push_private_callback

@@ -144,3 +144,44 @@ async def _card_unsigned(evidence, client, spec, facts):
     pass
 
 _FLOWS.update(extended_card_auth=_extended_card, card_unsigned=_card_unsigned)
+
+PRIVATE_CALLBACK_URLS = (
+    'http://127.0.0.1:9/argus-callback', 'http://localhost:9/argus-callback',
+    'http://10.0.0.1:9/argus-callback', 'http://172.16.0.1:9/argus-callback',
+    'http://192.168.0.1:9/argus-callback', 'http://169.254.169.254:9/argus-callback',
+)
+
+
+async def _push_private_callback(evidence, client, spec, facts):
+    import secrets
+    from argus.a2a.protocol import message_request, TERMINAL_STATES
+    if not facts.push_notifications:
+        evidence['precondition'] = {'skip': 'Card does not declare capabilities.pushNotifications'}
+        return
+    if _send_precondition(evidence, spec):
+        return
+    iface = facts.interface
+    task = await client.call('control_send', 'SendMessage', message_request(return_immediately=True), 'primary', iface=iface)
+    if task.outcome != 'success':
+        return
+    if task.result_kind == 'message':
+        evidence['precondition'] = {'skip': 'server answered with a Message; there is no task to register a callback on'}
+        return
+    if task.task_state in TERMINAL_STATES:
+        evidence['precondition'] = {'skip': 'task finished; there is no unfinished task to register a callback on'}
+        return
+    configs = []
+    config_id = 'argus-ctrl-'+secrets.token_hex(8)
+    control = await client.call('control_register', 'CreateTaskPushNotificationConfig', {'taskId': task.task_id, 'id': config_id, 'url': spec.push_control_url}, 'primary', iface=iface, detail={'callback_url': spec.push_control_url, 'config_id': config_id})
+    if control.outcome == 'success':
+        configs.append(control.detail['config_id'])
+        for index, url in enumerate(PRIVATE_CALLBACK_URLS):
+            config_id = f'argus-atk-{index}-'+secrets.token_hex(8)
+            attack = await client.call('attack_register', 'CreateTaskPushNotificationConfig', {'taskId': task.task_id, 'id': config_id, 'url': url}, 'primary', iface=iface, detail={'callback_url': url, 'config_id': config_id})
+            if attack.outcome == 'success':
+                configs.append(attack.detail['config_id'])
+    for config_id in configs:
+        await client.call('cleanup_delete', 'DeleteTaskPushNotificationConfig', {'taskId': task.task_id, 'id': config_id}, 'primary', iface=iface, detail={'config_id': config_id})
+    await client.call('cleanup_cancel', 'CancelTask', {'id': task.task_id}, 'primary', iface=iface)
+
+_FLOWS['push_private_callback'] = _push_private_callback
