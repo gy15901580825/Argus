@@ -339,7 +339,7 @@ class Runner:
         # attacker LLM emits self-contained prompts each round, so on a stateless
         # adapter they degrade to query-refinement — weaker, but still a real
         # attack, and skipping them would lose grpc/browser_use coverage.
-        if getattr(probe, "conversation", False) and not getattr(
+        if getattr(probe, "needs_history", getattr(probe, "conversation", False)) and not getattr(
             self._target, "supports_history", False
         ):
             yield self._skip(

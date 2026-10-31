@@ -83,7 +83,7 @@ def compatible_probe_ids(target_obj: Any) -> list[str]:
     return [
         p.id for p in load_probe_library(PROBES_DIR)
         if (not classes or not p.target_class or set(p.target_class) & classes)
-        and (history or not getattr(p, "conversation", False))
+        and (history or not getattr(p, "needs_history", getattr(p, "conversation", False)))
     ]
 
 
@@ -158,14 +158,19 @@ def _resolve_request_probe_ids(req: RunRequest, target_obj: Any = None) -> list[
                 status_code=422,
                 detail="probe_ids and suite are mutually exclusive — supply exactly one",
             )
-        return _resolve_suite(req.suite)
-    ids = _resolve_probe_ids(req.probe_ids, target_obj)
+        ids = _resolve_suite(req.suite)
+    else:
+        ids = _resolve_probe_ids(req.probe_ids, target_obj)
     if not ids:
         # Never hand [] on: it means "all" again downstream.
         raise HTTPException(
             status_code=422,
             detail=f"no probe in the library fits target kind {_resolve_target_kind(req.target)}",
         )
+    if req.mode == "deep":
+        phased = [p.id for p in load_probe_library(PROBES_DIR) if p.id in ids and getattr(p, "is_phased", False)]
+        if phased:
+            raise HTTPException(422, "deep mode cannot run paired-run probes (sessions/control/trials): " + ", ".join(phased))
     return ids
 
 
@@ -186,7 +191,7 @@ def _estimate_exchanges(req: RunRequest, probe_ids: list[str]) -> int:
     by_id = {p.id: p for p in load_probe_library(PROBES_DIR)}
     # An id the library doesn't know runs nothing, but counting it as one
     # exchange keeps the estimate conservative rather than optimistic.
-    return sum(len(by_id[pid].prompts) if pid in by_id else 1 for pid in probe_ids)
+    return sum(getattr(by_id[pid], "exchange_count", len(by_id[pid].prompts)) if pid in by_id else 1 for pid in probe_ids)
 
 
 def _judged_exchanges(req: RunRequest, probe_ids: list[str]) -> int:
@@ -200,7 +205,7 @@ def _judged_exchanges(req: RunRequest, probe_ids: list[str]) -> int:
         return _estimate_exchanges(req, probe_ids)
     by_id = {p.id: p for p in load_probe_library(PROBES_DIR)}
     return sum(
-        len(by_id[pid].prompts) if pid in by_id else 1
+        getattr(by_id[pid], "exchange_count", len(by_id[pid].prompts)) if pid in by_id else 1
         for pid in probe_ids
         if pid not in by_id or by_id[pid].needs_judge
     )
