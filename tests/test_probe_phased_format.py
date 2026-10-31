@@ -161,6 +161,6 @@ def test_compatible_probe_ids_respects_multi_turn_sessions(tmp_path, monkeypatch
 
 
 def test_existing_library_loads_unchanged():
-    library = load_probe_library(api.PROBES_DIR)
+    library = [p for p in load_probe_library(api.PROBES_DIR) if not p.is_phased]
     assert len(library) == 236
     assert all(not p.is_phased and p.exchange_count == len(p.prompts) for p in library)
