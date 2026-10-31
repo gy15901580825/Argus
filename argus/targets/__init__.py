@@ -1,4 +1,5 @@
 """Factory: dict-spec → Target instance."""
+
 from __future__ import annotations
 
 import functools
@@ -13,6 +14,7 @@ from argus.targets.browser_use import BrowserUseSpec, BrowserUseTarget
 from argus.targets.custom_http import CustomHTTPSpec, CustomHTTPTarget
 from argus.targets.grpc import GRPCSpec, GRPCTarget
 from argus.targets.http_upload import HTTPUploadSpec, HTTPUploadTarget
+from argus.targets.a2a_agent import A2AAgentSpec, A2AAgentTarget
 from argus.targets.mcp_agent import MCPAgentSpec, MCPAgentTarget
 from argus.targets.mcp_server import MCPServerSpec, MCPServerTarget
 from argus.targets.openai_compat import OpenAICompatSpec, OpenAICompatTarget
@@ -28,6 +30,7 @@ _BUILDERS = {
     "custom_http": (CustomHTTPSpec, CustomHTTPTarget),
     "grpc": (GRPCSpec, GRPCTarget),
     "http_upload": (HTTPUploadSpec, HTTPUploadTarget),
+    "a2a_agent": (A2AAgentSpec, A2AAgentTarget),
     "mcp_agent": (MCPAgentSpec, MCPAgentTarget),
     "mcp_server": (MCPServerSpec, MCPServerTarget),
     "openai_compat": (OpenAICompatSpec, OpenAICompatTarget),
@@ -49,17 +52,30 @@ ENTRY_POINT_GROUP = "argus.targets"
 def _plugin_builders() -> dict[str, tuple[type, type]]:
     builders: dict[str, tuple[type, type]] = {}
     # Sorted so that, when two plugins claim one kind, the winner doesn't depend on install order.
-    for ep in sorted(entry_points(group=ENTRY_POINT_GROUP), key=lambda e: (e.name, e.value)):
+    for ep in sorted(
+        entry_points(group=ENTRY_POINT_GROUP), key=lambda e: (e.name, e.value)
+    ):
         if ep.name in _BUILDERS:
-            logger.warning("target plugin %r ignored: %r is a built-in kind", ep.value, ep.name)
+            logger.warning(
+                "target plugin %r ignored: %r is a built-in kind", ep.value, ep.name
+            )
             continue
         if ep.name in builders:
-            logger.warning("target plugin %r ignored: kind %r already registered", ep.value, ep.name)
+            logger.warning(
+                "target plugin %r ignored: kind %r already registered",
+                ep.value,
+                ep.name,
+            )
             continue
         try:
             SpecClass, TargetClass = ep.load()
         except Exception:
-            logger.warning("target plugin %r (%s) failed to load; skipped", ep.name, ep.value, exc_info=True)
+            logger.warning(
+                "target plugin %r (%s) failed to load; skipped",
+                ep.name,
+                ep.value,
+                exc_info=True,
+            )
             continue
         builders[ep.name] = (SpecClass, TargetClass)
     return builders
@@ -73,5 +89,3 @@ def build_target(spec: dict[str, Any]) -> Target:
     SpecClass, TargetClass = builder
     spec_obj = SpecClass(**spec)
     return TargetClass(spec_obj)
-
-

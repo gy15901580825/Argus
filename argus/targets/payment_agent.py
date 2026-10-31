@@ -54,6 +54,7 @@ class PaymentAgentSpec:
 
 class PaymentAgentTarget(TestbedAgentTarget):
     compatible_classes: ClassVar[frozenset[str]] = frozenset({"payment_agent"})
+    controlled = False
     url_key = "merchant_url"
     staging_noun = "merchant"
     teardown_label = "payment testbed"

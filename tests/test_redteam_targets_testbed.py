@@ -28,8 +28,8 @@ def _spec(**kw):
     return base
 
 
-def test_registry_has_exactly_mcp_and_payment():
-    assert set(ENVIRONMENTS) == {"mcp", "payment"}
+def test_registry_has_exactly_mcp_payment_and_a2a():
+    assert set(ENVIRONMENTS) == {"mcp", "payment", "a2a"}
     assert ENVIRONMENTS["mcp"]["url_key"] == "mcp_url"
     assert ENVIRONMENTS["payment"]["url_key"] == "merchant_url"
 

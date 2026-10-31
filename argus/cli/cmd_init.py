@@ -1,4 +1,5 @@
 """argus-probe init subcommand: scaffold a target.json + optional GH Action workflow."""
+
 from __future__ import annotations
 
 import json
@@ -22,8 +23,11 @@ _KIND_QUESTIONS: dict[str, list[tuple[str, str, str | None]]] = {
     ],
     "custom_http": [
         ("request_url", "Request URL", None),
-        ("request_body_template", "Request body template (Jinja2 with {{prompt}})",
-         '{"input": {{prompt|tojson}}}'),
+        (
+            "request_body_template",
+            "Request body template (Jinja2 with {{prompt}})",
+            '{"input": {{prompt|tojson}}}',
+        ),
         ("response_jsonpath", "Response JSONPath", "$.output"),
     ],
     "grpc": [
@@ -34,10 +38,18 @@ _KIND_QUESTIONS: dict[str, list[tuple[str, str, str | None]]] = {
     ],
     "browser_use": [
         ("agent_url", "Browser-using agent URL", None),
-        ("scenario_kind", "Scenario kind (dom_injection/ui_phishing/visual_injection/os_cmd)", "dom_injection"),
+        (
+            "scenario_kind",
+            "Scenario kind (dom_injection/ui_phishing/visual_injection/os_cmd)",
+            "dom_injection",
+        ),
     ],
     "payment_agent": [
-        ("testbed_url", "Payment testbed URL (\"local\" starts the bundled one on 127.0.0.1 for each run)", "local"),
+        (
+            "testbed_url",
+            'Payment testbed URL ("local" starts the bundled one on 127.0.0.1 for each run)',
+            "local",
+        ),
         (
             "inner_json",
             "Inner target spec (JSON) for the transport that talks to your agent",
@@ -45,16 +57,37 @@ _KIND_QUESTIONS: dict[str, list[tuple[str, str, str | None]]] = {
         ),
     ],
     "mcp_agent": [
-        ("testbed_url", "MCP testbed URL (\"local\" starts the bundled one on 127.0.0.1 for each run)", "local"),
+        (
+            "testbed_url",
+            'MCP testbed URL ("local" starts the bundled one on 127.0.0.1 for each run)',
+            "local",
+        ),
         (
             "inner_json",
             "Inner target spec (JSON) for the transport that talks to your agent",
             '{"kind": "openai_compat", "endpoint_url": "http://127.0.0.1:8093/v1/chat/completions", "model": "argus-demo-mcp-agent"}',
         ),
     ],
+    "a2a_agent": [
+        (
+            "testbed_url",
+            "A2A control URL (local starts the bundled peer world)",
+            "local",
+        ),
+        (
+            "inner_json",
+            "Inner target spec (JSON)",
+            '{"kind":"openai_compat","endpoint_url":"http://127.0.0.1:8095/v1/chat/completions","model":"demo"}',
+        ),
+        ("capabilities_csv", "Capabilities (comma-separated)", "peer_http_json_1_0"),
+    ],
     "testbed_agent": [
-        ("environment", "Environment (mcp/payment)", "mcp"),
-        ("testbed_url", "Testbed URL (\"local\" starts the bundled one on 127.0.0.1 for each run)", "local"),
+        ("environment", "Environment (mcp/payment/a2a)", "mcp"),
+        (
+            "testbed_url",
+            'Testbed URL ("local" starts the bundled one on 127.0.0.1 for each run)',
+            "local",
+        ),
         (
             "inner_json",
             "Inner target spec (JSON) for the transport that talks to your agent",
@@ -66,7 +99,11 @@ _KIND_QUESTIONS: dict[str, list[tuple[str, str, str | None]]] = {
         ("upload_field_name", "Upload form field name", "file"),
         ("upload_filename", "Upload filename", "payload.svg"),
         ("upload_content_type", "Upload content type", "image/svg+xml"),
-        ("render_url_jsonpath", "Render URL JSONPath (extracts the render URL from the upload response)", "$.url"),
+        (
+            "render_url_jsonpath",
+            "Render URL JSONPath (extracts the render URL from the upload response)",
+            "$.url",
+        ),
     ],
     "web_chat": [
         ("url", "Chat page URL", None),
@@ -75,19 +112,35 @@ _KIND_QUESTIONS: dict[str, list[tuple[str, str, str | None]]] = {
         # An empty answer is valid: the target then presses Enter in the message box.
         ("send_selector", "CSS selector of the send button (empty: press Enter)", ""),
     ],
-    "a2a_server": [("url", "A2A server base URL (the Agent Card is at <url>/.well-known/agent-card.json)", None)],
+    "a2a_server": [
+        (
+            "url",
+            "A2A server base URL (the Agent Card is at <url>/.well-known/agent-card.json)",
+            None,
+        )
+    ],
     "mcp_server": [
-        ("url", "MCP server Streamable HTTP endpoint (e.g. http://127.0.0.1:3001/mcp)", None),
+        (
+            "url",
+            "MCP server Streamable HTTP endpoint (e.g. http://127.0.0.1:3001/mcp)",
+            None,
+        ),
     ],
     "vllm_server": [
-        ("url", "vLLM server root URL, not the /v1 path (e.g. http://10.0.0.5:8000)", None),
+        (
+            "url",
+            "vLLM server root URL, not the /v1 path (e.g. http://10.0.0.5:8000)",
+            None,
+        ),
     ],
 }
 
 # Chat kinds get a small judged set. Every other kind gets `all`, because the chat probes do not
 # apply to it and would be skipped, leaving a job that tests nothing. Assumes `all` fits the target (PR5a).
 _CHAT_PROBES = "owasp_01_prompt_injection_basic,syscard_crescendo"
-_CHAT_KINDS = frozenset({"openai_compat", "anthropic_native", "custom_http", "web_chat"})
+_CHAT_KINDS = frozenset(
+    {"openai_compat", "anthropic_native", "custom_http", "web_chat"}
+)
 
 
 def _probes_for(kind: str) -> str:
@@ -179,15 +232,22 @@ def init_command(kind: str, output: str, workflow: bool | None) -> None:
         try:
             spec["inner"] = json.loads(str(raw_inner))
         except json.JSONDecodeError as exc:
-            raise click.UsageError(f"inner target spec is not valid JSON: {exc}") from exc
+            raise click.UsageError(
+                f"inner target spec is not valid JSON: {exc}"
+            ) from exc
 
     # sandbox is a safety interlock, not a question: payment_agent,
     # mcp_agent and testbed_agent drive an agent that spends money / reaches a live MCP server,
     # and both the engine and the CLI loader refuse a spec without
     # sandbox: true — there is no way to turn it off, so it must never be
     # presented as something a user could answer "no" to.
-    if kind in ("payment_agent", "mcp_agent", "testbed_agent"):
+    if kind in ("payment_agent", "mcp_agent", "testbed_agent", "a2a_agent"):
         spec["sandbox"] = True
+
+    if "capabilities_csv" in spec:
+        spec["capabilities"] = [
+            c.strip() for c in str(spec.pop("capabilities_csv")).split(",") if c.strip()
+        ]
 
     # Confirm-overwrite if target file exists
     target_path = Path(output)
@@ -212,13 +272,22 @@ def init_command(kind: str, output: str, workflow: bool | None) -> None:
         # features (testbed_url "local", target-fitting `all`).
         v = _installed_version()
         version_line = f'          argus-version: "{v}"\n' if v else ""
-        wf_path.write_text(_WORKFLOW_TEMPLATE.format(
-            target_path=target_path.name, target_env=target_env, probes=_probes_for(kind),
-            version_line=version_line))
+        wf_path.write_text(
+            _WORKFLOW_TEMPLATE.format(
+                target_path=target_path.name,
+                target_env=target_env,
+                probes=_probes_for(kind),
+                version_line=version_line,
+            )
+        )
         click.echo(f"✅ Wrote {wf_path}")
 
     click.echo("")
-    click.echo(f"Next: argus-probe run --local --target {target_path} --probes {_probes_for(kind)} "
-               "--out argus-report.html")
+    click.echo(
+        f"Next: argus-probe run --local --target {target_path} --probes {_probes_for(kind)} "
+        "--out argus-report.html"
+    )
     if workflow:
-        click.echo("Add ANTHROPIC_API_KEY as a repository secret for the workflow's LLM judge.")
+        click.echo(
+            "Add ANTHROPIC_API_KEY as a repository secret for the workflow's LLM judge."
+        )
