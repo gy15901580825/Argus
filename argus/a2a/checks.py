@@ -69,3 +69,61 @@ async def _authentication(evidence, client, spec, facts):
     await client.call('attack_send', 'SendMessage', message_request(return_immediately=False), principal, iface=facts.interface)
 
 _FLOWS.update(unauthenticated_task=_authentication, invalid_credentials=_authentication)
+
+
+async def _cross_client(evidence, client, spec, facts):
+    import secrets
+    from argus.a2a.protocol import message_request, TERMINAL_STATES
+    if spec.second_client is None:
+        evidence['precondition'] = {'skip': 'no second_client configured'}
+        return
+    if not spec.forbidden_on_primary_tasks:
+        evidence['precondition'] = {'skip': 'no authorization boundary declared (second_client.forbidden_on_primary_tasks is empty)'}
+        return
+    if {(k.lower(), v) for k, v in spec.primary_headers} == {(k.lower(), v) for k, v in spec.second_headers}:
+        evidence['precondition'] = {'error': 'second_client.headers are identical to credentials.headers; the two principals cannot be told apart'}
+        return
+    if _send_precondition(evidence, spec):
+        return
+    iface = facts.interface
+    control = await client.call('control_a_send', 'SendMessage', message_request(return_immediately=True), 'primary', iface=iface)
+    if control.outcome != 'success':
+        return
+    if control.result_kind == 'message':
+        evidence['precondition'] = {'skip': 'server answered with a Message; there is no task to test'}
+        return
+    second = await client.call('control_b_send', 'SendMessage', message_request(return_immediately=True), 'second', iface=iface)
+    if second.outcome != 'success':
+        return
+    marker = secrets.token_hex(16)
+    evidence['marker'] = marker
+    attack = await client.call('attack_a_send', 'SendMessage', message_request(return_immediately=True, marker=marker), 'primary', iface=iface)
+    if attack.outcome != 'success':
+        return
+    if attack.result_kind == 'message':
+        evidence['precondition'] = {'skip': 'server answered with a Message; there is no task to test'}
+        return
+    task_id = attack.task_id
+    state = attack.task_state
+    if 'get' in spec.forbidden_on_primary_tasks:
+        get = await client.call('control_a_get', 'GetTask', {'id': task_id}, 'primary', iface=iface)
+        if get.outcome == 'success':
+            state = get.task_state
+            await client.call('attack_b_get', 'GetTask', {'id': task_id}, 'second', iface=iface)
+    if 'list' in spec.forbidden_on_primary_tasks:
+        listed = await client.call('control_a_list', 'ListTasks', {'pageSize': 100}, 'primary', iface=iface, detail={'list_has_primary_task': [task_id, marker]})
+        if listed.outcome == 'success' and listed.detail.get('list_has_primary_task') is True:
+            await client.call('attack_b_list', 'ListTasks', {'pageSize': 100}, 'second', iface=iface, detail={'list_has_primary_task': [task_id, marker]})
+    if 'cancel' in spec.forbidden_on_primary_tasks and control.task_state not in TERMINAL_STATES:
+        canceled = await client.call('control_a_cancel', 'CancelTask', {'id': control.task_id}, 'primary', iface=iface)
+        if canceled.outcome != 'success':
+            await client.call('control_a_recheck', 'GetTask', {'id': control.task_id}, 'primary', iface=iface)
+        elif state not in TERMINAL_STATES:
+            await client.call('attack_b_cancel', 'CancelTask', {'id': task_id}, 'second', iface=iface)
+            viewed = await client.call('attack_a_view', 'GetTask', {'id': task_id}, 'primary', iface=iface)
+            if viewed.outcome == 'success':
+                state = viewed.task_state
+    if state not in TERMINAL_STATES:
+        await client.call('cleanup_cancel', 'CancelTask', {'id': task_id}, 'primary', iface=iface)
+
+_FLOWS['cross_client_task'] = _cross_client
