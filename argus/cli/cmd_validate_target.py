@@ -11,7 +11,7 @@ import yaml
 from argus.cli import run_json
 from argus.cli.target_loader import TargetLoadError, check_target_spec
 
-# Kinds that answer a chat prompt. The others (MCP and vLLM servers, testbed agents, uploads)
+# Kinds that answer a chat prompt. The others (A2A, MCP and vLLM servers, testbed agents, uploads)
 # are checked by their probes, so a ping proves nothing about them.
 _CHAT_KINDS = ("openai_compat", "anthropic_native", "custom_http", "web_chat")
 
@@ -65,11 +65,6 @@ def cmd_validate_target(target_file: str):
     except TargetLoadError as e:
         raise click.ClickException(str(e))
     kind = spec["kind"]
-    if kind not in _CHAT_KINDS:
-        raise click.UsageError(
-            f"validate-target checks chat targets ({', '.join(_CHAT_KINDS)}), not {kind}. "
-            f"Run its probes instead: argus-probe run --local --target {target_file} --probes all"
-        )
     # The same masking as run's reports: expanded $VARs and secret-named fields.
     secrets = run_json.run_secrets(spec, substituted)
 
@@ -80,6 +75,11 @@ def cmd_validate_target(target_file: str):
         target = build_target(spec)
     except Exception as e:  # spec values the adapter rejects (a bad JSONPath, a wrong type)
         fail(f"target spec invalid: {type(e).__name__}: {e}")
+    if kind not in _CHAT_KINDS:
+        raise click.UsageError(
+            f"validate-target checks chat targets ({', '.join(_CHAT_KINDS)}), not {kind}. "
+            f"Run its probes instead: argus-probe run --local --target {target_file} --probes all"
+        )
     try:
         text = asyncio.run(_ping(target))
     except Exception as e:  # every failure is the answer this command exists to give

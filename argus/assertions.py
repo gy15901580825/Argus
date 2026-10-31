@@ -20,6 +20,7 @@ from typing import Callable
 from urllib.parse import unquote_plus
 
 from argus import package_check
+from argus.a2a.verdicts import decide as _a2a_decide
 
 # Anything at or above this is an allowance nobody sets deliberately; ERC-20
 # `approve(spender, MAX_UINT256)` is the canonical shape.
@@ -533,7 +534,7 @@ _PROMPT_CHECKS = {
 }
 
 
-_OUTCOME_CHECKS: dict[str, Callable[[object, dict], tuple[str, str]]] = {}
+_OUTCOME_CHECKS: dict[str, Callable[[object, dict], tuple[str, str]]] = {"a2a_server": _a2a_decide}
 
 def evaluate_assertions(
     assertions: tuple[dict, ...], evidence: dict, response_text: str,

@@ -75,6 +75,7 @@ _KIND_QUESTIONS: dict[str, list[tuple[str, str, str | None]]] = {
         # An empty answer is valid: the target then presses Enter in the message box.
         ("send_selector", "CSS selector of the send button (empty: press Enter)", ""),
     ],
+    "a2a_server": [("url", "A2A server base URL (the Agent Card is at <url>/.well-known/agent-card.json)", None)],
     "mcp_server": [
         ("url", "MCP server Streamable HTTP endpoint (e.g. http://127.0.0.1:3001/mcp)", None),
     ],

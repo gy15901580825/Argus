@@ -16,7 +16,7 @@ from typing import Any
 _KNOWN_KINDS = frozenset({
     "openai_compat", "anthropic_native", "custom_http", "grpc", "browser_use",
     "payment_agent", "mcp_agent", "testbed_agent", "http_upload", "mcp_server",
-    "vllm_server", "web_chat",
+    "vllm_server", "web_chat", "a2a_server",
 })
 
 _REQUIRED_FIELDS = {
@@ -30,6 +30,7 @@ _REQUIRED_FIELDS = {
     "testbed_agent": {"environment", "testbed_url", "inner", "sandbox"},
     "http_upload": {"upload_url"},
     "mcp_server": {"url"},
+    "a2a_server": {"url"},
     "vllm_server": {"url"},
     "web_chat": {"url", "input_selector", "response_selector"},
 }
