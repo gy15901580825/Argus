@@ -10,14 +10,16 @@ import asyncio
 import contextlib
 import contextvars
 import ipaddress
+import json
 import re
 import time
 from dataclasses import dataclass, fields
 from typing import ClassVar
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, quote_plus, urlsplit
 
 from fastapi import WebSocketDisconnect
 
+from argus.assertions import canary_in, trap_canaries
 from argus.targets._base import Target, TargetDeliveryError, Turn
 
 _SCENARIO_KINDS = frozenset({"dom_injection", "ui_phishing", "visual_injection", "os_cmd"})
@@ -122,6 +124,56 @@ def _valid_evidence(ev) -> bool:
     )
 
 
+def _redacted(text: str) -> str:
+    return f"<redacted {len(text)} chars>"
+
+
+def _mask_json(value, canaries: tuple[str, ...]):
+    if isinstance(value, dict):
+        return {k: _mask_json(v, canaries) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_mask_json(v, canaries) for v in value]
+    if isinstance(value, bool) or value is None:
+        return value
+    text = value if isinstance(value, str) else json.dumps(value)
+    return text if _holds_canary(text, canaries) else _redacted(text)
+
+
+def _holds_canary(text: str, canaries: tuple[str, ...]) -> bool:
+    return any(canary_in(text, c) for c in canaries)
+
+
+def _mask_text(text: str, canaries: tuple[str, ...]) -> str:
+    """Replace every value that holds no canary with its length; keep names and canary values."""
+    if not text:
+        return text
+    masked = None
+    try:
+        masked = json.dumps(_mask_json(json.loads(text), canaries), ensure_ascii=False)
+    except (ValueError, RecursionError):
+        pass
+    # Form-encoded text has no raw whitespace; strict parsing refuses a segment without "=".
+    if masked is None and not any(c.isspace() for c in text):
+        try:
+            pairs = parse_qsl(text, keep_blank_values=True, strict_parsing=True)
+        except ValueError:
+            pairs = []
+        if pairs:
+            masked = "&".join(
+                f"{quote_plus(k)}={quote_plus(v) if _holds_canary(v, canaries) else _redacted(v)}"
+                for k, v in pairs)
+    if masked is None:
+        masked = text if _holds_canary(text, canaries) else _redacted(text)
+    # A canary split across fields (an unencoded "&" inside it) must stay visible to the check.
+    if any(canary_in(text, c) and not canary_in(masked, c) for c in canaries):
+        return text
+    return masked
+
+
+def _masked_request(req: dict, canaries: tuple[str, ...]) -> dict:
+    return dict(req, query=_mask_text(req["query"], canaries), body=_mask_text(req["body"], canaries))
+
+
 def _is_delivery_failure(e: Exception) -> bool:
     """True for the bridge and transport failures; caller bugs must propagate."""
     from argus.connection_manager import NoClientAgentError
@@ -160,6 +212,8 @@ class BrowserUseTarget(Target):
         self._scenario_kind: str | None = None
         self._scenario_payload: str | None = None
         self._evidence: dict = {}
+        # Canaries the probe checks for; every other recorded value is masked.
+        self._canaries: tuple[str, ...] = ()
 
     # Holding a live browser context across rounds requires a client_agent WS
     # protocol change; deliberately out of scope for v1.
@@ -167,6 +221,7 @@ class BrowserUseTarget(Target):
 
     async def begin_probe(self, probe) -> None:
         self._evidence = {}
+        self._canaries = trap_canaries(getattr(probe, "assertions", None) or ())
         payload = getattr(probe, "scenario_payload", None)
         kind = getattr(probe, "scenario_kind", None)
         # No scenario block: the attack is the prompt itself, so send it as the
@@ -238,7 +293,12 @@ class BrowserUseTarget(Target):
         return reply.get("final_text", ""), latency_ms
 
     async def collect_evidence(self) -> dict:
-        return dict(self._evidence)
+        """The trap record with every value that is not a canary masked, since bodies and
+        queries can hold real credentials an agent autofilled."""
+        ev = dict(self._evidence)
+        if "trap_requests" in ev:
+            ev["trap_requests"] = [_masked_request(r, self._canaries) for r in ev["trap_requests"]]
+        return ev
 
     def _merge_evidence(self, new: dict) -> None:
         """Rounds of one probe add up; begin_probe starts over."""

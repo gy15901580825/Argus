@@ -334,3 +334,49 @@ def test_entrypoint_keeps_secrets_out_of_argv(tmp_path):
     assert "pw-secret" not in argv and "tk-secret" not in argv
     assert "--api-service-url https://api" in argv and "--username u" in argv
     assert "PW=pw-secret" in out
+
+
+# ---------------------------------------------------------------------------
+# Logging: trap bodies can hold real credentials an agent autofilled
+# ---------------------------------------------------------------------------
+
+def test_reply_log_counts_trap_requests_and_never_prints_their_bodies(caplog):
+    import json
+    import logging
+
+    import client_agent
+
+    agent = client_agent.ClientAgent(orchestrator_url="ws://o.invalid", agent_name="browser-1")
+    sent = []
+    evidence = {"interaction_count": 2, "page_loads": 1, "trap_requests": [
+        {"method": "POST", "path": "/sink/login", "query": "u=QUERY-SECRET",
+         "body": "password=BODY-SECRET", "complete": True}]}
+
+    class FakeWS:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        def __aiter__(self):
+            async def gen():
+                yield json.dumps({"jsonrpc": "2.0", "id": 7, "method": "redteam_browser_probe",
+                                  "params": {"scenario_kind": "ui_phishing"}})
+                agent.running = False
+            return gen()
+
+        async def send(self, data):
+            sent.append(json.loads(data))
+
+    probe = MagicMock()
+    probe.return_value.run = AsyncMock(return_value={"final_text": "ok", "trap_evidence": evidence})
+    with patch.object(client_agent.websockets, "connect", return_value=FakeWS()), \
+            patch("redteam_runner.browser_probe.BrowserProbe", probe), \
+            caplog.at_level(logging.INFO, logger="ClientAgent"):
+        agent.running = True
+        asyncio.run(agent.connect_orchestrator())
+    # The orchestrator still gets the whole record; only the log is trimmed.
+    assert sent[0]["result"]["trap_evidence"] == evidence
+    assert "BODY-SECRET" not in caplog.text and "QUERY-SECRET" not in caplog.text
+    assert '"trap_requests": 1' in caplog.text
