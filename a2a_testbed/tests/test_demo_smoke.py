@@ -19,4 +19,4 @@ def test_demo_health_card_and_version_boundary():
             json={},
         )
         assert response.status_code == 400
-        assert response.json()["code"] == "VersionNotSupportedError"
+        assert response.json()["error"]["details"][0]["reason"] == "VERSION_NOT_SUPPORTED"

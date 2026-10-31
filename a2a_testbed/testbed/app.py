@@ -9,7 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
 from .store import DEFAULT_LIMITS, Limits, Store
-from .wire import CONTENT_TYPE, TERMINAL_STATES, WireError, error_json, parse_send, version_ok
+from .wire import CONTENT_TYPE, TERMINAL_STATES, WireError, error_json, protocol_error_json, parse_send, version_ok
 
 
 @dataclass
@@ -25,7 +25,9 @@ def create_testbed(*,control_token: str,public_base_url: str='',plaintext_base_u
 
     def response(data,status=200):return JSONResponse(data,status_code=status,media_type=CONTENT_TYPE)
 
-    async def wire_error(request,exc):return response(error_json(exc.code,exc.status),exc.status)
+    async def wire_error(request,exc):
+        render=protocol_error_json if '/peers/' in request.url.path else error_json
+        return response(render(exc.code,exc.status),exc.status)
     control.add_exception_handler(WireError,wire_error);peer.add_exception_handler(WireError,wire_error)
 
     async def body(request):
@@ -112,7 +114,7 @@ def create_testbed(*,control_token: str,public_base_url: str='',plaintext_base_u
                     peer=name,http_status=status,state=task['status']['state'] if task else None,message_id=task.get('status',{}).get('message',{}).get('messageId') if task else None,
                     task_id=task.get('id') if task else None,context_id=task.get('contextId') if task else None,parent_event_ids=[sent['event_id']])
                 if task:session.tasks[task['id']]=task
-                return response({'task':task} if task else error_json('peer_unavailable',status),status)
+                return response({'task':task} if task else protocol_error_json('peer_unavailable',status),status)
 
     @peer.get('/s/{sid}/peers/{name}/tasks/{task_id}')
     async def task(sid: str,name: str,task_id: str,request: Request):

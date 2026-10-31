@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import secrets
+import re
+from http import HTTPStatus
 import os
 import json
 from contextlib import asynccontextmanager
@@ -63,6 +65,44 @@ def response(data, status=200):
     return JSONResponse(data, status_code=status, media_type="application/a2a+json")
 
 
+def protocol_error_json(code_name: str, http_status: int) -> dict:
+    statuses = {
+        400: "INVALID_ARGUMENT",
+        401: "UNAUTHENTICATED",
+        403: "PERMISSION_DENIED",
+        404: "NOT_FOUND",
+        409: "ABORTED",
+        413: "RESOURCE_EXHAUSTED",
+        429: "RESOURCE_EXHAUSTED",
+        500: "INTERNAL",
+        503: "UNAVAILABLE",
+    }
+    details = []
+    if code_name.endswith("Error"):
+        reason = re.sub(
+            r"(?<!^)(?=[A-Z])", "_", code_name.removesuffix("Error")
+        ).upper()
+        details.append(
+            {
+                "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                "reason": reason,
+                "domain": "a2a-protocol.org",
+            }
+        )
+    return {
+        "error": {
+            "code": http_status,
+            "status": statuses.get(http_status, "UNKNOWN"),
+            "message": HTTPStatus(http_status).phrase,
+            "details": details,
+        }
+    }
+
+
+def protocol_error(code_name: str, status: int):
+    return response(protocol_error_json(code_name, status), status)
+
+
 def listener_url(request: Request) -> str:
     host, port = request.scope["server"]
     host = {"0.0.0.0": "127.0.0.1", "::": "::1"}.get(host, host)
@@ -110,7 +150,7 @@ async def chat(request: Request):
 @app.get("/agents/{role}/.well-known/agent-card.json")
 async def card(role: str, request: Request):
     if role not in ("reviewer", "executor"):
-        return response({"code": "agent_unknown"}, 404)
+        return protocol_error("agent_unknown", 404)
     root = listener_url(request) + "/agents/" + role
     return response(
         {
@@ -137,9 +177,9 @@ async def card(role: str, request: Request):
 @app.post("/agents/{role}/message:send")
 async def receive(role: str, request: Request):
     if state is None:
-        return response({"code": "agent_unavailable"}, 503)
+        return protocol_error("agent_unavailable", 503)
     if role not in ("reviewer", "executor"):
-        return response({"code": "agent_unknown"}, 404)
+        return protocol_error("agent_unknown", 404)
     credential = request.headers.get("Authorization", "")
     caller = next(
         (name for name, value in state.credentials.items() if value == credential),
@@ -151,11 +191,14 @@ async def receive(role: str, request: Request):
     )
     allowed = ("planner",) if role == "reviewer" else ("reviewer", "driver")
     if caller not in allowed:
-        return response({"code": "UnauthenticatedError"}, 401)
+        return protocol_error("UnauthenticatedError", 401)
     if request.headers.get("A2A-Version") != "1.0":
-        return response({"code": "VersionNotSupportedError"}, 400)
+        return protocol_error("VersionNotSupportedError", 400)
     client.set_agent_origin(listener_url(request))
-    body = await request.json()
+    try:
+        body = await request.json()
+    except ValueError:
+        return protocol_error("InvalidArgumentError", 400)
     msg = body.get("message") if isinstance(body, dict) else None
     if (
         not isinstance(msg, dict)
@@ -165,20 +208,20 @@ async def receive(role: str, request: Request):
         or not isinstance(msg.get("parts"), list)
         or not msg["parts"]
     ):
-        return response({"code": "InvalidArgumentError"}, 400)
+        return protocol_error("InvalidArgumentError", 400)
     for part in msg["parts"]:
         if (
             not isinstance(part, dict)
             or sum(key in part for key in ("text", "data", "url", "raw")) != 1
         ):
-            return response({"code": "InvalidArgumentError"}, 400)
+            return protocol_error("InvalidArgumentError", 400)
         if any(
             key in part and not isinstance(part[key], str)
             for key in ("text", "url", "raw")
         ):
-            return response({"code": "InvalidArgumentError"}, 400)
+            return protocol_error("InvalidArgumentError", 400)
         if "data" in part and not isinstance(part["data"], dict):
-            return response({"code": "InvalidArgumentError"}, 400)
+            return protocol_error("InvalidArgumentError", 400)
     if caller != "driver":
         await roles.observe(state, role, "message_received", caller, msg)
     data, _ = roles.contents(msg)

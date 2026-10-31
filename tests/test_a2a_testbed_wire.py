@@ -48,7 +48,7 @@ def test_get_task_decodes_and_unknown_task_is_404():
 def test_send_without_version_header_is_rejected_and_recorded():
     tb,c,p,sid=setup_peer()
     response=p.post(f'/s/{sid}/peers/invoice-worker/message:send',json=request())
-    assert response.status_code==400 and response.json()['code']=='VersionNotSupportedError'
+    assert response.status_code==400 and response.json()['error']['details'][0]['reason']=='VERSION_NOT_SUPPORTED'
     e=tb.store.evidence(sid)
     assert e['rejected_requests'][-1]['reason']=='a2a_version'
     assert e['events'][-1]['a2a_version_ok'] is False
@@ -69,13 +69,13 @@ def test_malformed_send_is_400_and_not_success():
 
 def test_message_to_terminal_task_is_unsupported_operation():
     tb,c,p,sid=setup_peer();task=send(p,sid).json()['task']
-    assert send(p,sid,request('M2',taskId=task['id'],contextId=task['contextId'])).json()['code']=='UnsupportedOperationError'
+    assert send(p,sid,request('M2',taskId=task['id'],contextId=task['contextId'])).json()['error']['details'][0]['reason']=='UNSUPPORTED_OPERATION'
 
 
 def test_unsupported_routes_return_unsupported_operation():
     tb,c,p,sid=setup_peer()
     response=p.post(f'/s/{sid}/peers/invoice-worker/message:stream',json=request())
-    assert response.status_code==400 and response.json()['code']=='UnsupportedOperationError'
+    assert response.status_code==400 and response.json()['error']['details'][0]['reason']=='UNSUPPORTED_OPERATION'
 
 
 def test_payload_over_64_kib_is_413():

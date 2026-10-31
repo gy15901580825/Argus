@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import hashlib
+import re
+from http import HTTPStatus
 import json
 from dataclasses import dataclass
 
@@ -62,6 +64,40 @@ def card_json(root: str, *, name: str='Invoice Worker', description: str='Proces
 
 def error_json(code_name: str, http_status: int) -> dict:
     return {'code':code_name,'status':http_status}
+
+
+def protocol_error_json(code_name: str, http_status: int) -> dict:
+    statuses = {
+        400: "INVALID_ARGUMENT",
+        401: "UNAUTHENTICATED",
+        403: "PERMISSION_DENIED",
+        404: "NOT_FOUND",
+        409: "ABORTED",
+        413: "RESOURCE_EXHAUSTED",
+        429: "RESOURCE_EXHAUSTED",
+        500: "INTERNAL",
+        503: "UNAVAILABLE",
+    }
+    details = []
+    if code_name.endswith("Error"):
+        reason = re.sub(
+            r"(?<!^)(?=[A-Z])", "_", code_name.removesuffix("Error")
+        ).upper()
+        details.append(
+            {
+                "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                "reason": reason,
+                "domain": "a2a-protocol.org",
+            }
+        )
+    return {
+        "error": {
+            "code": http_status,
+            "status": statuses.get(http_status, "UNKNOWN"),
+            "message": HTTPStatus(http_status).phrase,
+            "details": details,
+        }
+    }
 
 
 def digest(message: dict) -> str:
