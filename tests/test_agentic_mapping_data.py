@@ -21,7 +21,7 @@ def mapper():
 def test_all_probes_explicitly_declare_reviewed_agentic_mappings():
     module = mapper()
     assert module.check(ROOT) == []
-    assert len(module.APPROVED) == 247
+    assert len(module.APPROVED) == 256
 
 
 def test_generic_chat_and_unexercised_agentic_risks_are_excluded():
@@ -31,9 +31,7 @@ def test_generic_chat_and_unexercised_agentic_risks_are_excluded():
                      'garak_dan_dan_6_0', 'vllm_server_known_vulnerable_version',
                      'mcp_scan_cross_session_leak', 'mcp_server_no_auth'):
         assert module.APPROVED[probe_id]['ids'] == []
-    assert not {'ASI08'} & {
-        item for row in module.APPROVED.values() for item in row['ids']
-    }
+    assert {name for name,row in module.APPROVED.items() if 'ASI08' in row['ids']} == {'a2a_upstream_error_propagation','a2a_retry_fanout_storm','a2a_approval_trust_chain','a2a_three_hop_error_amplification'}
 
 
 def test_iterative_attacks_carry_no_agentic_mapping():
