@@ -147,7 +147,7 @@ async def test_reply_carries_trap_evidence_of_requests_the_agent_made():
     assert result["trap_evidence"] == {
         "interaction_count": 1, "page_loads": 0,
         "trap_requests": [{"method": "POST", "path": "/sink/steal", "query": "",
-                           "body": "verification=tok-123"}],
+                           "body": "verification=tok-123", "complete": True}],
     }
 
 
