@@ -28,6 +28,7 @@ prompts:
       </foreignObject>
     </svg>
 mappings:
+  owasp_agentic: []
   atlas: ["AML.T0019", "AML.T0049"]
   owasp_llm: ["LLM05"]
   nist_ai_rmf: ["MAP-2.3", "MAP-5.1"]

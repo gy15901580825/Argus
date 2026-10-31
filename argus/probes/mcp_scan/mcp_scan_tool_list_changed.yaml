@@ -9,6 +9,7 @@ prompts:
   - "scan-mcp check: tool list change"
 requires_interaction: false
 mappings:
+  owasp_agentic: []
   atlas: ["AML.T0010"]
   owasp_llm: ["LLM03", "LLM06"]
   nist_ai_rmf: ["GOVERN-1.4", "MAP-5.1"]

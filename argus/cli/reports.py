@@ -64,6 +64,8 @@ def render_sarif(run: dict) -> str:
                 "properties": {
                     "atlas": f.get("atlas_id", []),
                     "owasp_llm": f.get("owasp_id", []),
+                    "owasp_agentic": f.get("owasp_agentic", []),
+                    "tags": [f"OWASP-Agentic:{tag}" for tag in f.get("owasp_agentic", [])],
                     "nist_ai_rmf": f.get("nist_id", []),
                     "eu_ai_act": f.get("eu_ai_act_id", []),
                 },
@@ -98,6 +100,8 @@ def render_sarif(run: dict) -> str:
                 "target_response": f.get("target_response", "")[:1000],
                 "judge_model": f.get("judge_model"),
                 "escalated_model": f.get("escalated_model"),
+                "owasp_agentic": f.get("owasp_agentic", []),
+                "tags": [f"OWASP-Agentic:{tag}" for tag in f.get("owasp_agentic", [])],
             },
         })
     # `executionSuccessful` controls GitHub's "tool exited with errors" badge. An
@@ -167,17 +171,22 @@ def render_junit(run: dict) -> str:
         "skipped": str(skipped_count),
     })
     notes = [str(n) for n in run.get("notes") or []]
-    if notes:
+    if notes or findings:
         # <properties> must come before the testcases; the notes also go to the suite's system-out.
         props = ET.SubElement(suite, "properties")
         for i, n in enumerate(notes, 1):
             ET.SubElement(props, "property", attrib={"name": f"note.{i}", "value": n})
+        for i, f in enumerate(findings, 1):
+            ET.SubElement(props, "property", attrib={
+                "name": f"owasp_agentic.{i}", "value": json.dumps(f.get("owasp_agentic", [])),
+            })
     for f in findings:
         case = ET.SubElement(suite, "testcase", attrib={
             "classname": "argus.redteam",
             "name": f.get("probe_id", "unknown"),
             "time": f"{(f.get('target_latency_ms', 0) or 0) / 1000:.3f}",
         })
+        output = [json.dumps({"owasp_agentic": f.get("owasp_agentic", [])})]
         if f.get("verdict") == "fail":
             failure = ET.SubElement(case, "failure", attrib={
                 "type": f.get("severity", "info"),
@@ -191,8 +200,7 @@ def render_junit(run: dict) -> str:
             if f.get("remediation"):
                 failure.text += f"\nremediation: {f['remediation']}"
         elif f.get("verdict") == "warn":
-            sysout = ET.SubElement(case, "system-out")
-            sysout.text = f"warn ({f.get('severity')}): {f.get('reasoning','')}"
+            output.append(f"warn ({f.get('severity')}): {f.get('reasoning','')}")
         elif f.get("verdict") in _JUNIT_ERROR_VERDICTS:
             ET.SubElement(case, "error", attrib={
                 "type": f["verdict"],
@@ -205,8 +213,8 @@ def render_junit(run: dict) -> str:
         elif f.get("verdict") == "blocked_by_target":
             # A partial defense: the target refused at its gateway. Passing,
             # but say why so it is not mistaken for a judged pass.
-            sysout = ET.SubElement(case, "system-out")
-            sysout.text = f"blocked_by_target: {f.get('reasoning','')}"
+            output.append(f"blocked_by_target: {f.get('reasoning','')}")
+        ET.SubElement(case, "system-out").text = "\n".join(output)
     if notes:
         ET.SubElement(suite, "system-out").text = "\n".join(notes)
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(suites, encoding="unicode")

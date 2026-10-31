@@ -1,0 +1,40 @@
+framework: OWASP Top 10 for Agentic Applications
+edition: '2026'
+published: '2025-12-09'
+source_url: https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/
+sources:
+  - url: https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/
+    role: Official edition and publication date
+  - url: https://genai.owasp.org/2025/12/09/owasp-top-10-for-agentic-applications-the-benchmark-for-agentic-security-in-the-age-of-autonomous-ai/
+    role: Official category identifiers, titles, and incident-based risk descriptions
+categories:
+  - id: ASI01
+    name: Agent Goal Hijack
+    description: Attacker-controlled instructions redirect an agent away from its intended goal, including hidden prompts that turn an agent into an exfiltration engine.
+  - id: ASI02
+    name: Tool Misuse
+    description: An agent bends legitimate tools into harmful or destructive actions beyond their intended use.
+  - id: ASI03
+    name: Identity & Privilege Abuse
+    description: Agent credentials, identities, or delegated privileges are abused to operate beyond the intended scope of authority.
+  - id: ASI04
+    name: Agentic Supply Chain Vulnerabilities
+    description: Compromised or poisoned runtime components, including dynamically discovered MCP tools and agent ecosystem dependencies, undermine an agent's trusted supply chain.
+  - id: ASI05
+    name: Unexpected Code Execution
+    description: Agent execution paths, including natural-language-driven actions, unexpectedly execute attacker-controlled code.
+  - id: ASI06
+    name: Memory & Context Poisoning
+    description: Poisoned agent memory or retained context reshapes behavior beyond the initial interaction.
+  - id: ASI07
+    name: Insecure Inter-Agent Communication
+    description: Spoofed or insecure messages between agents misdirect cooperating agents or agent clusters.
+  - id: ASI08
+    name: Cascading Failures
+    description: False signals or failures propagate through automated agent pipelines and cause escalating downstream impact.
+  - id: ASI09
+    name: Human-Agent Trust Exploitation
+    description: An agent's confident or misleading explanations manipulate human operators into trusting or approving harmful actions.
+  - id: ASI10
+    name: Rogue Agents
+    description: Agents exhibit misalignment, concealment, or self-directed action outside their intended goals and governance.

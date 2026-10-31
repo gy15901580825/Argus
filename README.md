@@ -98,7 +98,7 @@ What Argus does:
   this release a stdio server runs on your machine and needs `--on-host`. See
   [`docs/cli.md`](docs/cli.md#scan-an-mcp-servers-tools).
 - **Scan suites** — pass `suite` instead of enumerating `probe_ids` on
-  `POST /api/v1/redteam/runs`: `owasp-llm-top10`, `mitre-atlas`,
+  `POST /api/v1/redteam/runs`: `owasp-llm-top10`, `owasp-agentic-top10`, `mitre-atlas`,
   `nist-ai-rmf`, `eu-ai-act`, `payments`, `mcp`.
 - **LLM-judge harness** with per-probe rubrics in
   `argus/rubrics/`. A fast model judges every
@@ -144,6 +144,13 @@ What Argus does:
   coverage section (what the library does and does not test) and, for
   probes with captured evidence (payment/MCP interactions), an evidence
   section alongside the judge's verdict.
+- **OWASP Agentic Top 10**: findings carry direct-risk tags for the
+  [2026 edition](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/).
+  A tag describes the risk the probe actually exercises. Prerequisites and
+  possible downstream effects do not earn additional tags. Coverage shows
+  all ten ASI categories and marks those with no mapped probes `absent`.
+  See the generated [probe mapping table](docs/probe-mapping.md) for current
+  counts; tags do not establish complete coverage or compliance.
 - **Daily cost cap + per-run cap** with predictive abort, so the judge
   bill stays bounded.
 - **Optional runtime guardrail control** — `PromptGuard` wraps Meta
@@ -435,6 +442,7 @@ conversation: false              # ...unless this is true, in which case the
 mappings:                        # required — drives the report's standards IDs
   atlas: ["AML.T0051.001"]
   owasp_llm: ["LLM01"]
+  owasp_agentic: []               # assign ASI01 only when goal hijack is actually tested
   nist_ai_rmf: ["MEASURE-2.6"]
   eu_ai_act: ["Article 15(3)"]
 judge:

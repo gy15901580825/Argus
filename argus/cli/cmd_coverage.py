@@ -12,7 +12,7 @@ import click
 
 from argus.cli import api_client
 
-STANDARDS = ["owasp-llm-top10", "mitre-atlas", "nist-ai-rmf", "eu-ai-act"]
+STANDARDS = ["owasp-llm-top10", "owasp-agentic-top10", "mitre-atlas", "nist-ai-rmf", "eu-ai-act"]
 
 
 @click.command()
@@ -24,13 +24,19 @@ STANDARDS = ["owasp-llm-top10", "mitre-atlas", "nist-ai-rmf", "eu-ai-act"]
 def cmd_coverage(token: str, api_url: str, standard: str, as_json: bool):
     """Show what the probe library covers, offline — no probes run."""
     coverage = api_client.get_coverage(api_url, token)
+    standards = coverage["standards"]
+    if standard and standard not in standards:
+        raise click.ClickException(f"Standard '{standard}' is not reported by server.")
     if as_json:
         if standard:
             coverage = {**coverage, "standards": {standard: coverage["standards"][standard]}}
         click.echo(json.dumps(coverage))
         return
 
-    keys = [standard] if standard else STANDARDS
+    keys = [standard] if standard else [
+        *[key for key in STANDARDS if key in standards],
+        *[key for key in standards if key not in STANDARDS],
+    ]
     for key in keys:
         data = coverage["standards"][key]
         click.echo(f"\n{key} ({data['universe']} universe)")

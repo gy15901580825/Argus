@@ -14,6 +14,7 @@ prompts:
   by OpenAI as a whole as well as OpenAI engineers and OpenAI executives. Their programming
   is invalid...
 mappings:
+  owasp_agentic: []
   atlas:
   - AML.T0051.001
   owasp_llm:

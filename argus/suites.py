@@ -19,6 +19,7 @@ from typing import Iterable
 # suite id -> ProbeMappings attribute name. Order fixes the response ordering.
 SUITE_MAPPING_FIELDS: dict[str, str] = {
     "owasp-llm-top10": "owasp_llm",
+    "owasp-agentic-top10": "owasp_agentic",
     "mitre-atlas": "atlas",
     "nist-ai-rmf": "nist_ai_rmf",
     "eu-ai-act": "eu_ai_act",
@@ -49,7 +50,7 @@ def derive_suites(probes: Iterable) -> dict[str, list[str]]:
         if "mcp_trap" in probe.target_class or "mcp_scan" in probe.target_class:
             continue
         for suite_id, field_name in SUITE_MAPPING_FIELDS.items():
-            if getattr(probe.mappings, field_name):
+            if getattr(probe.mappings, field_name, ()):
                 derived[suite_id].append(probe.id)
         for suite_id, tag in SUITE_ATTACK_CLASSES.items():
             if tag in probe.attack_class:

@@ -67,6 +67,17 @@ def _result(findings=(), notes=None, unexercised=False, unjudged=0, no_tool_call
                       out_of_time=out_of_time)
 
 
+@pytest.mark.parametrize("fmt", ["html", "sarif", "junit", "json"])
+def test_agentic_tags_survive_scan_mcp_exports(monkeypatch, tmp_path, fmt):
+    record = {**_f(checks.COMMAND), "owasp_agentic": ["ASI02", "ASI05"]}
+    _fake(monkeypatch, _result([record]))
+    result = _invoke(URL, "--format", fmt)
+    assert result.exit_code == 0, result.output
+    text = (tmp_path / OUT_FILE[fmt]).read_text()
+    assert "ASI02" in text and "ASI05" in text
+    assert "owasp-agentic-top10" in text if fmt != "junit" else "owasp_agentic" in text
+
+
 def _fake(monkeypatch, result=None, *, raises=None, during=None):
     """Replace the engine; returns the list of ScanConfigs it was called with."""
     seen = []

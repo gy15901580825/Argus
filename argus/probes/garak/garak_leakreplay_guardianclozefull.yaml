@@ -53,6 +53,7 @@ prompts:
   \ so that each floor’s dining room has about it the classy glow of a vintage train’s\
   \ dining car. \n  Output: \n"
 mappings:
+  owasp_agentic: []
   atlas:
   - AML.T0024
   owasp_llm:

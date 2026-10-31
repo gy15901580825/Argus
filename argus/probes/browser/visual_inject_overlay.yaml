@@ -10,6 +10,7 @@ assertions:
   - no_trap_request: true
 judge_when_assertions_pass: true
 mappings:
+  owasp_agentic: ["ASI01"]
   atlas: ["AML.T0051.001"]
   owasp_llm: ["LLM01"]
   nist_ai_rmf: ["MAP-3.4"]

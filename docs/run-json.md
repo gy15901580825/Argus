@@ -31,7 +31,11 @@ The top-level keys always appear in this order. `incomplete_reason`, `notes` and
 | `notes` | array of strings | Only when there is something to say: the incomplete reasons, and the warning when almost every probe was blocked with one HTTP code. `run` writes it; `mcp-trap` and `scan-mcp` do not. |
 | `judge` | object | Only when the run used the LLM judge (`run` with a judged probe, `scan-mcp` with the judge on). The judge it was configured with: `provider`, `fast_model`, `strong_model`, `api_base_host` (the host and port of a custom base URL, never the path or query, or null) and `fallback_provider` (the provider tried when a call fails, or null). With the `jev` judge, `api_base_host` is the TypeSafe host and `explain_model` names the text model set with `--judge-explain-model`; the key is absent otherwise. Each finding's `judge_model` says which model gave that verdict. |
 
-Each finding has the same keys as the engine's `Finding` record: `id`, `probe_id`, `attack_prompt`, `target_response`, `target_latency_ms`, `probed_at`, `verdict`, `severity`, `confidence`, `reasoning`, `judge_model`, `escalated_model`, `atlas_id`, `owasp_id`, `nist_id`, `eu_ai_act_id`, `created_at`, `evidence` and `remediation`.
+Each finding has the same keys as the engine's `Finding` record: `id`, `probe_id`, `attack_prompt`, `target_response`, `target_latency_ms`, `probed_at`, `verdict`, `severity`, `confidence`, `reasoning`, `judge_model`, `escalated_model`, `atlas_id`, `owasp_id`, `owasp_agentic`, `nist_id`, `eu_ai_act_id`, `created_at`, `evidence` and `remediation`.
+
+`owasp_agentic` is a list of direct-risk tags from the OWASP Top 10 for Agentic Applications, 2026 edition (`ASI01` through `ASI10`). Unmapped findings contain `[]`. Older records may omit this additive field; reports render those records with empty agentic mappings. Coverage uses the key `owasp-agentic-top10` and always lists all ten categories, including `absent` cells.
+
+HTML shows agentic tags beside each finding. SARIF stores the exact array in rule and result `properties.owasp_agentic`, with namespaced strings such as `OWASP-Agentic:ASI01` in `properties.tags`. JUnit stores one suite property per finding, named `owasp_agentic.1`, `owasp_agentic.2`, and so on in testcase order. Each value is a JSON array, including `[]` when unmapped. Each testcase's `system-out` starts with JSON metadata such as `{"owasp_agentic": ["ASI01"]}`; any warning or target-blocked explanation follows on a new line. This uses elements supported by strict xUnit2 consumers.
 
 `remediation` is how to fix the weakness the probe tests: the probe's own text when it has one, else a few sentences for each of the probe's attack classes, one class per line. It is the same for every finding of a probe, whatever the verdict, and it is an empty string when there is no text for the probe. Files written before this field existed do not have it.
 
@@ -50,7 +54,7 @@ A target spec can reference environment variables as `$VAR` or `${VAR}` in any s
 This rule does not know which variables are secret. A non-secret value such as a port number or a hostname is masked too, wherever its characters appear in free text. This over-redaction is deliberate. These fields are always written as the engine produced them, never masked:
 
 - run: `schema_version`, `argus_version`, `id`, `status`, `started_at`, `finished_at`, `coverage` and `target_spec.kind`
-- each finding: `id`, `probe_id`, `verdict`, `severity`, `probed_at`, `created_at`, `confidence`, `target_latency_ms`, `atlas_id`, `owasp_id`, `nist_id`, `eu_ai_act_id`, `judge_model`, `escalated_model` and `remediation`
+- each finding: `id`, `probe_id`, `verdict`, `severity`, `probed_at`, `created_at`, `confidence`, `target_latency_ms`, `atlas_id`, `owasp_id`, `owasp_agentic`, `nist_id`, `eu_ai_act_id`, `judge_model`, `escalated_model` and `remediation`
 
 ### Rule 2: secret-looking key names
 

@@ -6,6 +6,7 @@ never quietly omit the cells we do not cover.
 """
 
 import json
+import pytest
 
 from click.testing import CliRunner
 
@@ -42,6 +43,14 @@ FAKE_MANIFEST = {
             ],
         },
         "mitre-atlas": {"universe": "open", "cells": []},
+        "owasp-agentic-top10": {
+            "universe": "closed",
+            "cells": [
+                {"id": f"ASI{i:02d}", "name": "Agentic risk", "probes_in_library": 0,
+                 "probes_run": 0, "library_status": "absent", "run_status": "not_run", "verdicts": {}}
+                for i in range(1, 11)
+            ],
+        },
         "nist-ai-rmf": {"universe": "open", "cells": []},
         "eu-ai-act": {"universe": "open", "cells": []},
     },
@@ -113,3 +122,46 @@ def test_unknown_standard_is_rejected_not_silently_empty(monkeypatch):
 
     assert result.exit_code != 0
     assert "bogus-standard" in result.output
+
+
+@pytest.mark.parametrize("as_json", [False, True])
+def test_agentic_standard_includes_all_ten_absent_cells(monkeypatch, as_json):
+    monkeypatch.setattr(api_client, "get_coverage", lambda api_url, token: FAKE_MANIFEST)
+    args = ["--token", "t", "--api-url", "http://x", "--standard", "owasp-agentic-top10"]
+    result = CliRunner().invoke(cmd_coverage, args + (["--json"] if as_json else []))
+    assert result.exit_code == 0, result.output
+    if as_json:
+        standards = json.loads(result.output)["standards"]
+        assert list(standards) == ["owasp-agentic-top10"]
+        assert len(standards["owasp-agentic-top10"]["cells"]) == 10
+    else:
+        assert "closed universe" in result.output
+        assert "owasp-llm-top10" not in result.output
+    for i in range(1, 11):
+        assert f"ASI{i:02d}" in result.output
+    assert "absent" in result.output
+
+
+def test_default_coverage_accepts_legacy_and_future_server_standards(monkeypatch):
+    standards = {key: value for key, value in FAKE_MANIFEST["standards"].items()
+                 if key != "owasp-agentic-top10"}
+    standards.update({"future-b": {"universe": "open", "cells": []},
+                      "future-a": {"universe": "open", "cells": []}})
+    manifest = {**FAKE_MANIFEST, "standards": standards}
+    monkeypatch.setattr(api_client, "get_coverage", lambda api_url, token: manifest)
+    result = CliRunner().invoke(cmd_coverage, ["--token", "t", "--api-url", "http://x"])
+    assert result.exit_code == 0, result.output
+    assert "LLM10" in result.output
+    assert result.output.index("future-b") < result.output.index("future-a")
+    assert "ASI01" not in result.output
+
+
+@pytest.mark.parametrize("as_json", [False, True])
+def test_explicit_unavailable_standard_has_friendly_error(monkeypatch, as_json):
+    manifest = {**FAKE_MANIFEST, "standards": {"owasp-llm-top10": FAKE_MANIFEST["standards"]["owasp-llm-top10"]}}
+    monkeypatch.setattr(api_client, "get_coverage", lambda api_url, token: manifest)
+    args = ["--token", "t", "--api-url", "http://x", "--standard", "owasp-agentic-top10"]
+    result = CliRunner().invoke(cmd_coverage, args + (["--json"] if as_json else []))
+    assert result.exit_code == 1
+    assert "owasp-agentic-top10" in result.output and "not reported by server" in result.output
+    assert isinstance(result.exception, SystemExit)

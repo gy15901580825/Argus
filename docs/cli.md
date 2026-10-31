@@ -472,6 +472,32 @@ v1 limits:
 - One server per run. The scan does not read an agent's MCP config file.
 - The command payloads target POSIX shells.
 
+## OWASP Agentic mappings and coverage
+
+Argus maps probes to the [OWASP Top 10 for Agentic Applications, 2026 edition](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/), published December 9, 2025.
+These are direct-risk tags: each tag describes the risk a probe actually exercises.
+Related prerequisites and possible downstream effects do not earn additional tags.
+New findings carry an `owasp_agentic` list, or `[]` when the probe is unmapped.
+The tags appear in JSON, HTML, SARIF, and JUnit exports from `run`, `scan-mcp`, and `mcp-trap`.
+
+To inspect the installed server's library mappings without running probes:
+
+```sh
+argus-probe coverage --api-url "$ARGUS_API_URL" --token "$ARGUS_API_TOKEN" \
+  --standard owasp-agentic-top10
+```
+
+Add `--json` to read the same table as JSON. The `owasp-agentic-top10` coverage
+table always shows `ASI01` through `ASI10`, including categories with no mapped
+probes (`absent`). A category with mapped probes can still have gaps; these
+counts do not establish full coverage or compliance. Current library counts
+are in [the generated mapping table](https://github.com/gy15901580825/Argus/blob/main/docs/probe-mapping.md).
+Server runs can select mapped probes with `suite: "owasp-agentic-top10"`.
+
+Built-in probe YAML must declare `mappings.owasp_agentic` as a list of valid
+ASI IDs, with `[]` for unmapped probes. Older external probe packs may omit the
+field and load with empty agentic mappings.
+
 ## Subcommands
 
 ```

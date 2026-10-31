@@ -487,7 +487,7 @@ def test_scan_skill_runs_tasks_and_builds_run_dict(tmp_path, monkeypatch):
     assert len(runs) == 3 and ev_decoys is decoys and ev_name == "md-format"
     assert calls["skill_files"] == {"SKILL.md": (src / "SKILL.md").read_text()}
 
-    assert run["findings"] == [{**finding, "remediation": ""}]
+    assert run["findings"] == [{**finding, "remediation": "", "owasp_agentic": []}]
     assert run["target_spec"] == {"kind": "skill", "source": str(src), "skill": "md-format",
                                   "label": f"md-format ({src})"}
     assert run["coverage"] is None
@@ -614,7 +614,7 @@ def test_scan_skill_keeps_completed_tasks_when_one_fails(tmp_path, monkeypatch):
     run = scan_skill(str(_skill(tmp_path / "src")), subpath=None, n_tasks=3, echo=lambda s: None)
     assert len(fake.prompts) == 2
     assert len(calls["evaluate"][0]) == 1
-    assert run["findings"] == [{**finding, "remediation": ""}]
+    assert run["findings"] == [{**finding, "remediation": "", "owasp_agentic": []}]
     assert run["status"] == "incomplete"
     assert run["stopped_reason"].startswith("docker exec (")
     assert run["notes"][-1] == ("Stopped after 1 of 3 tasks: docker exec ([REDACTED]) timed out after 300 seconds; "

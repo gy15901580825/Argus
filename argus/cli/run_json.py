@@ -16,7 +16,7 @@ _SECRET_KEY_PARTS = ("secret", "password", "authorization", "credential", "cooki
 # Engine-generated fields put back after the scrub, so a short env value cannot mangle them.
 _RUN_FIELDS = ("id", "status", "started_at", "finished_at", "coverage")
 _FINDING_FIELDS = ("id", "probe_id", "verdict", "severity", "probed_at", "created_at",
-                   "confidence", "target_latency_ms", "atlas_id", "owasp_id", "nist_id", "eu_ai_act_id",
+                   "confidence", "target_latency_ms", "atlas_id", "owasp_id", "owasp_agentic", "nist_id", "eu_ai_act_id",
                    "judge_model", "escalated_model", "remediation")
 
 

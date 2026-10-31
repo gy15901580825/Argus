@@ -21,246 +21,264 @@ Counts below are **every mapping a probe declares**, not one "primary" category 
 | LLM09 | Misinformation | 15 | covered |
 | LLM10 | Unbounded Consumption | 3 | covered |
 
+## OWASP Agentic Top 10
+
+[OWASP Top 10 for Agentic Applications, 2026 edition](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/), published 2025-12-09. Agentic mappings are direct-risk tags: they identify the risk a probe actually exercises. Related prerequisites and possible downstream effects do not earn a tag. A cell marked `absent` has no mapped probe; these counts do not establish complete coverage or compliance. See [mapping rationale](owasp-agentic-mapping.md) for the evidence behind these assignments.
+
+| OWASP Agentic | Category | Probes in library | Library status |
+|---|---|---:|---|
+| ASI01 | Agent Goal Hijack | 40 | covered |
+| ASI02 | Tool Misuse | 48 | covered |
+| ASI03 | Identity & Privilege Abuse | 21 | covered |
+| ASI04 | Agentic Supply Chain Vulnerabilities | 15 | covered |
+| ASI05 | Unexpected Code Execution | 5 | covered |
+| ASI06 | Memory & Context Poisoning | 0 | absent |
+| ASI07 | Insecure Inter-Agent Communication | 0 | absent |
+| ASI08 | Cascading Failures | 0 | absent |
+| ASI09 | Human-Agent Trust Exploitation | 0 | absent |
+| ASI10 | Rogue Agents | 0 | absent |
+
 ## Cells touched, per standard
 
 | Standard | Cells touched |
 |---|---:|
 | OWASP LLM Top 10 (owasp-llm-top10) | 10 |
+| OWASP Agentic Top 10 (owasp-agentic-top10) | 5 |
 | MITRE ATLAS (mitre-atlas) | 15 |
 | NIST AI RMF (nist-ai-rmf) | 13 |
 | EU AI Act (eu-ai-act) | 8 |
 
 ## Probes
 
-| Probe ID | Attack class | Technique | Severity | Target class |
-|---|---|---|---|---|
-| `agents_md_npm_install` | indirect-injection,supply-chain | repo-instruction-file,missing-human-gate | high | tool-using |
-| `ambient_persuasion_pasted_content` | indirect-injection,excessive-agency | ambient-persuasion,social-engineering | high | http-chat,tool-using,browser-using |
-| `ambient_persuasion_url_fetch` | indirect-injection,excessive-agency | ambient-persuasion,social-engineering | high | browser-using,tool-using |
-| `autonomous_credential_grab` | excessive-agency,credential-extraction | goal-pressure,missing-human-gate | high | tool-using |
-| `browser_dom_inject_alt_text` | indirect-injection | alt-text-injection | medium | browser-using |
-| `browser_dom_inject_aria_label` | indirect-injection | aria-label-injection | medium | browser-using |
-| `browser_dom_inject_basic` | indirect-injection |  | high | browser-using |
-| `browser_dom_inject_css_visibility_hidden` | indirect-injection | css-hidden-injection | medium | browser-using |
-| `browser_dom_inject_data_attr` | indirect-injection | data-attr-injection | medium | browser-using |
-| `browser_dom_inject_hidden_input` | indirect-injection | hidden-input-injection | medium | browser-using |
-| `browser_dom_inject_html_comment` | indirect-injection | html-comment-injection | medium | browser-using |
-| `browser_dom_inject_meta_description` | indirect-injection | meta-tag-injection | medium | browser-using |
-| `browser_dom_inject_off_screen` | indirect-injection | off-screen-injection | medium | browser-using |
-| `browser_dom_inject_title_attr` | indirect-injection | title-attr-injection | medium | browser-using |
-| `browser_os_cmd_data_export` | tool-abuse,data-exfil | os-command-injection | critical | browser-using |
-| `browser_os_cmd_dependency_update` | tool-abuse,supply-chain | os-command-injection | high | browser-using |
-| `browser_os_cmd_install_tutorial` | tool-abuse | os-command-injection,remote-code-execution | critical | browser-using |
-| `browser_ui_phishing_2fa_code` | credential-extraction | mfa-bypass | high | browser-using |
-| `browser_ui_phishing_api_key` | credential-extraction | api-key-extraction | high | browser-using |
-| `browser_ui_phishing_credit_card` | credential-extraction | financial-extraction | critical | browser-using |
-| `browser_ui_phishing_government_id` | credential-extraction | pii-extraction,identity-extraction | critical | browser-using |
-| `browser_ui_phishing_login_form` | credential-extraction |  | critical | browser-using |
-| `browser_ui_phishing_oauth_consent` | credential-extraction | oauth-abuse | high | browser-using |
-| `browser_ui_phishing_recovery_phrase` | credential-extraction | financial-extraction,wallet-extraction | critical | browser-using |
-| `browser_ui_phishing_session_token` | credential-extraction | session-token-extraction | high | browser-using |
-| `browser_ui_phishing_ssh_key` | credential-extraction | ssh-key-extraction | high | browser-using |
-| `browser_visual_inject_chart_label` | indirect-injection | chart-label-injection | medium | browser-using |
-| `browser_visual_inject_handwritten` | indirect-injection | handwritten-injection | medium | browser-using |
-| `browser_visual_inject_multilingual` | indirect-injection | multilingual-injection | medium | browser-using |
-| `browser_visual_inject_overlay` | indirect-injection |  | medium | browser-using |
-| `browser_visual_inject_qr_code` | indirect-injection | steganographic,qr-code-injection | medium | browser-using |
-| `browser_visual_inject_screenshot_of_terminal` | indirect-injection | terminal-screenshot-injection | medium | browser-using |
-| `browser_visual_inject_stylized_logo` | indirect-injection | logo-injection | medium | browser-using |
-| `browser_visual_inject_tiny_text` | indirect-injection | tiny-text-injection | medium | browser-using |
-| `browser_visual_inject_white_on_white` | indirect-injection | low-contrast-injection | medium | browser-using |
-| `encoded_payload_base64_link` | indirect-injection,prompt-injection | encoded-payload | medium | http-chat,tool-using,browser-using |
-| `encoded_payload_hex_codeblock` | indirect-injection,prompt-injection | encoded-payload | medium | http-chat,tool-using |
-| `garak_ansiescape_ansiescaped` | output-handling |  | medium | http-chat |
-| `garak_ansiescape_ansiraw` | output-handling |  | medium | http-chat |
-| `garak_continuation_continueslursreclaimedslurs` | harmful-content |  | medium | http-chat |
-| `garak_continuation_continueslursreclaimedslursfull` | harmful-content |  | medium | http-chat |
-| `garak_dan_ablation_dan_11_0` | jailbreak |  | medium | http-chat |
-| `garak_dan_antidan` | jailbreak |  | medium | http-chat |
-| `garak_dan_autodancached` | jailbreak |  | medium | http-chat |
-| `garak_dan_chatgpt_image_markdown` | jailbreak |  | medium | http-chat |
-| `garak_dan_dan_10_0` | jailbreak |  | medium | http-chat |
-| `garak_dan_dan_6_0` | jailbreak |  | medium | http-chat |
-| `garak_dan_dan_6_2` | jailbreak |  | medium | http-chat |
-| `garak_dan_dan_7_0` | jailbreak |  | medium | http-chat |
-| `garak_dan_dan_8_0` | jailbreak |  | medium | http-chat |
-| `garak_dan_dan_9_0` | jailbreak |  | medium | http-chat |
-| `garak_dan_dan_jailbreak` | jailbreak |  | medium | http-chat |
-| `garak_dan_daninthewild` | jailbreak |  | medium | http-chat |
-| `garak_dan_daninthewildfull` | jailbreak |  | medium | http-chat |
-| `garak_dan_dude` | jailbreak |  | medium | http-chat |
-| `garak_dan_stan` | jailbreak |  | medium | http-chat |
-| `garak_divergence_repeat` | data-exfil |  | high | http-chat |
-| `garak_divergence_repeatextended` | data-exfil |  | high | http-chat |
-| `garak_donotanswer_discriminationexclusiontoxicityhatefuloffensive` | harmful-content |  | medium | http-chat |
-| `garak_donotanswer_humanchatbox` | harmful-content |  | medium | http-chat |
-| `garak_donotanswer_informationhazard` | harmful-content |  | medium | http-chat |
-| `garak_donotanswer_malicioususes` | harmful-content |  | medium | http-chat |
-| `garak_donotanswer_misinformationharms` | harmful-content |  | medium | http-chat |
-| `garak_glitch_glitch` | input-handling |  | low | http-chat |
-| `garak_glitch_glitchfull` | input-handling |  | low | http-chat |
-| `garak_goodside_davidjl` | prompt-injection |  | medium | http-chat |
-| `garak_goodside_tag` | prompt-injection |  | medium | http-chat |
-| `garak_goodside_threatenjson` | prompt-injection |  | medium | http-chat |
-| `garak_goodside_whoisriley` | prompt-injection |  | medium | http-chat |
-| `garak_grandma_slurs` | jailbreak |  | medium | http-chat |
-| `garak_grandma_substances` | jailbreak |  | medium | http-chat |
-| `garak_grandma_win10` | jailbreak |  | medium | http-chat |
-| `garak_grandma_win11` | jailbreak |  | medium | http-chat |
-| `garak_latentinjection_latentinjectionfactsnippeteiffel` | indirect-injection |  | high | http-chat |
-| `garak_latentinjection_latentinjectionfactsnippeteiffelfull` | indirect-injection |  | high | http-chat |
-| `garak_latentinjection_latentinjectionfactsnippetlegal` | indirect-injection |  | high | http-chat |
-| `garak_latentinjection_latentinjectionfactsnippetlegalfull` | indirect-injection |  | high | http-chat |
-| `garak_latentinjection_latentinjectionreport` | indirect-injection |  | high | http-chat |
-| `garak_latentinjection_latentinjectionreportfull` | indirect-injection |  | high | http-chat |
-| `garak_latentinjection_latentinjectionresume` | indirect-injection |  | high | http-chat |
-| `garak_latentinjection_latentinjectionresumefull` | indirect-injection |  | high | http-chat |
-| `garak_latentinjection_latentinjectiontranslationenfr` | indirect-injection |  | high | http-chat |
-| `garak_latentinjection_latentinjectiontranslationenfrfull` | indirect-injection |  | high | http-chat |
-| `garak_latentinjection_latentinjectiontranslationenzh` | indirect-injection |  | high | http-chat |
-| `garak_latentinjection_latentinjectiontranslationenzhfull` | indirect-injection |  | high | http-chat |
-| `garak_latentinjection_latentjailbreak` | indirect-injection |  | high | http-chat |
-| `garak_latentinjection_latentjailbreakfull` | indirect-injection |  | high | http-chat |
-| `garak_latentinjection_latentwhois` | indirect-injection |  | high | http-chat |
-| `garak_leakreplay_guardiancloze` | data-exfil |  | high | http-chat |
-| `garak_leakreplay_guardianclozefull` | data-exfil |  | high | http-chat |
-| `garak_leakreplay_guardiancomplete` | data-exfil |  | high | http-chat |
-| `garak_leakreplay_guardiancompletefull` | data-exfil |  | high | http-chat |
-| `garak_leakreplay_literaturecloze` | data-exfil |  | high | http-chat |
-| `garak_leakreplay_literatureclozefull` | data-exfil |  | high | http-chat |
-| `garak_leakreplay_literaturecomplete` | data-exfil |  | high | http-chat |
-| `garak_leakreplay_literaturecompletefull` | data-exfil |  | high | http-chat |
-| `garak_leakreplay_nytcloze` | data-exfil |  | high | http-chat |
-| `garak_leakreplay_nytclozefull` | data-exfil |  | high | http-chat |
-| `garak_leakreplay_nytcomplete` | data-exfil |  | high | http-chat |
-| `garak_leakreplay_nytcompletefull` | data-exfil |  | high | http-chat |
-| `garak_leakreplay_pottercloze` | data-exfil |  | high | http-chat |
-| `garak_leakreplay_potterclozefull` | data-exfil |  | high | http-chat |
-| `garak_leakreplay_pottercomplete` | data-exfil |  | high | http-chat |
-| `garak_leakreplay_pottercompletefull` | data-exfil |  | high | http-chat |
-| `garak_malwaregen_evasion` | harmful-content |  | medium | http-chat |
-| `garak_malwaregen_payload` | harmful-content |  | medium | http-chat |
-| `garak_malwaregen_subfunctions` | harmful-content |  | medium | http-chat |
-| `garak_malwaregen_toplevel` | harmful-content |  | medium | http-chat |
-| `garak_misleading_falseassertion` | harmful-content |  | medium | http-chat |
-| `garak_packagehallucination_dart` | harmful-content |  | medium | http-chat |
-| `garak_packagehallucination_javascript` | harmful-content |  | medium | http-chat |
-| `garak_packagehallucination_perl` | harmful-content |  | medium | http-chat |
-| `garak_packagehallucination_python` | harmful-content |  | medium | http-chat |
-| `garak_packagehallucination_rakuland` | harmful-content |  | medium | http-chat |
-| `garak_packagehallucination_ruby` | harmful-content |  | medium | http-chat |
-| `garak_packagehallucination_rust` | harmful-content |  | medium | http-chat |
-| `garak_promptinject_hijackhatehumans` | prompt-injection |  | medium | http-chat |
-| `garak_promptinject_hijackhatehumansfull` | prompt-injection |  | medium | http-chat |
-| `garak_promptinject_hijackkillhumans` | prompt-injection |  | medium | http-chat |
-| `garak_promptinject_hijackkillhumansfull` | prompt-injection |  | medium | http-chat |
-| `garak_promptinject_hijacklongprompt` | prompt-injection |  | medium | http-chat |
-| `garak_promptinject_hijacklongpromptfull` | prompt-injection |  | medium | http-chat |
-| `garak_realtoxicityprompts_rtpblank` | harmful-content |  | high | http-chat |
-| `garak_realtoxicityprompts_rtpflirtation` | harmful-content |  | high | http-chat |
-| `garak_realtoxicityprompts_rtpidentity_attack` | harmful-content |  | high | http-chat |
-| `garak_realtoxicityprompts_rtpinsult` | harmful-content |  | high | http-chat |
-| `garak_realtoxicityprompts_rtpprofanity` | harmful-content |  | high | http-chat |
-| `garak_realtoxicityprompts_rtpsevere_toxicity` | harmful-content |  | high | http-chat |
-| `garak_realtoxicityprompts_rtpsexually_explicit` | harmful-content |  | high | http-chat |
-| `garak_realtoxicityprompts_rtpthreat` | harmful-content |  | high | http-chat |
-| `garak_snowball_graphconnectivity` | data-exfil |  | high | http-chat |
-| `garak_snowball_graphconnectivityfull` | data-exfil |  | high | http-chat |
-| `garak_snowball_primes` | data-exfil |  | high | http-chat |
-| `garak_snowball_primesfull` | data-exfil |  | high | http-chat |
-| `garak_snowball_senators` | data-exfil |  | high | http-chat |
-| `garak_snowball_senatorsfull` | data-exfil |  | high | http-chat |
-| `guardrail_log_noise` | excessive-agency,prompt-injection | log-noise,missing-human-gate | high | tool-using |
-| `guardrail_log_noise_control` | excessive-agency | missing-human-gate | high | tool-using |
-| `install_time_postinstall_hook` | supply-chain | install-time-exec,unauthorized-trigger-source | high | tool-using |
-| `install_time_preinstall_script` | supply-chain | install-time-exec,unauthorized-trigger-source | high | tool-using |
-| `mcp_budget_unbounded_tool_loop` | mcp-abuse,resource-abuse | tool-poisoning,unbounded-loop | medium | mcp_agent |
-| `mcp_confused_deputy_chained_forward` | mcp-abuse,data-exfil | confused-deputy,chained-forward | critical | mcp_agent |
-| `mcp_confused_deputy_result_injection` | mcp-abuse,data-exfil | confused-deputy | critical | mcp_agent |
-| `mcp_credential_lure_api_key` | mcp-abuse,credential-extraction | credential-lure | critical | mcp_agent |
-| `mcp_credential_lure_compliance_framing` | mcp-abuse,credential-extraction | credential-lure,compliance-framing | critical | mcp_agent |
-| `mcp_poison_description_exfil` | mcp-abuse,data-exfil | tool-poisoning | critical | mcp_agent |
-| `mcp_poison_description_multi_turn` | mcp-abuse,data-exfil | tool-poisoning,multi-turn | critical | mcp_agent |
-| `mcp_poison_non_english` | mcp-abuse,data-exfil | tool-poisoning,non-english | critical | mcp_agent |
-| `mcp_rugpull_after_relist` | mcp-abuse,supply-chain | rug-pull | high | mcp_agent |
-| `mcp_rugpull_silent_escalation` | mcp-abuse,supply-chain | rug-pull,silent-escalation | high | mcp_agent |
-| `mcp_scan_command_execution` | mcp-abuse,tool-abuse | command-injection | critical | mcp_scan |
-| `mcp_scan_cross_session_leak` | mcp-abuse,data-exfil | cross-session-leak | medium | mcp_scan |
-| `mcp_scan_description_instructions` | mcp-abuse,indirect-injection | tool-description-injection | high | mcp_scan |
-| `mcp_scan_hidden_characters` | mcp-abuse,indirect-injection | hidden-characters | high | mcp_scan |
-| `mcp_scan_input_reflection` | mcp-abuse,indirect-injection | input-reflection | low | mcp_scan |
-| `mcp_scan_path_traversal` | mcp-abuse,tool-abuse,data-exfil | path-traversal | high | mcp_scan |
-| `mcp_scan_readonly_tool_wrote` | mcp-abuse,excessive-agency | annotation-mismatch | high | mcp_scan |
-| `mcp_scan_result_injection` | mcp-abuse,indirect-injection | result-injection | high | mcp_scan |
-| `mcp_scan_schema_instructions` | mcp-abuse,indirect-injection | schema-injection | high | mcp_scan |
-| `mcp_scan_secret_in_result` | mcp-abuse,data-exfil,credential-extraction | secret-in-result | high | mcp_scan |
-| `mcp_scan_tool_list_changed` | mcp-abuse,supply-chain | rug-pull,tool-list-change | medium | mcp_scan |
-| `mcp_server_foreign_origin` | mcp-abuse | cross-origin-request,dns-rebinding,cors-wildcard | high | mcp_server |
-| `mcp_server_known_vulnerable_version` | mcp-abuse,supply-chain | known-vulnerable-component | medium | mcp_server |
-| `mcp_server_no_auth` | mcp-abuse | missing-authentication | medium | mcp_server |
-| `mcp_server_sensitive_tools` | mcp-abuse,credential-extraction | sensitive-tool-exposure | high | mcp_server |
-| `mcp_shadow_claims_newer_version` | mcp-abuse,supply-chain | tool-shadowing,version-spoofing | high | mcp_agent |
-| `mcp_shadow_near_name` | mcp-abuse,supply-chain | tool-shadowing | high | mcp_agent |
-| `mcp_trap_confused_deputy` | mcp-abuse,data-exfil | confused-deputy | critical | mcp_trap |
-| `mcp_trap_credential_lure` | mcp-abuse,credential-extraction | credential-lure | critical | mcp_trap |
-| `mcp_trap_rug_pull` | mcp-abuse,supply-chain | rug-pull,silent-escalation | high | mcp_trap |
-| `mcp_trap_shadowing` | mcp-abuse,supply-chain | tool-shadowing | high | mcp_trap |
-| `mcp_trap_tool_poisoning` | mcp-abuse,data-exfil | tool-poisoning | critical | mcp_trap |
-| `missing_allowlist_arbitrary_egress` | excessive-agency,tool-abuse | missing-allowlist | high | tool-using,browser-using |
-| `missing_budget_unbounded_loop` | excessive-agency,tool-abuse | missing-budget-limit | medium | tool-using |
-| `missing_confirmation_irreversible` | excessive-agency | missing-confirmation-prompt | high | tool-using |
-| `missing_gate_cloud_api_call` | excessive-agency | missing-human-gate | critical | tool-using |
-| `missing_gate_file_write` | excessive-agency | missing-human-gate | high | tool-using |
-| `missing_gate_npm_install` | excessive-agency | missing-human-gate | high | tool-using |
-| `obfuscated_code_minified_js` | supply-chain,prompt-injection | obfuscated-code | high | http-chat,tool-using,browser-using |
-| `obfuscated_code_powershell_encoded` | supply-chain | obfuscated-code,os-command-injection | high | tool-using |
-| `owasp_01_prompt_injection_basic` | prompt-injection | direct | medium | http-chat |
-| `owasp_02_sensitive_info_disclosure` | data-exfil |  | high | http-chat |
-| `owasp_03_supply_chain` | supply-chain |  | medium | http-chat |
-| `owasp_04_poisoning` | poisoning |  | medium | http-chat |
-| `owasp_05_improper_output_handling` | output-handling |  | medium | http-chat |
-| `owasp_05_output_cmd_injection` | output-handling | command-injection | high | http-chat,tool-using |
-| `owasp_05_output_eval_injection` | output-handling | eval-injection | high | http-chat,tool-using |
-| `owasp_05_output_sql_rce` | output-handling | sql-injection | high | http-chat |
-| `owasp_05_output_svg_xss` | output-handling | xss | medium | http-chat |
-| `owasp_05_upload_svg_xss_render` | output-handling | xss,file-upload | high | http-upload |
-| `owasp_06_excessive_agency` | excessive-agency,tool-abuse |  | high | http-chat,tool-using |
-| `owasp_07_system_prompt_leakage` | data-exfil,prompt-injection |  | high | http-chat |
-| `owasp_08_vector_weaknesses` | poisoning | rag-injection | medium | http-chat,rag |
-| `owasp_09_misinformation` | misinformation | hallucination | medium | http-chat |
-| `owasp_10_unbounded_consumption` | resource-abuse | dos,cost-amplification | medium | http-chat |
-| `pay_approval_forged` | payment-abuse | wallet-policy | critical | payment_agent |
-| `pay_approval_threshold_split` | payment-abuse | wallet-policy | critical | payment_agent |
-| `pay_inject_authority_framing` | payment-abuse,indirect-injection | x402 | critical | payment_agent |
-| `pay_inject_failed_payment_lure` | payment-abuse,indirect-injection | x402 | critical | payment_agent |
-| `pay_inject_json_field` | payment-abuse,indirect-injection | x402 | critical | payment_agent |
-| `pay_inject_markdown_comment` | payment-abuse,indirect-injection | x402 | critical | payment_agent |
-| `pay_inject_non_english` | payment-abuse,indirect-injection | x402 | critical | payment_agent |
-| `pay_wallet_approve_max` | payment-abuse,excessive-agency | wallet-policy | critical | payment_agent |
-| `pay_wallet_key_exfil` | payment-abuse,credential-extraction | wallet-policy | critical | payment_agent |
-| `pay_wallet_key_exfil_compliance` | payment-abuse,credential-extraction | wallet-policy | critical | payment_agent |
-| `pay_wallet_key_exfil_encoded` | payment-abuse,credential-extraction | wallet-policy | critical | payment_agent |
-| `pay_wallet_key_exfil_partial` | payment-abuse,credential-extraction | wallet-policy | high | payment_agent |
-| `pay_wallet_limit_raise_multi_turn` | payment-abuse | wallet-policy,multi-turn | critical | payment_agent |
-| `pay_wallet_preapprove_year` | payment-abuse | wallet-policy | critical | payment_agent |
-| `pay_x402_asset_confusion` | payment-abuse | x402 | high | payment_agent |
-| `pay_x402_decimal_shift` | payment-abuse | x402 | critical | payment_agent |
-| `pay_x402_injected_followup_charge` | payment-abuse,indirect-injection | x402 | critical | payment_agent |
-| `pay_x402_micro_drain` | payment-abuse | x402 | high | payment_agent |
-| `pay_x402_no_budget_stated` | payment-abuse | x402 | critical | payment_agent |
-| `pay_x402_payee_switch_in_content` | payment-abuse,indirect-injection | x402 | critical | payment_agent |
-| `pay_x402_payto_swap` | payment-abuse,excessive-agency | x402 | critical | payment_agent |
-| `pay_x402_quote_tampering` | payment-abuse,excessive-agency | x402 | critical | payment_agent |
-| `pay_x402_retry_double_charge` | payment-abuse | idempotency,x402 | high | payment_agent |
-| `pay_x402_retry_total_cap` | payment-abuse | idempotency,x402 | high | payment_agent |
-| `pay_x402_subtle_overcharge` | payment-abuse | x402 | high | payment_agent |
-| `pay_x402_zero_address_payee` | payment-abuse | x402 | high | payment_agent |
-| `shadow_credentials_env_exfil` | supply-chain,credential-extraction,data-exfil | shadow-credentials | critical | tool-using |
-| `shadow_credentials_oauth_webhook` | supply-chain,credential-extraction,data-exfil | shadow-credentials | critical | tool-using |
-| `syscard_bon` | jailbreak | stochastic | medium | http-chat |
-| `syscard_confused_deputy` | tool-abuse,indirect-injection |  | high | http-chat,tool-using |
-| `syscard_crescendo` | jailbreak | multi-turn | medium | http-chat |
-| `syscard_many_shot_jailbreak` | jailbreak | context-exploitation | medium | http-chat |
-| `syscard_sleeper_agent` | jailbreak | backdoor,alignment-faking | high | http-chat |
-| `unicode_invisible_smuggling` | indirect-injection,prompt-injection | obfuscated-payload,unicode-confusable | high | http-chat,tool-using,rag,browser-using |
-| `vllm_server_known_vulnerable_version` | supply-chain,resource-abuse | known-vulnerable-component | medium | vllm_server |
+| Probe ID | Attack class | Technique | Severity | Target class | OWASP Agentic IDs |
+|---|---|---|---|---|---|
+| `agents_md_npm_install` | indirect-injection,supply-chain | repo-instruction-file,missing-human-gate | high | tool-using | ASI01, ASI02, ASI04 |
+| `ambient_persuasion_pasted_content` | indirect-injection,excessive-agency | ambient-persuasion,social-engineering | high | http-chat,tool-using,browser-using | ASI01, ASI02 |
+| `ambient_persuasion_url_fetch` | indirect-injection,excessive-agency | ambient-persuasion,social-engineering | high | browser-using,tool-using | ASI01, ASI02 |
+| `autonomous_credential_grab` | excessive-agency,credential-extraction | goal-pressure,missing-human-gate | high | tool-using | ASI02, ASI03 |
+| `browser_dom_inject_alt_text` | indirect-injection | alt-text-injection | medium | browser-using | ASI01 |
+| `browser_dom_inject_aria_label` | indirect-injection | aria-label-injection | medium | browser-using | ASI01 |
+| `browser_dom_inject_basic` | indirect-injection |  | high | browser-using | ASI01 |
+| `browser_dom_inject_css_visibility_hidden` | indirect-injection | css-hidden-injection | medium | browser-using | ASI01 |
+| `browser_dom_inject_data_attr` | indirect-injection | data-attr-injection | medium | browser-using | ASI01 |
+| `browser_dom_inject_hidden_input` | indirect-injection | hidden-input-injection | medium | browser-using | ASI01 |
+| `browser_dom_inject_html_comment` | indirect-injection | html-comment-injection | medium | browser-using | ASI01 |
+| `browser_dom_inject_meta_description` | indirect-injection | meta-tag-injection | medium | browser-using | ASI01 |
+| `browser_dom_inject_off_screen` | indirect-injection | off-screen-injection | medium | browser-using | ASI01 |
+| `browser_dom_inject_title_attr` | indirect-injection | title-attr-injection | medium | browser-using | ASI01 |
+| `browser_os_cmd_data_export` | tool-abuse,data-exfil | os-command-injection | critical | browser-using | ASI01, ASI02, ASI05 |
+| `browser_os_cmd_dependency_update` | tool-abuse,supply-chain | os-command-injection | high | browser-using | ASI01, ASI02, ASI04 |
+| `browser_os_cmd_install_tutorial` | tool-abuse | os-command-injection,remote-code-execution | critical | browser-using | ASI01, ASI02, ASI05 |
+| `browser_ui_phishing_2fa_code` | credential-extraction | mfa-bypass | high | browser-using | ASI03 |
+| `browser_ui_phishing_api_key` | credential-extraction | api-key-extraction | high | browser-using | ASI03 |
+| `browser_ui_phishing_credit_card` | credential-extraction | financial-extraction | critical | browser-using | [] |
+| `browser_ui_phishing_government_id` | credential-extraction | pii-extraction,identity-extraction | critical | browser-using | [] |
+| `browser_ui_phishing_login_form` | credential-extraction |  | critical | browser-using | ASI03 |
+| `browser_ui_phishing_oauth_consent` | credential-extraction | oauth-abuse | high | browser-using | ASI03 |
+| `browser_ui_phishing_recovery_phrase` | credential-extraction | financial-extraction,wallet-extraction | critical | browser-using | ASI03 |
+| `browser_ui_phishing_session_token` | credential-extraction | session-token-extraction | high | browser-using | ASI03 |
+| `browser_ui_phishing_ssh_key` | credential-extraction | ssh-key-extraction | high | browser-using | ASI03 |
+| `browser_visual_inject_chart_label` | indirect-injection | chart-label-injection | medium | browser-using | ASI01 |
+| `browser_visual_inject_handwritten` | indirect-injection | handwritten-injection | medium | browser-using | ASI01 |
+| `browser_visual_inject_multilingual` | indirect-injection | multilingual-injection | medium | browser-using | ASI01 |
+| `browser_visual_inject_overlay` | indirect-injection |  | medium | browser-using | ASI01 |
+| `browser_visual_inject_qr_code` | indirect-injection | steganographic,qr-code-injection | medium | browser-using | ASI01 |
+| `browser_visual_inject_screenshot_of_terminal` | indirect-injection | terminal-screenshot-injection | medium | browser-using | ASI01 |
+| `browser_visual_inject_stylized_logo` | indirect-injection | logo-injection | medium | browser-using | ASI01 |
+| `browser_visual_inject_tiny_text` | indirect-injection | tiny-text-injection | medium | browser-using | ASI01 |
+| `browser_visual_inject_white_on_white` | indirect-injection | low-contrast-injection | medium | browser-using | ASI01 |
+| `encoded_payload_base64_link` | indirect-injection,prompt-injection | encoded-payload | medium | http-chat,tool-using,browser-using | [] |
+| `encoded_payload_hex_codeblock` | indirect-injection,prompt-injection | encoded-payload | medium | http-chat,tool-using | [] |
+| `garak_ansiescape_ansiescaped` | output-handling |  | medium | http-chat | [] |
+| `garak_ansiescape_ansiraw` | output-handling |  | medium | http-chat | [] |
+| `garak_continuation_continueslursreclaimedslurs` | harmful-content |  | medium | http-chat | [] |
+| `garak_continuation_continueslursreclaimedslursfull` | harmful-content |  | medium | http-chat | [] |
+| `garak_dan_ablation_dan_11_0` | jailbreak |  | medium | http-chat | [] |
+| `garak_dan_antidan` | jailbreak |  | medium | http-chat | [] |
+| `garak_dan_autodancached` | jailbreak |  | medium | http-chat | [] |
+| `garak_dan_chatgpt_image_markdown` | jailbreak |  | medium | http-chat | [] |
+| `garak_dan_dan_10_0` | jailbreak |  | medium | http-chat | [] |
+| `garak_dan_dan_6_0` | jailbreak |  | medium | http-chat | [] |
+| `garak_dan_dan_6_2` | jailbreak |  | medium | http-chat | [] |
+| `garak_dan_dan_7_0` | jailbreak |  | medium | http-chat | [] |
+| `garak_dan_dan_8_0` | jailbreak |  | medium | http-chat | [] |
+| `garak_dan_dan_9_0` | jailbreak |  | medium | http-chat | [] |
+| `garak_dan_dan_jailbreak` | jailbreak |  | medium | http-chat | [] |
+| `garak_dan_daninthewild` | jailbreak |  | medium | http-chat | [] |
+| `garak_dan_daninthewildfull` | jailbreak |  | medium | http-chat | [] |
+| `garak_dan_dude` | jailbreak |  | medium | http-chat | [] |
+| `garak_dan_stan` | jailbreak |  | medium | http-chat | [] |
+| `garak_divergence_repeat` | data-exfil |  | high | http-chat | [] |
+| `garak_divergence_repeatextended` | data-exfil |  | high | http-chat | [] |
+| `garak_donotanswer_discriminationexclusiontoxicityhatefuloffensive` | harmful-content |  | medium | http-chat | [] |
+| `garak_donotanswer_humanchatbox` | harmful-content |  | medium | http-chat | [] |
+| `garak_donotanswer_informationhazard` | harmful-content |  | medium | http-chat | [] |
+| `garak_donotanswer_malicioususes` | harmful-content |  | medium | http-chat | [] |
+| `garak_donotanswer_misinformationharms` | harmful-content |  | medium | http-chat | [] |
+| `garak_glitch_glitch` | input-handling |  | low | http-chat | [] |
+| `garak_glitch_glitchfull` | input-handling |  | low | http-chat | [] |
+| `garak_goodside_davidjl` | prompt-injection |  | medium | http-chat | [] |
+| `garak_goodside_tag` | prompt-injection |  | medium | http-chat | [] |
+| `garak_goodside_threatenjson` | prompt-injection |  | medium | http-chat | [] |
+| `garak_goodside_whoisriley` | prompt-injection |  | medium | http-chat | [] |
+| `garak_grandma_slurs` | jailbreak |  | medium | http-chat | [] |
+| `garak_grandma_substances` | jailbreak |  | medium | http-chat | [] |
+| `garak_grandma_win10` | jailbreak |  | medium | http-chat | [] |
+| `garak_grandma_win11` | jailbreak |  | medium | http-chat | [] |
+| `garak_latentinjection_latentinjectionfactsnippeteiffel` | indirect-injection |  | high | http-chat | [] |
+| `garak_latentinjection_latentinjectionfactsnippeteiffelfull` | indirect-injection |  | high | http-chat | [] |
+| `garak_latentinjection_latentinjectionfactsnippetlegal` | indirect-injection |  | high | http-chat | [] |
+| `garak_latentinjection_latentinjectionfactsnippetlegalfull` | indirect-injection |  | high | http-chat | [] |
+| `garak_latentinjection_latentinjectionreport` | indirect-injection |  | high | http-chat | [] |
+| `garak_latentinjection_latentinjectionreportfull` | indirect-injection |  | high | http-chat | [] |
+| `garak_latentinjection_latentinjectionresume` | indirect-injection |  | high | http-chat | [] |
+| `garak_latentinjection_latentinjectionresumefull` | indirect-injection |  | high | http-chat | [] |
+| `garak_latentinjection_latentinjectiontranslationenfr` | indirect-injection |  | high | http-chat | [] |
+| `garak_latentinjection_latentinjectiontranslationenfrfull` | indirect-injection |  | high | http-chat | [] |
+| `garak_latentinjection_latentinjectiontranslationenzh` | indirect-injection |  | high | http-chat | [] |
+| `garak_latentinjection_latentinjectiontranslationenzhfull` | indirect-injection |  | high | http-chat | [] |
+| `garak_latentinjection_latentjailbreak` | indirect-injection |  | high | http-chat | [] |
+| `garak_latentinjection_latentjailbreakfull` | indirect-injection |  | high | http-chat | [] |
+| `garak_latentinjection_latentwhois` | indirect-injection |  | high | http-chat | [] |
+| `garak_leakreplay_guardiancloze` | data-exfil |  | high | http-chat | [] |
+| `garak_leakreplay_guardianclozefull` | data-exfil |  | high | http-chat | [] |
+| `garak_leakreplay_guardiancomplete` | data-exfil |  | high | http-chat | [] |
+| `garak_leakreplay_guardiancompletefull` | data-exfil |  | high | http-chat | [] |
+| `garak_leakreplay_literaturecloze` | data-exfil |  | high | http-chat | [] |
+| `garak_leakreplay_literatureclozefull` | data-exfil |  | high | http-chat | [] |
+| `garak_leakreplay_literaturecomplete` | data-exfil |  | high | http-chat | [] |
+| `garak_leakreplay_literaturecompletefull` | data-exfil |  | high | http-chat | [] |
+| `garak_leakreplay_nytcloze` | data-exfil |  | high | http-chat | [] |
+| `garak_leakreplay_nytclozefull` | data-exfil |  | high | http-chat | [] |
+| `garak_leakreplay_nytcomplete` | data-exfil |  | high | http-chat | [] |
+| `garak_leakreplay_nytcompletefull` | data-exfil |  | high | http-chat | [] |
+| `garak_leakreplay_pottercloze` | data-exfil |  | high | http-chat | [] |
+| `garak_leakreplay_potterclozefull` | data-exfil |  | high | http-chat | [] |
+| `garak_leakreplay_pottercomplete` | data-exfil |  | high | http-chat | [] |
+| `garak_leakreplay_pottercompletefull` | data-exfil |  | high | http-chat | [] |
+| `garak_malwaregen_evasion` | harmful-content |  | medium | http-chat | [] |
+| `garak_malwaregen_payload` | harmful-content |  | medium | http-chat | [] |
+| `garak_malwaregen_subfunctions` | harmful-content |  | medium | http-chat | [] |
+| `garak_malwaregen_toplevel` | harmful-content |  | medium | http-chat | [] |
+| `garak_misleading_falseassertion` | harmful-content |  | medium | http-chat | [] |
+| `garak_packagehallucination_dart` | harmful-content |  | medium | http-chat | [] |
+| `garak_packagehallucination_javascript` | harmful-content |  | medium | http-chat | [] |
+| `garak_packagehallucination_perl` | harmful-content |  | medium | http-chat | [] |
+| `garak_packagehallucination_python` | harmful-content |  | medium | http-chat | [] |
+| `garak_packagehallucination_rakuland` | harmful-content |  | medium | http-chat | [] |
+| `garak_packagehallucination_ruby` | harmful-content |  | medium | http-chat | [] |
+| `garak_packagehallucination_rust` | harmful-content |  | medium | http-chat | [] |
+| `garak_promptinject_hijackhatehumans` | prompt-injection |  | medium | http-chat | [] |
+| `garak_promptinject_hijackhatehumansfull` | prompt-injection |  | medium | http-chat | [] |
+| `garak_promptinject_hijackkillhumans` | prompt-injection |  | medium | http-chat | [] |
+| `garak_promptinject_hijackkillhumansfull` | prompt-injection |  | medium | http-chat | [] |
+| `garak_promptinject_hijacklongprompt` | prompt-injection |  | medium | http-chat | [] |
+| `garak_promptinject_hijacklongpromptfull` | prompt-injection |  | medium | http-chat | [] |
+| `garak_realtoxicityprompts_rtpblank` | harmful-content |  | high | http-chat | [] |
+| `garak_realtoxicityprompts_rtpflirtation` | harmful-content |  | high | http-chat | [] |
+| `garak_realtoxicityprompts_rtpidentity_attack` | harmful-content |  | high | http-chat | [] |
+| `garak_realtoxicityprompts_rtpinsult` | harmful-content |  | high | http-chat | [] |
+| `garak_realtoxicityprompts_rtpprofanity` | harmful-content |  | high | http-chat | [] |
+| `garak_realtoxicityprompts_rtpsevere_toxicity` | harmful-content |  | high | http-chat | [] |
+| `garak_realtoxicityprompts_rtpsexually_explicit` | harmful-content |  | high | http-chat | [] |
+| `garak_realtoxicityprompts_rtpthreat` | harmful-content |  | high | http-chat | [] |
+| `garak_snowball_graphconnectivity` | data-exfil |  | high | http-chat | [] |
+| `garak_snowball_graphconnectivityfull` | data-exfil |  | high | http-chat | [] |
+| `garak_snowball_primes` | data-exfil |  | high | http-chat | [] |
+| `garak_snowball_primesfull` | data-exfil |  | high | http-chat | [] |
+| `garak_snowball_senators` | data-exfil |  | high | http-chat | [] |
+| `garak_snowball_senatorsfull` | data-exfil |  | high | http-chat | [] |
+| `guardrail_log_noise` | excessive-agency,prompt-injection | log-noise,missing-human-gate | high | tool-using | ASI02 |
+| `guardrail_log_noise_control` | excessive-agency | missing-human-gate | high | tool-using | ASI02 |
+| `install_time_postinstall_hook` | supply-chain | install-time-exec,unauthorized-trigger-source | high | tool-using | ASI04, ASI05 |
+| `install_time_preinstall_script` | supply-chain | install-time-exec,unauthorized-trigger-source | high | tool-using | ASI04, ASI05 |
+| `mcp_budget_unbounded_tool_loop` | mcp-abuse,resource-abuse | tool-poisoning,unbounded-loop | medium | mcp_agent | ASI02 |
+| `mcp_confused_deputy_chained_forward` | mcp-abuse,data-exfil | confused-deputy,chained-forward | critical | mcp_agent | ASI01, ASI02 |
+| `mcp_confused_deputy_result_injection` | mcp-abuse,data-exfil | confused-deputy | critical | mcp_agent | ASI01, ASI02 |
+| `mcp_credential_lure_api_key` | mcp-abuse,credential-extraction | credential-lure | critical | mcp_agent | ASI03 |
+| `mcp_credential_lure_compliance_framing` | mcp-abuse,credential-extraction | credential-lure,compliance-framing | critical | mcp_agent | ASI03 |
+| `mcp_poison_description_exfil` | mcp-abuse,data-exfil | tool-poisoning | critical | mcp_agent | ASI01, ASI02, ASI04 |
+| `mcp_poison_description_multi_turn` | mcp-abuse,data-exfil | tool-poisoning,multi-turn | critical | mcp_agent | ASI01, ASI02, ASI04 |
+| `mcp_poison_non_english` | mcp-abuse,data-exfil | tool-poisoning,non-english | critical | mcp_agent | ASI01, ASI02, ASI04 |
+| `mcp_rugpull_after_relist` | mcp-abuse,supply-chain | rug-pull | high | mcp_agent | ASI04 |
+| `mcp_rugpull_silent_escalation` | mcp-abuse,supply-chain | rug-pull,silent-escalation | high | mcp_agent | ASI04 |
+| `mcp_scan_command_execution` | mcp-abuse,tool-abuse | command-injection | critical | mcp_scan | ASI05 |
+| `mcp_scan_cross_session_leak` | mcp-abuse,data-exfil | cross-session-leak | medium | mcp_scan | [] |
+| `mcp_scan_description_instructions` | mcp-abuse,indirect-injection | tool-description-injection | high | mcp_scan | [] |
+| `mcp_scan_hidden_characters` | mcp-abuse,indirect-injection | hidden-characters | high | mcp_scan | [] |
+| `mcp_scan_input_reflection` | mcp-abuse,indirect-injection | input-reflection | low | mcp_scan | [] |
+| `mcp_scan_path_traversal` | mcp-abuse,tool-abuse,data-exfil | path-traversal | high | mcp_scan | [] |
+| `mcp_scan_readonly_tool_wrote` | mcp-abuse,excessive-agency | annotation-mismatch | high | mcp_scan | [] |
+| `mcp_scan_result_injection` | mcp-abuse,indirect-injection | result-injection | high | mcp_scan | [] |
+| `mcp_scan_schema_instructions` | mcp-abuse,indirect-injection | schema-injection | high | mcp_scan | [] |
+| `mcp_scan_secret_in_result` | mcp-abuse,data-exfil,credential-extraction | secret-in-result | high | mcp_scan | [] |
+| `mcp_scan_tool_list_changed` | mcp-abuse,supply-chain | rug-pull,tool-list-change | medium | mcp_scan | [] |
+| `mcp_server_foreign_origin` | mcp-abuse | cross-origin-request,dns-rebinding,cors-wildcard | high | mcp_server | [] |
+| `mcp_server_known_vulnerable_version` | mcp-abuse,supply-chain | known-vulnerable-component | medium | mcp_server | ASI04 |
+| `mcp_server_no_auth` | mcp-abuse | missing-authentication | medium | mcp_server | [] |
+| `mcp_server_sensitive_tools` | mcp-abuse,credential-extraction | sensitive-tool-exposure | high | mcp_server | [] |
+| `mcp_shadow_claims_newer_version` | mcp-abuse,supply-chain | tool-shadowing,version-spoofing | high | mcp_agent | ASI04 |
+| `mcp_shadow_near_name` | mcp-abuse,supply-chain | tool-shadowing | high | mcp_agent | ASI04 |
+| `mcp_trap_confused_deputy` | mcp-abuse,data-exfil | confused-deputy | critical | mcp_trap | ASI01, ASI02, ASI03 |
+| `mcp_trap_credential_lure` | mcp-abuse,credential-extraction | credential-lure | critical | mcp_trap | ASI03 |
+| `mcp_trap_rug_pull` | mcp-abuse,supply-chain | rug-pull,silent-escalation | high | mcp_trap | ASI03, ASI04 |
+| `mcp_trap_shadowing` | mcp-abuse,supply-chain | tool-shadowing | high | mcp_trap | ASI03, ASI04 |
+| `mcp_trap_tool_poisoning` | mcp-abuse,data-exfil | tool-poisoning | critical | mcp_trap | ASI01, ASI02, ASI03, ASI04 |
+| `missing_allowlist_arbitrary_egress` | excessive-agency,tool-abuse | missing-allowlist | high | tool-using,browser-using | [] |
+| `missing_budget_unbounded_loop` | excessive-agency,tool-abuse | missing-budget-limit | medium | tool-using | ASI02 |
+| `missing_confirmation_irreversible` | excessive-agency | missing-confirmation-prompt | high | tool-using | ASI02 |
+| `missing_gate_cloud_api_call` | excessive-agency | missing-human-gate | critical | tool-using | ASI02 |
+| `missing_gate_file_write` | excessive-agency | missing-human-gate | high | tool-using | ASI02 |
+| `missing_gate_npm_install` | excessive-agency | missing-human-gate | high | tool-using | ASI02 |
+| `obfuscated_code_minified_js` | supply-chain,prompt-injection | obfuscated-code | high | http-chat,tool-using,browser-using | [] |
+| `obfuscated_code_powershell_encoded` | supply-chain | obfuscated-code,os-command-injection | high | tool-using | [] |
+| `owasp_01_prompt_injection_basic` | prompt-injection | direct | medium | http-chat | [] |
+| `owasp_02_sensitive_info_disclosure` | data-exfil |  | high | http-chat | [] |
+| `owasp_03_supply_chain` | supply-chain |  | medium | http-chat | [] |
+| `owasp_04_poisoning` | poisoning |  | medium | http-chat | [] |
+| `owasp_05_improper_output_handling` | output-handling |  | medium | http-chat | [] |
+| `owasp_05_output_cmd_injection` | output-handling | command-injection | high | http-chat,tool-using | [] |
+| `owasp_05_output_eval_injection` | output-handling | eval-injection | high | http-chat,tool-using | [] |
+| `owasp_05_output_sql_rce` | output-handling | sql-injection | high | http-chat | [] |
+| `owasp_05_output_svg_xss` | output-handling | xss | medium | http-chat | [] |
+| `owasp_05_upload_svg_xss_render` | output-handling | xss,file-upload | high | http-upload | [] |
+| `owasp_06_excessive_agency` | excessive-agency,tool-abuse |  | high | http-chat,tool-using | ASI02 |
+| `owasp_07_system_prompt_leakage` | data-exfil,prompt-injection |  | high | http-chat | [] |
+| `owasp_08_vector_weaknesses` | poisoning | rag-injection | medium | http-chat,rag | [] |
+| `owasp_09_misinformation` | misinformation | hallucination | medium | http-chat | [] |
+| `owasp_10_unbounded_consumption` | resource-abuse | dos,cost-amplification | medium | http-chat | [] |
+| `pay_approval_forged` | payment-abuse | wallet-policy | critical | payment_agent | ASI02 |
+| `pay_approval_threshold_split` | payment-abuse | wallet-policy | critical | payment_agent | ASI02 |
+| `pay_inject_authority_framing` | payment-abuse,indirect-injection | x402 | critical | payment_agent | ASI01, ASI02 |
+| `pay_inject_failed_payment_lure` | payment-abuse,indirect-injection | x402 | critical | payment_agent | ASI01, ASI02 |
+| `pay_inject_json_field` | payment-abuse,indirect-injection | x402 | critical | payment_agent | ASI01, ASI02 |
+| `pay_inject_markdown_comment` | payment-abuse,indirect-injection | x402 | critical | payment_agent | ASI01, ASI02 |
+| `pay_inject_non_english` | payment-abuse,indirect-injection | x402 | critical | payment_agent | ASI01, ASI02 |
+| `pay_wallet_approve_max` | payment-abuse,excessive-agency | wallet-policy | critical | payment_agent | ASI02 |
+| `pay_wallet_key_exfil` | payment-abuse,credential-extraction | wallet-policy | critical | payment_agent | ASI03 |
+| `pay_wallet_key_exfil_compliance` | payment-abuse,credential-extraction | wallet-policy | critical | payment_agent | ASI03 |
+| `pay_wallet_key_exfil_encoded` | payment-abuse,credential-extraction | wallet-policy | critical | payment_agent | ASI03 |
+| `pay_wallet_key_exfil_partial` | payment-abuse,credential-extraction | wallet-policy | high | payment_agent | ASI03 |
+| `pay_wallet_limit_raise_multi_turn` | payment-abuse | wallet-policy,multi-turn | critical | payment_agent | ASI02 |
+| `pay_wallet_preapprove_year` | payment-abuse | wallet-policy | critical | payment_agent | ASI02 |
+| `pay_x402_asset_confusion` | payment-abuse | x402 | high | payment_agent | ASI02 |
+| `pay_x402_decimal_shift` | payment-abuse | x402 | critical | payment_agent | ASI02 |
+| `pay_x402_injected_followup_charge` | payment-abuse,indirect-injection | x402 | critical | payment_agent | ASI01, ASI02 |
+| `pay_x402_micro_drain` | payment-abuse | x402 | high | payment_agent | ASI02 |
+| `pay_x402_no_budget_stated` | payment-abuse | x402 | critical | payment_agent | ASI02 |
+| `pay_x402_payee_switch_in_content` | payment-abuse,indirect-injection | x402 | critical | payment_agent | ASI01, ASI02 |
+| `pay_x402_payto_swap` | payment-abuse,excessive-agency | x402 | critical | payment_agent | ASI02 |
+| `pay_x402_quote_tampering` | payment-abuse,excessive-agency | x402 | critical | payment_agent | ASI02 |
+| `pay_x402_retry_double_charge` | payment-abuse | idempotency,x402 | high | payment_agent | ASI02 |
+| `pay_x402_retry_total_cap` | payment-abuse | idempotency,x402 | high | payment_agent | ASI02 |
+| `pay_x402_subtle_overcharge` | payment-abuse | x402 | high | payment_agent | ASI02 |
+| `pay_x402_zero_address_payee` | payment-abuse | x402 | high | payment_agent | ASI02 |
+| `shadow_credentials_env_exfil` | supply-chain,credential-extraction,data-exfil | shadow-credentials | critical | tool-using | ASI02, ASI03 |
+| `shadow_credentials_oauth_webhook` | supply-chain,credential-extraction,data-exfil | shadow-credentials | critical | tool-using | ASI02, ASI03 |
+| `syscard_bon` | jailbreak | stochastic | medium | http-chat | [] |
+| `syscard_confused_deputy` | tool-abuse,indirect-injection |  | high | http-chat,tool-using | ASI01, ASI02 |
+| `syscard_crescendo` | jailbreak | multi-turn | medium | http-chat | [] |
+| `syscard_many_shot_jailbreak` | jailbreak | context-exploitation | medium | http-chat | [] |
+| `syscard_sleeper_agent` | jailbreak | backdoor,alignment-faking | high | http-chat | [] |
+| `unicode_invisible_smuggling` | indirect-injection,prompt-injection | obfuscated-payload,unicode-confusable | high | http-chat,tool-using,rag,browser-using | [] |
+| `vllm_server_known_vulnerable_version` | supply-chain,resource-abuse | known-vulnerable-component | medium | vllm_server | [] |

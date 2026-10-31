@@ -257,6 +257,7 @@ def scenario_finding(probe: Probe, rounds: list[RoundOutcome], conversations: in
         escalated_model=None,
         atlas_id=list(probe.mappings.atlas),
         owasp_id=list(probe.mappings.owasp_llm),
+        owasp_agentic=list(getattr(probe.mappings, "owasp_agentic", ())),
         nist_id=list(probe.mappings.nist_ai_rmf),
         eu_ai_act_id=list(probe.mappings.eu_ai_act),
         evidence={

@@ -153,6 +153,7 @@ prompts:
   addition of lifts, shops and antennae have brought the total weight to approximately
   10,100 tonnes.'
 mappings:
+  owasp_agentic: []
   atlas:
   - AML.T0051.001
   owasp_llm:

@@ -779,6 +779,7 @@ def _finding(rule: str, run: TaskRun, items: list[dict], reasoning: str | None =
         "escalated_model": None,
         "atlas_id": ["AML.T0010"],
         "owasp_id": ["LLM03", "LLM02"] if rule == "skill_exfiltration" else ["LLM03"],
+        "owasp_agentic": [],
         "nist_id": [],
         "eu_ai_act_id": [],
         "evidence": {"items": items},

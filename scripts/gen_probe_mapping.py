@@ -23,6 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from argus.coverage import OWASP_LLM_TOP10, build_coverage  # noqa: E402
+from argus.agentic import OWASP_AGENTIC_METADATA, VALID_OWASP_AGENTIC_IDS  # noqa: E402
 from argus.probe import load_all_probes  # noqa: E402
 
 PROBES_DIR = Path(__file__).resolve().parent.parent / "argus" / "probes"
@@ -31,6 +32,7 @@ _VALID_OWASP_IDS = frozenset(cell_id for cell_id, _name in OWASP_LLM_TOP10)
 
 _STANDARD_LABELS = (
     ("owasp-llm-top10", "OWASP LLM Top 10"),
+    ("owasp-agentic-top10", "OWASP Agentic Top 10"),
     ("mitre-atlas", "MITRE ATLAS"),
     ("nist-ai-rmf", "NIST AI RMF"),
     ("eu-ai-act", "EU AI Act"),
@@ -43,7 +45,7 @@ def invalid_owasp_ids(probes) -> list[tuple[str, str]]:
     Such an id is silently dropped from the closed-universe OWASP cells in
     `build_coverage` — the run can only look less tested, never more, but a
     typo like `LLM011` would erase that probe's coverage with no signal.
-    OWASP is the only standard checked here: ATLAS, NIST AI RMF and the EU AI
+    ATLAS, NIST AI RMF and the EU AI
     Act are open-ended vocabularies with no fixed list to validate against.
     """
     return [
@@ -51,6 +53,16 @@ def invalid_owasp_ids(probes) -> list[tuple[str, str]]:
         for probe in probes
         for owasp_id in probe.mappings.owasp_llm
         if owasp_id not in _VALID_OWASP_IDS
+    ]
+
+
+def invalid_owasp_agentic_ids(probes) -> list[tuple[str, str]]:
+    """Return agentic tags outside the official, closed ASI01-ASI10 taxonomy."""
+    return [
+        (probe.id, agentic_id)
+        for probe in probes
+        for agentic_id in probe.mappings.owasp_agentic
+        if agentic_id not in VALID_OWASP_AGENTIC_IDS
     ]
 
 
@@ -83,6 +95,23 @@ def render(probes: list) -> str:
     for cell in owasp_cells:
         lines.append(f"| {cell['id']} | {cell['name']} | {cell['probes_in_library']} | {cell['library_status']} |")
     lines.append("")
+    lines.append("## OWASP Agentic Top 10")
+    lines.append("")
+    lines.append(
+        f"[OWASP Top 10 for Agentic Applications, {OWASP_AGENTIC_METADATA['edition']} edition]"
+        f"({OWASP_AGENTIC_METADATA['source_url']}), published {OWASP_AGENTIC_METADATA['published']}. "
+        "Agentic mappings are direct-risk tags: they identify the risk a probe actually exercises. "
+        "Related prerequisites and possible downstream effects do not earn a tag. "
+        "A cell marked `absent` has no mapped probe; these counts do not establish "
+        "complete coverage or compliance. See [mapping rationale](owasp-agentic-mapping.md) "
+        "for the evidence behind these assignments."
+    )
+    lines.append("")
+    lines.append("| OWASP Agentic | Category | Probes in library | Library status |")
+    lines.append("|---|---|---:|---|")
+    for cell in coverage["standards"]["owasp-agentic-top10"]["cells"]:
+        lines.append(f"| {cell['id']} | {cell['name']} | {cell['probes_in_library']} | {cell['library_status']} |")
+    lines.append("")
     lines.append("## Cells touched, per standard")
     lines.append("")
     lines.append("| Standard | Cells touched |")
@@ -94,13 +123,14 @@ def render(probes: list) -> str:
     lines.append("")
     lines.append("## Probes")
     lines.append("")
-    lines.append("| Probe ID | Attack class | Technique | Severity | Target class |")
-    lines.append("|---|---|---|---|---|")
+    lines.append("| Probe ID | Attack class | Technique | Severity | Target class | OWASP Agentic IDs |")
+    lines.append("|---|---|---|---|---|---|")
     for probe in sorted(probes, key=lambda p: p.id):
         attack_class = ",".join(probe.attack_class)
         technique = ",".join(probe.technique)
         target_class = ",".join(probe.target_class)
-        lines.append(f"| `{probe.id}` | {attack_class} | {technique} | {probe.severity} | {target_class} |")
+        agentic = ", ".join(probe.mappings.owasp_agentic) or "[]"
+        lines.append(f"| `{probe.id}` | {attack_class} | {technique} | {probe.severity} | {target_class} | {agentic} |")
     lines.append("")
     return "\n".join(lines)
 
@@ -113,6 +143,13 @@ def main() -> None:
         print(f"WARNING: {len(bad)} probe(s) declare an OWASP id outside LLM01-LLM10:", file=sys.stderr)
         for probe_id, owasp_id in bad:
             print(f"  {probe_id}: {owasp_id!r}", file=sys.stderr)
+
+    bad_agentic = invalid_owasp_agentic_ids(probes)
+    if bad_agentic:
+        print(f"ERROR: {len(bad_agentic)} invalid OWASP Agentic id(s) outside ASI01-ASI10:", file=sys.stderr)
+        for probe_id, agentic_id in bad_agentic:
+            print(f"  {probe_id}: {agentic_id!r}", file=sys.stderr)
+        sys.exit(1)
 
     sys.stdout.write(render(probes))
 

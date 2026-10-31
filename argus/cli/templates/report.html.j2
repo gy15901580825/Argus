@@ -166,6 +166,7 @@ h1 { border-bottom: 2px solid #333; }
   <div class="mappings">
     {% for a in f.atlas_id %}<code>ATLAS:{{ a }}</code>{% endfor %}
     {% for o in f.owasp_id %}<code>OWASP:{{ o }}</code>{% endfor %}
+    {%- if f.owasp_agentic %}{% for a in f.owasp_agentic %}<code>OWASP Agentic:{{ a }}</code>{% endfor %}{% endif %}
     {% for n in f.nist_id %}<code>NIST:{{ n }}</code>{% endfor %}
     {% for e in f.eu_ai_act_id %}<code>EU:{{ e }}</code>{% endfor %}
   </div>

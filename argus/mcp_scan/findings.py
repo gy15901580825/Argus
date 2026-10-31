@@ -47,7 +47,9 @@ def finding(probe: Probe, *, verdict: str, severity: str, reasoning: str, eviden
                 target_latency_ms=latency_ms, probed_at=datetime.now(timezone.utc), verdict=verdict,
                 severity=severity, confidence=confidence, reasoning=reasoning, judge_model=judge_model,
                 escalated_model=escalated_model, atlas_id=list(probe.mappings.atlas),
-                owasp_id=list(probe.mappings.owasp_llm), nist_id=list(probe.mappings.nist_ai_rmf),
+                owasp_id=list(probe.mappings.owasp_llm),
+                owasp_agentic=list(getattr(probe.mappings, "owasp_agentic", ())),
+                nist_id=list(probe.mappings.nist_ai_rmf),
                 eu_ai_act_id=list(probe.mappings.eu_ai_act), evidence=evidence,
                 remediation=remediation.for_probe(probe))
     d = asdict(f)

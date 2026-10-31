@@ -323,7 +323,7 @@ def test_compliance_ids_and_coverage_survive_digit_secrets(tmp_path, monkeypatch
     cov = {"thin_threshold": 2, "standards": {"owasp_llm": {"LLM01": 1}, "atlas": {"AML.T0051": 1}}}
 
     async def _run_ids(target, probe_ids, **kw):
-        yield {**FAIL_FINDING, "owasp_id": ["LLM01"], "atlas_id": ["AML.T0051"], "nist_id": ["MS-2.10"],
+        yield {**FAIL_FINDING, "owasp_id": ["LLM01"], "owasp_agentic": ["ASI01"], "atlas_id": ["AML.T0051"], "nist_id": ["MS-2.10"],
                "eu_ai_act_id": ["Art.10"]}
         yield {"type": "coverage", "coverage": cov}
 
@@ -340,8 +340,10 @@ def test_compliance_ids_and_coverage_survive_digit_secrets(tmp_path, monkeypatch
         assert (f["owasp_id"], f["atlas_id"], f["nist_id"], f["eu_ai_act_id"]) == (
             ["LLM01"], ["AML.T0051"], ["MS-2.10"], ["Art.10"])
         assert data["coverage"] == cov
+        assert f["owasp_agentic"] == ["ASI01"]
     else:
         run = data["runs"][0]
         props = run["tool"]["driver"]["rules"][0]["properties"]
         assert props["owasp_llm"] == ["LLM01"] and props["atlas"] == ["AML.T0051"]
+        assert props["owasp_agentic"] == ["ASI01"]
         assert run["properties"]["coverage"] == cov

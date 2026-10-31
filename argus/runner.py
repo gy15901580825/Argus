@@ -212,6 +212,7 @@ class Finding:
     escalated_model: str | None
     atlas_id: list[str] = field(default_factory=list)
     owasp_id: list[str] = field(default_factory=list)
+    owasp_agentic: list[str] = field(default_factory=list)
     nist_id: list[str] = field(default_factory=list)
     eu_ai_act_id: list[str] = field(default_factory=list)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -240,6 +241,7 @@ def skipped_finding(probe, reasoning: str) -> Finding:
         escalated_model=None,
         atlas_id=list(probe.mappings.atlas),
         owasp_id=list(probe.mappings.owasp_llm),
+        owasp_agentic=list(getattr(probe.mappings, "owasp_agentic", ())),
         nist_id=list(probe.mappings.nist_ai_rmf),
         eu_ai_act_id=list(probe.mappings.eu_ai_act),
     )
@@ -320,6 +322,7 @@ class Runner:
                     escalated_model=None,
                     atlas_id=list(probe.mappings.atlas),
                     owasp_id=list(probe.mappings.owasp_llm),
+                    owasp_agentic=list(getattr(probe.mappings, "owasp_agentic", ())),
                     nist_id=list(probe.mappings.nist_ai_rmf),
                     eu_ai_act_id=list(probe.mappings.eu_ai_act),
                 )
@@ -568,6 +571,7 @@ class Runner:
             judge_model="", escalated_model=None,
             atlas_id=list(probe.mappings.atlas),
             owasp_id=list(probe.mappings.owasp_llm),
+            owasp_agentic=list(getattr(probe.mappings, "owasp_agentic", ())),
             nist_id=list(probe.mappings.nist_ai_rmf),
             eu_ai_act_id=list(probe.mappings.eu_ai_act),
             evidence=evidence,
@@ -678,6 +682,7 @@ class Runner:
                 judge_model=verdict.judge_model, escalated_model=verdict.escalated_model,
                 atlas_id=list(probe.mappings.atlas),
                 owasp_id=list(probe.mappings.owasp_llm),
+                owasp_agentic=list(getattr(probe.mappings, "owasp_agentic", ())),
                 nist_id=list(probe.mappings.nist_ai_rmf),
                 eu_ai_act_id=list(probe.mappings.eu_ai_act),
             )
@@ -820,6 +825,7 @@ class Runner:
                         judge_model=verdict.judge_model, escalated_model=verdict.escalated_model,
                         atlas_id=list(probe.mappings.atlas),
                         owasp_id=list(probe.mappings.owasp_llm),
+                        owasp_agentic=list(getattr(probe.mappings, "owasp_agentic", ())),
                         nist_id=list(probe.mappings.nist_ai_rmf),
                         eu_ai_act_id=list(probe.mappings.eu_ai_act),
                     )
@@ -841,6 +847,7 @@ class Runner:
                 judge_model="", escalated_model=None,
                 atlas_id=list(probe.mappings.atlas),
                 owasp_id=list(probe.mappings.owasp_llm),
+                owasp_agentic=list(getattr(probe.mappings, "owasp_agentic", ())),
                 nist_id=list(probe.mappings.nist_ai_rmf),
                 eu_ai_act_id=list(probe.mappings.eu_ai_act),
             )

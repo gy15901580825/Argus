@@ -1,6 +1,7 @@
 """Smoke tests for the three renderers over a minimal run dict."""
 
 import json
+import pytest
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -59,6 +60,76 @@ def test_render_html_mentions_probe_and_verdict():
     html = reports.render_html(RUN)
     assert "owasp_01_prompt_injection_basic" in html
     assert "fail" in html
+
+
+@pytest.mark.parametrize("ids", [["ASI01", "ASI02"], []])
+def test_agentic_tags_are_exported_in_each_report(ids):
+    run = {**RUN, "findings": [{**RUN["findings"][0], "owasp_agentic": ids}]}
+    sarif = json.loads(reports.render_sarif(run))["runs"][0]
+    assert sarif["tool"]["driver"]["rules"][0]["properties"]["owasp_agentic"] == ids
+    assert sarif["results"][0]["properties"]["owasp_agentic"] == ids
+    assert sarif["results"][0]["properties"]["tags"] == [f"OWASP-Agentic:{tag}" for tag in ids]
+    suite = ET.fromstring(reports.render_junit(run)).find("testsuite")
+    case = suite.find("testcase")
+    prop = suite.find("properties/property[@name='owasp_agentic.1']")
+    assert json.loads(prop.attrib["value"]) == ids
+    assert json.loads(case.find("system-out").text.splitlines()[0]) == {"owasp_agentic": ids}
+    html = reports.render_html(run)
+    for tag in ids:
+        assert f"OWASP Agentic:{tag}" in html
+
+
+def test_legacy_report_records_default_to_empty_agentic_tags():
+    sarif = json.loads(reports.render_sarif(RUN))["runs"][0]
+    assert sarif["results"][0]["properties"]["tags"] == []
+    suite = ET.fromstring(reports.render_junit(RUN)).find("testsuite")
+    assert suite.find("properties/property[@name='owasp_agentic.1']").attrib["value"] == "[]"
+
+
+def test_junit_metadata_uses_xunit2_elements_and_preserves_every_finding():
+    verdicts = ["fail", "warn", "pass", "error", "skipped", "blocked_by_target", "aborted_cost"]
+    findings = [{**RUN["findings"][0], "verdict": verdict, "owasp_agentic": ["ASI01"] if i % 2 else []}
+                for i, verdict in enumerate(verdicts)]
+    suite = ET.fromstring(reports.render_junit({**RUN, "findings": findings, "notes": ["run note"]})).find("testsuite")
+    assert suite[0].tag == "properties"
+    assert suite.find("properties/property[@name='note.1']").get("value") == "run note"
+    for i, (case, finding) in enumerate(zip(suite.findall("testcase"), findings), 1):
+        assert set(child.tag for child in case) <= {"failure", "error", "skipped", "system-out", "system-err"}
+        assert len(case.findall("system-out")) == 1
+        output = case.find("system-out").text.splitlines()
+        assert json.loads(output[0]) == {"owasp_agentic": finding["owasp_agentic"]}
+        assert json.loads(suite.find(f"properties/property[@name='owasp_agentic.{i}']").get("value")) == finding["owasp_agentic"]
+        if finding["verdict"] in ("warn", "blocked_by_target"):
+            assert finding["verdict"] in output[1] and finding["reasoning"] in output[1]
+    assert suite.find("system-out").text == "run note"
+
+
+@pytest.mark.parametrize("fmt", ["html", "sarif", "junit", "json"])
+def test_agentic_metadata_survives_scrubbing_without_leaking_evidence(fmt):
+    from argus.cli.run_json import render_json, scrub_run
+
+    finding = {**RUN["findings"][0], "owasp_agentic": ["ASI01", "ASI10"],
+               "target_response": "private-secret-01", "reasoning": "private-secret-01"}
+    run = {**RUN, "findings": [finding]}
+    if fmt == "json":
+        rendered = render_json(run, ["private-secret-01", "0", "1"])
+    else:
+        renderer = {"html": reports.render_html, "sarif": reports.render_sarif,
+                    "junit": reports.render_junit}[fmt]
+        rendered = renderer(scrub_run(run, ["private-secret-01", "0", "1"]))
+    assert "ASI01" in rendered and "ASI10" in rendered
+    assert "private-secret-01" not in rendered and "***" in rendered
+
+
+def test_html_agentic_coverage_shows_official_names_and_absent_cells():
+    from argus.coverage import build_coverage
+
+    html = reports.render_html({**RUN, "coverage": build_coverage([])})
+    assert "owasp-agentic-top10" in html
+    assert "Agent Goal Hijack" in html and "Rogue Agents" in html
+    for i in range(1, 11):
+        assert f"ASI{i:02d}" in html
+    assert 'class="library-absent">absent' in html
 
 
 def test_run_notes_reach_sarif_and_junit_without_becoming_findings():
