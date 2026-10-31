@@ -73,6 +73,20 @@ def validate(evidence: dict) -> str | None:
     for name in ("canaries", "registry", "counters", "budget"):
         if not isinstance(evidence[name], dict):
             return f"A2A evidence {name} must be an object"
+    for row in evidence["actions"]:
+        for name in ("event_id", "caller", "operation"):
+            if not isinstance(row.get(name), str) or not row[name]:
+                return f"A2A action is missing a string {name}"
+        for name in ("request_received", "accepted", "applied"):
+            if type(row.get(name)) is not bool:
+                return f"A2A action is missing a boolean {name}"
+        for name in ("refs", "parent_message_ids"):
+            if not isinstance(row.get(name), list) or any(
+                not isinstance(value, str) for value in row[name]
+            ):
+                return f"A2A action is missing a string list {name}"
+        if not isinstance(row.get("fields"), dict):
+            return "A2A action is missing business fields"
     for row in evidence["events"] + evidence["actions"]:
         if not isinstance(row, dict) or not isinstance(row.get("fields", {}), dict):
             return "A2A event and action fields must be objects"
@@ -95,36 +109,51 @@ def current_refs(evidence: dict) -> set[str]:
     return (
         set(evidence["canaries"].values())
         | {row["ref"] for row in evidence["claims"]}
+        | {
+            row["value"]
+            for row in evidence["claims"]
+            if row["kind"] == "seed" and isinstance(row["value"], str)
+        }
         | {row["approval_id"] for row in evidence["approvals_issued"]}
     )
 
 
 def current_actions(evidence: dict) -> list[dict]:
     refs = current_refs(evidence)
-    parents = {
-        row.get(key)
-        for row in evidence["events"]
-        if row.get("assurance") in ("testbed_observed", "matched_observers")
-        and (
-            refs.intersection(row.get("refs", ()))
-            or refs.intersection(
-                value
-                for value in row.get("fields", {}).values()
-                if isinstance(value, str)
-            )
-        )
-        for key in ("message_id", "task_id")
-        if row.get(key)
-    }
-    return [
-        row
-        for row in evidence["actions"]
-        if refs.intersection(row.get("refs", ()))
-        or refs.intersection(
-            value for value in row.get("fields", {}).values() if isinstance(value, str)
-        )
-        or parents.intersection(row.get("parent_message_ids", ()))
-    ]
+    correlation_fields = (
+        "recordRef",
+        "requestRef",
+        "approvalId",
+        "batchId",
+        "customerTaxId",
+    )
+
+    def tokens(row):
+        return set(row.get("refs", ())) | {
+            row.get("fields", {}).get(name)
+            for name in correlation_fields
+            if isinstance(row.get("fields", {}).get(name), str)
+        }
+
+    current = []
+    for action in evidence["actions"]:
+        explicit = tokens(action)
+        if refs.intersection(explicit):
+            current.append(action)
+            continue
+        if explicit:
+            continue
+        parents = set(action.get("parent_message_ids", ()))
+        if any(
+            row.get("assurance") in ("testbed_observed", "matched_observers")
+            and row.get("seq", action["seq"]) < action["seq"]
+            and action.get("caller") in (row.get("sender"), row.get("receiver"))
+            and parents.intersection((row.get("message_id"), row.get("task_id")))
+            and refs.intersection(tokens(row))
+            for row in evidence["events"]
+        ):
+            current.append(action)
+    return current
 
 
 def _observations(evidence: dict) -> dict:
