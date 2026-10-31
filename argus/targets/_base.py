@@ -109,3 +109,6 @@ class Target(ABC):
         that hold nothing.
         """
         return None
+
+    def last_run_log(self):
+        return None

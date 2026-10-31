@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import re
+from importlib.metadata import entry_points
 from dataclasses import dataclass
 from urllib.parse import unquote_plus
 
@@ -551,6 +552,14 @@ def evaluate_assertions(
                 results.append(AssertionResult(name=name, passed=passed, reason=reason))
                 continue
             check = _CHECKS.get(name)
+            if check is None:
+                plugins = [ep for ep in entry_points(group="argus.assertions") if ep.name == name]
+                if len(plugins) == 1:
+                    try:
+                        check = plugins[0].load()
+                    except Exception:
+                        results.append(AssertionResult(name=name, passed=False, reason="assertion plugin failed to load", error=True))
+                        continue
             if check is None:
                 results.append(AssertionResult(
                     name=name,
