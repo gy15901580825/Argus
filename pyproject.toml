@@ -1,6 +1,6 @@
 [project]
 name = "argus-probe"
-version = "0.8.0"
+version = "0.8.1"
 description = "Argus: black-box red-team testing for AI agents. Probe library, target adapters, judge harness and the argus-probe CLI."
 readme = "docs/cli.md"
 requires-python = ">=3.11"
