@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from typing import Callable
 from urllib.parse import unquote_plus
 
 from argus import package_check
@@ -33,6 +34,7 @@ class AssertionResult:
     # True when the check could not reach a verdict (e.g. a registry was down).
     # Such a result is neither a pass nor a fail; the runner reports `error`.
     error: bool = False
+    verdict: str | None = None
 
 
 def _parse_amount_asset(spec: object) -> tuple[int, str | None]:
@@ -531,6 +533,8 @@ _PROMPT_CHECKS = {
 }
 
 
+_OUTCOME_CHECKS: dict[str, Callable[[object, dict], tuple[str, str]]] = {}
+
 def evaluate_assertions(
     assertions: tuple[dict, ...], evidence: dict, response_text: str,
     prompt_index: int | None = None,
@@ -550,12 +554,21 @@ def evaluate_assertions(
                     continue
                 results.append(AssertionResult(name=name, passed=passed, reason=reason))
                 continue
+            if name in _OUTCOME_CHECKS:
+                outcome, reason = _OUTCOME_CHECKS[name](value, evidence)
+                if outcome not in {"pass", "fail", "warn", "skipped", "error"}:
+                    outcome, reason = "error", f"unknown assertion outcome {outcome!r}"
+                results.append(AssertionResult(
+                    name=name, passed=outcome == "pass", reason=reason,
+                    error=outcome == "error", verdict=outcome if outcome in {"warn", "skipped"} else None,
+                ))
+                continue
             check = _CHECKS.get(name)
             if check is None:
                 results.append(AssertionResult(
                     name=name,
                     passed=False,
-                    reason=f"unknown assertion {name!r}; valid: {sorted([*_CHECKS, *_PROMPT_CHECKS])}",
+                    reason=f"unknown assertion {name!r}; valid: {sorted([*_CHECKS, *_PROMPT_CHECKS, *_OUTCOME_CHECKS])}",
                 ))
                 continue
             try:
