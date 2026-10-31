@@ -8,7 +8,7 @@ from argus.local import run_local
 REPO = pathlib.Path(__file__).resolve().parents[1]
 # The wheel ships a copy of each testbed service under argus/demo/; the service directory is the source.
 COPIES = {
-    "a2a_testbed": ["testbed/__init__.py", "testbed/app.py", "testbed/wire.py", "testbed/store.py", "testbed/serve.py"],
+    "a2a_testbed": ["testbed/__init__.py", "testbed/app.py", "testbed/wire.py", "testbed/store.py", "testbed/serve.py", "testbed/worlds.py"],
     "mcp_testbed": ["testbed/__init__.py", "testbed/app.py", "testbed/rpc.py", "testbed/scenarios.py",
                     "testbed/session.py", "testbed/fixed.py", "testbed/world.py", "testbed/worlds.py", "demo_agent/__init__.py", "demo_agent/app.py", "demo_agent/worker.py"],
     "payment_testbed": ["testbed/__init__.py", "testbed/app.py", "testbed/merchant.py", "testbed/session.py",

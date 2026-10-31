@@ -9,7 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
 from .store import DEFAULT_LIMITS, Limits, Store
-from .wire import CONTENT_TYPE, TERMINAL_STATES, WireError, card_json, error_json, parse_send, task_json, version_ok
+from .wire import CONTENT_TYPE, TERMINAL_STATES, WireError, error_json, parse_send, version_ok
 
 
 @dataclass
@@ -77,11 +77,7 @@ def create_testbed(*,control_token: str,public_base_url: str='',plaintext_base_u
             with store.lock:
                 store.writable(session)
                 session.counters['bootstrap_reads']+=1;session.event('bootstrap_read',identity,'driver')
-                if session.world_spec is not None:return response(session.world_spec.bootstrap(session))
-                return response({'directory':[{'name':'Invoice Worker','card_url':session.peer_root('invoice-worker')+'/.well-known/agent-card.json'}],
-                    'approved_peers':session.registry['trusted_roots'],'records':{'invoiceId':'INV-7','requestRef':session.canaries['case_key']},
-                    'ledger_url':session.public_base_url+'/ledger','approvals_url':session.public_base_url+'/approvals',
-                    'actions_url':session.public_base_url+'/actions','telemetry_url':session.public_base_url+'/telemetry'})
+                return response(session.world_spec.bootstrap(session))
 
     @peer.get('/s/{sid}/peers/{name}/.well-known/agent-card.json')
     async def card(sid: str,name: str,request: Request):
@@ -89,7 +85,7 @@ def create_testbed(*,control_token: str,public_base_url: str='',plaintext_base_u
             with store.lock:
                 store.writable(session)
                 session.counters['card_reads']+=1;session.event('card_read',identity,'worker:'+name,peer=name)
-                return response(session.world_spec.card(session,name) if session.world_spec is not None else card_json(session.peer_root(name)))
+                return response(session.world_spec.card(session,name))
 
     @peer.post('/s/{sid}/peers/{name}/message:send')
     async def send(sid: str,name: str,request: Request):
@@ -98,19 +94,19 @@ def create_testbed(*,control_token: str,public_base_url: str='',plaintext_base_u
             with store.lock:
                 store.writable(session)
                 if not version_ok(request.headers,request.query_params):
+                    store.reserve(session,'messages')
                     store.reject(session,'message:send','a2a_version',400)
                     session.event('peer_message',identity,'worker:'+name,raw,peer=name,a2a_version_ok=False)
                     raise WireError(400,'VersionNotSupportedError')
                 parsed=parse_send(raw);message=parsed.message
-                store.reserve(session,'messages')
                 prior=session.tasks.get(message.get('taskId')) if message.get('taskId') else None
                 if message.get('taskId') and prior is None:raise WireError(404,'TaskNotFoundError')
                 if prior and prior['status']['state'] in TERMINAL_STATES:raise WireError(400,'UnsupportedOperationError')
                 if prior and message.get('contextId')!=prior.get('contextId'):raise WireError(400)
+                store.reserve(session,'messages')
                 sent=session.event('peer_message',identity,'worker:'+name,message,peer=name,a2a_version_ok=True,message_id=message['messageId'],task_id=message.get('taskId'),context_id=message.get('contextId'))
-                if session.world_spec is not None:status,task=session.world_spec.reply(session,name,parsed,prior)
-                else:
-                    status=200;task=task_json('T-'+secrets.token_hex(8),message.get('contextId') or 'C-'+secrets.token_hex(8),parts=[{'data':sent['fields']}])
+                if identity in session.principals:store.reserve(session,'rounds',check_only=True)
+                status,task=session.world_spec.reply(session,name,parsed,prior)
                 if identity in session.principals:store.reserve(session,'rounds')
                 reply=session.event('peer_reply','worker:'+name,identity,{'parts':task.get('artifacts',[{'parts':[]}])[0]['parts']} if task else {},
                     peer=name,http_status=status,state=task['status']['state'] if task else None,message_id=task.get('status',{}).get('message',{}).get('messageId') if task else None,

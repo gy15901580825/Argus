@@ -18,8 +18,9 @@ PRINCIPALS={'planner':'Bearer planner','reviewer':'Bearer reviewer','executor':'
 def opened(**kwargs):
     tb=create_testbed(control_token='control',settle_grace_s=0,**kwargs)
     c,p=TestClient(tb.control_app),TestClient(tb.peer_app)
-    response=c.post('/sessions',headers=AUTH,json={'scenario':'a2a_world','world':'payout_inbox','phase':'attack','principals':PRINCIPALS})
+    response=c.post('/sessions',headers=AUTH,json={'scenario':'a2a_world','world':'invoice_delegation','phase':'attack','principals':PRINCIPALS})
     assert response.status_code==201,response.text
+    p.business_record=tb.store.sessions[response.json()['session_id']].business_record
     return tb,c,p,response.json()['session_id']
 
 
@@ -48,7 +49,7 @@ def test_second_active_session_is_409():
 
 def test_identity_from_credentials_else_entry():
     tb,c,p,sid=opened();send(p,sid)
-    p.post(f'/s/{sid}/peers/invoice-worker/message:send',headers={'A2A-Version':'1.0'},json=request('M2'))
+    p.post(f'/s/{sid}/peers/invoice-worker/message:send',headers={'A2A-Version':'1.0'},json=request('M2',parts=[{'data':p.business_record}]))
     assert [e['sender'] for e in tb.store.evidence(sid)['events'] if e['kind']=='peer_message']==['planner','entry']
 
 
@@ -93,8 +94,8 @@ def test_actions_ledger_is_passive():
 
 def test_hard_budget_messages_429_and_flag():
     tb,c,p,sid=opened(limits=replace(DEFAULT_LIMITS,max_messages=2));assert send(p,sid).status_code==200
-    assert send(p,sid,request('M2')).status_code==200
-    assert send(p,sid,request('M3')).status_code==429
+    assert send(p,sid,request('M2',parts=[{'data':p.business_record}])).status_code==200
+    assert send(p,sid,request('M3',parts=[{'data':p.business_record}])).status_code==429
     assert tb.store.evidence(sid)['budget']['exhausted_by']=='messages'
 
 
@@ -103,7 +104,7 @@ def test_hard_budget_concurrency_and_rounds():
     with tb.store.request(sid):assert send(p,sid).status_code==429
     assert tb.store.evidence(sid)['budget']['exhausted_by']=='concurrency'
     tb,c,p,sid=opened(limits=replace(DEFAULT_LIMITS,max_rounds=1))
-    assert send(p,sid).status_code==200 and send(p,sid,request('M2')).status_code==429
+    assert send(p,sid).status_code==200 and send(p,sid,request('M2',parts=[{'data':p.business_record}])).status_code==429
     assert tb.store.evidence(sid)['budget']['exhausted_by']=='rounds'
 
 
@@ -115,7 +116,7 @@ def test_phase_duration_limit():
 
 
 def test_telemetry_still_recorded_after_exhaustion():
-    tb,c,p,sid=opened(limits=replace(DEFAULT_LIMITS,max_messages=1));send(p,sid);send(p,sid,request('M2'))
+    tb,c,p,sid=opened(limits=replace(DEFAULT_LIMITS,max_messages=1));send(p,sid);send(p,sid,request('M2',parts=[{'data':p.business_record}]))
     response=p.post('/telemetry',headers={'Authorization':PRINCIPALS['planner']},json=telemetry('planner','reviewer',request()['message'],'message_sent'))
     assert response.status_code==204 and tb.store.evidence(sid)['counters']['telemetry_events']==1
 
@@ -211,3 +212,40 @@ def test_delegation_depth_uses_paired_causal_edges_at_seal():
     p.post('/actions',headers={'Authorization':PRINCIPALS['planner']},json={'operation':'pay_invoice','recordRef':ref,'parentMessageIds':[parent]})
     sealed=c.post(f'/sessions/{sid}/seal',headers=AUTH).json()
     assert sealed['budget']['exhausted_by']=='delegation_depth'
+
+
+def test_telemetry_invalid_batch_is_rejected_atomically():
+    tb,c,p,sid=opened();valid=telemetry('planner','reviewer',request()['message'],'message_sent')['events'][0]
+    bad={**valid,'peer_role':'planner'}
+    assert p.post('/telemetry',headers={'Authorization':PRINCIPALS['planner']},json={'events':[valid,bad]}).status_code==400
+    assert tb.store.evidence(sid)['events']==[]
+
+
+@pytest.mark.parametrize('message',({}, {'messageId':'M','role':'ROLE_USER','parts':[]}, {'messageId':'M','role':'wrong','parts':[{'text':'hello'}]}))
+def test_telemetry_requires_well_formed_a2a_message(message):
+    tb,c,p,sid=opened()
+    assert p.post('/telemetry',headers={'Authorization':PRINCIPALS['planner']},json=telemetry('planner','reviewer',message,'message_sent')).status_code==400
+    assert tb.store.evidence(sid)['events']==[]
+
+
+def test_action_and_telemetry_limits_are_enforced():
+    tb,c,p,sid=opened(limits=replace(DEFAULT_LIMITS,max_actions=1,max_telemetry_events=1))
+    headers={'Authorization':PRINCIPALS['planner']}
+    assert p.post('/actions',headers=headers,json={'operation':'pay_invoice'}).status_code==200
+    assert p.post('/actions',headers=headers,json={'operation':'pay_invoice'}).status_code==429
+    body=telemetry('planner','reviewer',request()['message'],'message_sent')
+    assert p.post('/telemetry',headers=headers,json=body).status_code==204
+    assert p.post('/telemetry',headers=headers,json=body).status_code==429
+    evidence=tb.store.evidence(sid)
+    assert len(evidence['actions'])==1 and evidence['counters']['telemetry_events']==1
+
+
+def test_rejected_version_peer_messages_still_consume_public_message_budget():
+    tb,c,p,sid=opened(limits=replace(DEFAULT_LIMITS,max_messages=1))
+    url=f'/s/{sid}/peers/invoice-worker/message:send'
+    body=request(parts=[{'data':p.business_record}])
+    assert p.post(url,json=body).status_code==400
+    assert p.post(url,json=body).status_code==429
+    evidence=tb.store.evidence(sid)
+    assert evidence['counters']['business_sends']==1
+    assert evidence['budget']['exhausted_by']=='messages'

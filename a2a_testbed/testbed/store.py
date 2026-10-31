@@ -10,7 +10,8 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from urllib.parse import urlsplit
 
-from .wire import WireError, digest, extract
+from .wire import WireError, digest, extract, parse_send
+from .worlds import WORLDS
 
 ROLES = ('planner','reviewer','executor')
 
@@ -101,13 +102,9 @@ class Session:
         refs=self.refs
         fields=item.get('fields',{})
         if any(ref in refs for ref in item.get('refs',())) or any(isinstance(value,str) and value in refs for value in fields.values()):return True
-        correlation=('recordRef','requestRef','approvalId','batchId','customerTaxId')
-        if any(isinstance(fields.get(key),str) and fields[key] not in refs for key in correlation) or any(ref not in refs for ref in item.get('refs',())):return False
-        actor=item.get('caller',item.get('sender'))
-        return any(e['seq']<item['seq'] and e['kind'] in ('peer_reply','agent_message') and e['receiver']==actor
-                   and e['assurance'] in ('testbed_observed','matched_observers') and any(ref in refs for ref in e['refs'])
-                   and any(value in item.get('parent_message_ids',()) for value in (e.get('message_id'),e.get('task_id')) if value)
-                   for e in self.events)
+        # Client-generated message IDs can collide across runs. They index causal
+        # relationships only after a minted business token establishes membership.
+        return False
 
     def delegation_depth(self):
         """Minimal causal depth calculation; normal identities and paired edges only."""
@@ -124,7 +121,7 @@ class Session:
             incoming={role:[] for role in ROLES};incoming[seed['receiver']].append((seed,1))
             for row in sorted(events+[{**action,'kind':'action'} for action in self.actions],key=lambda row:row['seq']):
                 actor=row.get('caller',row.get('sender'))
-                if row['seq']<=seed['seq'] or actor not in ROLES or row['kind'] not in ('agent_message','peer_message','action') or not carries(row):continue
+                if row['seq']<=seed['seq'] or actor not in ROLES or row['kind'] not in ('agent_message','peer_message','action') or not carries(row) or not self.current(row):continue
                 if row['kind']=='agent_message' and (row['assurance']!='matched_observers' or row['receiver'] not in ROLES):continue
                 levels=[level for prior,level in incoming[actor] if row['seq']>prior['seq'] and
                         (any(parent in row.get('parent_message_ids',()) for parent in (prior.get('message_id'),prior.get('task_id')) if parent)
@@ -136,8 +133,7 @@ class Session:
         return maximum
 
     def complete(self):
-        if self.world_spec is not None:return self.world_spec.task_completed(self)
-        return any(a['caller'] in ROLES and self.current(a) for a in self.actions)
+        return self.world_spec.task_completed(self)
 
     def evidence(self):
         return {'schema_version':'argus-a2a-evidence-v1','session_id':self.session_id,'phase':self.phase,'world':self.world,
@@ -146,12 +142,6 @@ class Session:
                 'events':self.events,'actions':self.actions,'ingress':self.ingress,'attack_delivered':self.attack_delivered,
                 'counters':self.counters,'budget':self.budget,'rejected_requests':self.rejected_requests,
                 'task_completed':self.complete() if self.sealed else None}
-
-
-def _probe_world(session):
-    approval='AP-'+secrets.token_hex(8)
-    session.approvals_issued=[{'approval_id':approval,'invoice_id':'INV-7','amount_minor':2500,'currency':'USD','approver':'approver'}]
-    session.registry['trusted_roots']=[session.peer_root('invoice-worker')]
 
 
 class Store:
@@ -163,11 +153,19 @@ class Store:
     def open(self,payload,base_url):
         with self.lock:
             if self.active_session_id is not None:raise WireError(409,'session_active')
-            if not isinstance(payload,dict) or payload.get('world')!='payout_inbox' or payload.get('phase') not in ('clean','attack'):raise WireError(400)
+            if not isinstance(payload,dict) or not isinstance(payload.get('world'),str) or payload.get('world') not in WORLDS or payload.get('phase') not in ('clean','attack'):raise WireError(400)
+            spec=WORLDS[payload['world']]
+            allowed={'scenario','world','phase','principals','capabilities',*spec.knobs}
+            if set(payload)-allowed or payload.get('scenario','a2a_world')!='a2a_world':raise WireError(400)
+            for knob,values in spec.knobs.items():
+                if knob in payload and not any(type(payload[knob]) is type(value) and payload[knob]==value for value in values):raise WireError(400)
+            capabilities=payload.get('capabilities',[])
+            if not isinstance(capabilities,list) or any(not isinstance(value,str) for value in capabilities):raise WireError(400)
+            settings={**payload,**{knob:payload.get(knob,values[0]) for knob,values in spec.knobs.items()}}
             principals=payload.get('principals',{})
             if not isinstance(principals,dict) or any(role not in ROLES or not isinstance(value,str) or not value for role,value in principals.items()) or len(set(principals.values()))!=len(principals):raise WireError(400)
-            session=Session('S-'+secrets.token_hex(12),payload['world'],payload['phase'],dict(payload),principals,list(payload.get('capabilities',[])),self.clock(),self.public_base_url or base_url.rstrip('/'),self.plaintext_base_url,self.limits)
-            session.budget['limits']=asdict(self.limits);_probe_world(session)
+            session=Session('S-'+secrets.token_hex(12),payload['world'],payload['phase'],settings,principals,capabilities,self.clock(),self.public_base_url or base_url.rstrip('/'),self.plaintext_base_url,self.limits)
+            session.budget['limits']=asdict(self.limits);session.world_spec=spec;spec.open(session)
             self.sessions[session.session_id]=session;self.active_session_id=session.session_id
             return session
 
@@ -208,14 +206,14 @@ class Store:
     def writable(self,session):
         if session.sealed:raise WireError(409,'session_sealed')
 
-    def reserve(self,session,kind,*,source='peer'):
+    def reserve(self,session,kind,*,source='peer',check_only=False):
         with self.lock:
             self.writable(session)
             key,limit={'messages':('business_sends',session.limits.max_messages),'actions':('action_requests',session.limits.max_actions),'rounds':('rounds',session.limits.max_rounds)}[kind]
             count=session.counters[key]
             if kind=='messages':count+=session.telemetry_sends+len(session.ingress['log'] if session.ingress else [])
             if count>=limit:self._budget(session,kind)
-            if kind!='messages' or source=='peer':session.counters[key]+=1
+            if not check_only and (kind!='messages' or source=='peer'):session.counters[key]+=1
 
     def action(self,session,identity,body):
         with self.lock:
@@ -239,6 +237,8 @@ class Store:
             if session.counters['telemetry_events']+len(entries)>session.limits.max_telemetry_events:raise WireError(429,'telemetry_limit')
             for item in entries:
                 if not isinstance(item,dict) or item.get('kind') not in ('message_sent','message_received') or item.get('peer_role') not in ROLES or not isinstance(item.get('message'),dict):raise WireError(400)
+                if item['peer_role']==identity or item['message'].get('role') not in ('ROLE_USER','ROLE_AGENT'):raise WireError(400)
+                parse_send({'message':{**item['message'],'role':'ROLE_USER'}})
                 parents=item.get('parent_message_ids',[])
                 if not isinstance(parents,list) or any(not isinstance(value,str) for value in parents):raise WireError(400)
                 try:hash_value=digest(item['message']);extract(item['message'],session.refs,session.canaries)
@@ -284,7 +284,9 @@ class Store:
             if session.sealed:return self.evidence(sid)
         await asyncio.sleep(self.settle_grace_s)
         deadline=time.monotonic()+self.settle_timeout_s
-        with self.lock:session.sealing=True
+        with self.lock:
+            if session.sealed:return self.evidence(sid)
+            session.sealing=True
         while True:
             with self.lock:pending=session.in_flight
             if not pending or time.monotonic()>=deadline:break

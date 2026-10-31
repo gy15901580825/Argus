@@ -70,3 +70,9 @@ def test_two_listener_loops_share_store_and_seal_pending_request():
         for thread in threads:thread.join(3)
         for sock in sockets:sock.close()
         assert all(not thread.is_alive() for thread in threads)
+
+
+@pytest.mark.parametrize('host',('127.0.0.2','::1','localhost'))
+def test_serve_accepts_loopback_control_host_forms(monkeypatch,host):
+    monkeypatch.setenv('TESTBED_CONTROL_HOST',host)
+    assert configuration()['control_host']==host

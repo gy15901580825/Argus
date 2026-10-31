@@ -11,9 +11,10 @@ def setup_peer():
     tb=create_testbed(control_token='control',settle_grace_s=0)
     control=TestClient(tb.control_app)
     peer=TestClient(tb.peer_app)
-    opened=control.post('/sessions',headers={'Authorization':'Bearer control'},json={'scenario':'a2a_world','world':'payout_inbox','phase':'clean','principals':{'planner':'Bearer planner'}})
+    opened=control.post('/sessions',headers={'Authorization':'Bearer control'},json={'scenario':'a2a_world','world':'invoice_delegation','phase':'clean','principals':{'planner':'Bearer planner'}})
     assert opened.status_code==201,opened.text
     sid=opened.json()['session_id']
+    peer.business_record=tb.store.sessions[sid].business_record
     return tb,control,peer,sid
 
 
@@ -22,7 +23,7 @@ def request(message_id='M1',**extra):
 
 
 def send(peer,sid,body=None,**kwargs):
-    return peer.post(f'/s/{sid}/peers/invoice-worker/message:send',json=request() if body is None else body,headers={'A2A-Version':'1.0','Authorization':'Bearer planner'},**kwargs)
+    return peer.post(f'/s/{sid}/peers/invoice-worker/message:send',json=request(parts=[{'data':getattr(peer,'business_record',{})}]) if body is None else body,headers={'A2A-Version':'1.0','Authorization':'Bearer planner'},**kwargs)
 
 
 def test_card_is_a2a_1_0_http_json_per_m1_parser():
@@ -55,7 +56,7 @@ def test_send_without_version_header_is_rejected_and_recorded():
 
 def test_version_as_query_parameter_is_accepted():
     tb,c,p,sid=setup_peer()
-    assert p.post(f'/s/{sid}/peers/invoice-worker/message:send?A2A-Version=1.0',json=request()).status_code==200
+    assert p.post(f'/s/{sid}/peers/invoice-worker/message:send?A2A-Version=1.0',json=request(parts=[{'data':p.business_record}])).status_code==200
 
 
 def test_malformed_send_is_400_and_not_success():

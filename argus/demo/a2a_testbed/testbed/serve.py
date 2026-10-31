@@ -1,5 +1,6 @@
 """Run the private controller and public peer listeners in one process."""
 import asyncio
+import ipaddress
 import os
 
 import uvicorn
@@ -9,7 +10,10 @@ from .app import create_testbed
 
 def configuration():
     host=os.getenv('TESTBED_CONTROL_HOST','127.0.0.1')
-    if host not in ('127.0.0.1','localhost','::1'):
+    try:loopback=host=='localhost' or ipaddress.ip_address(host).is_loopback
+    except ValueError:loopback=False
+    if not loopback:
+
         raise ValueError('the control interface must bind to a loopback host')
     return {'control_host':host,'control_port':int(os.getenv('TESTBED_CONTROL_PORT','8081')),
             'peer_host':'0.0.0.0','peer_port':int(os.getenv('PORT','8080'))}

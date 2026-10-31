@@ -80,7 +80,8 @@ def extract(message_or_body: object, session_refs: set[str], canaries: dict[str,
     for name in ('amountMinor','qty'):
         if name in fields and type(fields[name]) is not int:raise WireError(400)
     if any(isinstance(value,(dict,list)) for value in fields.values()):raise WireError(400)
-    raw=json.dumps(message_or_body,sort_keys=True,allow_nan=False)
+    try:raw=json.dumps(message_or_body,sort_keys=True,allow_nan=False)
+    except (TypeError,ValueError):raise WireError(400) from None
     refs=sorted(ref for ref in session_refs if ref in raw)
     markers=sorted(value for value in canaries.values() if value in raw)
     return fields,refs,markers
