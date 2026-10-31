@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from argus.scenarios.credentials import build_credential_provider
 from argus.scenarios.models import IntegrationScenario, ObjectRecord, now, object_marker
-from argus.scenarios.runner import ScenarioRunner
+from argus.scenarios.runner import CLEANUP_RESERVE_S, ScenarioRunner
 from argus.scenarios.runtime import build_drivers, validate_target_credentials, read_template
 from argus.targets import build_target
 
@@ -176,7 +176,14 @@ async def cleanup_scenario(req: ScenarioCleanupRequest):
             if obj.run_id != str(req.run_id) or obj.connection_id not in req.connections.values() or obj.marker != object_marker(str(req.run_id), obj.group, obj.logical_key, obj.control_name):
                 raise ValueError("cleanup object identity mismatch")
             runner.ctx.registry.save(obj)
-        await runner.cleanup()
+        try:
+            await asyncio.wait_for(runner.cleanup(), timeout=CLEANUP_RESERVE_S)
+        except TimeoutError:
+            runner.cleanup_gaps.append("cleanup reserve exhausted")
+            for obj in runner.ctx.registry.records.values():
+                if obj.cleanup_status == "pending":
+                    obj.cleanup_status, obj.cleanup_detail = "failed", "cleanup reserve exhausted"
+                    runner.ctx.registry.save(obj)
         return runner.ctx.redact({"run_id": str(req.run_id), "organization_id": str(req.organization_id), "complete": not runner.cleanup_gaps and all(o.cleanup_status in {"deleted", "not_applicable"} for o in runner.ctx.registry.records.values()),
                                   "gaps": runner.cleanup_gaps, "objects": [o.model_dump(mode="json") for o in runner.ctx.registry.records.values()]})
     except Exception:

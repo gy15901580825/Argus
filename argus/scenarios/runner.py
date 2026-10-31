@@ -16,6 +16,9 @@ from argus.scenarios.models import Evidence, IntegrationScenario, ObjectRecord, 
 from argus.scenarios.runtime import Budget, BudgetExceeded, NotReady, ObjectRegistry, RunContext, validate_target_credentials, read_template
 
 
+CLEANUP_RESERVE_S = 60
+
+
 class ScenarioRunner:
     def __init__(self, scenario: IntegrationScenario, target, drivers: dict, *, run_id: str, organization_id: str,
                  connections: dict[str, str], directory: Path, target_identity: str = "", clock=time.monotonic,
@@ -323,8 +326,9 @@ class ScenarioRunner:
             reason = f"scenario dependency failed: {type(exc).__name__}"
         last_phase = self.phase
         try:
-            await asyncio.wait_for(self.cleanup(), timeout=60)
+            await asyncio.wait_for(self.cleanup(), timeout=CLEANUP_RESERVE_S)
         except Exception:
+            self.cleanup_gaps.append("cleanup did not finish")
             for obj in self.ctx.registry.records.values():
                 if obj.cleanup_status == "pending":
                     obj.cleanup_status, obj.cleanup_detail = "failed", "cleanup reserve exhausted"

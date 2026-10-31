@@ -5,6 +5,7 @@ from uuid import uuid4
 import pytest
 
 from argus.scenarios.credentials import CredentialUnavailable
+from argus.scenarios import runner as runner_module
 from argus.scenarios.models import CleanupResult, ConnCheck, Evidence, IntegrationScenario, ObjectRecord, Provenance, TargetRunLog
 from argus.scenarios.runner import ScenarioRunner
 
@@ -234,6 +235,34 @@ async def test_cancellation_waits_for_cleanup_without_background_task(tmp_path):
         await task
     assert d.deleted
     assert task.done()
+
+
+async def test_cleanup_timeout_with_empty_registry_cannot_claim_complete(monkeypatch, tmp_path):
+    monkeypatch.setattr(runner_module, "CLEANUP_RESERVE_S", 0.01)
+    driver = Driver()
+    driver.invalid = True
+    release = asyncio.Event()
+    stopped = asyncio.Event()
+    recovered = []
+
+    async def recover(ctx, spec):
+        try:
+            await release.wait()
+            recovered.append("finished")
+            return []
+        finally:
+            stopped.set()
+
+    driver.recover = recover
+    result = await asyncio.wait_for(runner(tmp_path, driver).run(), timeout=1)
+    assert result.outcome == "not_ready"
+    assert result.objects == []
+    assert result.cleanup_complete is False
+    assert result.cleanup_gaps
+    assert stopped.is_set()
+    release.set()
+    await asyncio.sleep(0)
+    assert recovered == []
 
 
 async def test_raw_tool_text_is_referenced_without_exporting_mail_body(tmp_path):

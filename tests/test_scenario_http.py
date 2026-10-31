@@ -1,10 +1,14 @@
+import asyncio
 import json
 from uuid import uuid4
 
+import httpx
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from argus.scenarios import api
+from argus.scenarios.models import ObjectRecord, object_marker
 from test_scenario_runner import Driver, Target, scenario
 
 
@@ -73,3 +77,54 @@ def test_cleanup_discovery_failure_cannot_claim_complete(monkeypatch, tmp_path):
     assert response.status_code == 200
     assert response.json()["complete"] is False
     assert response.json()["gaps"]
+
+
+@pytest.mark.parametrize("blocked_operation, include_registry", [("recover", False), ("recover", True), ("cleanup", True)])
+async def test_cleanup_timeout_returns_registry_and_cancels_driver(monkeypatch, tmp_path, blocked_operation, include_registry):
+    monkeypatch.setenv("ARGUS_SERVER_TOKEN", "server-token")
+    monkeypatch.setenv("ARGUS_SCENARIO_RUN_DIR", str(tmp_path))
+    monkeypatch.setattr(api, "CLEANUP_RESERVE_S", 0.01)
+    release = asyncio.Event()
+    stopped = asyncio.Event()
+    completed = []
+    driver = Driver()
+
+    async def blocked(*args):
+        try:
+            await release.wait()
+            completed.append(blocked_operation)
+        finally:
+            stopped.set()
+
+    if blocked_operation == "recover":
+        driver.recover = blocked
+    else:
+        driver.cleanup = blocked
+    monkeypatch.setattr(api, "build_credential_provider", lambda *args: object())
+    monkeypatch.setattr(api, "build_drivers", lambda *args: {"fake": driver})
+    run_id = str(uuid4())
+    objects = [ObjectRecord(run_id=run_id, group="test", logical_key=key, provider="fake", external_id=key,
+                            marker=object_marker(run_id, "test", key), owner="owner", connection_id="op",
+                            cleanup_status="deleted" if key == "done" else "pending")
+               for key in (["seed", "remaining", "done"] if include_registry else [])]
+    body = {"run_id": run_id, "organization_id": str(uuid4()), "scenario": scenario().model_dump(mode="json"),
+            "connections": {"operator": "op", "observer": "obs"}, "credential_provider": {"kind": "fake"},
+            "run_token": "cleanup-token", "objects": [obj.model_dump(mode="json") for obj in objects]}
+    app = FastAPI()
+    app.include_router(api.router)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await asyncio.wait_for(client.post("/redteam/scenario/cleanup",
+                                          headers={"Authorization": "Bearer server-token"}, json=body), timeout=1)
+    assert response.status_code == 200
+    result = response.json()
+    assert result["complete"] is False
+    assert result["gaps"]
+    statuses = {obj["logical_key"]: obj["cleanup_status"] for obj in result["objects"]}
+    assert statuses == ({"seed": "failed", "remaining": "failed", "done": "deleted"} if include_registry else {})
+    registry_path = tmp_path / run_id / "objects.json"
+    saved = json.loads(registry_path.read_text()) if registry_path.exists() else []
+    assert {obj["logical_key"]: obj["cleanup_status"] for obj in saved} == statuses
+    assert stopped.is_set()
+    release.set()
+    await asyncio.sleep(0)
+    assert completed == []
