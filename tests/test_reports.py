@@ -236,3 +236,13 @@ def test_render_html_lists_each_trap_request_with_a_short_body():
     assert "x" * 167 not in html
     assert html.count("(incomplete)") == 1
     assert "request(s) to the testbed" not in html
+
+
+def test_junit_uses_supported_aggregate_attributes_and_keeps_skip_count():
+    """The pytest/Surefire JUnit XSD permits skipped on testsuite, not testsuites."""
+    run = {**RUN, "findings": [{**RUN["findings"][0], "verdict": "skipped",
+                                "owasp_agentic": ["ASI01"]}]}
+    root = ET.fromstring(reports.render_junit(run))
+    assert set(root.attrib) <= {"name", "time", "tests", "failures", "errors"}
+    assert root.find("testsuite").attrib["skipped"] == "1"
+    assert root.find("testsuite/testcase/skipped") is not None

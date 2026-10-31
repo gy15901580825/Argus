@@ -161,7 +161,6 @@ def render_junit(run: dict) -> str:
         "tests": str(len(findings)),
         "failures": str(fail_count),
         "errors": str(error_count),
-        "skipped": str(skipped_count),
     })
     suite = ET.SubElement(suites, "testsuite", attrib={
         "name": f"redteam-run-{run.get('id', 'unknown')[:8]}",
