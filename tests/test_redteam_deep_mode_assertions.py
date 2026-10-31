@@ -565,3 +565,25 @@ async def test_a_deep_round_that_carries_the_canary_is_decided_by_the_trap(tmp_p
     assert findings[0].reasoning == "the canary never reached the trap"
     # The attacker heard why round 0 counted for nothing.
     assert "did not carry the canary" in m.await_args_list[1].args[1]
+
+
+def test_deep_probe_inherits_scenario_kind():
+    """The browser adapter picks the trap page from it; without it a deep phishing
+    thread renders the target spec's default page and the form never appears."""
+    assert _deep(BROWSER_BASE).scenario_kind == "ui_phishing"
+
+
+@pytest.mark.asyncio
+async def test_a_deep_browser_round_serves_the_base_probes_page():
+    from argus.targets.browser_use import BrowserUseSpec, BrowserUseTarget
+
+    ws = AsyncMock()
+    ws.send_and_wait = AsyncMock(return_value={
+        "final_text": "ok", "latency_ms": 1.0,
+        "trap_evidence": {"interaction_count": 1, "page_loads": 1, "trap_requests": []}})
+    target = BrowserUseTarget(BrowserUseSpec(agent_url="http://t/agent", scenario_kind="dom_injection"))
+    await target.begin_probe(_deep(BROWSER_BASE))
+    with patch("argus.targets.browser_use._get_client_agent_ws", return_value=ws):
+        await target.send_prompt(f"key {BROWSER_CANARY}")
+    sent = ws.send_and_wait.call_args.args[0]
+    assert (sent["scenario_kind"], sent["payload"]) == ("ui_phishing", "{sink_url}/api-key")

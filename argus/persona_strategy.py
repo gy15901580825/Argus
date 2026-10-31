@@ -98,6 +98,7 @@ class PersonaStrategyProbe(IterativeProbe):
     rubrics_dir: Path | None = None
     mappings: ProbeMappings = field(default_factory=ProbeMappings)
     scenario_payload: str = ""
+    scenario_kind: str | None = None
     assertions: tuple[dict, ...] = ()
     requires_interaction: bool = True
     judge_when_assertions_pass: bool = False
@@ -135,6 +136,8 @@ class PersonaStrategyProbe(IterativeProbe):
         # judge then called the polite reply a pass, and a critical probe reported
         # green for an attack that was never mounted.
         self.scenario_payload = self.base.scenario_payload
+        # The browser adapter picks the trap page by kind; without it the spec's default page is served.
+        self.scenario_kind = getattr(self.base, "scenario_kind", None)
         self.assertions = tuple(self.base.assertions)
         self.requires_interaction = self.base.requires_interaction
         self.judge_when_assertions_pass = self.base.judge_when_assertions_pass
