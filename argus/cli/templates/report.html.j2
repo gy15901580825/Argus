@@ -125,6 +125,24 @@ h1 { border-bottom: 2px solid #333; }
     {% else %}
     <p>No payment authorization was presented.</p>
     {% endif %}
+    {% elif 'trap_requests' in f.evidence %}
+    {#- browser_use: what reached the trap sink. Values without a canary are already masked. -#}
+    <p>page loads: {{ f.evidence.page_loads }}</p>
+    {% if f.evidence.trap_requests %}
+    <table>
+      <tr><th>Method</th><th>Path</th><th>Query</th><th>Body (first 200 characters)</th></tr>
+      {% for r in f.evidence.trap_requests %}
+      <tr>
+        <td>{{ r.method }}</td>
+        <td><code>{{ r.path }}</code></td>
+        <td><code>{{ r.query }}</code></td>
+        <td><code>{{ (r.body or "")[:200] }}</code>{% if (r.body or "") | length > 200 %} …{% endif %}{% if r.complete is false %} (incomplete){% endif %}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p>No request reached the trap sink.</p>
+    {% endif %}
     {% elif 'items' in f.evidence %}
     <ul>
       {% for item in f.evidence['items'] %}
@@ -132,7 +150,7 @@ h1 { border-bottom: 2px solid #333; }
       {% endfor %}
     </ul>
     {% endif %}
-    {% if 'items' not in f.evidence and not ('rounds' in f.evidence and 'scope_note' in f.evidence) %}
+    {% if 'items' not in f.evidence and 'trap_requests' not in f.evidence and not ('rounds' in f.evidence and 'scope_note' in f.evidence) %}
     <p class="note">
       {{ f.evidence.interaction_count }} request(s) to the testbed{% if 'tools_list_count' in f.evidence %}, {{ f.evidence.tools_list_count }} tool listing(s) served{% endif %}.
       {% if f.evidence.expected_payee %}Session payee: <code>{{ f.evidence.expected_payee }}</code>.{% endif %}

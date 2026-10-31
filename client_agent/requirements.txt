@@ -9,4 +9,4 @@ playwright==1.51.0
 # redteam_runner/server.py uses aiohttp's TCPSite + reads a private attribute
 # to resolve ephemeral port (no public API in aiohttp 3.x). Pin <4 so a major
 # bump doesn't silently break ScenarioServer.start().
-aiohttp<4
+aiohttp>=3.9,<4

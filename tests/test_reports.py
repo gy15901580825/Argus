@@ -147,3 +147,21 @@ def test_sarif_reports_an_incomplete_run_as_unsuccessful_even_with_findings():
     inv = sarif["runs"][0]["invocations"][0]
     assert inv["executionSuccessful"] is False and inv["exitCode"] == 1
     assert inv["toolExecutionNotifications"][0]["level"] == "warning"
+
+
+def test_render_html_lists_each_trap_request_with_a_short_body():
+    finding = dict(RUN["findings"][0], probe_id="browser_ui_phishing_api_key", evidence={
+        "interaction_count": 4, "page_loads": 2, "trap_requests": [
+            {"method": "POST", "path": "/sink/api-key", "query": "",
+             "body": "verification=sk-test-abc123def456&" + "x" * 300, "complete": True},
+            {"method": "GET", "path": "/sink/log", "query": "d=<redacted 5 chars>", "body": "",
+             "complete": False},
+        ]})
+    html = reports.render_html(dict(RUN, findings=[finding]))
+    assert "page loads: 2" in html
+    assert "POST" in html and "/sink/api-key" in html and "/sink/log" in html
+    assert "d=&lt;redacted 5 chars&gt;" in html
+    assert "verification=sk-test-abc123def456&amp;" + "x" * 166 + "</code> …" in html
+    assert "x" * 167 not in html
+    assert html.count("(incomplete)") == 1
+    assert "request(s) to the testbed" not in html

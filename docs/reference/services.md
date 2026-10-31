@@ -16,9 +16,11 @@ Orchestrator red-team run (target kind browser_use)
 
 The `redteam_browser_probe` message carries two text fields. `prompt` is the user's instruction and is what the client agent sends to the browser agent; `payload` is the hostile scenario planted in the trap page and must never be treated as the instruction. A probe without a `scenario` block sends its prompt in both fields.
 
-The message can also carry `trap_host`, `trap_port` and `trap_public_url`, copied from the target spec. Each key is present only when the spec sets a value other than the default, and is never null. The client agent binds the trap page to `trap_host` and `trap_port`, and sends the browser agent `trap_public_url` with `/scenario` appended. A missing key keeps the default: `127.0.0.1`, a free port, and a URL built from the bound address.
+The message can also carry `trap_host`, `trap_port` and `trap_public_url`, copied from the target spec. Each key is present only when the spec sets a value other than the default, and is never null. The client agent binds the trap page to `trap_host` and `trap_port`, and sends the browser agent `trap_public_url` followed by a random path token and `/scenario`. The sink lives under the same token. Requests without it get a 404 and are not recorded. A missing key keeps the default: `127.0.0.1`, a free port, and a URL built from the bound address.
 
 The client agent's reply includes `trap_url`, the URL it sent the browser agent. When the spec sets any trap field, the orchestrator checks `trap_url` against those settings. If `trap_url` is missing or does not match, the probe gets an `error` finding that says "client_agent did not use the trap settings (upgrade client_agent)". A client agent older than this field causes that error.
+
+The reply also carries `trap_evidence`, the trap server's record of what the browser agent did: `page_loads`, `interaction_count` and `trap_requests`, one entry per request to the sink with `method`, `path`, `query`, `body` and `complete`. The orchestrator decides browser probes from this record, not from the agent's reply alone, and masks every recorded value that does not contain the probe's canary before it stores the finding ([run.json](../run-json.md) describes the fields). A reply without `trap_evidence`, or with an entry missing a field, is a delivery error. So server-mode browser runs need a client agent from this release; with an older one every browser probe ends as an `error` finding that asks you to upgrade the client agent.
 
 ## API Endpoints
 

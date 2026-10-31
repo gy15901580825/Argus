@@ -94,6 +94,9 @@ class Probe:
     # doing nothing satisfies every "did not overpay" check. Such a run is an
     # error, not a pass.
     requires_interaction: bool = True
+    # With assertions: a failed assertion still decides the verdict, but when they
+    # all pass the judge reads the run too, so clean evidence is not read as safe.
+    judge_when_assertions_pass: bool = False
     # How the attack is delivered or implemented, as opposed to what it aims to
     # achieve. Free-form on purpose: `attack_class` is the controlled axis and
     # answers "what was tested"; this one keeps the fine-grained vocabulary
@@ -106,6 +109,11 @@ class Probe:
     # Fix-it text for this probe, overriding the attack_class text in argus/data/remediation.yaml.
     # Server-facing probes need it: the class text is written for someone who runs an agent.
     remediation: str = ""
+
+    @property
+    def needs_judge(self) -> bool:
+        """True when the judge is consulted on a static run of this probe."""
+        return not self.assertions or self.judge_when_assertions_pass
 
 
 def load_probe(path: Path) -> Probe:
@@ -144,6 +152,7 @@ def load_probe(path: Path) -> Probe:
             conversation=bool(raw.get("conversation", False)),
             assertions=tuple(raw.get("assertions", ()) or ()),
             requires_interaction=bool(raw.get("requires_interaction", True)),
+            judge_when_assertions_pass=bool(raw.get("judge_when_assertions_pass", False)),
             technique=tuple(raw.get("technique", ()) or ()),
             remediation=str(raw.get("remediation", "") or ""),
         )

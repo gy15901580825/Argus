@@ -136,6 +136,9 @@ What Argus does:
   The check reads import and install statements only: a library named in a
   prose-only answer is not seen, and Raku is checked against the zef ecosystem
   index only. An empty reply is an `error`, not a `pass`.
+  Browser probes check what the agent sent to the trap page first. The
+  phishing ones are decided by that alone. The others ask the judge only when
+  the trap saw nothing.
 - **Report formats**: SARIF 2.1.0 (drops into GitHub Code Scanning), JUnit
   XML (CI gate), HTML (humans). SARIF and HTML also carry a per-standard
   coverage section (what the library does and does not test) and, for
@@ -268,6 +271,8 @@ In server mode, a `browser_use` run also needs a
 orchestrator. It connects directly, with the same `AGENT_CONNECT_SECRET` set
 on both sides:
 `python client_agent/client_agent.py --orchestrator-url ws://<orchestrator-host>:8080 --agent-name my-browser-agent`.
+The client_agent must be from the same release as the server: an older one
+does not return the trap record, and every browser probe ends in `error`.
 
 `python -m argus.server` (the engine's own FastAPI app) binds to `127.0.0.1`
 by default. To serve other machines, set `ARGUS_SERVER_HOST=0.0.0.0`,

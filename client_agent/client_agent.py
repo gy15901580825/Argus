@@ -13,6 +13,19 @@ from datetime import datetime, timedelta
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("ClientAgent")
 
+
+def _loggable(response: dict) -> dict:
+    """The reply without trap request bodies, which can hold credentials an agent autofilled."""
+    result = response.get("result")
+    if not isinstance(result, dict) or not isinstance(result.get("trap_evidence"), dict):
+        return response
+    ev = result["trap_evidence"]
+    reqs = ev.get("trap_requests")
+    counts = {"page_loads": ev.get("page_loads"),
+              "trap_requests": len(reqs) if isinstance(reqs, list) else None}
+    return dict(response, result=dict(result, trap_evidence=counts))
+
+
 # --- OAuth Client Logic ---
 
 class OAuthClient:
@@ -299,7 +312,7 @@ class ClientAgent:
                                     }
                                     logger.info("=" * 80)
                                     logger.info("📤 SENDING RESPONSE TO ORCHESTRATOR")
-                                    logger.info(f"Full response: {json.dumps(response, indent=2)}")
+                                    logger.info(f"Full response: {json.dumps(_loggable(response), indent=2)}")
                                     logger.info("=" * 80)
                                     await websocket.send(json.dumps(response))
 

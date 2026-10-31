@@ -45,6 +45,7 @@ class IterativeProbe(ABC):
     scenario_payload: str = ""
     assertions: tuple[dict, ...] = ()
     requires_interaction: bool = True
+    judge_when_assertions_pass: bool = False
 
     @abstractmethod
     async def next_prompt(self, ctx: IterationContext) -> str | None:

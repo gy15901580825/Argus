@@ -10,16 +10,22 @@ import asyncio
 import contextlib
 import contextvars
 import ipaddress
+import json
+import re
 import time
 from dataclasses import dataclass, fields
 from typing import ClassVar
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, quote_plus, urlsplit
 
 from fastapi import WebSocketDisconnect
 
+from argus.assertions import canary_in, trap_canaries
 from argus.targets._base import Target, TargetDeliveryError, Turn
 
 _SCENARIO_KINDS = frozenset({"dom_injection", "ui_phishing", "visual_injection", "os_cmd"})
+
+# Same cap as the trap server's, so evidence summed over rounds stays bounded.
+_MAX_TRAP_REQUESTS = 50
 
 # Set only by run_local. Server mode never runs the trap page in-process.
 _LOCAL_RUN: contextvars.ContextVar[bool] = contextvars.ContextVar("browser_local_run", default=False)
@@ -104,6 +110,79 @@ class BrowserUseSpec:
         return (self.trap_host, self.trap_port, self.trap_public_url) != ("127.0.0.1", 0, "")
 
 
+def _valid_evidence(ev) -> bool:
+    """Fail closed: an empty or misshapen record must not read as "the agent did nothing"."""
+    return (
+        isinstance(ev, dict)
+        and all(isinstance(ev.get(k), int) and not isinstance(ev.get(k), bool) and ev.get(k) >= 0
+                for k in ("interaction_count", "page_loads"))
+        and isinstance(ev.get("trap_requests"), list)
+        and all(isinstance(r, dict)
+                and all(isinstance(r.get(k), str) for k in ("method", "path", "query", "body"))
+                and isinstance(r.get("complete"), bool)
+                for r in ev["trap_requests"])
+    )
+
+
+def _redacted(text: str) -> str:
+    return f"<redacted {len(text)} chars>"
+
+
+def _mask_json(value, canaries: tuple[str, ...]):
+    if isinstance(value, dict):
+        return {k: _mask_json(v, canaries) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_mask_json(v, canaries) for v in value]
+    if isinstance(value, bool) or value is None:
+        return value
+    text = value if isinstance(value, str) else json.dumps(value)
+    return text if _holds_canary(text, canaries) else _redacted(text)
+
+
+_TEXT_FIELD_SEP = re.compile(r"(\r?\n|;|&)")
+
+
+def _holds_canary(text: str, canaries: tuple[str, ...]) -> bool:
+    return any(canary_in(text, c) for c in canaries)
+
+
+def _mask_text(text: str, canaries: tuple[str, ...]) -> str:
+    """Replace every value that holds no canary with its length; keep names and canary values."""
+    if not text:
+        return text
+    masked = None
+    try:
+        masked = json.dumps(_mask_json(json.loads(text), canaries), ensure_ascii=False)
+    except (ValueError, RecursionError):
+        pass
+    # Form-encoded text has no raw whitespace; strict parsing refuses a segment without "=".
+    if masked is None and not any(c.isspace() for c in text):
+        try:
+            pairs = parse_qsl(text, keep_blank_values=True, strict_parsing=True)
+        except ValueError:
+            pairs = []
+        if pairs:
+            masked = "&".join(
+                f"{quote_plus(k)}={quote_plus(v) if _holds_canary(v, canaries) else _redacted(v)}"
+                for k, v in pairs)
+    if masked is None and not _holds_canary(text, canaries):
+        masked = _redacted(text)
+    if masked is None:
+        # Free text (multipart, text/plain): keep only the lines or fields that hold a canary.
+        parts = _TEXT_FIELD_SEP.split(text)
+        masked = "".join(
+            part if not part or _TEXT_FIELD_SEP.fullmatch(part) or _holds_canary(part, canaries)
+            else _redacted(part) for part in parts)
+    # A canary split across fields (an unencoded "&" inside it) must stay visible to the check.
+    if any(canary_in(text, c) and not canary_in(masked, c) for c in canaries):
+        return text
+    return masked
+
+
+def _masked_request(req: dict, canaries: tuple[str, ...]) -> dict:
+    return dict(req, query=_mask_text(req["query"], canaries), body=_mask_text(req["body"], canaries))
+
+
 def _is_delivery_failure(e: Exception) -> bool:
     """True for the bridge and transport failures; caller bugs must propagate."""
     from argus.connection_manager import NoClientAgentError
@@ -141,12 +220,17 @@ class BrowserUseTarget(Target):
         # old prompt-as-payload behaviour.
         self._scenario_kind: str | None = None
         self._scenario_payload: str | None = None
+        self._evidence: dict = {}
+        # Canaries the probe checks for; every other recorded value is masked.
+        self._canaries: tuple[str, ...] = ()
 
     # Holding a live browser context across rounds requires a client_agent WS
     # protocol change; deliberately out of scope for v1.
     supports_history: ClassVar[bool] = False
 
     async def begin_probe(self, probe) -> None:
+        self._evidence = {}
+        self._canaries = trap_canaries(getattr(probe, "assertions", None) or ())
         payload = getattr(probe, "scenario_payload", None)
         kind = getattr(probe, "scenario_kind", None)
         # No scenario block: the attack is the prompt itself, so send it as the
@@ -182,6 +266,8 @@ class BrowserUseTarget(Target):
             reply = await asyncio.wait_for(
                 self._run_in_process(msg), timeout=self.spec.timeout_s + 5.0
             )
+            if not _valid_evidence(reply.get("trap_evidence")):
+                raise TargetDeliveryError("the trap server returned no evidence")
         else:
             # Send only the trap settings that differ from the default; never null.
             msg.update({f.name: getattr(self.spec, f.name) for f in fields(self.spec)
@@ -204,25 +290,53 @@ class BrowserUseTarget(Target):
                     f"client_agent reply has no result object (got {type(reply).__name__})"
                 )
             self._check_trap_url(reply.get("trap_url"))
+            # An older client_agent has no recorder; its silence must not read as "agent did nothing".
+            if not _valid_evidence(reply.get("trap_evidence")):
+                raise TargetDeliveryError(
+                    "client_agent did not return trap evidence (upgrade client_agent)"
+                )
+        self._merge_evidence(reply["trap_evidence"])
         wall_latency_ms = (time.monotonic() - start) * 1000.0
         reported = reply.get("latency_ms")
         latency_ms = float(reported) if isinstance(reported, (int, float)) else wall_latency_ms
         return reply.get("final_text", ""), latency_ms
+
+    async def collect_evidence(self) -> dict:
+        """The trap record with every value that is not a canary masked, since bodies and
+        queries can hold real credentials an agent autofilled."""
+        ev = dict(self._evidence)
+        if "trap_requests" in ev:
+            ev["trap_requests"] = [_masked_request(r, self._canaries) for r in ev["trap_requests"]]
+        return ev
+
+    def _merge_evidence(self, new: dict) -> None:
+        """Rounds of one probe add up; begin_probe starts over."""
+        old = self._evidence
+        requests = (old.get("trap_requests", []) + new["trap_requests"])[:_MAX_TRAP_REQUESTS]
+        page_loads = old.get("page_loads", 0) + new["page_loads"]
+        self._evidence = {
+            "interaction_count": page_loads + len(requests),
+            "page_loads": page_loads,
+            "trap_requests": requests,
+        }
 
     def _check_trap_url(self, got) -> None:
         """A client_agent without trap support serves on 127.0.0.1 and omits trap_url."""
         s = self.spec
         if not s.sets_trap:
             return
+        # The page sits under a random path token (secrets.token_urlsafe(12)).
+        tail = r"/[A-Za-z0-9_-]{16}/scenario"
         if s.trap_public_url:
-            expected = s.trap_public_url.rstrip("/") + "/scenario"
-            ok = got == expected
+            base = s.trap_public_url.rstrip("/")
+            expected = base + "/<token>/scenario"
+            ok = isinstance(got, str) and re.fullmatch(re.escape(base) + tail, got) is not None
         else:
-            expected = f"http://{s.trap_host}:{s.trap_port or '<any port>'}/scenario"
+            expected = f"http://{s.trap_host}:{s.trap_port or '<any port>'}/<token>/scenario"
             try:
                 parts = urlsplit(got) if isinstance(got, str) else None
                 ok = parts is not None and parts.hostname == s.trap_host \
-                    and s.trap_port in (0, parts.port)
+                    and s.trap_port in (0, parts.port) and re.fullmatch(tail, parts.path) is not None
             except ValueError:
                 ok = False
         if not ok:

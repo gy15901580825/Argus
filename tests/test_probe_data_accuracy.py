@@ -304,9 +304,9 @@ async def test_generator_name_is_rendered_before_sending(tmp_path, model, expect
 def test_every_placeholder_left_in_the_library_is_known():
     # {generator.name} and {describe character here}: rendered by the runner. url keys: rendered by the testbed
     # adapter. {canary}: mcp-trap driver. {param}/{YOUR_REPLY}: literal shell
-    # templates inside owasp_05_output_cmd_injection.
+    # templates inside owasp_05_output_cmd_injection. {sink_url}: browser trap server.
     known = {"{generator.name}", "{mcp_url}", "{merchant_url}", "{canary}", "{YOUR_REPLY}", "{param}",
-             "{describe character here}"}
+             "{describe character here}", "{sink_url}"}
     found = set()
     for p in LIBRARY:
         for text in (*p.prompts, p.scenario_payload):
