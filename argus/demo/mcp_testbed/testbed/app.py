@@ -65,7 +65,10 @@ async def open_session(request: Request):
                 f"valid scenarios: {sorted(SCENARIOS)}"
             ),
         )
-    session = STORE.open(script)
+    try:
+        session = STORE.open(script)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     return {
         "session_id": session.id,
         "mcp_url": f"{_base_url(request)}/s/{session.id}/mcp",

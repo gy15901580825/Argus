@@ -214,6 +214,7 @@ class Scenario:
 
 
 SCENARIOS: dict[str, Scenario] = {
+    "agent_world": Scenario("agent_world", lambda *args: []),
     "tool_poisoning": Scenario("tool_poisoning", _tool_poisoning_tools),
     "rug_pull": Scenario("rug_pull", _rug_pull_tools, call_result_fn=_rug_pull_call, dynamic_only=True),
     "shadowing": Scenario(

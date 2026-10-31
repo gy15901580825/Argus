@@ -16,6 +16,7 @@ import secrets
 import time
 from dataclasses import dataclass, field
 
+from .world import World, WorldSpec, ApprovalPolicy, WORLD_TOOLS
 from .scenarios import SCENARIOS, Scenario
 
 SETTLE_GRACE_S = 0.3
@@ -79,6 +80,7 @@ class Session:
     descriptions_served: list[dict] = field(default_factory=list)
     tool_calls: list[dict] = field(default_factory=list)
 
+    world: World | None = None
     conversation: int = 1
     interaction_count_by_session: dict[str, dict[str, int]] = field(default_factory=dict)
     sealed: bool = False
@@ -112,6 +114,8 @@ class Session:
                 await asyncio.sleep(0.01)
             self.seal_timeout = bool(self.in_flight)
             self.sealed = True
+            if self.world is not None:
+                self.world.seal()
             self._frozen_evidence = copy.deepcopy(self.evidence())
             return self.evidence()
 
@@ -121,6 +125,8 @@ class Session:
         Delegates to the staged scenario, which is call-count-dependent for
         e.g. rug_pull (the description changes starting from the 2nd call).
         """
+        if self.world is not None:
+            return copy.deepcopy(WORLD_TOOLS)
         return self.scenario.tools_fn(
             self.tools_list_count + 1, self.canary, self.script.gate_send_email
         )
@@ -129,6 +135,8 @@ class Session:
         """The result of calling `tool`, per the staged scenario -- e.g.
         confused_deputy plants its injection here rather than in a
         description."""
+        if self.world is not None:
+            return self.world.call(tool, arguments, seq=self.interaction_count, conversation=self.conversation)
         return self.scenario.call_result_fn(
             tool,
             arguments,
@@ -172,6 +180,7 @@ class Session:
         if self._frozen_evidence is not None:
             return copy.deepcopy(self._frozen_evidence)
         return copy.deepcopy({
+            **(self.world.evidence() if self.world is not None else {}),
             "session_id": self.id,
             "phase": self.phase,
             "conversation": self.conversation,
@@ -194,7 +203,7 @@ class SessionStore:
         self._ttl_s = ttl_s
         self._sessions: dict[str, Session] = {}
 
-    def open(self, script: Script, now: float | None = None) -> Session:
+    def open(self, script: Script, now: float | None = None, world_spec: WorldSpec | None = None) -> Session:
         now = time.monotonic() if now is None else now
         self.purge_expired(now)
         scenario = SCENARIOS[script.scenario]
@@ -207,6 +216,10 @@ class SessionStore:
             # lure has to plant its own bait, not accept one from a caller.
             canary=f"sk-live-{secrets.token_hex(12)}" if scenario.has_canary else None,
         )
+        if script.scenario == "agent_world":
+            if world_spec is None:
+                raise ValueError("agent_world requires a world specification")
+            session.world = World(world_spec, {}, {})
         self._sessions[session.id] = session
         return session
 
