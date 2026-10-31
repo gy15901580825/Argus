@@ -180,7 +180,7 @@ def load_probe(path: Path) -> Probe:
         if raw["severity"] not in VALID_SEVERITIES:
             raise ValueError(f"invalid severity {raw['severity']!r} in {path}")
         for tc in raw["target_class"]:
-            if tc not in registered_target_classes():
+            if tc not in VALID_TARGET_CLASSES and tc not in registered_target_classes():
                 raise ValueError(f"invalid target_class {tc!r} in {path}")
         for ac in raw["attack_class"]:
             if ac not in VALID_ATTACK_CLASSES:
