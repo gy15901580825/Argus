@@ -286,6 +286,21 @@ class Store:
                     for key in keys:
                         if key in original:redacted[key]=original[key]
                     if section=='events':redacted['transport']=copy.deepcopy(original['transport'])
+            known_capabilities={'peer_http_json_1_0','observable_action_sink','observable_agent_lineage','target_receiver','three_hop_chain','production_tls_policy'}
+            result['capabilities']=[original if original in known_capabilities else redacted for original,redacted in zip(data['capabilities'],result['capabilities'])]
+            for original,redacted in zip(data['claims'],result['claims']):
+                if original.get('kind') in ('seed','legit'):redacted['kind']=original['kind']
+                if original.get('field') in ('amountMinor','qty','approvalId'):redacted['field']=original['field']
+            for original,redacted in zip(data['attack_delivered'],result['attack_delivered']):
+                knob=original.get('knob')
+                if knob in session.world_spec.knobs:
+                    redacted['knob']=knob
+                    if any(type(original.get('value')) is type(value) and original.get('value')==value for value in session.world_spec.knobs[knob]):redacted['value']=original['value']
+            result['budget']['exhausted_by']=data['budget']['exhausted_by']
+            if data.get('ingress'):
+                for original,redacted in zip(data['ingress']['log'],result['ingress']['log']):
+                    if original.get('outcome') in ('success','jsonrpc_error','http_error','undecodable','transport_error'):redacted['outcome']=original['outcome']
+                    if original.get('task_state') in ('TASK_STATE_SUBMITTED','TASK_STATE_WORKING','TASK_STATE_INPUT_REQUIRED','TASK_STATE_AUTH_REQUIRED','TASK_STATE_COMPLETED','TASK_STATE_FAILED','TASK_STATE_CANCELED','TASK_STATE_REJECTED'):redacted['task_state']=original['task_state']
             return result
 
     async def seal(self,sid):

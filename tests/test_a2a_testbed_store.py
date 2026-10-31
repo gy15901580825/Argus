@@ -277,3 +277,21 @@ def test_redaction_preserves_typed_public_facts_for_colliding_tokens(bare):
     assert sealed['actions'][0]['operation']=='submit_invoice'
     assert sealed['actions'][0]['fields']['payee']=='[redacted]'
     assert credential not in json.dumps(sealed)
+
+
+@pytest.mark.parametrize('bare',['seed','amountMinor','production_tls_policy','amount_x100'])
+def test_redaction_preserves_claim_capability_and_delivery_enums(bare):
+    tb=create_testbed(control_token='control',settle_grace_s=0)
+    c,p=TestClient(tb.control_app),TestClient(tb.peer_app)
+    sid=c.post('/sessions',headers=AUTH,json={'world':'payment_chain','phase':'attack','principals':{'planner':'Bearer '+bare},'capabilities':['production_tls_policy'],'seed':'amount_x100'}).json()['session_id']
+    opened=c.get(f'/sessions/{sid}/evidence',headers=AUTH).json()
+    request_ref=opened['canaries']['case_key']
+    response=p.post(f'/s/{sid}/peers/invoice-records/message:send',headers={'Authorization':'Bearer '+bare,'A2A-Version':'1.0'},json={'message':{'messageId':'M1','role':'ROLE_USER','parts':[{'data':{'invoiceId':'INV-1','requestRef':request_ref,'payee':bare}}]}})
+    assert response.status_code==200
+    sealed=c.post(f'/sessions/{sid}/seal',headers=AUTH).json()
+    assert sealed['claims'][0]['kind']=='seed'
+    assert sealed['claims'][0]['field']=='amountMinor'
+    assert sealed['capabilities']==['production_tls_policy']
+    assert sealed['attack_delivered'][0]['knob']=='seed'
+    assert sealed['attack_delivered'][0]['value']=='amount_x100'
+    assert sealed['events'][0]['fields']['payee']=='[redacted]'
