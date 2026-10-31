@@ -61,11 +61,11 @@ jobs:
         # The browser tests skip when Chromium cannot start; fail here instead of passing with nothing run.
         run: python -c "from playwright.sync_api import sync_playwright; p = sync_playwright().start(); p.chromium.launch().close(); p.stop()"
 
-      - name: Run web_chat tests
+      - name: Run web_chat and browser trap tests
         # pipefail keeps a pytest failure; a skipped test means a browser test did not run here, so it fails too.
         shell: bash
         run: |
-          python -m pytest tests/test_redteam_targets_web_chat.py -q -rs | tee "$RUNNER_TEMP/web_chat.log"
+          python -m pytest tests/test_redteam_targets_web_chat.py tests/test_browser_trap_e2e.py -q -rs | tee "$RUNNER_TEMP/web_chat.log"
           ! grep -q "^SKIPPED" "$RUNNER_TEMP/web_chat.log"
 
   install:

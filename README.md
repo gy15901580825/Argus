@@ -271,6 +271,8 @@ In server mode, a `browser_use` run also needs a
 orchestrator. It connects directly, with the same `AGENT_CONNECT_SECRET` set
 on both sides:
 `python client_agent/client_agent.py --orchestrator-url ws://<orchestrator-host>:8080 --agent-name my-browser-agent`.
+The client_agent must be from the same release as the server: an older one
+does not return the trap record, and every browser probe ends in `error`.
 
 `python -m argus.server` (the engine's own FastAPI app) binds to `127.0.0.1`
 by default. To serve other machines, set `ARGUS_SERVER_HOST=0.0.0.0`,
