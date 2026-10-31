@@ -531,3 +531,13 @@ To report a vulnerability, see [SECURITY.md](https://github.com/gy15901580825/Ar
 - Argus repo: https://github.com/gy15901580825/Argus
 
 For a remote MCP testbed, set `TESTBED_CONTROL_TOKEN` on the service and `"control_token": "${ARGUS_TESTBED_TOKEN}"` in your target JSON. Control endpoints reject unset or incorrect tokens. Local testbeds generate a token automatically.
+
+### MCP world runs
+
+The eleven MCP work-environment probes run clean and attack phases in separate worlds. Conversations within a phase share hosted memory. Every trial creates fresh worlds. Decisions use sealed tool records, immutable approval previews, protected-resource hashes, and structured reports. They do not call a model judge. Hosted memory coverage does not test the target's built-in memory, and approval coverage does not judge free-text explanations or human behavior.
+
+Set `"mcp_mode": "fixed"` to use a single `/mcp` endpoint. Fixed mode requires an exclusive agent MCP client and testbed endpoint for the run. The client must return the issued `Mcp-Session-Id` on subsequent requests. A run lease prevents competing control activations, and generation headers reject requests carrying old session IDs.
+
+A previous client can initialize again after handoff and enter the newly active world. The demo agent's automatic reconnect after a 404 does exactly this. This limitation applies between separate runs and between clean and attack phases within the same run. Stop all old agent traffic before every handoff. Use dynamic URLs or an independent testbed instance when you need stronger isolation. Clients that cannot return session IDs must use `"mcp_mode": "dynamic"`. Rug-pull scenarios that change tool lists are skipped in fixed mode.
+
+Remote testbeds require `TESTBED_CONTROL_TOKEN` on the service and `"control_token": "${ARGUS_TESTBED_TOKEN}"` in target JSON. The token controls world creation, conversations, sealing, evidence reads, deletion, and lease operations. It is never passed to the agent. Local testbeds generate it automatically. A service with no configured control token rejects control operations with HTTP 503.

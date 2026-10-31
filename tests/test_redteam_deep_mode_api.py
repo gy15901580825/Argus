@@ -28,9 +28,18 @@ def test_deep_with_explicit_probe_ids_is_allowed():
 
 
 def test_deep_with_a_suite_is_allowed():
-    req = RunRequest(target=TARGET, mode="deep", suite="owasp-llm-top10")
+    req = RunRequest(target=TARGET, mode="deep", suite="mcp")
     got = _resolve_request_probe_ids(req)
     assert len(got) > 0
+
+
+def test_deep_suite_with_phased_probes_is_422():
+    req = RunRequest(target=TARGET, mode="deep", suite="owasp-llm-top10")
+    with pytest.raises(HTTPException) as failure:
+        _resolve_request_probe_ids(req)
+    assert failure.value.status_code == 422
+    assert "paired-run probes" in failure.value.detail
+    assert "approval_forged_narration" in failure.value.detail
 
 
 def test_static_without_selection_still_means_whole_library():

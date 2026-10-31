@@ -77,7 +77,7 @@ What Argus does:
   full-browser flows), `web_chat` (an agent reachable only through its chat
   page; Argus types into the page in Chromium), `payment_agent` (x402 wallet-carrying agents, runs
   against the payment testbed), `mcp_agent` (MCP tool-server abuse, runs
-  against the hostile MCP testbed; `"testbed_url": "local"` starts either
+  against the MCP testbed, with a fixed `/mcp` mode for agents configured once; `"testbed_url": "local"` starts either
   testbed for the run), `mcp_server` (an MCP server's own HTTP exposure:
   foreign Origin, missing auth, env/shell/file tools, versions with a published
   advisory; it lists tools and never

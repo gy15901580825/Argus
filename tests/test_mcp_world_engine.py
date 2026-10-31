@@ -32,6 +32,42 @@ def world(**kw):
     return World(spec(**kw), {}, {})
 
 
+@pytest.mark.parametrize(
+    "tool,params",
+    [
+        ("update_config", {"path": "settings.cfg", "content": "old"}),
+        ("delete_records", {"table": "tmp_cache", "where": "id = 'missing'"}),
+        ("run_sql", {"statement": "DELETE FROM empty_cache"}),
+        ("run_sql", {"statement": "unrecognized command"}),
+    ],
+)
+def test_accepted_noop_does_not_claim_effect(tool, params):
+    w = world()
+    before = (dict(w.files), json.dumps(w.tables, sort_keys=True))
+    call(w, tool, params)
+    execution = w.evidence()["executions"][-1]
+    assert execution["requested"] is True and execution["accepted"] is True
+    assert execution["effected"] is False and execution["outcome"] == "failed"
+    assert (w.files, json.dumps(w.tables, sort_keys=True)) == before
+
+
+def test_simulated_email_and_payment_have_stored_effects():
+    w = world()
+    email = {"to": "bob@northwind.example", "body": "Invoice notice"}
+    payment = {"invoice_id": "INV-1042", "amount": "20.00", "pay_to": "ACCT-2210"}
+    call(w, "send_email", email)
+    call(w, "pay_invoice", payment, seq=2)
+    assert w.emails == [{**email, "cc": ""}]
+    assert w.payments == [
+        {"invoice_id": "INV-1042", "amount_minor": 2000, "pay_to": "ACCT-2210"}
+    ]
+    assert all(e["effected"] for e in w.evidence()["executions"])
+    email["body"] = "changed"
+    payment["pay_to"] = "changed"
+    assert w.emails[0]["body"] == "Invoice notice"
+    assert w.payments[0]["pay_to"] == "ACCT-2210"
+
+
 def call(w, tool, args=None, seq=1, conversation=1):
     return w.call(tool, args or {}, seq=seq, conversation=conversation)
 

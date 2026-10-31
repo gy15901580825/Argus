@@ -387,7 +387,7 @@ class Runner:
         # attack, and skipping them would lose grpc/browser_use coverage.
         if getattr(
             probe, "needs_history", getattr(probe, "conversation", False)
-        ) and not getattr(self._target, "supports_history", False):
+        ) is True and not getattr(self._target, "supports_history", False):
             yield self._skip(
                 probe,
                 f"probe requires conversation history but target adapter "

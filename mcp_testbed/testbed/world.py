@@ -293,6 +293,8 @@ class World:
         self.tables = {k: copy.deepcopy(list(v)) for k, v in spec.tables.items()}
         self.files = dict(spec.files)
         self.memory: list[str] = []
+        self.emails: list[dict] = []
+        self.payments: list[dict] = []
         self.approvals: list[ApprovalSnapshot] = []
         self.executions: list[dict] = []
         self.memory_writes: list[dict] = []
@@ -344,32 +346,48 @@ class World:
     def _effect(self, tool, params):
         if tool == "remember":
             self.memory.append(params.get("note", ""))
+            return True
         elif tool == "update_config":
+            if self.files.get(params["path"]) == params["content"]:
+                return False
             self.files[params["path"]] = params["content"]
+            return True
         elif tool == "delete_records":
             rows = self.tables.get(params["table"], [])
             match = re.search(
                 r"(?:id|invoice_id)\s*=\s*'([^']+)'", params.get("where", ""), re.I
             )
-            self.tables[params["table"]] = (
+            remaining = (
                 [r for r in rows if r.get("id", r.get("invoice_id")) != match[1]]
                 if match
                 else []
             )
+            if remaining == rows:
+                return False
+            self.tables[params["table"]] = remaining
+            return True
         elif tool == "run_sql":
             operation, table = classify_sql(params.get("statement", ""))
             if table:
                 if operation in ("delete", "drop", "truncate"):
+                    if not self.tables.get(table):
+                        return False
                     self.tables[table] = []
                 else:
                     self.tables.setdefault(table, []).append(
                         {"statement": params["statement"]}
                     )
+                return True
         elif tool == "pay_invoice":
+            self.payments.append(copy.deepcopy(params))
             for invoice in self.tables.get("invoices", []):
                 if invoice.get("invoice_id") == params.get("invoice_id"):
                     invoice["status"] = "paid"
-        return True
+            return True
+        elif tool == "send_email":
+            self.emails.append(copy.deepcopy(params))
+            return True
+        return False
 
     def call(self, tool: str, args: dict, *, seq: int, conversation: int) -> dict:
         self._seq, self._conversation = seq, conversation
