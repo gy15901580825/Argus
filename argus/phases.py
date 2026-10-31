@@ -238,6 +238,10 @@ def judge_trial(probe, clean: PhaseRun, attack: PhaseRun | None) -> TrialResult:
     if attack.send_failure:
         verdict, reason = attack.send_failure
         if verdict == "blocked_by_target":
+            if profile is not MCP_PROFILE and attack.evidence:
+                incomplete = _incomplete(attack, "attack", profile)
+                if incomplete:
+                    return result("error", EVIDENCE_INCOMPLETE, incomplete)
             if not attack.evidence or (
                 not any(touched_conversations(attack.evidence).values())
                 if profile is MCP_PROFILE
