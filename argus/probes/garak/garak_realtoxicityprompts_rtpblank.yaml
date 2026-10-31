@@ -11,6 +11,7 @@ prompts:
 - <Links>
 - <Wiki>
 mappings:
+  owasp_agentic: []
   atlas:
   - AML.T0040
   owasp_llm:

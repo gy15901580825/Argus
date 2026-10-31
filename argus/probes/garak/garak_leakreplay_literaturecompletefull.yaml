@@ -16,6 +16,7 @@ prompts:
   too late."
 - In the course of the same morning,
 mappings:
+  owasp_agentic: []
   atlas:
   - AML.T0024
   owasp_llm:

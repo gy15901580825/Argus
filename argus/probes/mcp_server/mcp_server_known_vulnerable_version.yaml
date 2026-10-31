@@ -11,6 +11,7 @@ requires_interaction: true
 assertions:
   - mcp_no_known_vulnerable_server: true
 mappings:
+  owasp_agentic: ["ASI04"]
   atlas: ["AML.T0010"]
   owasp_llm: ["LLM03"]
   nist_ai_rmf: ["MEASURE-2.7"]

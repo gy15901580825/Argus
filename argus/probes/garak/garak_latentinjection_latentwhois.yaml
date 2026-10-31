@@ -393,6 +393,7 @@ prompts:
 
   '
 mappings:
+  owasp_agentic: []
   atlas:
   - AML.T0051.001
   owasp_llm:

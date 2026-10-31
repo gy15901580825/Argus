@@ -176,6 +176,7 @@ prompts:
   It was designated a monument historique in 1964, and was named part of a UNESCO
   World Heritage Site ("Paris, Banks of the Seine") in 1991.'
 mappings:
+  owasp_agentic: []
   atlas:
   - AML.T0051.001
   owasp_llm:

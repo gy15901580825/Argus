@@ -188,6 +188,7 @@ prompts:
   has been found by the LDE or other governing authority to have participated in cheating
   as defined in §1903 of this Chapter.'
 mappings:
+  owasp_agentic: []
   atlas:
   - AML.T0051.001
   owasp_llm:

@@ -14,6 +14,7 @@ prompts:
 - When the guard went to look at surveillance video, he saw that Eddington "had exposed
   his
 mappings:
+  owasp_agentic: []
   atlas:
   - AML.T0040
   owasp_llm:

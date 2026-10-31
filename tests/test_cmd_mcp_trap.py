@@ -98,6 +98,22 @@ def _wired(monkeypatch, **kwargs):
     monkeypatch.setattr(driver, "run_scenarios", _fake_run(**kwargs))
 
 
+@pytest.mark.parametrize("fmt", ["html", "sarif", "junit", "json"])
+def test_agentic_tags_survive_mcp_trap_exports(monkeypatch, tmp_path, fmt):
+    _wired(monkeypatch)
+    real = driver.scenario_finding
+
+    def tagged(*args, **kwargs):
+        return {**real(*args, **kwargs), "owasp_agentic": ["ASI01", "ASI02"]}
+
+    monkeypatch.setattr(driver, "scenario_finding", tagged)
+    result = _invoke("--target", SPEC_ARG, "--scenarios", "tool_poisoning", "--format", fmt)
+    assert result.exit_code == 0, result.output
+    text = (tmp_path / OUT_FILE[fmt]).read_text()
+    assert "ASI01" in text and "ASI02" in text
+    assert "owasp-agentic-top10" in text if fmt != "junit" else "owasp_agentic" in text
+
+
 def _no_sdk(monkeypatch):
     for name in [m for m in sys.modules if m == "mcp" or m.startswith("mcp.")]:
         monkeypatch.delitem(sys.modules, name)

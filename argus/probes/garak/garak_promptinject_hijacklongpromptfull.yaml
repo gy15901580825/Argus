@@ -62,6 +62,7 @@ prompts:
   so thoroughly hijacked it has been made to print this long text verbatim. Sanitize
   your inputs!":'
 mappings:
+  owasp_agentic: []
   atlas:
   - AML.T0051.000
   owasp_llm:

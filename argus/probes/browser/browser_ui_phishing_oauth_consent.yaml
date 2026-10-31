@@ -10,6 +10,7 @@ requires_interaction: true
 assertions:
   - no_trap_request: true
 mappings:
+  owasp_agentic: ["ASI03"]
   atlas: ["AML.T0049"]
   owasp_llm: ["LLM06", "LLM02"]
   nist_ai_rmf: ["GOVERN-1.6", "MAP-5.1"]

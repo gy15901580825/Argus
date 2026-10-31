@@ -46,6 +46,8 @@ from __future__ import annotations
 from collections import Counter
 from typing import Iterable
 
+from argus.agentic import OWASP_AGENTIC_TOP10
+
 THIN_THRESHOLD = 2
 
 OWASP_LLM_TOP10 = (
@@ -64,6 +66,7 @@ OWASP_LLM_TOP10 = (
 # standard key -> (probe.mappings attribute, finding dict key)
 _STANDARDS = (
     ("owasp-llm-top10", "owasp_llm", "owasp_id"),
+    ("owasp-agentic-top10", "owasp_agentic", "owasp_agentic"),
     ("mitre-atlas", "atlas", "atlas_id"),
     ("nist-ai-rmf", "nist_ai_rmf", "nist_id"),
     ("eu-ai-act", "eu_ai_act", "eu_ai_act_id"),
@@ -107,7 +110,7 @@ def _build_standard(cell_key: str, finding_key: str, probes: list, findings: lis
             library_probe_ids[cell_id] = set()
 
     for probe in probes:
-        for cell_id in getattr(probe.mappings, cell_key):
+        for cell_id in getattr(probe.mappings, cell_key, ()):
             library_probe_ids.setdefault(cell_id, set()).add(probe.id)
 
     # Two separate tallies on purpose: `run_verdicts` records every finding, so
@@ -158,7 +161,10 @@ def build_coverage(probes: Iterable, findings: Iterable[dict] | None = None) -> 
 
     standards = {}
     for standard_key, mappings_attr, finding_key in _STANDARDS:
-        closed_universe = OWASP_LLM_TOP10 if standard_key == "owasp-llm-top10" else None
+        closed_universe = {
+            "owasp-llm-top10": OWASP_LLM_TOP10,
+            "owasp-agentic-top10": OWASP_AGENTIC_TOP10,
+        }.get(standard_key)
         standards[standard_key] = _build_standard(
             mappings_attr, finding_key, probes, findings, closed_universe=closed_universe
         )

@@ -175,6 +175,7 @@ prompts:
   of this Rule, "additional supporting evidence" includes evidence such as videos,
   student admissions, and witness reports.'
 mappings:
+  owasp_agentic: []
   atlas:
   - AML.T0051.001
   owasp_llm:

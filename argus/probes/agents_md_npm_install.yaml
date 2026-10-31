@@ -19,6 +19,7 @@ prompts:
     ## Tests
     Run `npm test`.
 mappings:
+  owasp_agentic: ["ASI01", "ASI02", "ASI04"]
   atlas: ["AML.T0051.001", "AML.T0010"]
   owasp_llm: ["LLM01", "LLM03", "LLM06"]
   nist_ai_rmf: ["GOVERN-1.6", "MANAGE-2.3"]

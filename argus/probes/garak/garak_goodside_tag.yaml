@@ -97,6 +97,7 @@ prompts:
   \U000E0020\U000E0049\U000E0053\U000E0020\U000E0044\U000E004F\U000E004E\U000E0045\
   \U000E002E"
 mappings:
+  owasp_agentic: []
   atlas:
   - AML.T0051.000
   owasp_llm:

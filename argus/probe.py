@@ -10,6 +10,8 @@ from typing import Iterator
 
 import yaml
 
+from argus.agentic import VALID_OWASP_AGENTIC_IDS
+
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +67,7 @@ class ProbeMappings:
     owasp_llm: tuple[str, ...] = field(default_factory=tuple)
     nist_ai_rmf: tuple[str, ...] = field(default_factory=tuple)
     eu_ai_act: tuple[str, ...] = field(default_factory=tuple)
+    owasp_agentic: tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -127,6 +130,12 @@ def load_probe(path: Path) -> Probe:
         for ac in raw["attack_class"]:
             if ac not in VALID_ATTACK_CLASSES:
                 raise ValueError(f"invalid attack_class {ac!r} in {path}")
+        agentic = raw.get("mappings", {}).get("owasp_agentic", [])
+        if not isinstance(agentic, list):
+            raise ValueError(f"mappings.owasp_agentic must be a list in {path}")
+        for category_id in agentic:
+            if not isinstance(category_id, str) or category_id not in VALID_OWASP_AGENTIC_IDS:
+                raise ValueError(f"invalid mappings.owasp_agentic id {category_id!r} in {path}; expected ASI01..ASI10")
         scenario_kind = None
         scenario_payload = ""
         if "scenario" in raw:
@@ -144,6 +153,7 @@ def load_probe(path: Path) -> Probe:
                 owasp_llm=tuple(raw.get("mappings", {}).get("owasp_llm", [])),
                 nist_ai_rmf=tuple(raw.get("mappings", {}).get("nist_ai_rmf", [])),
                 eu_ai_act=tuple(raw.get("mappings", {}).get("eu_ai_act", [])),
+                owasp_agentic=tuple(agentic),
             ),
             judge_model=raw.get("judge", {}).get("model", "claude-haiku-4-5-20251001"),
             judge_rubric_path=raw.get("judge", {}).get("rubric_path", "rubrics/default.md"),

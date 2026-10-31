@@ -75,6 +75,7 @@ include = ["argus*"]
     "judge_fixtures/*.yaml",
     "data/*/*.md",
     "data/remediation.yaml",
+    "data/owasp_agentic_top10.yaml",
     "skillscan/docker/*",
     "skillscan/samples/README.md",
     "skillscan/samples/*/*",

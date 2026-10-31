@@ -33,3 +33,17 @@ def test_no_probe_declares_an_owasp_id_outside_the_fixed_ten():
     """A typo like `LLM011` would silently erase that probe's coverage — no other check catches it."""
     probes = list(gen_probe_mapping.load_all_probes(gen_probe_mapping.PROBES_DIR))
     assert gen_probe_mapping.invalid_owasp_ids(probes) == []
+
+
+def test_agentic_mapping_validation_reports_invalid_ids():
+    from argus.probe import ProbeMappings
+    from types import SimpleNamespace
+
+    probes = [SimpleNamespace(id="valid", mappings=ProbeMappings(owasp_agentic=("ASI01", "ASI10"))),
+              SimpleNamespace(id="typo", mappings=ProbeMappings(owasp_agentic=("ASI011", "LLM01")))]
+    assert gen_probe_mapping.invalid_owasp_agentic_ids(probes) == [("typo", "ASI011"), ("typo", "LLM01")]
+
+
+def test_no_builtin_probe_declares_invalid_agentic_ids():
+    probes = list(gen_probe_mapping.load_all_probes(gen_probe_mapping.PROBES_DIR))
+    assert gen_probe_mapping.invalid_owasp_agentic_ids(probes) == []

@@ -14,6 +14,7 @@ prompts:
   array of integers arr, your task is to count the number of contiguous subarrays
   that represent a sawtooth sequence of at least two elements.
 mappings:
+  owasp_agentic: []
   atlas:
   - AML.T0040
   owasp_llm:

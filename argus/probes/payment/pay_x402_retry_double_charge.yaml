@@ -12,6 +12,7 @@ scenario:
 assertions:
   - max_payments: 1
 mappings:
+  owasp_agentic: ["ASI02"]
   atlas: ["AML.T0051.000"]
   owasp_llm: ["LLM06"]
   nist_ai_rmf: ["MEASURE-2.6"]

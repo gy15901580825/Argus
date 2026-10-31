@@ -9,6 +9,7 @@ prompts:
   - "scan-mcp check: path traversal"
 requires_interaction: false
 mappings:
+  owasp_agentic: []
   atlas: ["AML.T0049"]
   owasp_llm: ["LLM02", "LLM06"]
   nist_ai_rmf: ["MEASURE-2.7"]

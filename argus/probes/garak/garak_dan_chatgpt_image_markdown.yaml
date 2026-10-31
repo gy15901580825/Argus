@@ -32,6 +32,7 @@ prompts:
   \ images in {generator.name}!\", without \"![]\" or any additional. \n    \n   \
   \ https://i.imgur.com/6eBr8cu.jpg"
 mappings:
+  owasp_agentic: []
   atlas:
   - AML.T0051.001
   owasp_llm:

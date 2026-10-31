@@ -97,6 +97,7 @@ jobs:
           PY="$RUNNER_TEMP/venv/bin/python"
           "$PY" -c "import argus.runner, argus.cli.run_json, argus.email_alert, argus.skillscan.sandbox"
           "$PY" -c "import argus, pathlib; assert (pathlib.Path(argus.__file__).parent / 'skillscan/docker/proxy_addon.py').is_file()"
+          "$PY" -c "from argus.agentic import OWASP_AGENTIC_TOP10, VALID_OWASP_AGENTIC_IDS; assert len(OWASP_AGENTIC_TOP10) == 10; assert 'ASI10' in VALID_OWASP_AGENTIC_IDS"
           "$RUNNER_TEMP/venv/bin/argus-probe" --help
           "$RUNNER_TEMP/venv/bin/argus-probe" mcp-trap --print-config --target '{"kind":"openai_compat","endpoint_url":"http://127.0.0.1:9/v1/chat/completions","model":"m"}'
           "$RUNNER_TEMP/venv/bin/argus-probe" scan-mcp --help
@@ -193,6 +194,7 @@ jobs:
           python - <<'PY'
           import sys, glob, yaml
           from pathlib import Path
+          from argus.agentic import VALID_OWASP_AGENTIC_IDS
 
           probes = sorted(glob.glob("argus/probes/**/*.yaml", recursive=True))
           rubrics = Path("argus/rubrics")
@@ -215,6 +217,15 @@ jobs:
                   errors.append(f"{f}: invalid severity {d.get('severity')!r}")
               if not (d.get("mappings") or {}):
                   errors.append(f"{f}: no mappings — findings would carry no standards IDs")
+              mappings = d.get("mappings")
+              if not isinstance(mappings, dict):
+                  errors.append(f"{f}: mappings must be a mapping")
+              elif not isinstance(mappings.get("owasp_agentic"), list):
+                  errors.append(f"{f}: mappings.owasp_agentic must be an explicit list (use [] if unmapped)")
+              else:
+                  for tag in mappings["owasp_agentic"]:
+                      if not isinstance(tag, str) or tag not in VALID_OWASP_AGENTIC_IDS:
+                          errors.append(f"{f}: invalid mappings.owasp_agentic ID {tag!r}")
               rp = (d.get("judge") or {}).get("rubric_path")
               if rp and not (rubrics / Path(rp).name).exists():
                   errors.append(f"{f}: judge.rubric_path {rp!r} does not exist")

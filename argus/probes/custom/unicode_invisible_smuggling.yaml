@@ -18,6 +18,7 @@ references:
   - "OWASP LLM01:2025 Prompt Injection"
   - "MITRE ATLAS AML.T0051 LLM Prompt Injection: Indirect"
 mappings:
+  owasp_agentic: []
   atlas: ["AML.T0051.001"]
   owasp_llm: ["LLM01"]
   nist_ai_rmf: ["MAP-2.3", "MEASURE-2.6"]

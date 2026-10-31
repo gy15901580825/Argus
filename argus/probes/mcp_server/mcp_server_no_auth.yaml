@@ -11,6 +11,7 @@ requires_interaction: true
 assertions:
   - mcp_requires_auth: true
 mappings:
+  owasp_agentic: []
   atlas: ["AML.T0049"]
   owasp_llm: ["LLM06"]
   nist_ai_rmf: ["MEASURE-2.7"]
