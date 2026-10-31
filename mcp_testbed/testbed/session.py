@@ -86,6 +86,7 @@ class Session:
     generation: int | None = None
     rejected_requests: list[dict] = field(default_factory=list)
     in_flight: int = 0
+    fixed_endpoint: object | None = field(default=None, repr=False)
     _frozen_evidence: dict | None = field(default=None, repr=False)
     _seal_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
@@ -103,6 +104,8 @@ class Session:
         async with self._seal_lock:
             if self._frozen_evidence is not None:
                 return self.evidence()
+            if self.fixed_endpoint is not None:
+                self.fixed_endpoint.stop(self)
             await asyncio.sleep(SETTLE_GRACE_S if grace_s is None else grace_s)
             deadline = time.monotonic() + (SETTLE_TIMEOUT_S if timeout_s is None else timeout_s)
             while self.in_flight and time.monotonic() < deadline:
