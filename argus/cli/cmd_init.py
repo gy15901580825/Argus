@@ -75,6 +75,12 @@ _KIND_QUESTIONS: dict[str, list[tuple[str, str, str | None]]] = {
         # An empty answer is valid: the target then presses Enter in the message box.
         ("send_selector", "CSS selector of the send button (empty: press Enter)", ""),
     ],
+    "mcp_server": [
+        ("url", "MCP server Streamable HTTP endpoint (e.g. http://127.0.0.1:3001/mcp)", None),
+    ],
+    "vllm_server": [
+        ("url", "vLLM server root URL, not the /v1 path (e.g. http://10.0.0.5:8000)", None),
+    ],
 }
 
 # Chat kinds get a small judged set. Every other kind gets `all`, because the chat probes do not

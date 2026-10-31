@@ -72,7 +72,7 @@ For `browser_use` targets in server mode, the server's orchestrator also needs a
 argus-probe validate-target --target argus-target.json
 ```
 
-Sends a tiny "Reply with OK" message and reports if the target endpoint accepts the OpenAI-compat shape. If this fails, fix the target spec before continuing.
+Sends one "ping" prompt the way `run` does, with `$VAR` references in the spec expanded, and reports whether the target answered with text. It works for the chat kinds: `openai_compat`, `anthropic_native` and `custom_http`. For other kinds it exits 2 and points you to `run --local`, because their probes are the check. If this fails, fix the target spec before continuing.
 
 ## 5. Run your first probe (server mode)
 
@@ -144,7 +144,7 @@ argus-probe scan-skill --sample key-grab
 ```
 argus-probe quickstart                Run the MCP probes against a built-in demo agent, no key
 argus-probe init --kind <X>           Interactive target.json generator
-argus-probe validate-target           Sanity-check target reachability
+argus-probe validate-target           Send one prompt to a chat target and check it answers
 argus-probe list-probes               List probe ids (local library, or a server with --api-url); --target / --target-class filter them
 argus-probe run                       Submit a run + write the report
 argus-probe report                    Re-render an existing run's report
