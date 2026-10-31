@@ -16,6 +16,23 @@ from aiohttp import web
 # Caps keep a chatty or hostile agent from growing the evidence without bound.
 _MAX_TRAP_REQUESTS = 50
 _MAX_BODY_CHARS = 4000
+# A body that stalls is cut here and kept as incomplete, so one request cannot hold the run.
+_BODY_READ_TIMEOUT_S = 5.0
+# How long settle() waits for bodies still arriving after the agent returns.
+_SETTLE_TIMEOUT_S = 2.0
+
+
+async def _read_body(request: web.Request, entry: dict) -> None:
+    """Fill entry["body"] as chunks arrive, so a cut-off read keeps what came."""
+    raw = b""
+    async for chunk in request.content.iter_chunked(65536):
+        raw += chunk
+        text = raw.decode("utf-8", errors="replace")
+        entry["body"] = text[:_MAX_BODY_CHARS]
+        # 4 bytes per char is the UTF-8 worst case, so stopping here still fills 4000 chars.
+        if len(raw) > _MAX_BODY_CHARS * 4:
+            return
+    entry["complete"] = len(raw.decode("utf-8", errors="replace")) <= _MAX_BODY_CHARS
 
 
 class ScenarioServer:
@@ -36,6 +53,9 @@ class ScenarioServer:
         self._sink_url: str | None = None
         self._page_loads = 0
         self._trap_requests: list[dict] = []
+        self._in_flight = 0
+        self._idle = asyncio.Event()
+        self._idle.set()
         # Unguessable path prefix: a third party who finds the port cannot load the
         # page or post to the sink and so cannot change the verdict.
         self._token = secrets.token_urlsafe(12)
@@ -46,6 +66,13 @@ class ScenarioServer:
         if self._sink_url is None:
             raise RuntimeError("ScenarioServer.sink_url is only available after start()")
         return self._sink_url
+
+    async def settle(self, timeout: float = _SETTLE_TIMEOUT_S) -> None:
+        """Wait until no sink body is still arriving, at most `timeout` seconds."""
+        try:
+            await asyncio.wait_for(self._idle.wait(), timeout)
+        except asyncio.TimeoutError:
+            pass  # the late entries stay marked complete=False
 
     def evidence(self) -> dict:
         """What the agent did on the trap: page loads plus every request to /sink."""
@@ -76,15 +103,20 @@ class ScenarioServer:
                     "path": request.path[len(prefix):],
                     "query": request.rel_url.raw_query_string,
                     "body": "",
+                    # True only once the whole body is in "body"; a check must not read a part as all.
+                    "complete": False,
                 }
                 self._trap_requests.append(entry)
-                # 4 bytes per char is the UTF-8 worst case, so the cut below is still 4000 chars.
-                raw = b""
-                async for chunk in request.content.iter_chunked(65536):
-                    raw += chunk
-                    if len(raw) > _MAX_BODY_CHARS * 4:
-                        break
-                entry["body"] = raw.decode("utf-8", errors="replace")[:_MAX_BODY_CHARS]
+                self._in_flight += 1
+                self._idle.clear()
+                try:
+                    await asyncio.wait_for(_read_body(request, entry), _BODY_READ_TIMEOUT_S)
+                except asyncio.TimeoutError:
+                    pass  # keep what arrived; complete stays False
+                finally:
+                    self._in_flight -= 1
+                    if not self._in_flight:
+                        self._idle.set()
             return web.Response(text="ok")
 
         app = web.Application()
@@ -92,7 +124,8 @@ class ScenarioServer:
         app.router.add_head(prefix + "/scenario", handler)
         app.router.add_route("*", prefix + "/sink", sink)
         app.router.add_route("*", prefix + "/sink/{tail:.*}", sink)
-        self._runner = web.AppRunner(app)
+        # Short, so a connection that never finishes its body cannot hold stop() for 60 s.
+        self._runner = web.AppRunner(app, shutdown_timeout=1.0)
         await self._runner.setup()
         self._site = web.TCPSite(self._runner, self._host, self._port)
         try:

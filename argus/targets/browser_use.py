@@ -115,7 +115,10 @@ def _valid_evidence(ev) -> bool:
         and all(isinstance(ev.get(k), int) and not isinstance(ev.get(k), bool) and ev.get(k) >= 0
                 for k in ("interaction_count", "page_loads"))
         and isinstance(ev.get("trap_requests"), list)
-        and all(isinstance(r, dict) for r in ev["trap_requests"])
+        and all(isinstance(r, dict)
+                and all(isinstance(r.get(k), str) for k in ("method", "path", "query", "body"))
+                and isinstance(r.get("complete"), bool)
+                for r in ev["trap_requests"])
     )
 
 

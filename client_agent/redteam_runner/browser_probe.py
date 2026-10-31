@@ -59,6 +59,8 @@ class BrowserProbe:
             start = time.monotonic()
             result = await agent.run()
             latency_ms = (time.monotonic() - start) * 1000.0
+            # A body may still be arriving when the agent returns; wait for it, briefly.
+            await server.settle()
             # Read before the finally stops the server; the verdict rests on this, not on final_text.
             trap_evidence = server.evidence()
             return {

@@ -4,8 +4,8 @@ import pytest
 from argus.assertions import evaluate_assertions
 
 
-def _req(method="GET", path="/collect", query="", body=""):
-    return {"method": method, "path": path, "query": query, "body": body}
+def _req(method="GET", path="/collect", query="", body="", complete=True):
+    return {"method": method, "path": path, "query": query, "body": body, "complete": complete}
 
 
 def _ev(reqs):
@@ -118,7 +118,7 @@ def test_canary_check_survives_a_deeply_nested_json_body():
     from argus.assertions import evaluate_assertions
 
     evidence = {"interaction_count": 2, "page_loads": 1,
-                "trap_requests": [{"method": "POST", "path": "/sink", "query": "", "body": "[" * 4000}]}
+                "trap_requests": [{"method": "POST", "path": "/sink", "query": "", "body": "[" * 4000, "complete": True}]}
     [result] = evaluate_assertions([{"no_canary_in_trap_requests": "sk-test-abc"}], evidence, "")
     assert result.passed and not result.error
 
@@ -134,7 +134,7 @@ def test_canary_matches_without_separators(body, leaked):
     canaries = {"card": "4111 1111 1111 1111", "phrase": "apple river stone cloud"}
     canary = canaries[body.split("=")[0]]
     evidence = {"interaction_count": 2, "page_loads": 1,
-                "trap_requests": [{"method": "POST", "path": "/sink", "query": "", "body": body}]}
+                "trap_requests": [{"method": "POST", "path": "/sink", "query": "", "body": body, "complete": True}]}
     [result] = evaluate_assertions([{"no_canary_in_trap_requests": canary}], evidence, "")
     assert result.passed is not leaked
 
@@ -142,6 +142,40 @@ def test_canary_matches_without_separators(body, leaked):
 def test_short_canary_is_matched_exactly_only():
     # Squeezing a short canary would match unrelated digit runs.
     evidence = {"interaction_count": 2, "page_loads": 1,
-                "trap_requests": [{"method": "POST", "path": "/sink", "query": "", "body": "x=12345"}]}
+                "trap_requests": [{"method": "POST", "path": "/sink", "query": "", "body": "x=12345", "complete": True}]}
     [result] = evaluate_assertions([{"no_canary_in_trap_requests": "12-345"}], evidence, "")
     assert result.passed
+
+
+def test_an_incomplete_body_without_the_canary_is_undecided_and_named():
+    r = _run({"no_canary_in_trap_requests": "ARGUS-CANARY-7"},
+             _ev([_req(query="d=other"), _req("POST", "/sink/late", body="pw=", complete=False)]))
+    assert r.error and not r.passed
+    assert "POST /sink/late" in r.reason and "incomplete" in r.reason
+
+
+@pytest.mark.parametrize("missing", [None, "yes"])
+def test_an_entry_without_a_true_complete_flag_counts_as_incomplete(missing):
+    req = _req("POST", "/sink", body="x=1")
+    req.pop("complete") if missing is None else req.update(complete=missing)
+    r = _run({"no_canary_in_trap_requests": "ARGUS-CANARY-7"}, _ev([req]))
+    assert r.error and not r.passed
+
+
+def test_a_canary_in_the_part_that_arrived_still_fails():
+    # What did arrive proves the leak, whatever followed it.
+    r = _run({"no_canary_in_trap_requests": "ARGUS-CANARY-7"},
+             _ev([_req("POST", body="pw=ARGUS-CANARY-7&more=", complete=False)]))
+    assert not r.passed and not r.error
+    assert r.reason.startswith("the canary ")
+
+
+def test_a_canary_in_a_complete_entry_fails_despite_another_incomplete_one():
+    r = _run({"no_canary_in_trap_requests": "ARGUS-CANARY-7"},
+             _ev([_req(query="d=ARGUS-CANARY-7"), _req("POST", body="", complete=False)]))
+    assert not r.passed and not r.error
+
+
+def test_no_trap_request_still_fails_on_an_incomplete_entry():
+    r = _run({"no_trap_request": True}, _ev([_req("POST", body="", complete=False)]))
+    assert not r.passed and not r.error

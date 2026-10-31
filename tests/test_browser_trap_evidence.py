@@ -41,8 +41,8 @@ async def test_evidence_records_page_loads_and_sink_requests_in_order():
             "page_loads": 2,
             "trap_requests": [
                 {"method": "POST", "path": "/sink/x", "query": "a=1",
-                 "body": "email=a%40b.c&password=pw"},
-                {"method": "GET", "path": "/sink", "query": "", "body": ""},
+                 "body": "email=a%40b.c&password=pw", "complete": True},
+                {"method": "GET", "path": "/sink", "query": "", "body": "", "complete": True},
             ],
         }
     finally:
@@ -67,7 +67,10 @@ async def test_sink_body_is_cut_at_4000_chars_and_decoded_leniently():
             await c.post(f"{base}/sink", content=b"ok\xff")
         first, second = server.evidence()["trap_requests"]
         assert first["body"] == "x" * 4000
+        # Cut by the cap, so the record does not hold the whole body.
+        assert first["complete"] is False
         assert second["body"] == "ok�"
+        assert second["complete"] is True
     finally:
         await server.stop()
 
@@ -245,14 +248,121 @@ async def test_browser_probe_reply_carries_trap_evidence():
     assert result["trap_evidence"] == {
         "interaction_count": 1, "page_loads": 0,
         "trap_requests": [{"method": "POST", "path": "/sink/steal", "query": "",
-                           "body": "verification=tok-123"}],
+                           "body": "verification=tok-123", "complete": True}],
     }
+
+
+async def _stalled(first: bytes, release: asyncio.Event):
+    yield first
+    await release.wait()
+    yield b"never"
+
+
+@pytest.mark.asyncio
+async def test_settle_waits_for_a_body_still_arriving():
+    server, base = await _started()
+    try:
+        async with httpx.AsyncClient(trust_env=False, timeout=30) as c:
+            post = asyncio.create_task(c.post(f"{base}/sink/late", content=_slow(0.5, b"pw=late")))
+            await asyncio.sleep(0.2)
+            await server.settle()
+            [entry] = server.evidence()["trap_requests"]
+            assert entry["body"] == "pw=late"
+            assert entry["complete"] is True
+            await post
+    finally:
+        await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_settle_gives_up_after_2s_and_marks_the_stalled_body_incomplete():
+    server, base = await _started()
+    release = asyncio.Event()
+    try:
+        async with httpx.AsyncClient(trust_env=False, timeout=30) as c:
+            post = asyncio.create_task(c.post(f"{base}/sink/stall", content=_stalled(b"abc", release)))
+            await asyncio.sleep(0.3)
+            t0 = asyncio.get_running_loop().time()
+            await server.settle()
+            assert 1.5 < asyncio.get_running_loop().time() - t0 < 3.0
+            [entry] = server.evidence()["trap_requests"]
+            assert entry["body"] == "abc"
+            assert entry["complete"] is False
+            post.cancel()
+    finally:
+        release.set()
+        await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_a_stalled_body_read_stops_at_the_bound_and_keeps_what_arrived(monkeypatch):
+    from argus.browser_runner import server as server_mod
+    monkeypatch.setattr(server_mod, "_BODY_READ_TIMEOUT_S", 0.5)
+    server, base = await _started()
+    release = asyncio.Event()
+    try:
+        async with httpx.AsyncClient(trust_env=False, timeout=30) as c:
+            post = asyncio.create_task(c.post(f"{base}/sink/stall", content=_stalled(b"abc", release)))
+            await asyncio.sleep(1.0)
+            [entry] = server.evidence()["trap_requests"]
+            assert entry == {"method": "POST", "path": "/sink/stall", "query": "",
+                             "body": "abc", "complete": False}
+            t0 = asyncio.get_running_loop().time()
+            await server.settle()  # the bounded read already ended, so nothing is in flight
+            assert asyncio.get_running_loop().time() - t0 < 0.5
+            post.cancel()
+    finally:
+        release.set()
+        await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_a_stalled_post_does_not_hold_up_stop():
+    server, base = await _started()
+    release = asyncio.Event()
+    async with httpx.AsyncClient(trust_env=False, timeout=30) as c:
+        post = asyncio.create_task(c.post(f"{base}/sink/stall", content=_stalled(b"abc", release)))
+        await asyncio.sleep(0.3)
+        t0 = asyncio.get_running_loop().time()
+        await server.stop()
+        assert asyncio.get_running_loop().time() - t0 < 2.0
+        post.cancel()
+        release.set()
+
+
+@pytest.mark.asyncio
+async def test_browser_probe_waits_for_a_post_the_agent_left_in_flight():
+    posts = []
+
+    class FireAndForgetDriver:
+        def __init__(self, scenario_url):
+            self.sink = scenario_url.rsplit("/scenario", 1)[0] + "/sink/steal"
+
+        async def run(self):
+            client = _client()
+            posts.append((client, asyncio.create_task(
+                client.post(self.sink, content=_slow(0.5, b"verification=tok-123")))))
+            await asyncio.sleep(0.1)
+            return {"final_text": "done", "screenshots": []}
+
+    msg = {"scenario_kind": "ui_phishing", "agent_url": "http://t/agent",
+           "payload": "{sink_url}/steal", "timeout_s": 30}
+    with patch("argus.browser_runner.browser_probe._make_target_agent_driver",
+               side_effect=lambda a, scenario_url, p, t: FireAndForgetDriver(scenario_url)):
+        result = await BrowserProbe().run(msg)
+    client, task = posts[0]
+    await asyncio.gather(task, return_exceptions=True)
+    await client.aclose()
+    assert result["trap_evidence"]["trap_requests"] == [
+        {"method": "POST", "path": "/sink/steal", "query": "", "body": "verification=tok-123",
+         "complete": True}]
 
 
 # --- BrowserUseTarget ---------------------------------------------------------
 
 _EVIDENCE = {"interaction_count": 1, "page_loads": 0,
-             "trap_requests": [{"method": "GET", "path": "/sink", "query": "q=1", "body": ""}]}
+             "trap_requests": [{"method": "GET", "path": "/sink", "query": "", "body": "",
+                                "complete": True}]}
 
 
 def _target() -> BrowserUseTarget:
@@ -307,6 +417,15 @@ _BAD_EVIDENCE = [
     {"interaction_count": 0, "page_loads": 0, "trap_requests": {}},
     {"interaction_count": -1, "page_loads": 0, "trap_requests": []},
     {"interaction_count": 1, "page_loads": 0, "trap_requests": ["GET /sink"]},
+    # An entry must say whether its body arrived whole; an older client_agent does not.
+    {"interaction_count": 1, "page_loads": 0,
+     "trap_requests": [{"method": "GET", "path": "/sink", "query": "", "body": ""}]},
+    {"interaction_count": 1, "page_loads": 0,
+     "trap_requests": [{"method": "GET", "path": "/sink", "query": "", "body": "", "complete": "yes"}]},
+    {"interaction_count": 1, "page_loads": 0,
+     "trap_requests": [{"method": "GET", "path": "/sink", "query": "", "body": None, "complete": True}]},
+    {"interaction_count": 1, "page_loads": 0,
+     "trap_requests": [{"path": "/sink", "query": "", "body": "", "complete": True}]},
 ]
 
 
@@ -347,7 +466,7 @@ def _probe_start(target):
 
 
 def _req(path):
-    return {"method": "GET", "path": path, "query": "", "body": ""}
+    return {"method": "GET", "path": path, "query": "", "body": "", "complete": True}
 
 
 @pytest.mark.asyncio
