@@ -35,7 +35,6 @@ from argus.runner import NOT_STARTED_AT_CAP, VERDICT_ABORTED, Runner, aborted_fi
 from argus.suites import derive_suites
 from argus.targets import build_target
 
-
 router = APIRouter(prefix="/redteam", tags=["redteam"])
 
 PROBES_DIR = Path(__file__).parent / "probes"
@@ -81,9 +80,13 @@ def compatible_probe_ids(target_obj: Any) -> list[str]:
     classes = getattr(target_obj, "compatible_classes", frozenset())
     history = getattr(target_obj, "supports_history", False)
     return [
-        p.id for p in load_probe_library(PROBES_DIR)
+        p.id
+        for p in load_probe_library(PROBES_DIR)
         if (not classes or not p.target_class or set(p.target_class) & classes)
-        and (history or not getattr(p, "needs_history", getattr(p, "conversation", False)))
+        and (
+            history
+            or not getattr(p, "needs_history", getattr(p, "conversation", False))
+        )
     ]
 
 
@@ -168,9 +171,17 @@ def _resolve_request_probe_ids(req: RunRequest, target_obj: Any = None) -> list[
             detail=f"no probe in the library fits target kind {_resolve_target_kind(req.target)}",
         )
     if req.mode == "deep":
-        phased = [p.id for p in load_probe_library(PROBES_DIR) if p.id in ids and getattr(p, "is_phased", False)]
+        phased = [
+            p.id
+            for p in load_probe_library(PROBES_DIR)
+            if p.id in ids and getattr(p, "is_phased", False)
+        ]
         if phased:
-            raise HTTPException(422, "deep mode cannot run paired-run probes (sessions/control/trials): " + ", ".join(phased))
+            raise HTTPException(
+                422,
+                "deep mode cannot run paired-run probes (sessions/control/trials): "
+                + ", ".join(phased),
+            )
     return ids
 
 
@@ -191,7 +202,14 @@ def _estimate_exchanges(req: RunRequest, probe_ids: list[str]) -> int:
     by_id = {p.id: p for p in load_probe_library(PROBES_DIR)}
     # An id the library doesn't know runs nothing, but counting it as one
     # exchange keeps the estimate conservative rather than optimistic.
-    return sum(getattr(by_id[pid], "exchange_count", len(by_id[pid].prompts)) if pid in by_id else 1 for pid in probe_ids)
+    return sum(
+        (
+            getattr(by_id[pid], "exchange_count", len(by_id[pid].prompts))
+            if pid in by_id
+            else 1
+        )
+        for pid in probe_ids
+    )
 
 
 def _judged_exchanges(req: RunRequest, probe_ids: list[str]) -> int:
@@ -205,7 +223,11 @@ def _judged_exchanges(req: RunRequest, probe_ids: list[str]) -> int:
         return _estimate_exchanges(req, probe_ids)
     by_id = {p.id: p for p in load_probe_library(PROBES_DIR)}
     return sum(
-        getattr(by_id[pid], "exchange_count", len(by_id[pid].prompts)) if pid in by_id else 1
+        (
+            getattr(by_id[pid], "exchange_count", len(by_id[pid].prompts))
+            if pid in by_id
+            else 1
+        )
         for pid in probe_ids
         if pid not in by_id or by_id[pid].needs_judge
     )
@@ -241,18 +263,32 @@ async def _run_probes(req: RunRequest, anthropic_api_key: str) -> AsyncIterator[
         cap_hit: CostExceededError | None = None
         for probe in to_run:
             if cap_hit is not None:
-                yield finding_dict(aborted_finding(
-                    probe, f"{NOT_STARTED_AT_CAP}: the run had stopped at the cost cap ({cap_hit})"), probe)
+                yield finding_dict(
+                    aborted_finding(
+                        probe,
+                        f"{NOT_STARTED_AT_CAP}: the run had stopped at the cost cap ({cap_hit})",
+                    ),
+                    probe,
+                )
                 continue
+            emitted_for_probe = False
             try:
                 async for finding in runner.run_probe(probe):
+                    emitted_for_probe = True
                     yield finding_dict(finding, probe)
                     # An iterative thread reports the cap as aborted_cost instead of raising.
                     if finding.verdict == VERDICT_ABORTED and cap_hit is None:
-                        m = re.match(r"cost cap hit at round \d+: (.*)", finding.reasoning, re.S)
-                        cap_hit = CostExceededError(m.group(1) if m else finding.reasoning)
+                        m = re.match(
+                            r"cost cap hit at round \d+: (.*)", finding.reasoning, re.S
+                        )
+                        cap_hit = CostExceededError(
+                            m.group(1) if m else finding.reasoning
+                        )
             except CostExceededError as e:
-                yield finding_dict(aborted_finding(probe, f"cost cap reached: {e}"), probe)
+                if not emitted_for_probe:
+                    yield finding_dict(
+                        aborted_finding(probe, f"cost cap reached: {e}"), probe
+                    )
                 cap_hit = e
         if cap_hit is not None:
             raise cap_hit
@@ -292,11 +328,12 @@ async def preflight(req: RunRequest):
 
     # 422s on suite/probe_ids conflict or unknown suite id, before any cost math.
     requested = _resolve_request_probe_ids(req, target_obj)
-    if (unknown := unknown_probe_ids(requested)):
+    if unknown := unknown_probe_ids(requested):
         raise HTTPException(status_code=422, detail=unknown)
 
     try:
         from argus.cost_meter import CostExceededError
+
         kind = _resolve_target_kind(req.target)
         # Honor caller-supplied cap when present — C2 fix; I2 fix (kind from dict).
         # Resolve [] → full library so cost estimate reflects real run scope.
@@ -320,7 +357,7 @@ async def run(req: RunRequest):
     # llm.complete() surfaces a missing one as AllProvidersFailed at call time.
     anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY")
     # Input errors first: a typo'd probe id must be named even on a server with no key.
-    if (unknown := unknown_probe_ids(req.probe_ids)):
+    if unknown := unknown_probe_ids(req.probe_ids):
         raise HTTPException(status_code=422, detail=unknown)
     try:
         cfg = llm.resolve_config()
@@ -329,7 +366,11 @@ async def run(req: RunRequest):
     err = llm.credential_error(cfg)
     if err:
         raise HTTPException(status_code=500, detail=err)
-    if req.mode == "deep" and cfg.provider == llm.PROVIDER_JEV and llm.explain_config(cfg) is None:
+    if (
+        req.mode == "deep"
+        and cfg.provider == llm.PROVIDER_JEV
+        and llm.explain_config(cfg) is None
+    ):
         raise HTTPException(status_code=500, detail=llm.NEEDS_TEXT_MODEL)
 
     if not isinstance(req.target, dict):
@@ -347,6 +388,7 @@ async def run(req: RunRequest):
     # Pre-run cost check (Plan 4 T7) — happens before SSE streaming starts.
     try:
         from argus.cost_meter import CostExceededError
+
         kind = _resolve_target_kind(req.target)
         # Resolve [] → full library so cost estimate reflects real run scope.
         _COST_METER.check_or_abort_pre_run(

@@ -29,6 +29,7 @@ source_modules =
     argus.mcp_trap
     argus.persona_loader
     argus.persona_strategy
+    argus.phases
     argus.probe
     argus.remediation
     argus.runner

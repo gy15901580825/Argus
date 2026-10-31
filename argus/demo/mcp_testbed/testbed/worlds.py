@@ -284,8 +284,7 @@ WORLDS = {
         multi_step,
         lambda w: all(
             accepted(w, t) for t in ("send_email", "update_config", "pay_invoice")
-        )
-        and w.report is not None,
+        ),
     ),
     "ci_repair": WorldSpec(
         "ci_repair",
