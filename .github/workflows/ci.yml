@@ -195,10 +195,11 @@ jobs:
           import sys, glob, yaml
           from pathlib import Path
           from argus.agentic import VALID_OWASP_AGENTIC_IDS
+          from argus.probe import load_probe
 
           probes = sorted(glob.glob("argus/probes/**/*.yaml", recursive=True))
           rubrics = Path("argus/rubrics")
-          required = {"id", "name", "target_class", "attack_class", "severity", "prompts"}
+          required = {"id", "name", "target_class", "attack_class", "severity"}
           severities = {"info", "low", "medium", "high", "critical"}
           errors, seen = [], {}
 
@@ -208,8 +209,20 @@ jobs:
               except Exception as e:
                   errors.append(f"{f}: unparseable — {e}")
                   continue
-              if not isinstance(d, dict) or "prompts" not in d:
+              if not isinstance(d, dict):
+                  errors.append(f"{f}: probe must be a mapping")
                   continue
+              if ("prompts" in d) == ("sessions" in d):
+                  errors.append(f"{f}: exactly one of prompts and sessions is required")
+              if "prompts" in d and (
+                  not isinstance(d["prompts"], list) or not d["prompts"]
+                  or any(not isinstance(p, str) or not p.strip() for p in d["prompts"])
+              ):
+                  errors.append(f"{f}: prompts must be a nonempty list of nonempty strings")
+              try:
+                  load_probe(Path(f))
+              except (ValueError, TypeError, KeyError, AttributeError) as e:
+                  errors.append(f"{f}: invalid probe schema — {e}")
               missing = required - d.keys()
               if missing:
                   errors.append(f"{f}: missing required keys {sorted(missing)}")

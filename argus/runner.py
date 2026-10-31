@@ -15,7 +15,12 @@ from uuid import UUID, uuid4
 import httpx
 
 from argus.placeholders import needs_rendering, render_generator_name, target_model_name
+from argus.cost_meter import CostExceededError
+from argus.phases import PhaseRun, clean_failure, judge_trial
+from argus.trials import aggregate_trials, pass_wording
+from argus.world_assertions import report_from_reply
 from argus.probe import Probe
+from argus.targets._base import ProbeNotApplicable
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +54,13 @@ VERDICT_PASS = "pass"
 VERDICT_WARN = "warn"
 VERDICT_FAIL = "fail"
 VERDICT_ERROR = "error"
-VERDICT_BLOCKED_BY_TARGET = "blocked_by_target"  # adapter HTTP 4xx (target gateway content filter)
-VERDICT_SKIPPED = "skipped"                       # probe.target_class disjoint from target.compatible_classes
-VERDICT_ABORTED = "aborted_cost"                  # mid-run CostExceededError (daily cap crossed)
+VERDICT_BLOCKED_BY_TARGET = (
+    "blocked_by_target"  # adapter HTTP 4xx (target gateway content filter)
+)
+VERDICT_SKIPPED = (
+    "skipped"  # probe.target_class disjoint from target.compatible_classes
+)
+VERDICT_ABORTED = "aborted_cost"  # mid-run CostExceededError (daily cap crossed)
 # Reason prefix of a judged probe skipped because no judge credential is set.
 NO_JUDGE_KEY = "no judge key"
 # Reason prefix of a probe the run never started because it had already hit a cost cap.
@@ -89,13 +98,18 @@ _NO_TEXT_HINTS = {
 
 
 def _no_text_reason(target) -> str:
-    hint = _NO_TEXT_HINTS.get(getattr(getattr(target, "spec", None), "kind", None), "check the endpoint")
+    hint = _NO_TEXT_HINTS.get(
+        getattr(getattr(target, "spec", None), "kind", None), "check the endpoint"
+    )
     return f"target returned no text; {hint}"
 
 
 def _blank(text) -> bool:
     # Adapters may hand back a non-string (a list of parts); only real emptiness is "no text".
-    return text is None or (isinstance(text, str) and not text.strip()) or text in ([], {})
+    return (
+        text is None or (isinstance(text, str) and not text.strip()) or text in ([], {})
+    )
+
 
 _GRPC_HINTS = {
     "UNAUTHENTICATED": "check credentials",
@@ -115,7 +129,9 @@ class TargetUnreachableError(Exception):
 def _status_code(exc: Exception) -> int | None:
     if isinstance(exc, httpx.HTTPStatusError):
         return exc.response.status_code
-    code = getattr(exc, "status_code", None)  # SDK errors such as anthropic.APIStatusError
+    code = getattr(
+        exc, "status_code", None
+    )  # SDK errors such as anthropic.APIStatusError
     return code if isinstance(code, int) else None
 
 
@@ -125,17 +141,27 @@ def _is_transport_failure(exc: Exception) -> bool:
 
     from argus.targets._base import TargetDeliveryError
 
-    if isinstance(exc, (httpx.HTTPError, TargetDeliveryError, TimeoutError, ConnectionError,
-                        json.JSONDecodeError)):
+    if isinstance(
+        exc,
+        (
+            httpx.HTTPError,
+            TargetDeliveryError,
+            TimeoutError,
+            ConnectionError,
+            json.JSONDecodeError,
+        ),
+    ):
         return True
     try:
         import anthropic
+
         if isinstance(exc, anthropic.APIConnectionError):  # includes APITimeoutError
             return True
     except ImportError:  # pragma: no cover - anthropic is a base dependency
         pass
     try:
         from grpc.aio import AioRpcError
+
         if isinstance(exc, AioRpcError):
             return True
     except ImportError:  # pragma: no cover - grpcio is a base dependency
@@ -162,8 +188,11 @@ def _grpc_reason(exc: Exception) -> str | None:
 def _never_reached(blocked_reasoning: str) -> str:
     """Reasoning for a block from an agent that never touched its testbed."""
     m = re.match(r"target returned HTTP (\d{3}) ", blocked_reasoning)
-    cause = (f"agent returned HTTP {m[1]}" if m
-             else f"{blocked_reasoning.split('; counted as blocked')[0]}, and the agent")
+    cause = (
+        f"agent returned HTTP {m[1]}"
+        if m
+        else f"{blocked_reasoning.split('; counted as blocked')[0]}, and the agent"
+    )
     return f"{cause} and never reached the testbed, so the probe did not run; this is not a defended result"
 
 
@@ -185,11 +214,17 @@ def _send_failure(exc: Exception) -> tuple[str, str] | None:
         if code in _STATUS_HINTS:
             return VERDICT_ERROR, f"target returned HTTP {code} ({_STATUS_HINTS[code]})"
         if 400 <= code < 500:
-            return VERDICT_BLOCKED_BY_TARGET, f"target returned HTTP {code} to the attack prompt; counted as blocked"
+            return (
+                VERDICT_BLOCKED_BY_TARGET,
+                f"target returned HTTP {code} to the attack prompt; counted as blocked",
+            )
         if code >= 500:
             return VERDICT_ERROR, f"target returned HTTP {code} (server error)"
         # raise_for_status also raises on a redirect the adapter did not follow.
-        return VERDICT_ERROR, f"target returned HTTP {code}; check endpoint_url / request_url"
+        return (
+            VERDICT_ERROR,
+            f"target returned HTTP {code}; check endpoint_url / request_url",
+        )
     if isinstance(exc, TargetDeliveryError):
         return VERDICT_ERROR, f"target could not deliver the probe: {_short(exc)}"
     if _is_transport_failure(exc):
@@ -268,6 +303,7 @@ class Runner:
         # The meter is extracted from judge, which was passed in from api.py.
         if hasattr(judge, "_cost_meter") and judge._cost_meter is not None:
             from argus import iterative_tap, iterative_pair, persona_strategy
+
             iterative_tap.set_cost_meter(judge._cost_meter)
             iterative_pair.set_cost_meter(judge._cost_meter)
             persona_strategy.set_cost_meter(judge._cost_meter)
@@ -285,10 +321,18 @@ class Runner:
         # Template slots ({generator.name}) must never reach the target as literals.
         name = target_model_name(self._target)
         if isinstance(probe, Probe) and any(needs_rendering(p) for p in probe.prompts):
-            probe = replace(probe, prompts=tuple(render_generator_name(p, name) for p in probe.prompts))
-        base = getattr(probe, "base", None)  # deep mode: the attacker reads the base's first prompt
+            probe = replace(
+                probe,
+                prompts=tuple(render_generator_name(p, name) for p in probe.prompts),
+            )
+        base = getattr(
+            probe, "base", None
+        )  # deep mode: the attacker reads the base's first prompt
         if isinstance(base, Probe) and any(needs_rendering(p) for p in base.prompts):
-            probe.base = replace(base, prompts=tuple(render_generator_name(p, name) for p in base.prompts))
+            probe.base = replace(
+                base,
+                prompts=tuple(render_generator_name(p, name) for p in base.prompts),
+            )
         # A pack probe looks in its pack's rubrics first, then the built-in ones.
         candidate = None
         pack_rubrics = getattr(probe, "rubrics_dir", None)
@@ -301,7 +345,9 @@ class Runner:
         if candidate.exists() and candidate.is_file():
             rubric_text = candidate.read_text()
         else:
-            logger.warning("rubric not found for probe %s: resolved=%s", probe.id, candidate)
+            logger.warning(
+                "rubric not found for probe %s: resolved=%s", probe.id, candidate
+            )
             rubric_text = None
 
         # Plan 5 D2: target_class compat check — skip probes that don't match the target adapter
@@ -339,9 +385,9 @@ class Runner:
         # attacker LLM emits self-contained prompts each round, so on a stateless
         # adapter they degrade to query-refinement — weaker, but still a real
         # attack, and skipping them would lose grpc/browser_use coverage.
-        if getattr(probe, "conversation", False) and not getattr(
-            self._target, "supports_history", False
-        ):
+        if getattr(
+            probe, "needs_history", getattr(probe, "conversation", False)
+        ) is True and not getattr(self._target, "supports_history", False):
             yield self._skip(
                 probe,
                 f"probe requires conversation history but target adapter "
@@ -353,10 +399,25 @@ class Runner:
         # before any send or attacker call; evidence-judged probes need no rubric.
         if rubric_text is None and _needs_judge(probe):
             yield self._finding(
-                probe, "", "", 0.0, datetime.now(timezone.utc),
-                verdict=VERDICT_ERROR, severity="info", confidence=1.0,
-                reasoning=f"rubric file not found: {candidate}", evidence=None,
+                probe,
+                "",
+                "",
+                0.0,
+                datetime.now(timezone.utc),
+                verdict=VERDICT_ERROR,
+                severity="info",
+                confidence=1.0,
+                reasoning=f"rubric file not found: {candidate}",
+                evidence=None,
             )
+            return
+
+        if getattr(probe, "is_phased", False) is True:
+            if getattr(self._target, "supports_phases", False) is not True:
+                yield self._skip(probe, "target has no isolated MCP world support")
+                return
+            async for finding in self._run_phased(probe):
+                yield finding
             return
 
         # The probe is going to run: tell a stateful adapter where the previous
@@ -369,6 +430,9 @@ class Runner:
         if inspect.iscoroutinefunction(begin):
             try:
                 await begin(probe)
+            except ProbeNotApplicable as exc:
+                yield self._skip(probe, str(exc))
+                return
             except ValueError as e:
                 # A probe the adapter refuses to stage — a malformed
                 # `scenario.payload`, say — is one broken probe, not a broken
@@ -381,8 +445,14 @@ class Runner:
                 # JSONDecodeError which subclasses it). Catching Exception here
                 # would swallow real bugs in an adapter's setup.
                 yield self._finding(
-                    probe, "", "", 0.0, datetime.now(timezone.utc),
-                    verdict=VERDICT_ERROR, severity="info", confidence=1.0,
+                    probe,
+                    "",
+                    "",
+                    0.0,
+                    datetime.now(timezone.utc),
+                    verdict=VERDICT_ERROR,
+                    severity="info",
+                    confidence=1.0,
                     reasoning=f"target could not set up this probe: {e}",
                     evidence=None,
                 )
@@ -393,13 +463,21 @@ class Runner:
                 if not _is_transport_failure(e):
                     raise
                 yield self._finding(
-                    probe, "", "", 0.0, datetime.now(timezone.utc),
-                    verdict=VERDICT_ERROR, severity="info", confidence=1.0,
+                    probe,
+                    "",
+                    "",
+                    0.0,
+                    datetime.now(timezone.utc),
+                    verdict=VERDICT_ERROR,
+                    severity="info",
+                    confidence=1.0,
                     reasoning=f"target could not set up this probe: {_short(e)}",
                     evidence=None,
                 )
                 self._sends_ok, self._sends_failed = 0, 1
-                self._last_send_failure = f"target could not set up this probe: {_short(e)}"
+                self._last_send_failure = (
+                    f"target could not set up this probe: {_short(e)}"
+                )
                 self._check_breaker()
                 return
 
@@ -433,16 +511,25 @@ class Runner:
                         # blip only loses the attachment; say so and keep going.
                         if not _is_transport_failure(e):
                             raise
-                        f = replace(f, reasoning=f"{f.reasoning} | evidence unavailable: {_short(e)}")
+                        f = replace(
+                            f,
+                            reasoning=f"{f.reasoning} | evidence unavailable: {_short(e)}",
+                        )
                     else:
                         if observed:
                             f = replace(f, evidence=observed)
             # A 4xx or refusal before the agent touched the testbed means the attack was never
             # staged in front of it (unreachable testbed, wrong origin), not that it was defended.
             # Same gate as _assertion_finding: only evidence-judged probes that need the testbed.
-            if (f.verdict == VERDICT_BLOCKED_BY_TARGET and probe.assertions and probe.requires_interaction
-                    and not (f.evidence or {}).get("interaction_count")):
-                f = replace(f, verdict=VERDICT_ERROR, reasoning=_never_reached(f.reasoning))
+            if (
+                f.verdict == VERDICT_BLOCKED_BY_TARGET
+                and probe.assertions
+                and probe.requires_interaction
+                and not (f.evidence or {}).get("interaction_count")
+            ):
+                f = replace(
+                    f, verdict=VERDICT_ERROR, reasoning=_never_reached(f.reasoning)
+                )
             yield f
         self._check_breaker()
 
@@ -465,8 +552,9 @@ class Runner:
                 f"target unreachable: {self._failed_streak} probes in a row failed ({self._last_send_failure})"
             )
 
-
-    async def _assertion_finding(self, probe, prompt, response_text, latency_ms, probed_at) -> Finding:
+    async def _assertion_finding(
+        self, probe, prompt, response_text, latency_ms, probed_at
+    ) -> Finding:
         """Build a Finding whose verdict comes from captured evidence."""
         from argus.assertions import evaluate_assertions
 
@@ -482,8 +570,14 @@ class Runner:
                 # session errors this probe only; it must never read as a pass.
                 self._evidence_failed = True
                 return self._finding(
-                    probe, prompt, response_text, latency_ms, probed_at,
-                    verdict=VERDICT_ERROR, severity="info", confidence=1.0,
+                    probe,
+                    prompt,
+                    response_text,
+                    latency_ms,
+                    probed_at,
+                    verdict=VERDICT_ERROR,
+                    severity="info",
+                    confidence=1.0,
                     reasoning=f"could not read evidence from the testbed: {_short(e)}",
                     evidence=None,
                 )
@@ -493,8 +587,14 @@ class Runner:
         # reporting a pass here would hand the customer a false green.
         if probe.requires_interaction and not evidence.get("interaction_count"):
             return self._finding(
-                probe, prompt, response_text, latency_ms, probed_at,
-                verdict=VERDICT_ERROR, severity="info", confidence=1.0,
+                probe,
+                prompt,
+                response_text,
+                latency_ms,
+                probed_at,
+                verdict=VERDICT_ERROR,
+                severity="info",
+                confidence=1.0,
                 reasoning=(
                     "target never reached its testbed, so the probe did "
                     "not actually run; this is not a defended result"
@@ -507,7 +607,9 @@ class Runner:
         prompts = list(getattr(probe, "prompts", ()))
         prompt_index = prompts.index(prompt) if prompts.count(prompt) == 1 else None
         if not prompts and getattr(probe, "base", None) is not None:
-            prompt_index = 0  # deep thread: the attacker is shown only the base's first prompt
+            prompt_index = (
+                0  # deep thread: the attacker is shown only the base's first prompt
+            )
         # Blocking registry lookups must not stall the event loop.
         results = await asyncio.to_thread(
             evaluate_assertions, probe.assertions, evidence, response_text, prompt_index
@@ -515,8 +617,14 @@ class Runner:
         undecided = [r for r in results if r.error]
         if undecided:
             return self._finding(
-                probe, prompt, response_text, latency_ms, probed_at,
-                verdict=VERDICT_ERROR, severity="info", confidence=1.0,
+                probe,
+                prompt,
+                response_text,
+                latency_ms,
+                probed_at,
+                verdict=VERDICT_ERROR,
+                severity="info",
+                confidence=1.0,
                 reasoning="; ".join(r.reason for r in undecided),
                 evidence=evidence or None,
             )
@@ -529,7 +637,11 @@ class Runner:
         selected = failed or warnings or (skipped if verdict == VERDICT_SKIPPED else results)
         reasoning = "; ".join(r.reason for r in selected)
         return self._finding(
-            probe, prompt, response_text, latency_ms, probed_at,
+            probe,
+            prompt,
+            response_text,
+            latency_ms,
+            probed_at,
             verdict=verdict,
             severity=probe.severity if verdict in {VERDICT_FAIL, VERDICT_WARN} else "info",
             confidence=1.0,
@@ -537,7 +649,9 @@ class Runner:
             evidence=evidence or None,
         )
 
-    async def _hybrid_finding(self, probe, rubric_text, clean: Finding, *, round_n: int | None = None) -> Finding:
+    async def _hybrid_finding(
+        self, probe, rubric_text, clean: Finding, *, round_n: int | None = None
+    ) -> Finding:
         """The judge's verdict for a probe whose assertions all passed.
 
         Clean evidence only rules out the failures the assertions know how to see,
@@ -548,7 +662,10 @@ class Runner:
         if _blank(clean.target_response):
             reason = _no_text_reason(self._target)
             return replace(
-                clean, verdict=VERDICT_ERROR, severity="info", confidence=1.0,
+                clean,
+                verdict=VERDICT_ERROR,
+                severity="info",
+                confidence=1.0,
                 reasoning=reason if round_n is None else f"round {round_n}: {reason}",
             )
         verdict = await self._judge.judge(
@@ -560,22 +677,42 @@ class Runner:
         )
         return replace(
             clean,
-            verdict=verdict.verdict, severity=verdict.severity,
+            verdict=verdict.verdict,
+            severity=verdict.severity,
             confidence=verdict.confidence,
             reasoning=f"evidence clean ({clean.reasoning}); judge: {verdict.reasoning}",
-            judge_model=verdict.judge_model, escalated_model=verdict.escalated_model,
+            judge_model=verdict.judge_model,
+            escalated_model=verdict.escalated_model,
         )
 
-    def _finding(self, probe, prompt, response_text, latency_ms, probed_at,
-                 *, verdict, severity, confidence, reasoning, evidence) -> Finding:
+    def _finding(
+        self,
+        probe,
+        prompt,
+        response_text,
+        latency_ms,
+        probed_at,
+        *,
+        verdict,
+        severity,
+        confidence,
+        reasoning,
+        evidence,
+    ) -> Finding:
         return Finding(
-            id=uuid4(), probe_id=probe.id,
-            attack_prompt=prompt, target_response=response_text,
-            target_latency_ms=latency_ms, probed_at=probed_at,
-            verdict=verdict, severity=severity, confidence=confidence,
+            id=uuid4(),
+            probe_id=probe.id,
+            attack_prompt=prompt,
+            target_response=response_text,
+            target_latency_ms=latency_ms,
+            probed_at=probed_at,
+            verdict=verdict,
+            severity=severity,
+            confidence=confidence,
             reasoning=reasoning,
             # Deterministic verdicts name no model, because none was consulted.
-            judge_model="", escalated_model=None,
+            judge_model="",
+            escalated_model=None,
             atlas_id=list(probe.mappings.atlas),
             owasp_id=list(probe.mappings.owasp_llm),
             owasp_agentic=list(getattr(probe.mappings, "owasp_agentic", ())),
@@ -584,7 +721,159 @@ class Runner:
             evidence=evidence,
         )
 
-    async def _run_static(self, probe, rubric_text: str | None) -> AsyncIterator[Finding]:
+    async def _run_phase(self, probe, phase: str, trial: int) -> PhaseRun:
+        from argus.targets._base import Turn
+
+        prompts, replies = [], []
+        evidence = None
+        evidence_error = None
+        failure = None
+        started = False
+        try:
+            try:
+                await self._target.begin_phase(probe, phase, trial)
+                started = True
+            except ProbeNotApplicable:
+                raise
+            except Exception as exc:
+                if not isinstance(exc, ValueError) and not _is_transport_failure(exc):
+                    raise
+                return PhaseRun(
+                    phase,
+                    trial,
+                    ("error", f"target could not set up this phase: {_named(exc)}"),
+                    None,
+                    None,
+                    (),
+                    (),
+                )
+            for index, session_prompts in enumerate(probe.session_prompts, 1):
+                if index >= 2:
+                    await self._target.begin_conversation(index)
+                transcript = []
+                for prompt in session_prompts:
+                    prompts.append(self._shown(prompt))
+                    try:
+                        response, latency = await self._target.send_prompt(
+                            prompt, history=tuple(transcript)
+                        )
+                    except Exception as exc:
+                        if isinstance(exc, CostExceededError):
+                            raise
+                        failure = _send_failure(exc)
+                        if failure is None:
+                            raise
+                        self._note_send(failure[1] if failure[0] == "error" else None)
+                        break
+                    self._note_send(None)
+                    replies.append(response or "")
+                    transcript.extend(
+                        (Turn("user", prompt), Turn("assistant", response or ""))
+                    )
+                if failure:
+                    break
+        except (ProbeNotApplicable, CostExceededError):
+            raise
+        except Exception as exc:
+            if not isinstance(exc, ValueError) and not _is_transport_failure(exc):
+                raise
+            failure = ("error", _named(exc))
+            self._note_send(failure[1])
+        finally:
+            if started:
+                try:
+                    evidence = await self._target.end_phase()
+                except Exception as exc:
+                    if not isinstance(exc, ValueError) and not _is_transport_failure(
+                        exc
+                    ):
+                        raise
+                    evidence_error = _named(exc)
+        if evidence is not None and evidence.get("report") is None and replies:
+            report = report_from_reply(replies[-1])
+            if report is not None:
+                evidence = dict(evidence)
+                evidence["report"] = {
+                    **report,
+                    "seq": evidence.get("interaction_count", 0),
+                    "conversation": len(probe.session_prompts),
+                }
+        return PhaseRun(
+            phase,
+            trial,
+            failure,
+            evidence,
+            evidence_error,
+            tuple(prompts),
+            tuple(replies),
+        )
+
+    async def _run_phased(self, probe) -> AsyncIterator[Finding]:
+        self._sends_ok = self._sends_failed = 0
+        results = []
+        cap = None
+        trial = 0
+        try:
+            for trial in range(1, probe.trials + 1):
+                clean = await self._run_phase(probe, "clean", trial)
+                failure = clean_failure(probe, clean)
+                if failure is not None:
+                    results.append(failure)
+                    continue
+                attack = await self._run_phase(probe, "attack", trial)
+                results.append(judge_trial(probe, clean, attack))
+        except ProbeNotApplicable as exc:
+            yield self._skip(probe, str(exc))
+            return
+        except CostExceededError as exc:
+            cap = exc
+        summary = aggregate_trials(
+            [r.verdict for r in results], stopped_at_cost_cap=cap is not None
+        )
+        probed_at = datetime.now(timezone.utc)
+        prefix = f"cost cap hit at trial {trial}: {cap} " if cap is not None else ""
+        wording = (
+            pass_wording(probe.trials, probed_at.date())
+            if summary.verdict == "pass"
+            else summary.sentence()
+        )
+        reasons = " ".join(
+            f"Trial {r.trial}: {r.verdict} ({r.reason_code}): {r.reason}"
+            for r in results
+        )
+        reasoning = (
+            prefix
+            + probe.scope_note
+            + " "
+            + wording
+            + " "
+            + summary.counts_line()
+            + " "
+            + reasons
+        )
+        attacks = [r.attack for r in results if r.attack is not None]
+        yield self._finding(
+            probe,
+            "\n\n".join(p for run in attacks for p in run.prompts),
+            attacks[-1].replies[-1] if attacks and attacks[-1].replies else "",
+            0.0,
+            probed_at,
+            verdict=summary.verdict,
+            severity=probe.severity if summary.verdict in ("fail", "warn") else "info",
+            confidence=1.0,
+            reasoning=reasoning.strip(),
+            evidence={
+                "trial_summary": summary.as_dict(),
+                "trials": [r.as_dict() for r in results],
+            },
+        )
+        self._check_breaker()
+        if cap is not None:
+            raise cap
+
+    async def _run_static(
+        self, probe, rubric_text: str | None
+    ) -> AsyncIterator[Finding]:
         """Static-prompt path.
 
         Default: each prompt is an independent single shot (history stays empty).
@@ -608,9 +897,16 @@ class Runner:
                 verdict, reasoning = failure
                 self._note_send(reasoning if verdict == VERDICT_ERROR else None)
                 yield self._finding(
-                    probe, prompt, "", 0.0, probed_at,
-                    verdict=verdict, severity="info", confidence=1.0,
-                    reasoning=reasoning, evidence=None,
+                    probe,
+                    prompt,
+                    "",
+                    0.0,
+                    probed_at,
+                    verdict=verdict,
+                    severity="info",
+                    confidence=1.0,
+                    reasoning=reasoning,
+                    evidence=None,
                 )
                 # Later turns of a conversation mean nothing without this one.
                 if conversation:
@@ -620,9 +916,16 @@ class Runner:
             # An empty reply is a broken response path, not a refusal; a judge would read it as a pass.
             if not probe.assertions and _blank(response_text):
                 yield self._finding(
-                    probe, prompt, response_text or "", latency_ms, probed_at,
-                    verdict=VERDICT_ERROR, severity="info", confidence=1.0,
-                    reasoning=_no_text_reason(self._target), evidence=None,
+                    probe,
+                    prompt,
+                    response_text or "",
+                    latency_ms,
+                    probed_at,
+                    verdict=VERDICT_ERROR,
+                    severity="info",
+                    confidence=1.0,
+                    reasoning=_no_text_reason(self._target),
+                    evidence=None,
                 )
                 if conversation:
                     return
@@ -646,14 +949,22 @@ class Runner:
                 if conversation and idx != len(probe.prompts) - 1:
                     continue
                 # A hybrid conversation probe is judged on its final turn only; the estimate counts every prompt.
-                f = await self._assertion_finding(probe, prompt, response_text, latency_ms, probed_at)
+                f = await self._assertion_finding(
+                    probe, prompt, response_text, latency_ms, probed_at
+                )
                 if f.verdict == VERDICT_PASS and _is_hybrid(probe):
                     try:
                         f = await self._hybrid_finding(probe, rubric_text, f)
                     except ValueError as e:
                         f = self._finding(
-                            probe, prompt, response_text, latency_ms, probed_at,
-                            verdict=VERDICT_ERROR, severity="info", confidence=1.0,
+                            probe,
+                            prompt,
+                            response_text,
+                            latency_ms,
+                            probed_at,
+                            verdict=VERDICT_ERROR,
+                            severity="info",
+                            confidence=1.0,
                             reasoning=f"judge reply could not be used: {str(e)[:200]}",
                             evidence=f.evidence,
                         )
@@ -674,19 +985,31 @@ class Runner:
                 # "the scanner failed". Still fail-closed: it never reports a
                 # pass. ValueError only (JSONDecodeError subclasses it).
                 yield self._finding(
-                    probe, prompt, response_text, latency_ms, probed_at,
-                    verdict=VERDICT_ERROR, severity="info", confidence=1.0,
+                    probe,
+                    prompt,
+                    response_text,
+                    latency_ms,
+                    probed_at,
+                    verdict=VERDICT_ERROR,
+                    severity="info",
+                    confidence=1.0,
                     reasoning=f"judge reply could not be used: {str(e)[:200]}",
                     evidence=None,
                 )
                 continue
             yield Finding(
-                id=uuid4(), probe_id=probe.id,
-                attack_prompt=prompt, target_response=response_text,
-                target_latency_ms=latency_ms, probed_at=probed_at,
-                verdict=verdict.verdict, severity=verdict.severity,
-                confidence=verdict.confidence, reasoning=verdict.reasoning,
-                judge_model=verdict.judge_model, escalated_model=verdict.escalated_model,
+                id=uuid4(),
+                probe_id=probe.id,
+                attack_prompt=prompt,
+                target_response=response_text,
+                target_latency_ms=latency_ms,
+                probed_at=probed_at,
+                verdict=verdict.verdict,
+                severity=verdict.severity,
+                confidence=verdict.confidence,
+                reasoning=verdict.reasoning,
+                judge_model=verdict.judge_model,
+                escalated_model=verdict.escalated_model,
                 atlas_id=list(probe.mappings.atlas),
                 owasp_id=list(probe.mappings.owasp_llm),
                 owasp_agentic=list(getattr(probe.mappings, "owasp_agentic", ())),
@@ -694,13 +1017,16 @@ class Runner:
                 eu_ai_act_id=list(probe.mappings.eu_ai_act),
             )
 
-    async def _run_iterative(self, probe, rubric_text: str | None) -> AsyncIterator[Finding]:
+    async def _run_iterative(
+        self, probe, rubric_text: str | None
+    ) -> AsyncIterator[Finding]:
         """IterativeProbe path: probe.next_prompt(ctx) drives each round."""
         from argus.assertions import trap_canaries
         from argus.cost_meter import CostExceededError
         from argus.iterative import IterationContext
         from argus.judge import Verdict
         from argus.targets._base import TargetDeliveryError, Turn
+
         prior_prompts: list[str] = []
         prior_responses: list[str] = []
         prior_verdicts = []
@@ -750,20 +1076,36 @@ class Runner:
                         reasoning = f"target could not deliver round {round_n} prompt: {_short(e)}"
                     else:
                         reasoning = f"round {round_n}: {reasoning}"
-                    self._note_send(reasoning if verdict_name == VERDICT_ERROR else None)
+                    self._note_send(
+                        reasoning if verdict_name == VERDICT_ERROR else None
+                    )
                     # The next round needs this round's reply, so the attack ends here.
                     yield self._finding(
-                        probe, prompt, "", 0.0, probed_at,
-                        verdict=verdict_name, severity="info", confidence=1.0,
-                        reasoning=reasoning, evidence=None,
+                        probe,
+                        prompt,
+                        "",
+                        0.0,
+                        probed_at,
+                        verdict=verdict_name,
+                        severity="info",
+                        confidence=1.0,
+                        reasoning=reasoning,
+                        evidence=None,
                     )
                     return
                 self._note_send(None)
                 if not assertions and _blank(response_text):
                     yield self._finding(
-                        probe, prompt, response_text or "", latency_ms, probed_at,
-                        verdict=VERDICT_ERROR, severity="info", confidence=1.0,
-                        reasoning=f"round {round_n}: {_no_text_reason(self._target)}", evidence=None,
+                        probe,
+                        prompt,
+                        response_text or "",
+                        latency_ms,
+                        probed_at,
+                        verdict=VERDICT_ERROR,
+                        severity="info",
+                        confidence=1.0,
+                        reasoning=f"round {round_n}: {_no_text_reason(self._target)}",
+                        evidence=None,
                     )
                     return
                 if assertions:
@@ -775,34 +1117,53 @@ class Runner:
                     missing = [c for c in trap_canaries(assertions) if c not in prompt]
                     if missing and current.verdict != VERDICT_FAIL:
                         current = replace(
-                            current, verdict=VERDICT_ERROR, severity="info", confidence=1.0,
+                            current,
+                            verdict=VERDICT_ERROR,
+                            severity="info",
+                            confidence=1.0,
                             reasoning=f"the attack prompt did not carry the canary {missing[0]!r}; "
-                                      "the probe did not run",
+                            "the probe did not run",
                         )
                     elif current.verdict == VERDICT_PASS and _is_hybrid(probe):
                         try:
-                            current = await self._hybrid_finding(probe, rubric_text, current, round_n=round_n)
+                            current = await self._hybrid_finding(
+                                probe, rubric_text, current, round_n=round_n
+                            )
                         except ValueError as e:
                             # Same as the judged branch below: the next round needs this verdict.
                             yield self._finding(
-                                probe, prompt, response_text, latency_ms, probed_at,
-                                verdict=VERDICT_ERROR, severity="info", confidence=1.0,
+                                probe,
+                                prompt,
+                                response_text,
+                                latency_ms,
+                                probed_at,
+                                verdict=VERDICT_ERROR,
+                                severity="info",
+                                confidence=1.0,
                                 reasoning=f"judge reply could not be used: {str(e)[:200]}",
                                 evidence=current.evidence,
                             )
                             return
                     # Only the last pending finding is reported, so a hybrid thread keeps its worst
                     # round: a later judge pass must not erase an earlier warn.
-                    if not _is_hybrid(probe) or pending is None or (
-                        _VERDICT_RANK.get(current.verdict, 1) >= _VERDICT_RANK.get(pending.verdict, 1)
+                    if (
+                        not _is_hybrid(probe)
+                        or pending is None
+                        or (
+                            _VERDICT_RANK.get(current.verdict, 1)
+                            >= _VERDICT_RANK.get(pending.verdict, 1)
+                        )
                     ):
                         pending = current
                     # Fed back as a Verdict purely so the attacker LLM and
                     # should_halt see the round the way they see a judged one.
                     verdict = Verdict(
-                        verdict=current.verdict, severity=current.severity,
-                        confidence=current.confidence, reasoning=current.reasoning,
-                        judge_model=current.judge_model, escalated_model=current.escalated_model,
+                        verdict=current.verdict,
+                        severity=current.severity,
+                        confidence=current.confidence,
+                        reasoning=current.reasoning,
+                        judge_model=current.judge_model,
+                        escalated_model=current.escalated_model,
                     )
                 else:
                     try:
@@ -817,22 +1178,36 @@ class Runner:
                         # Same reasoning as the static path. The next round needs
                         # this round's verdict, so the attack ends here.
                         yield self._finding(
-                            probe, prompt, response_text, latency_ms, probed_at,
-                            verdict=VERDICT_ERROR, severity="info", confidence=1.0,
+                            probe,
+                            prompt,
+                            response_text,
+                            latency_ms,
+                            probed_at,
+                            verdict=VERDICT_ERROR,
+                            severity="info",
+                            confidence=1.0,
                             reasoning=f"judge reply could not be used: {str(e)[:200]}",
                             evidence=None,
                         )
                         return
                     yield Finding(
-                        id=uuid4(), probe_id=probe.id,
-                        attack_prompt=prompt, target_response=response_text,
-                        target_latency_ms=latency_ms, probed_at=probed_at,
-                        verdict=verdict.verdict, severity=verdict.severity,
-                        confidence=verdict.confidence, reasoning=verdict.reasoning,
-                        judge_model=verdict.judge_model, escalated_model=verdict.escalated_model,
+                        id=uuid4(),
+                        probe_id=probe.id,
+                        attack_prompt=prompt,
+                        target_response=response_text,
+                        target_latency_ms=latency_ms,
+                        probed_at=probed_at,
+                        verdict=verdict.verdict,
+                        severity=verdict.severity,
+                        confidence=verdict.confidence,
+                        reasoning=verdict.reasoning,
+                        judge_model=verdict.judge_model,
+                        escalated_model=verdict.escalated_model,
                         atlas_id=list(probe.mappings.atlas),
                         owasp_id=list(probe.mappings.owasp_llm),
-                        owasp_agentic=list(getattr(probe.mappings, "owasp_agentic", ())),
+                        owasp_agentic=list(
+                            getattr(probe.mappings, "owasp_agentic", ())
+                        ),
                         nist_id=list(probe.mappings.nist_ai_rmf),
                         eu_ai_act_id=list(probe.mappings.eu_ai_act),
                     )
@@ -845,13 +1220,18 @@ class Runner:
                 round_n += 1
         except CostExceededError as e:
             yield Finding(
-                id=uuid4(), probe_id=probe.id,
-                attack_prompt="", target_response="",
-                target_latency_ms=0.0, probed_at=datetime.now(timezone.utc),
-                verdict=VERDICT_ABORTED, severity="info",
+                id=uuid4(),
+                probe_id=probe.id,
+                attack_prompt="",
+                target_response="",
+                target_latency_ms=0.0,
+                probed_at=datetime.now(timezone.utc),
+                verdict=VERDICT_ABORTED,
+                severity="info",
                 confidence=1.0,
                 reasoning=f"cost cap hit at round {round_n}: {e}",
-                judge_model="", escalated_model=None,
+                judge_model="",
+                escalated_model=None,
                 atlas_id=list(probe.mappings.atlas),
                 owasp_id=list(probe.mappings.owasp_llm),
                 owasp_agentic=list(getattr(probe.mappings, "owasp_agentic", ())),

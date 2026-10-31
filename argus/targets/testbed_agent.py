@@ -7,6 +7,7 @@ there. Add a new environment by adding an entry to `ENVIRONMENTS`.
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import sys
@@ -15,7 +16,7 @@ from typing import Any, ClassVar
 
 import httpx
 
-from argus.targets._base import Target, Turn
+from argus.targets._base import ProbeNotApplicable, Target, Turn
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ class TestbedAgentTarget(Target):
         self.spec = spec
         self._inner = build_target(dict(spec.inner))
         self._session: dict | None = None
+        self._lease_id: str | None = None
         # The script the *next* session opens with. begin_probe() replaces it
         # per probe; the spec-level script is only the run default.
         self._script: dict[str, Any] = dict(spec.script)
@@ -44,14 +46,89 @@ class TestbedAgentTarget(Target):
     def supports_history(self) -> bool:  # type: ignore[override]
         return bool(getattr(self._inner, "supports_history", False))
 
+    async def _control(
+        self, method: str, path: str, json: dict | None = None
+    ) -> httpx.Response:
+        headers = (
+            {"Authorization": ("Bearer " + self.spec.control_token).rstrip()}
+            if self.url_key == "mcp_url"
+            else {}
+        )
+        async with self._httpx().AsyncClient(timeout=self.spec.timeout_s) as client:
+            kwargs = {"headers": headers} if headers else {}
+            if json is not None:
+                kwargs["json"] = json
+            resp = await getattr(client, method.lower())(
+                f"{self.spec.testbed_url.rstrip('/')}{path}", **kwargs
+            )
+            if (
+                getattr(resp, "status_code", None) in (401, 503)
+                and self.url_key == "mcp_url"
+            ):
+                raise ValueError(
+                    'MCP testbed refused the control token; for a remote testbed set "control_token": "${ARGUS_TESTBED_TOKEN}" (status '
+                    + str(resp.status_code)
+                    + ")"
+                )
+            resp.raise_for_status()
+            return resp
+
+    @property
+    def supports_phases(self) -> bool:
+        return self.url_key == "mcp_url"
+
+    async def _acquire_lease(self) -> None:
+        if self._lease_id is not None:
+            return
+        try:
+            self._lease_id = (await self._control("post", "/lease")).json()["lease_id"]
+        except httpx.HTTPStatusError as exc:
+            detail = exc.response.json().get("detail", {})
+            if exc.response.status_code == 409 and detail.get("code") == "lease_held":
+                raise ValueError(
+                    f"MCP testbed fixed endpoint is in use by another run (lease held, expires in {detail['expires_in']:.1f}s)"
+                ) from exc
+            raise
+
+    async def _activate(self) -> None:
+        for attempt in range(2):
+            await self._acquire_lease()
+            try:
+                activated = (
+                    await self._control(
+                        "post",
+                        f"/lease/{self._lease_id}/activate",
+                        json={"session_id": self._session["session_id"]},
+                    )
+                ).json()
+            except httpx.HTTPStatusError as exc:
+                detail = exc.response.json().get("detail", {})
+                if (
+                    exc.response.status_code == 422
+                    and detail.get("code") == "dynamic_only"
+                ):
+                    raise ProbeNotApplicable(
+                        f"scenario {self._script['scenario']} changes the tool list mid-session and only runs in mcp_mode dynamic"
+                    ) from exc
+                if (
+                    exc.response.status_code == 409
+                    and detail.get("code") == "lease_mismatch"
+                ):
+                    self._lease_id = None
+                    if attempt == 0:
+                        continue
+                    raise ValueError(
+                        "MCP testbed refused fixed endpoint lease after reacquisition"
+                    ) from exc
+                raise
+            self._session["mcp_url"] = activated["mcp_url"]
+            return
+
     async def _open_session(self) -> dict:
         if self._session is None:
-            async with self._httpx().AsyncClient(timeout=self.spec.timeout_s) as client:
-                resp = await client.post(
-                    f"{self.spec.testbed_url.rstrip('/')}/sessions", json=dict(self._script)
-                )
-                resp.raise_for_status()
-                self._session = resp.json()
+            self._session = (
+                await self._control("post", "/sessions", json=dict(self._script))
+            ).json()
         return self._session
 
     async def _close_session(self) -> None:
@@ -69,11 +146,7 @@ class TestbedAgentTarget(Target):
             return
         sid = session.get("session_id")
         try:
-            async with self._httpx().AsyncClient(timeout=self.spec.timeout_s) as client:
-                resp = await client.delete(
-                    f"{self.spec.testbed_url.rstrip('/')}/sessions/{sid}"
-                )
-                resp.raise_for_status()
+            await self._control("delete", f"/sessions/{sid}")
         except Exception:
             logger.warning(
                 "%s refused teardown of session %s; it will expire by TTL",
@@ -132,7 +205,57 @@ class TestbedAgentTarget(Target):
         script = self._script_for(probe)
         await self._close_session()
         self._script = script
+        if getattr(self.spec, "mcp_mode", "dynamic") == "fixed":
+            await self._acquire_lease()
         await self._open_session()
+        if getattr(self.spec, "mcp_mode", "dynamic") == "fixed":
+            await self._activate()
+
+    async def begin_phase(self, probe, phase: str, trial: int) -> None:
+        script = self._script_for(probe)
+        if phase == "clean":
+            script.update(json.loads(probe.scenario_control))
+        script["phase"] = phase
+        await self._close_session()
+        self._script = script
+        if getattr(self.spec, "mcp_mode", "dynamic") == "fixed":
+            await self._acquire_lease()
+        await self._open_session()
+        if getattr(self.spec, "mcp_mode", "dynamic") == "fixed":
+            await self._activate()
+
+    async def begin_conversation(self, index: int) -> None:
+        if index >= 2:
+            await self._control(
+                "post", f"/sessions/{self._session['session_id']}/conversations"
+            )
+
+    async def end_phase(self) -> dict:
+        try:
+            return (
+                await self._control(
+                    "post", f"/sessions/{self._session['session_id']}/seal"
+                )
+            ).json()
+        finally:
+            await self._close_session()
+
+    async def aclose(self) -> None:
+        try:
+            await self._close_session()
+            if self._lease_id is not None:
+                lease_id, self._lease_id = self._lease_id, None
+                try:
+                    await self._control("delete", f"/lease/{lease_id}")
+                except httpx.HTTPStatusError as exc:
+                    if exc.response.status_code != 404:
+                        raise
+        finally:
+            close = getattr(self._inner, "aclose", None)
+            if close is not None:
+                result = close()
+                if inspect.isawaitable(result):
+                    await result
 
     def rendered_prompt(self, prompt: str) -> str:
         if self._session is None:
@@ -147,7 +270,9 @@ class TestbedAgentTarget(Target):
         # History holds earlier turns as the probe wrote them, so render it too.
         placeholder, url = "{" + self.url_key + "}", session[self.url_key]
         rendered = self.rendered_prompt(prompt)
-        history = tuple(replace(t, content=t.content.replace(placeholder, url)) for t in history)
+        history = tuple(
+            replace(t, content=t.content.replace(placeholder, url)) for t in history
+        )
         return await self._inner.send_prompt(rendered, history=history)
 
     async def collect_evidence(self) -> dict:
@@ -159,15 +284,20 @@ class TestbedAgentTarget(Target):
         if self._session is None:
             return {}
         sid = self._session["session_id"]
-        async with self._httpx().AsyncClient(timeout=self.spec.timeout_s) as client:
-            resp = await client.get(f"{self.spec.testbed_url.rstrip('/')}/sessions/{sid}/evidence")
-            resp.raise_for_status()
-            return resp.json()
+        return (await self._control("get", f"/sessions/{sid}/evidence")).json()
 
 
 ENVIRONMENTS: dict[str, dict[str, str]] = {
-    "mcp": {"url_key": "mcp_url", "staging_noun": "MCP server", "teardown_label": "MCP testbed"},
-    "payment": {"url_key": "merchant_url", "staging_noun": "merchant", "teardown_label": "payment testbed"},
+    "mcp": {
+        "url_key": "mcp_url",
+        "staging_noun": "MCP server",
+        "teardown_label": "MCP testbed",
+    },
+    "payment": {
+        "url_key": "merchant_url",
+        "staging_noun": "merchant",
+        "teardown_label": "payment testbed",
+    },
 }
 
 
@@ -180,6 +310,8 @@ class TestbedAgentSpec:
     script: dict[str, Any] = field(default_factory=dict)
     sandbox: bool = False
     timeout_s: float = 60.0
+    control_token: str = ""
+    mcp_mode: str = "dynamic"
 
     def __post_init__(self) -> None:
         if self.kind != "testbed_agent":
@@ -190,6 +322,10 @@ class TestbedAgentSpec:
             raise ValueError(
                 f"unknown environment {self.environment!r}; known: {sorted(ENVIRONMENTS)}"
             )
+        if self.mcp_mode not in ("dynamic", "fixed"):
+            raise ValueError("mcp_mode must be dynamic or fixed")
+        if self.mcp_mode == "fixed" and self.environment != "mcp":
+            raise ValueError("fixed mode is only available for the MCP environment")
         if not self.testbed_url:
             raise ValueError("testbed_url is required")
         if not self.inner:

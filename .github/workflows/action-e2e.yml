@@ -1,85 +1,160 @@
 name: Action e2e
-
-# Runs gy15901580825/argus-probe-action end to end against the MCP testbed's
-# deliberately weak demo agent. MCP probes are decided by assertions on
-# testbed evidence, so no judge key is needed.
-
-on:
+permissions:
+  contents: read
+jobs:
+  released-client:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    - name: Check out the action
+      uses: actions/checkout@v4
+      with:
+        repository: gy15901580825/argus-probe-action
+        ref: ${{ inputs.action-ref || 'main' }}
+        path: .argus-probe-action
+    - name: Resolve the selected Action release version
+      id: version
+      run: |
+        python -m pip install pyyaml
+        python - <<'PYVERSION'
+        import os, re, sys, yaml
+        with open('.argus-probe-action/action.yml') as source:
+            version = yaml.safe_load(source)['inputs']['argus-version']['default']
+        if not isinstance(version, str) or not re.fullmatch(r'\d+\.\d+\.\d+', version):
+            sys.exit('cannot resolve argus-version from the selected action')
+        print(f'resolved argus-version={version}')
+        with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+            print(f'version={version}', file=output)
+        PYVERSION
+        VERSION=$(python -c "import yaml; print(yaml.safe_load(open('.argus-probe-action/action.yml'))['inputs']['argus-version']['default'])")
+        git ls-remote --exit-code --tags "https://github.com/${{ github.repository }}" "refs/tags/v$VERSION" || { echo "release tag v$VERSION not found"; exit 1; }
+    - uses: actions/checkout@v4
+      with:
+        ref: v${{ steps.version.outputs.version }}
+        path: .release-fixture
+    - name: Start MCP testbed and demo agent
+      working-directory: .release-fixture/mcp_testbed
+      run: |
+        python -m pip install -r requirements.txt
+        TESTBED_CONTROL_TOKEN="$ARGUS_TESTBED_TOKEN" nohup uvicorn testbed.app:app --port 8092 > testbed.log 2>&1 &
+        TESTBED_ORIGIN=http://127.0.0.1:8092 nohup uvicorn demo_agent.app:app --port 8093 > agent.log 2>&1 &
+        for port in 8092 8093; do
+          for _ in $(seq 1 30); do
+            curl -sf "http://127.0.0.1:$port/docs" > /dev/null && break
+            sleep 1
+          done
+          curl -sf "http://127.0.0.1:$port/docs" > /dev/null
+        done
+        if test -f ../.github/argus-e2e/mcp-target-source.json; then
+          target=.release-fixture/.github/argus-e2e/mcp-target-source.json
+        else
+          target=.release-fixture/.github/argus-e2e/mcp-target.json
+        fi
+        echo "target=$target" >> "$GITHUB_OUTPUT"
+      id: fixture
+    - name: Run the action
+      id: argus
+      continue-on-error: true
+      uses: ./.argus-probe-action
+      with:
+        target: ${{ steps.fixture.outputs.target }}
+        probes: mcp_budget_unbounded_tool_loop,mcp_confused_deputy_chained_forward,mcp_confused_deputy_result_injection,mcp_credential_lure_api_key,mcp_credential_lure_compliance_framing,mcp_poison_description_exfil,mcp_poison_description_multi_turn,mcp_poison_non_english,mcp_rugpull_after_relist,mcp_rugpull_silent_escalation,mcp_shadow_claims_newer_version,mcp_shadow_near_name
+        fail-on: high
+        upload-sarif: 'false'
+        argus-version: ${{ steps.version.outputs.version }}
+    - name: Expect the gate to trip
+      env:
+        EXIT_CODE: ${{ steps.argus.outputs.exit-code }}
+        OUTCOME: ${{ steps.argus.outcome }}
+        REPORT: ${{ steps.argus.outputs.report }}
+      run: |
+        echo "exit-code=$EXIT_CODE outcome=$OUTCOME report=$REPORT"
+        test "$EXIT_CODE" = "3"
+        test "$OUTCOME" = "failure"
+        test -s "$REPORT"
+        python - "$REPORT" <<'PY'
+        import json, sys
+        results = json.load(open(sys.argv[1]))["runs"][0]["results"]
+        print(f"{len(results)} SARIF results")
+        assert len(results) == 12, len(results)
+        PY
+    - name: Testbed logs
+      if: always()
+      working-directory: .release-fixture/mcp_testbed
+      run: tail -n 50 testbed.log agent.log
+    env:
+      ARGUS_TESTBED_TOKEN: e2e-${{ github.run_id }}-${{ github.run_attempt }}
+  pr-source:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    - name: Start MCP testbed and demo agent
+      working-directory: mcp_testbed
+      run: |
+        python -m pip install -r requirements.txt
+        TESTBED_CONTROL_TOKEN="$ARGUS_TESTBED_TOKEN" nohup uvicorn testbed.app:app --port 8092 > testbed.log 2>&1 &
+        TESTBED_ORIGIN=http://127.0.0.1:8092 nohup uvicorn demo_agent.app:app --port 8093 > agent.log 2>&1 &
+        for port in 8092 8093; do
+          for _ in $(seq 1 30); do
+            curl -sf "http://127.0.0.1:$port/docs" > /dev/null && break
+            sleep 1
+          done
+          curl -sf "http://127.0.0.1:$port/docs" > /dev/null
+        done
+    - name: Check out the action
+      uses: actions/checkout@v4
+      with:
+        repository: gy15901580825/argus-probe-action
+        ref: ${{ inputs.action-ref || 'main' }}
+        path: .argus-probe-action
+    - name: Run the action
+      id: argus
+      continue-on-error: true
+      uses: ./.argus-probe-action
+      with:
+        target: .github/argus-e2e/mcp-target-source.json
+        probes: mcp_budget_unbounded_tool_loop,mcp_confused_deputy_chained_forward,mcp_confused_deputy_result_injection,mcp_credential_lure_api_key,mcp_credential_lure_compliance_framing,mcp_poison_description_exfil,mcp_poison_description_multi_turn,mcp_poison_non_english,mcp_rugpull_after_relist,mcp_rugpull_silent_escalation,mcp_shadow_claims_newer_version,mcp_shadow_near_name
+        fail-on: high
+        upload-sarif: 'false'
+        install-spec: .[local]
+    - name: Expect the gate to trip
+      env:
+        EXIT_CODE: ${{ steps.argus.outputs.exit-code }}
+        OUTCOME: ${{ steps.argus.outcome }}
+        REPORT: ${{ steps.argus.outputs.report }}
+      run: |
+        echo "exit-code=$EXIT_CODE outcome=$OUTCOME report=$REPORT"
+        test "$EXIT_CODE" = "3"
+        test "$OUTCOME" = "failure"
+        test -s "$REPORT"
+        python - "$REPORT" <<'PY'
+        import json, sys
+        results = json.load(open(sys.argv[1]))["runs"][0]["results"]
+        print(f"{len(results)} SARIF results")
+        assert len(results) == 12, len(results)
+        PY
+    - name: Testbed logs
+      if: always()
+      working-directory: mcp_testbed
+      run: tail -n 50 testbed.log agent.log
+    env:
+      ARGUS_TESTBED_TOKEN: e2e-${{ github.run_id }}-${{ github.run_attempt }}
+'on':
   pull_request:
     paths:
-      - ".github/workflows/action-e2e.yml"
-      - ".github/argus-e2e/**"
-      - "mcp_testbed/**"
+    - .github/workflows/action-e2e.yml
+    - .github/argus-e2e/**
+    - mcp_testbed/**
+    - argus/**
+    - pyproject.toml
   workflow_dispatch:
     inputs:
       action-ref:
         description: argus-probe-action ref to test
         default: main
-
-permissions:
-  contents: read
-
-jobs:
-  mcp-demo-agent:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Start MCP testbed and demo agent
-        working-directory: mcp_testbed
-        run: |
-          python -m pip install -r requirements.txt
-          nohup uvicorn testbed.app:app --port 8092 > testbed.log 2>&1 &
-          TESTBED_ORIGIN=http://127.0.0.1:8092 nohup uvicorn demo_agent.app:app --port 8093 > agent.log 2>&1 &
-          for port in 8092 8093; do
-            for _ in $(seq 1 30); do
-              curl -sf "http://127.0.0.1:$port/docs" > /dev/null && break
-              sleep 1
-            done
-            curl -sf "http://127.0.0.1:$port/docs" > /dev/null
-          done
-
-      - name: Check out the action
-        uses: actions/checkout@v4
-        with:
-          repository: gy15901580825/argus-probe-action
-          ref: ${{ inputs.action-ref || 'main' }}
-          path: .argus-probe-action
-
-      - name: Run the action
-        id: argus
-        # The demo agent is meant to fail some probes; the next step checks that it did.
-        continue-on-error: true
-        uses: ./.argus-probe-action
-        with:
-          target: .github/argus-e2e/mcp-target.json
-          probes: mcp_budget_unbounded_tool_loop,mcp_confused_deputy_chained_forward,mcp_confused_deputy_result_injection,mcp_credential_lure_api_key,mcp_credential_lure_compliance_framing,mcp_poison_description_exfil,mcp_poison_description_multi_turn,mcp_poison_non_english,mcp_rugpull_after_relist,mcp_rugpull_silent_escalation,mcp_shadow_claims_newer_version,mcp_shadow_near_name
-          fail-on: high
-          # Upload is proven; uploading demo-agent findings would open alerts on this repo.
-          upload-sarif: "false"
-
-      - name: Expect the gate to trip
-        env:
-          EXIT_CODE: ${{ steps.argus.outputs.exit-code }}
-          OUTCOME: ${{ steps.argus.outcome }}
-          REPORT: ${{ steps.argus.outputs.report }}
-        run: |
-          echo "exit-code=$EXIT_CODE outcome=$OUTCOME report=$REPORT"
-          test "$EXIT_CODE" = "3"
-          test "$OUTCOME" = "failure"
-          test -s "$REPORT"
-          python - "$REPORT" <<'PY'
-          import json, sys
-          results = json.load(open(sys.argv[1]))["runs"][0]["results"]
-          print(f"{len(results)} SARIF results")
-          assert len(results) == 12, len(results)
-          PY
-
-      - name: Testbed logs
-        if: always()
-        working-directory: mcp_testbed
-        run: tail -n 50 testbed.log agent.log

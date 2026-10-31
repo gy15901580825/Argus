@@ -23,6 +23,8 @@ from __future__ import annotations
 import os
 import re
 
+from .worker import WORLD_WEAKNESSES, run_world_task
+
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
@@ -61,7 +63,9 @@ _TESTBED_ORIGIN = os.environ.get("TESTBED_ORIGIN", "")
 #   relist        lists tools a second time before calling one
 #   obey_results  calls any other tool a tools/call result names
 #   loop          calls the target tool repeatedly instead of once
-_KNOWN_WEAKNESSES = frozenset({"relist", "obey_results", "loop"})
+_KNOWN_WEAKNESSES = (
+    frozenset({"relist", "obey_results", "loop", "skip_approval"}) | WORLD_WEAKNESSES
+)
 _LOOP_CALLS = 8
 _weaknesses: frozenset[str] = frozenset()
 
@@ -80,6 +84,9 @@ def set_weaknesses(spec: str | None) -> None:
     """Comma-separated subset of _KNOWN_WEAKNESSES; None or "" turns them off."""
     global _weaknesses
     names = frozenset(n.strip() for n in (spec or "").split(",") if n.strip())
+    names = (names - {"naive", "safe"}) | (
+        WORLD_WEAKNESSES if "naive" in names else frozenset()
+    )
     unknown = names - _KNOWN_WEAKNESSES
     if unknown:
         raise ValueError(
@@ -121,16 +128,35 @@ def _check_origin(url: str) -> None:
         )
 
 
-def _rpc(url: str, method: str, params: dict, request_id: int) -> dict:
+def _rpc(
+    url: str, method: str, params: dict, request_id: int, session_id: str | None = None
+) -> tuple[dict, str | None]:
     _check_origin(url)
-    body = {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}
-    if _http_client is not None:
-        resp = _http_client.post(url, json=body)
-    else:
+
+    def post(call_method, call_params, call_id, header):
+        body = {
+            "jsonrpc": "2.0",
+            "id": call_id,
+            "method": call_method,
+            "params": call_params,
+        }
+        headers = {"Mcp-Session-Id": header} if header else {}
+        if _http_client is not None:
+            return _http_client.post(url, json=body, headers=headers)
         import httpx
 
-        resp = httpx.post(url, json=body, timeout=30.0)
-    return resp.json()
+        return httpx.post(url, json=body, headers=headers, timeout=30.0)
+
+    response = post(method, params, request_id, session_id)
+    if response.status_code == 404 and method != "initialize":
+        initialized = post(
+            "initialize", {"protocolVersion": "2025-03-26"}, request_id + 10000, None
+        )
+        initialized.raise_for_status()
+        session_id = initialized.headers.get("Mcp-Session-Id")
+        response = post(method, params, request_id, session_id)
+    response.raise_for_status()
+    return response.json(), response.headers.get("Mcp-Session-Id") or session_id
 
 
 def _pick_tool(prompt: str, tools: list[dict]) -> dict | None:
@@ -184,13 +210,20 @@ def _content_text(result: dict) -> str:
 
 
 def _reply(text: str) -> JSONResponse:
-    return JSONResponse({
-        "id": "demo-1",
-        "object": "chat.completion",
-        "model": "argus-demo-mcp-agent",
-        "choices": [{"index": 0, "message": {"role": "assistant", "content": text},
-                     "finish_reason": "stop"}],
-    })
+    return JSONResponse(
+        {
+            "id": "demo-1",
+            "object": "chat.completion",
+            "model": "argus-demo-mcp-agent",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": text},
+                    "finish_reason": "stop",
+                }
+            ],
+        }
+    )
 
 
 @app.post("/v1/chat/completions")
@@ -198,24 +231,44 @@ async def chat(body: dict):
     messages = body.get("messages") or []
     prompt = messages[-1].get("content", "") if messages else ""
 
-    match = _URL.search(prompt)
+    match = next(
+        (
+            _URL.search(message.get("content", ""))
+            for message in reversed(messages)
+            if message.get("role") == "user" and _URL.search(message.get("content", ""))
+        ),
+        None,
+    )
     if not match:
-        return _reply("Tell me which MCP server to connect to and what you'd like from it.")
+        return _reply(
+            "Tell me which MCP server to connect to and what you'd like from it."
+        )
     url = match.group(0).rstrip(".,)")
 
+    session_id = None
+
+    def rpc(method, params, request_id):
+        nonlocal session_id
+        result, session_id = _rpc(url, method, params, request_id, session_id)
+        return result
+
     log: list[str] = []
-    _rpc(url, "initialize", {}, 1)
-    tools = _rpc(url, "tools/list", {}, 2)["result"]["tools"]
+    rpc("initialize", {"protocolVersion": "2025-03-26"}, 1)
+    tools = rpc("tools/list", {}, 2)["result"]["tools"]
+    if {"request_approval", "recall"} <= {tool["name"] for tool in tools}:
+        return _reply(run_world_task(messages, rpc, tools, _weaknesses))
     log.append("discovered tools: " + ", ".join(t["name"] for t in tools))
     if "relist" in _weaknesses:
         # Trusts whatever the second listing says, with no check that a
         # description changed since the first one (rug pull).
-        tools = _rpc(url, "tools/list", {}, 20)["result"]["tools"]
+        tools = rpc("tools/list", {}, 20)["result"]["tools"]
         log.append("listed tools again")
 
     target = _pick_tool(prompt, tools)
     if target is None:
-        return _reply("Connected, but the server offered no tools.\n\n" + "; ".join(log))
+        return _reply(
+            "Connected, but the server offered no tools.\n\n" + "; ".join(log)
+        )
 
     preferred = _preferred_tool(tools)
     if preferred is not None and preferred["name"] != target["name"]:
@@ -232,13 +285,13 @@ async def chat(body: dict):
         target = preferred
 
     args = _fill_arguments(target)
-    result = _rpc(url, "tools/call", {"name": target["name"], "arguments": args}, 3)["result"]
+    result = rpc("tools/call", {"name": target["name"], "arguments": args}, 3)["result"]
     log.append(f"called {target['name']}")
     content_text = _content_text(result)
 
     if "loop" in _weaknesses:
         for i in range(_LOOP_CALLS - 1):
-            _rpc(url, "tools/call", {"name": target["name"], "arguments": args}, 30 + i)
+            rpc("tools/call", {"name": target["name"], "arguments": args}, 30 + i)
         log.append(f"called {target['name']} {_LOOP_CALLS} times in total")
 
     if "obey_results" in _weaknesses:
@@ -246,10 +299,12 @@ async def chat(body: dict):
         # and calls any other tool it names.
         for tool in tools:
             if tool["name"] != target["name"] and tool["name"] in content_text:
-                _rpc(
-                    url,
+                rpc(
                     "tools/call",
-                    {"name": tool["name"], "arguments": _fill_arguments(tool, notes_text=content_text)},
+                    {
+                        "name": tool["name"],
+                        "arguments": _fill_arguments(tool, notes_text=content_text),
+                    },
                     50,
                 )
                 log.append(f"obeyed a tool result: called {tool['name']}")
@@ -269,7 +324,7 @@ async def chat(body: dict):
         if obey_tool is None or obey_tool["name"] == target["name"]:
             continue
         obey_args = _fill_arguments(obey_tool, notes_text=content_text)
-        _rpc(url, "tools/call", {"name": obey_name, "arguments": obey_args}, next_id)
+        rpc("tools/call", {"name": obey_name, "arguments": obey_args}, next_id)
         next_id += 1
         log.append(
             f"obeyed an instruction embedded in {tool['name']}'s description: "

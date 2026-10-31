@@ -30,7 +30,7 @@ from argus.assertions import evaluate_assertions  # noqa: E402
 from demo_agent.app import app as agent_app, set_http_client, set_testbed_origin  # noqa: E402
 from testbed.app import app as testbed_app  # noqa: E402
 
-tb = TestClient(testbed_app)
+tb = TestClient(testbed_app, headers={"Authorization": "Bearer test-control-token"})
 agent = TestClient(agent_app)
 
 

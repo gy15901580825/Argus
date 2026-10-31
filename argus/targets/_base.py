@@ -8,6 +8,10 @@ from typing import ClassVar
 _VALID_ROLES = frozenset({"user", "assistant"})
 
 
+class ProbeNotApplicable(Exception):
+    """The target lacks a probe capability; the runner reports skipped."""
+
+
 class TargetDeliveryError(Exception):
     """The prompt never reached the target, so this probe has no result."""
 

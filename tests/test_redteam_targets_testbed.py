@@ -91,7 +91,7 @@ def _fake_client_factory(session):
         async def __aexit__(self, *a):
             return False
 
-        async def post(self, url, json=None):
+        async def post(self, url, json=None, headers=None):
             assert url == "http://tb/sessions"
             return _FakeResp(session)
 

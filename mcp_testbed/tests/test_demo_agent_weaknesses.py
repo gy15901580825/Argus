@@ -16,7 +16,7 @@ from demo_agent.app import (
 )
 from testbed.app import app as testbed_app
 
-tb = TestClient(testbed_app)
+tb = TestClient(testbed_app, headers={"Authorization": "Bearer test-control-token"})
 client = TestClient(agent_app)
 
 
