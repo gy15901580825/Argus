@@ -74,13 +74,13 @@ class ACSEmailDriver:
         return obj
 
     async def readiness(self, ctx, check):
-        return ConnCheck(active=True)
+        raise NotReady("local ACS driver does not support mailbox readiness; use an observer driver")
 
     async def snapshot(self, ctx, scope):
-        return {}
+        raise NotReady("local ACS driver does not support mailbox snapshots; use an observer driver")
 
     async def collect(self, ctx, scope, since):
-        return []
+        raise NotReady("local ACS driver does not support mailbox observation; use an observer driver")
 
     async def recover(self, ctx, scenario):
         return []
