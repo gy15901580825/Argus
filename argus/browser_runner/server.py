@@ -20,6 +20,7 @@ _MAX_BODY_CHARS = 4000
 _BODY_READ_TIMEOUT_S = 5.0
 # How long settle() waits for bodies still arriving after the agent returns.
 _SETTLE_TIMEOUT_S = 2.0
+_SETTLE_GRACE_S = 0.3
 
 
 async def _read_body(request: web.Request, entry: dict) -> None:
@@ -69,6 +70,8 @@ class ScenarioServer:
 
     async def settle(self, timeout: float = _SETTLE_TIMEOUT_S) -> None:
         """Wait until no sink body is still arriving, at most `timeout` seconds."""
+        # A request the agent sent just before replying may not have connected yet.
+        await asyncio.sleep(_SETTLE_GRACE_S)
         try:
             await asyncio.wait_for(self._idle.wait(), timeout)
         except asyncio.TimeoutError:

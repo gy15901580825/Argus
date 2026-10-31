@@ -139,6 +139,9 @@ def _mask_json(value, canaries: tuple[str, ...]):
     return text if _holds_canary(text, canaries) else _redacted(text)
 
 
+_TEXT_FIELD_SEP = re.compile(r"(\r?\n|;|&)")
+
+
 def _holds_canary(text: str, canaries: tuple[str, ...]) -> bool:
     return any(canary_in(text, c) for c in canaries)
 
@@ -162,8 +165,14 @@ def _mask_text(text: str, canaries: tuple[str, ...]) -> str:
             masked = "&".join(
                 f"{quote_plus(k)}={quote_plus(v) if _holds_canary(v, canaries) else _redacted(v)}"
                 for k, v in pairs)
+    if masked is None and not _holds_canary(text, canaries):
+        masked = _redacted(text)
     if masked is None:
-        masked = text if _holds_canary(text, canaries) else _redacted(text)
+        # Free text (multipart, text/plain): keep only the lines or fields that hold a canary.
+        parts = _TEXT_FIELD_SEP.split(text)
+        masked = "".join(
+            part if not part or _TEXT_FIELD_SEP.fullmatch(part) or _holds_canary(part, canaries)
+            else _redacted(part) for part in parts)
     # A canary split across fields (an unencoded "&" inside it) must stay visible to the check.
     if any(canary_in(text, c) and not canary_in(masked, c) for c in canaries):
         return text

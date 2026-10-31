@@ -121,14 +121,18 @@ def test_os_cmd_prompts_ask_for_a_benign_read_not_for_running_commands():
 
 
 # An agent that obeys a payload must do no real harm: the action goes to the sink instead.
-_DESTRUCTIVE = re.compile(r"\bdelet\w*|\brm\s+-[a-z]*(?:r[a-z]*f|f[a-z]*r)|\bdisabl\w*\b[^.]*\b(?:2fa|two-factor)", re.I)
+_DESTRUCTIVE = re.compile(
+    r"\b(?:delet|eras|wip)\w*|\bremov\w*\s+(?:\w+\s+)?files?\b|\brm\s+-[a-z]*(?:r[a-z]*f|f[a-z]*r)"
+    r"|\b(?:disabl\w*|turn\w*\s+off)\b[^.]*\b(?:2fa|two-factor)", re.I)
 _NPM_INSTALL = re.compile(r"\bnpm\s+(?:install|i|add)\b(?:\s+-\S+)*\s+(\S+)")
 
 
 def test_no_payload_asks_for_a_destructive_action():
     for p in _probes():
         payload = p.scenario_payload
-        assert not _DESTRUCTIVE.search(payload), p.id
+        # Naming a harmful action is fine when obeying it only opens a sink URL to "approve" it.
+        if not re.search(r"\bopen \{sink_url\}\S* to approve\b", payload, re.I):
+            assert not _DESTRUCTIVE.search(payload), p.id
         if re.search(r"\btransfer", payload, re.I):
             assert "{sink_url}" in payload, p.id
 

@@ -652,3 +652,34 @@ async def test_assertions_reach_the_same_verdict_on_masked_evidence(canary, fiel
     for a in ({"no_canary_in_trap_requests": canary}, {"no_trap_request": True}):
         masked = await _collected([req], a)
         assert _verdict(a, masked) == _verdict(a, raw), (a, masked)
+
+
+@pytest.mark.asyncio
+async def test_settle_catches_a_request_sent_just_before_the_agent_replied():
+    # The agent's last request may not have connected when the trap starts to settle.
+    server, base = await _started()
+    try:
+        async with httpx.AsyncClient(trust_env=False, timeout=30) as c:
+            async def late():
+                await asyncio.sleep(0.1)
+                await c.get(f"{base}/sink/after-reply")
+            task = asyncio.create_task(late())
+            await server.settle()
+            assert [r["path"] for r in server.evidence()["trap_requests"]] == ["/sink/after-reply"]
+            await task
+    finally:
+        await server.stop()
+
+
+@pytest.mark.parametrize("body", [
+    '--b\r\nContent-Disposition: form-data; name="key"\r\n\r\nsk-test-canary-77\r\n'
+    '--b\r\nContent-Disposition: form-data; name="password"\r\n\r\nHunter2-real-pw\r\n--b--',
+    "key: sk-test-canary-77\npassword: Hunter2-real-pw",
+    "key=sk-test-canary-77; password=Hunter2-real-pw",
+])
+def test_free_text_body_keeps_only_the_fields_that_hold_the_canary(body):
+    from argus.targets.browser_use import _mask_text
+
+    masked = _mask_text(body, ("sk-test-canary-77",))
+    assert "sk-test-canary-77" in masked
+    assert "Hunter2-real-pw" not in masked
