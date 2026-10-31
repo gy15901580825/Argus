@@ -71,7 +71,7 @@ What Argus does:
   (see RESULTS.md), and 99 [garak](https://github.com/NVIDIA/garak)
   wrappers for NVIDIA's existing catalog. Exact per-standard counts are
   generated, not hand-maintained — see [`docs/probe-mapping.md`](docs/probe-mapping.md).
-- **12 target adapters**: `openai_compat`, `anthropic_native`, `custom_http`
+- **13 target adapters**: `openai_compat`, `anthropic_native`, `custom_http`
   (Jinja2 + JSONPath), `grpc` (with reflection auto-discovery), `http_upload`
   (file-upload-and-render sinks), `browser_use` (Playwright-driven
   full-browser flows), `web_chat` (an agent reachable only through its chat
@@ -81,7 +81,7 @@ What Argus does:
   testbed for the run), `mcp_server` (an MCP server's own HTTP exposure:
   foreign Origin, missing auth, env/shell/file tools, versions with a published
   advisory; it lists tools and never
-  calls one), `vllm_server` (reads a vLLM server's `/version` and matches it
+  calls one), `a2a_server` (A2A 1.0 authentication and declared task or callback boundaries), `vllm_server` (reads a vLLM server's `/version` and matches it
   against vLLM advisories), and `testbed_agent` (generic form of the two
   testbed adapters; `environment` picks the testbed).
 - **`argus-probe mcp-trap`**: your agent connects to a hostile MCP server that
@@ -214,6 +214,8 @@ Sample output:
 Real measured results, plus the with-guardrail comparison, are written up
 in [`RESULTS.md`](RESULTS.md).
 
+A2A server checks use `kind: "a2a_server"` and deterministic assertions for inbound authentication, declared task boundaries, and callback registration. State changes require `allow_send: true`.
+
 ## Running against your own agent
 
 Targets are described in a small JSON file. `argus-probe init --kind <kind>`
@@ -230,7 +232,7 @@ writes a starter one. `${VAR}` references are expanded from the environment:
 
 Other `kind` values: `anthropic_native`, `custom_http` (with Jinja2 body
 templates and JSONPath response extractors), `grpc`, `http_upload`,
-`browser_use`, `web_chat`, `payment_agent`, `mcp_agent`, `testbed_agent`, `vllm_server`. Full target-spec cookbook in
+`browser_use`, `web_chat`, `payment_agent`, `mcp_agent`, `testbed_agent`, `vllm_server`, `a2a_server`. Full target-spec cookbook in
 [`docs/onboarding/target-spec-cookbook.md`](docs/onboarding/target-spec-cookbook.md).
 
 Install the `argus-probe` CLI from PyPI (Python 3.11+). The package
@@ -350,6 +352,7 @@ argus-probe scan-skill --sample key-grab
 │                  │  payment_agent   │                                   │
 │                  │  mcp_agent       │                                   │
 │                  │  testbed_agent   │                                   │
+│                  │  a2a_server      │                                   │
 │                  │  vllm_server     │                                   │
 │                  │  web_chat ───────┼──▶ your chat page in Chromium     │
 │                  │  browser_use ────┼──▶ local trap page, or            │
@@ -367,7 +370,7 @@ argus-probe scan-skill --sample key-grab
 
 | Sub-project | Role |
 |---|---|
-| [`argus/`](argus/) | The `argus-probe` package: probe library, judge harness, 11 target adapters, guardrail wrappers (used by the local demo runner) and the CLI in `argus/cli/`. Install it from this repo with `pip install .`. |
+| [`argus/`](argus/) | The `argus-probe` package: probe library, judge harness, 13 target adapters, guardrail wrappers (used by the local demo runner) and the CLI in `argus/cli/`. Install it from this repo with `pip install .`. |
 | [`client_agent/`](client_agent/) | Edge agent (browser-use + Playwright) for browser-driven probes. |
 | [`demo_target/`](demo_target/) | Deliberately-vulnerable FastAPI chatbot for offline demos. |
 | [`payment_testbed/`](payment_testbed/) | Mock x402 payment world + insecure demo agent, for `payment_agent` probes. |
@@ -414,6 +417,8 @@ argus/probes/
 │   └── mcp_*.yaml
 ├── mcp_server/                                ← an MCP server's own exposure, for mcp_server
 │   └── mcp_server_*.yaml
+├── a2a_server/                                ← A2A 1.0 inbound checks, for a2a_server
+│   └── a2a_server_*.yaml
 ├── vllm_server/                               ← vLLM version check, for vllm_server
 │   └── vllm_server_*.yaml
 ├── custom/
