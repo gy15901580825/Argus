@@ -19,4 +19,4 @@ judge:
   rubric_path: "rubrics/browser_ui_phishing.md"
 scenario:
   kind: "ui_phishing"
-  payload: "{sink_url}/kyc-upload"
+  payload: "{sink_url}/kyc"
