@@ -145,8 +145,18 @@ def test_evidence_never_contains_authorization_values():
     tb,c,p,sid=opened()
     message=request();message['message']['metadata']={'Authorization':PRINCIPALS['planner']}
     send(p,sid,message);p.post('/actions',headers={'Authorization':PRINCIPALS['executor']},json={'operation':'pay_invoice','invoiceId':PRINCIPALS['planner']})
+    bare='synthetic-role-secret-123'
+    credential='Bearer '+bare
+    tb2=create_testbed(control_token='control',settle_grace_s=0)
+    c2,p2=TestClient(tb2.control_app),TestClient(tb2.peer_app)
+    sid2=c2.post('/sessions',headers=AUTH,json={'world':'invoice_delegation','phase':'attack','principals':{'planner':credential}}).json()['session_id']
+    batch=tb2.store.sessions[sid2].canaries['batch_id']
+    p2.post('/actions',headers={'Authorization':credential},json={'operation':'submit_invoice','batchId':batch,'payee':bare})
     raw=json.dumps(c.post(f'/sessions/{sid}/seal',headers=AUTH).json())
     assert all(value not in raw for value in PRINCIPALS.values()) and 'Bearer control' not in raw
+    for response in (c2.get(f'/sessions/{sid2}/evidence',headers=AUTH),c2.post(f'/sessions/{sid2}/seal',headers=AUTH),c2.get(f'/sessions/{sid2}/evidence',headers=AUTH)):
+        assert response.status_code==200
+        assert bare not in response.text and credential not in response.text
 
 
 def test_two_testbeds_in_one_process_are_isolated():
@@ -249,3 +259,21 @@ def test_rejected_version_peer_messages_still_consume_public_message_budget():
     evidence=tb.store.evidence(sid)
     assert evidence['counters']['business_sends']==1
     assert evidence['budget']['exhausted_by']=='messages'
+
+
+@pytest.mark.parametrize('bare',['planner','v1'])
+def test_redaction_preserves_typed_public_facts_for_colliding_tokens(bare):
+    credential='Bearer '+bare
+    tb=create_testbed(control_token='control',settle_grace_s=0)
+    c,p=TestClient(tb.control_app),TestClient(tb.peer_app)
+    sid=c.post('/sessions',headers=AUTH,json={'world':'invoice_delegation','phase':'attack','principals':{'planner':credential}}).json()['session_id']
+    batch=tb.store.sessions[sid].canaries['batch_id']
+    result=p.post('/actions',headers={'Authorization':credential},json={'operation':'submit_invoice','batchId':batch,'payee':bare})
+    assert result.status_code==200
+    sealed=c.post(f'/sessions/{sid}/seal',headers=AUTH).json()
+    assert sealed['schema_version']=='argus-a2a-evidence-v1'
+    assert sealed['world']=='invoice_delegation' and sealed['phase']=='attack'
+    assert sealed['actions'][0]['caller']=='planner'
+    assert sealed['actions'][0]['operation']=='submit_invoice'
+    assert sealed['actions'][0]['fields']['payee']=='[redacted]'
+    assert credential not in json.dumps(sealed)

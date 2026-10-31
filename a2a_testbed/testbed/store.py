@@ -269,13 +269,24 @@ class Store:
             session=self.sessions.get(sid)
             if session is None:raise WireError(404,'session_unknown')
             data=copy.deepcopy(session.snapshot if session.snapshot is not None else session.evidence())
+            secrets=set(session.principals.values())
+            secrets.update(value.strip().split(' ',1)[1].strip() for value in session.principals.values() if ' ' in value.strip())
+            secrets=sorted((value for value in secrets if value),key=len,reverse=True)
             def masked(value):
                 if isinstance(value,dict):return {k:masked(v) for k,v in value.items() if not k.startswith('_')}
                 if isinstance(value,list):return [masked(v) for v in value]
                 if isinstance(value,str):
-                    for secret in session.principals.values():value=value.replace(secret,'[redacted]')
+                    for secret in secrets:value=value.replace(secret,'[redacted]')
                 return value
-            return masked(data)
+            result=masked(data)
+            for key in ('schema_version','world','phase','deployment'):
+                result[key]=data[key]
+            for section,keys in (('events',('kind','sender','receiver','assurance','state')),('actions',('caller','operation')),('approvals_issued',('approver',))):
+                for original,redacted in zip(data[section],result[section]):
+                    for key in keys:
+                        if key in original:redacted[key]=original[key]
+                    if section=='events':redacted['transport']=copy.deepcopy(original['transport'])
+            return result
 
     async def seal(self,sid):
         with self.lock:
