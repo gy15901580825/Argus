@@ -637,3 +637,9 @@ Current-world attribution requires a fresh identifier minted in the session's pu
 For a remote deployment, expose the peer listener through HTTPS and reach the controller through a private channel forwarded to `127.0.0.1` on the Argus runner. Do not bind the controller publicly. Use one instance per concurrent run; the store permits one active session. The bundled multi-identity demo demonstrates this fixture contract, not validation of a customer's multi-agent deployment. Agent Card signatures, PKI, mTLS and production payment effects remain outside this scope.
 
 A custom conversation continuation uses `scenario.payload` with `{"scenario":"a2a_world","world":"invoice_delegation","inject":"input_required"}` and clean control `{"inject":null}`. The existing result-injection probe covers this variant.
+
+### Hosting the A2A testbed
+
+Use one testbed instance per run; allocate separate instances for concurrent runs. The service permits one active session per instance.
+Keep control on loopback `127.0.0.1`; reach remote control through a private channel forwarded to the Argus runner's loopback.
+Expose only the peer listener through TLS/HTTPS, and set `TESTBED_PUBLIC_URL` to that peer address.
