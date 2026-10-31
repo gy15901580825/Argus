@@ -37,10 +37,13 @@ class MCPAgentSpec:
     sandbox: bool = False
     timeout_s: float = 60.0
     control_token: str = ""
+    mcp_mode: str = "dynamic"
 
     def __post_init__(self) -> None:
         if self.kind != "mcp_agent":
             raise ValueError(f"kind must be 'mcp_agent', got {self.kind!r}")
+        if self.mcp_mode not in ("dynamic", "fixed"):
+            raise ValueError("mcp_mode must be dynamic or fixed")
         if not self.testbed_url:
             raise ValueError("testbed_url is required")
         if not self.inner:

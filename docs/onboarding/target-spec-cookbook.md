@@ -583,3 +583,9 @@ To scan a server your agent already uses, copy the URL or the command from its e
 
 - [Quickstart](./quickstart.md) — install + first run
 - [Threat coverage overview](./probe-id-cheatsheet.md) — what threats are covered + recommended starter sets
+
+### MCP world options
+
+`mcp_agent` and `testbed_agent` with `environment: "mcp"` accept `control_token` and `mcp_mode`. Set `"control_token": "${ARGUS_TESTBED_TOKEN}"` for remote control access. Local testbeds supply a token automatically.
+
+The default `mcp_mode` is `dynamic`, with a separate `/s/{sid}/mcp` URL per world. Use `fixed` for agents configured once at `/mcp`. The agent must return the issued `Mcp-Session-Id` on subsequent requests. Tool-list-changing rug-pull scenarios are skipped in fixed mode. Stop old agent traffic before each world handoff. Old clients that initialize again can enter the newly active world. Use dynamic URLs or an independent testbed instance when you need stronger isolation.

@@ -16,6 +16,7 @@ import httpx
 
 from argus.placeholders import needs_rendering, render_generator_name, target_model_name
 from argus.probe import Probe
+from argus.targets._base import ProbeNotApplicable
 
 logger = logging.getLogger(__name__)
 
@@ -369,6 +370,9 @@ class Runner:
         if inspect.iscoroutinefunction(begin):
             try:
                 await begin(probe)
+            except ProbeNotApplicable as exc:
+                yield self._skip(probe, str(exc))
+                return
             except ValueError as e:
                 # A probe the adapter refuses to stage — a malformed
                 # `scenario.payload`, say — is one broken probe, not a broken
