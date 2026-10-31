@@ -25,7 +25,7 @@ an agent through the things it trusts, then checks what the agent actually did.
   that use it, and reports risky behaviour: decoy secrets it read, suspicious
   commands it ran and requests it tried to send to other hosts.
 
-Around those sits a library of 230 adversarial probes in all (OWASP LLM Top
+Around those sits a library of 236 adversarial probes in all (OWASP LLM Top
 10, MITRE ATLAS, NIST AI RMF, garak wrappers), most of them for chat, gRPC and
 browser-using agents. Findings come out as SARIF 2.1.0, JUnit XML and HTML;
 failed findings from the library carry fix-it text, and the SARIF can be
@@ -56,7 +56,7 @@ AI RMF** controls without translation.
 
 What Argus does:
 
-- **230 probes** in the bundled library — 15 OWASP LLM Top 10 hand-authored,
+- **236 probes** in the bundled library — 15 OWASP LLM Top 10 hand-authored,
   5 from public LLM system cards (best-of-N, crescendo, confused deputy,
   many-shot jailbreak, sleeper agent), 31 browser-agent specific, 26
   payment-abuse probes (x402 wallet flows, against `payment_agent`), 32
@@ -67,7 +67,7 @@ What Argus does:
   Semia-mapped agent-skill detectors (missing human gate, encoded payload,
   install-time exec, shadow credentials), 4 agent-autonomy probes (AGENTS.md
   install, credential grab, guardrail log noise with its control),
-  1 vLLM version check (against `vllm_server`), 1 custom unicode-smuggling probe
+  6 A2A server checks (against `a2a_server`), 1 vLLM version check (against `vllm_server`), 1 custom unicode-smuggling probe
   (see RESULTS.md), and 99 [garak](https://github.com/NVIDIA/garak)
   wrappers for NVIDIA's existing catalog. Exact per-standard counts are
   generated, not hand-maintained — see [`docs/probe-mapping.md`](docs/probe-mapping.md).
@@ -338,7 +338,7 @@ argus-probe scan-skill --sample key-grab
 │  argus  (engine; argus.server is the FastAPI app for server mode)       │
 │    probe loader  ──▶  target adapter  ──▶  judge harness                │
 │        │                  │                      │                      │
-│        └──── 230 YAML     │                      └──▶ fast model, then  │
+│        └──── 236 YAML     │                      └──▶ fast model, then  │
 │              probes       │                           strong model on   │
 │                           │                           high/critical,    │
 │                  ┌────────┴─────────┐                 confidence ≥ 0.7  │

@@ -58,7 +58,7 @@ VALID_ATTACK_CLASSES = frozenset({
     "prompt-injection", "indirect-injection", "jailbreak", "data-exfil",
     "credential-extraction", "output-handling", "input-handling", "tool-abuse",
     "excessive-agency", "supply-chain", "poisoning", "harmful-content",
-    "misinformation", "resource-abuse", "payment-abuse", "mcp-abuse",
+    "misinformation", "resource-abuse", "payment-abuse", "mcp-abuse", "a2a-abuse",
 })
 
 
