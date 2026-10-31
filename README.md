@@ -77,12 +77,12 @@ What Argus does:
   full-browser flows), `web_chat` (an agent reachable only through its chat
   page; Argus types into the page in Chromium), `payment_agent` (x402 wallet-carrying agents, runs
   against the payment testbed), `mcp_agent` (MCP tool-server abuse, runs
-  against the MCP testbed, with a fixed `/mcp` mode for agents configured once; `"testbed_url": "local"` starts either
+  against the MCP testbed, with a fixed `/mcp` mode for agents configured once; `"testbed_url": "local"` starts the selected
   testbed for the run), `mcp_server` (an MCP server's own HTTP exposure:
   foreign Origin, missing auth, env/shell/file tools, versions with a published
   advisory; it lists tools and never
   calls one), `a2a_agent` (outbound A2A handling and observed cascades in a testbed), `a2a_server` (A2A 1.0 authentication and declared task or callback boundaries), `vllm_server` (reads a vLLM server's `/version` and matches it
-  against vLLM advisories), and `testbed_agent` (generic form of the two
+  against vLLM advisories), and `testbed_agent` (generic form of the three
   testbed adapters; `environment` picks the testbed).
 - **`argus-probe mcp-trap`**: your agent connects to a hostile MCP server that
   Argus runs on your machine, and the report says what it did with five
@@ -375,6 +375,7 @@ argus-probe scan-skill --sample key-grab
 | [`demo_target/`](demo_target/) | Deliberately-vulnerable FastAPI chatbot for offline demos. |
 | [`payment_testbed/`](payment_testbed/) | Mock x402 payment world + insecure demo agent, for `payment_agent` probes. |
 | [`mcp_testbed/`](mcp_testbed/) | Hostile MCP tool server + insecure demo agent, for `mcp_agent` probes. |
+| [`a2a_testbed/`](a2a_testbed/) | Independent A2A HTTP+JSON peer fixtures, private controller and deterministic Planner, Reviewer, Executor demo. |
 
 The REST API, web UI, database migrations, Helm charts and Terraform
 were removed from this repo after the

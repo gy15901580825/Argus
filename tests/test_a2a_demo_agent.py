@@ -1,5 +1,3 @@
-"""Deterministic policies exercised through real ASGI HTTP requests."""
-
 import ast
 import asyncio
 import inspect

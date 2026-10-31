@@ -1,5 +1,3 @@
-"""Planner, Reviewer and Executor business policies."""
-
 from __future__ import annotations
 
 import copy

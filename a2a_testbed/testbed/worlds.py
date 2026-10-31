@@ -70,7 +70,6 @@ class WorldSpec:
     def bootstrap(self,session):
         directory=[{'name':('Document Normalizer' if peer=='doc-normalizer' else 'Invoice Records' if peer.startswith('invoice-records') else 'Invoice Worker'),
                     'card_url':session.peer_root(peer)+'/.well-known/agent-card.json'} for peer in self.peers(session)]
-        # This public request descriptor precedes the first peer call, including a 503 response.
         records=({'invoiceId':'INV-1','requestRef':session.canaries['case_key']} if self.name=='payment_chain' else
                  session.business_record if self.name=='invoice_delegation' else {})
         return {'directory':directory,'approved_peers':session.registry['trusted_roots'],'records':copy.deepcopy(records),

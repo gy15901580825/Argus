@@ -2,10 +2,10 @@
 
 Argus needs to know how to reach your AI agent. The "target spec" is a small JSON file (`argus-target.json`) that describes the agent endpoint and how to authenticate against it.
 
-The fastest way to generate it is interactively, for any of the 10 kinds `init` knows how to ask questions about (`openai_compat`, `anthropic_native`, `custom_http`, `grpc`, `browser_use`, `web_chat`, `payment_agent`, `mcp_agent`, `testbed_agent`, `http_upload`):
+The fastest way to generate it is interactively, for any of the 14 kinds `init` knows how to ask questions about (`openai_compat`, `anthropic_native`, `custom_http`, `grpc`, `browser_use`, `web_chat`, `payment_agent`, `mcp_agent`, `testbed_agent`, `http_upload`, `a2a_server`, `mcp_server`, `vllm_server`, `a2a_agent`):
 
 ```bash
-argus-probe init --kind <one of those 10>
+argus-probe init --kind <one of those 14>
 ```
 
 Below are copy-paste templates for each supported agent shape, plus the gotchas we've run into in real deployments.
@@ -436,7 +436,7 @@ argus-probe run --local --target a2a-target.json --probes all --format json --ou
 
 ## testbed_agent
 
-**Use this for**: the generic form of `mcp_agent` and `payment_agent`. The `environment` field (`mcp` or `payment`) selects which testbed it drives, and the rest of the spec is the same shape. `environment` also decides which probes apply (the `mcp/` or `payment/` probe families).
+**Use this for**: the generic form of `mcp_agent`, `payment_agent` and `a2a_agent`. The `environment` field (`mcp`, `payment` or `a2a`) selects which testbed it drives, and the rest of the spec is the same shape. `environment` also decides which probes apply (the `mcp/`, `mcp_world/`, `payment/` or `a2a_world/` probe families).
 
 ```json
 {
@@ -516,7 +516,7 @@ jobs:
           argus-version: "0.8.1"
 ```
 
-This is the workflow for a chat target. For `mcp_agent`, `payment_agent` and `testbed_agent`, `init` writes `probes: all`, because the chat probes do not apply there. `argus-version` is the version of `argus-probe` that ran `init`.
+This is the workflow for a chat target. For `mcp_agent`, `payment_agent`, `a2a_agent` and `testbed_agent`, `init` writes `probes: all`, because the chat probes do not apply there. `argus-version` is the version of `argus-probe` that ran `init`.
 
 Add `ANTHROPIC_API_KEY` and any key your target spec references as repository secrets. Pull requests from forks and Dependabot do not receive repository secrets, so the keys are empty and the job fails on them.
 
@@ -589,3 +589,51 @@ To scan a server your agent already uses, copy the URL or the command from its e
 `mcp_agent` and `testbed_agent` with `environment: "mcp"` accept `control_token` and `mcp_mode`. Set `"control_token": "${ARGUS_TESTBED_TOKEN}"` for remote control access. Local testbeds supply a token automatically.
 
 The default `mcp_mode` is `dynamic`, with a separate `/s/{sid}/mcp` URL per world. Use `fixed` for agents configured once at `/mcp`, with an exclusive agent client and endpoint for the run. The agent must return the issued `Mcp-Session-Id` on subsequent requests. Tool-list-changing rug-pull scenarios are skipped in fixed mode. Stop old agent traffic before each world handoff. Old clients that initialize again can enter the newly active world. Use dynamic URLs or an independent testbed instance when you need stronger isolation.
+
+## a2a_agent
+
+Use `a2a_agent` to drive your agent against Argus's A2A 1.0 HTTP+JSON peer world. The controller stays on this host's loopback interface. `testbed_url: "local"` starts a private controller and a separate peer listener for the run. Argus sends a normal control run before each attack and judges the sealed record without a model key.
+
+```json
+{
+  "kind": "a2a_agent",
+  "testbed_url": "local",
+  "sandbox": true,
+  "capabilities": ["peer_http_json_1_0", "observable_action_sink", "observable_agent_lineage", "three_hop_chain", "target_receiver"],
+  "agent_credentials": {
+    "planner": "Bearer ${PLANNER_TOKEN}",
+    "reviewer": "Bearer ${REVIEWER_TOKEN}",
+    "executor": "Bearer ${EXECUTOR_TOKEN}"
+  },
+  "receiver": {
+    "url": "http://127.0.0.1:8095/agents/executor",
+    "headers": [["Authorization", "Bearer ${RECEIVER_TOKEN}"]]
+  },
+  "inner": {
+    "kind": "openai_compat",
+    "endpoint_url": "http://127.0.0.1:8095/v1/chat/completions",
+    "model": "your-agent"
+  }
+}
+```
+
+For an already running testbed, set `testbed_url` to its loopback controller and `control_token` to `${ARGUS_TESTBED_TOKEN}`. The equivalent generic form is `kind: "testbed_agent", environment: "a2a"` with the same fields. `peer_url` is filled in by local startup. `script` supplies defaults for custom probes; library probes stage their own payload. `timeout_s` defaults to 60 seconds. `sandbox` must be the boolean `true`.
+
+| Capability | What the clean run must prove |
+|---|---|
+| `peer_http_json_1_0` | A trusted peer accepted an A2A business message with `A2A-Version: 1.0` |
+| `observable_action_sink` | A verified target identity requested the deciding action |
+| `observable_agent_lineage` | Matched observations show an edge between distinct target identities; all three role credentials are required |
+| `target_receiver` | The declared receiver accepted the normal single-use business approval |
+| `three_hop_chain` | A clean Planner, Reviewer, Executor chain; requires `observable_agent_lineage` |
+| `production_tls_policy` | Declared production transport uses HTTPS; optional plaintext subcases require this declaration |
+
+A missing required declaration skips the probe before opening any session. A declared capability without clean proof is `error`, rather than a pass. Most customer deployments without observable, verified inter-agent edges will skip ASI08 probes. One agent retrying or looping does not establish a cascade.
+
+Telemetry integration requires the target to report every normal-role A2A message sent and received to the public `telemetry_url` with that role's distinct Authorization value. The request body is `{"events":[{"kind":"message_sent","peer_role":"reviewer","message":<complete A2A Message>,"parent_message_ids":[<source messageId>]}]}`; the receiver reports `message_received` with the sender role. The store pairs matching content digests and identities. Self-reported adoption or identity is not proof. Send `A2A-Version: 1.0` and `Content-Type: application/a2a+json` with each business SendMessage request. Request business effects at `actions_url` with the actor credential, operation, full business fields and current `recordRef`, batch, request or approval identifier. The ledger records request, acceptance and application independently.
+
+Current-world attribution requires a fresh identifier minted in the session's public business records. Client-chosen message IDs and parent IDs are causality indexes only. Foreign references cannot contaminate the next world's verdict; an authenticated action without any association token produces an evidence error. Stop old agent traffic before handing a shared static endpoint to the next run. Stronger isolation requires a separate testbed instance.
+
+For a remote deployment, expose the peer listener through HTTPS and reach the controller through a private channel forwarded to `127.0.0.1` on the Argus runner. Do not bind the controller publicly. Use one instance per concurrent run; the store permits one active session. The bundled multi-identity demo demonstrates this fixture contract, not validation of a customer's multi-agent deployment. Agent Card signatures, PKI, mTLS and production payment effects remain outside this scope.
+
+A custom conversation continuation uses `scenario.payload` with `{"scenario":"a2a_world","world":"invoice_delegation","inject":"input_required"}` and clean control `{"inject":null}`. The existing result-injection probe covers this variant.

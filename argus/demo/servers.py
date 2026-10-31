@@ -176,7 +176,7 @@ def start_mcp_demo() -> Iterator[dict]:
 
 
 def local_environment(spec) -> str | None:
-    """ "mcp" or "payment" when `spec` asks for the bundled testbed, else None."""
+    """ "mcp", "payment" or "a2a" when `spec` asks for the bundled testbed, else None."""
     if not isinstance(spec, dict) or spec.get("testbed_url") != LOCAL:
         return None
     env = (

@@ -541,3 +541,10 @@ Set `"mcp_mode": "fixed"` to use a single `/mcp` endpoint. Fixed mode requires a
 A previous client can initialize again after handoff and enter the newly active world. The demo agent's automatic reconnect after a 404 does exactly this. This limitation applies between separate runs and between clean and attack phases within the same run. Stop all old agent traffic before every handoff. Use dynamic URLs or an independent testbed instance when you need stronger isolation. Clients that cannot return session IDs must use `"mcp_mode": "dynamic"`. Rug-pull scenarios that change tool lists are skipped in fixed mode.
 
 Remote testbeds require `TESTBED_CONTROL_TOKEN` on the service and `"control_token": "${ARGUS_TESTBED_TOKEN}"` in target JSON. The token controls world creation, conversations, sealing, evidence reads, deletion, and lease operations. It is never passed to the agent. Local testbeds generate it automatically. A service with no configured control token rejects control operations with HTTP 503.
+
+
+### Local A2A peer worlds
+
+Use `argus-probe init --kind a2a_agent` to create a sandboxed target, then run its nine probes with `argus-probe run --local`. No judge key is needed for these assertion-backed probes. Declare only capabilities your integration exposes; see [the target cookbook](onboarding/target-spec-cookbook.md#a2a_agent).
+
+`testbed_url: "local"` starts two listeners: a private controller on a free loopback port and the agent-visible peer service. `ARGUS_TESTBED_PORT` pins only the peer listener. The CLI prints both addresses. Remote deployments expose the peer service through HTTPS and reach control through a private channel forwarded to this host's loopback. Control tokens are mandatory; unset control tokens fail closed. Use one testbed instance per concurrent run and stop old traffic before handing static endpoints to the next phase.

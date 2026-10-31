@@ -1,5 +1,3 @@
-"""A2A target boundaries and ingress transport contracts."""
-
 import asyncio
 import json
 from contextlib import contextmanager

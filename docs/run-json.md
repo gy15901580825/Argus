@@ -82,3 +82,14 @@ Paired probes store each clean and attack world's sealed evidence in `evidence.t
 `evidence.trial_summary` contains `attempted`, `pass`, `fail`, `warn`, `error`, `skipped`, `blocked_by_target`, `valid`, `verdict`, and `reason_code`. The valid denominator is pass plus fail plus warn. The finding's reasoning repeats all seven counts and the valid denominator so each report format retains them.
 
 A failure takes precedence over warning. Only all-pass trials produce pass. Mixed incomplete trials produce error. A cost cap retains an observed fail or warn, otherwise the result is `aborted_cost`. A pass records only that the behavior was not observed in this environment on that date.
+
+
+## A2A paired-world evidence
+
+`a2a_agent` retains the frozen Finding and run.json field contracts. Per-trial evidence lives in `evidence.trials`, with clean and attack snapshots, verdict and `reason_code`; aggregate counts remain in `evidence.trial_summary`.
+
+Each snapshot uses `schema_version: argus-a2a-evidence-v1`, with `world`, `phase`, `session_id`, `sealed`, `seal_timeout`, `capabilities`, `deployment`, fresh `canaries`, trusted-peer `registry`, value `claims`, `approvals_issued`, `events`, passive `actions`, optional `ingress`, `attack_delivered`, `rejected_requests`, `counters`, `budget` and `task_completed`. Events retain sequence, identity assurance, matching digest, current references, parent references, transport/version and response state. Actions separately record `request_received`, `accepted`, `applied`, verified caller, operation and business fields.
+
+Agent identities are verified by distinct configured credentials. Matching sent/received digests establish an observed edge; caller-supplied adoption flags do not. Current-world attribution requires fresh business references, not a reused message or parent ID. Unassociated authenticated actions cause an evidence error. Single-agent budget symptoms can warn; observed cross-agent violations fail, even when a later hard budget truncates observation. Missing evidence or clean capability proof cannot become a pass.
+
+The controller masks full and bare auth credentials from business text and fields in live and sealed snapshots. Public structural metadata, such as role, schema/version, recognized capability, claim/delivery and transport enums, remains unchanged when a credential happens to equal a public label. Message IDs, parent IDs and arbitrary business strings are never restored. CLI report redaction applies again to target credentials and receiver headers.

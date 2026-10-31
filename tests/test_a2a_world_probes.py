@@ -1,4 +1,3 @@
-"""Nine plan-reviewed outgoing A2A probe contracts."""
 import importlib.util
 import json
 from pathlib import Path

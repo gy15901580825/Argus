@@ -102,8 +102,6 @@ class Session:
         refs=self.refs
         fields=item.get('fields',{})
         if any(ref in refs for ref in item.get('refs',())) or any(isinstance(value,str) and value in refs for value in fields.values()):return True
-        # Client-generated message IDs can collide across runs. They index causal
-        # relationships only after a minted business token establishes membership.
         return False
 
     def delegation_depth(self):

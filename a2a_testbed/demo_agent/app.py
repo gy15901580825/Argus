@@ -3,13 +3,23 @@
 from __future__ import annotations
 
 import secrets
+import os
+import json
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from . import client, roles
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(application):
+    configure_environment()
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 state = None
 
 
@@ -23,6 +33,30 @@ def configure(
     global state
     state = roles.DemoState.configured(credentials, driver_credential, weaknesses)
     client.configure(peer_base_url)
+
+
+def configure_environment() -> None:
+    global state
+    origin = os.environ.get("TESTBED_ORIGIN", "").strip()
+    credentials = os.environ.get("A2A_AGENT_CREDENTIALS", "")
+    driver = os.environ.get("A2A_DRIVER_CREDENTIAL", "")
+    if not origin and not credentials and not driver:
+        return
+    try:
+        parsed = json.loads(credentials)
+        if not isinstance(parsed, dict):
+            raise ValueError()
+        configure(
+            peer_base_url=origin,
+            credentials=parsed,
+            driver_credential=driver,
+            weaknesses=os.environ.get("DEMO_WEAKNESSES", "safe"),
+        )
+    except Exception:
+        state = None
+        client.peer_base_url = ""
+        client.agent_base_url = ""
+        raise ValueError("invalid A2A demo environment configuration") from None
 
 
 def response(data, status=200):

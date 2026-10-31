@@ -153,6 +153,30 @@ jobs:
       - name: Run test suite
         run: python -m pytest tests/ -q
 
+  a2a_testbed:
+    name: a2a_testbed — tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: a2a_testbed
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: a2a_testbed/requirements-dev.txt
+
+      - name: Install dependencies
+        # requirements.txt is runtime-only; pytest/pytest-asyncio live in requirements-dev.txt.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run test suite
+        run: python -m pytest tests/ -q
+
   client_agent:
     name: client_agent — tests
     runs-on: ubuntu-latest
