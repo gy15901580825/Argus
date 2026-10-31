@@ -2,11 +2,33 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 
 
 class Undecided(Exception):
-    pass
+    def __init__(self, message: str, code: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class AssertionSkipped(Exception):
+    """A conditional subcase is outside the declared capabilities."""
+
+
+@dataclass(frozen=True)
+class WorldProfile:
+    required_fields: tuple[str, ...]
+    checks: Mapping[str, Callable[[object, dict, str], tuple[bool, str]]]
+    decision_predicates: tuple[str, ...]
+    decision_point_reached: Callable[[tuple[dict, ...], dict], bool]
+    untouched: Callable[[object, dict], str | None]
+    delivered: Callable[[dict], str | None]
+    validate: Callable[[dict], str | None] = lambda evidence: None
+    capability_unproven: Callable[[tuple[str, ...], dict], str | None] = (
+        lambda names, evidence: None
+    )
+    truncated: Callable[[dict], str | None] = lambda evidence: None
 
 
 KEY_FIELDS = {
