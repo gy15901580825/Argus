@@ -35,6 +35,7 @@ source_modules =
     argus.skillscan
     argus.suites
     argus.targets
+    argus.trials
     argus.typesafe
     argus.world_assertions
 forbidden_modules =
