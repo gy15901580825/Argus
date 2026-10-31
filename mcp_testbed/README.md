@@ -96,3 +96,6 @@ DEMO_AGENT_WEAKNESSES=relist,obey_results,loop TESTBED_ORIGIN=http://127.0.0.1:8
 `TESTBED_ORIGIN` must point at the `testbed/` instance above -- see "Safety:
 `demo_agent/` is restricted to `TESTBED_ORIGIN`" above. Without it the demo
 agent starts but refuses to contact any MCP server.
+
+Control endpoints require `Authorization: Bearer <token>`. Set `TESTBED_CONTROL_TOKEN` before starting the testbed. If it is unset, control endpoints return 503. The agent endpoints do not require this token.
+For remote runs, set `"control_token": "${ARGUS_TESTBED_TOKEN}"` in the target configuration. Local runs generate and restore a token automatically.

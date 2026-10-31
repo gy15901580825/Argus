@@ -36,6 +36,7 @@ class MCPAgentSpec:
     script: dict[str, Any] = field(default_factory=dict)
     sandbox: bool = False
     timeout_s: float = 60.0
+    control_token: str = ""
 
     def __post_init__(self) -> None:
         if self.kind != "mcp_agent":

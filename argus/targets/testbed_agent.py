@@ -44,14 +44,21 @@ class TestbedAgentTarget(Target):
     def supports_history(self) -> bool:  # type: ignore[override]
         return bool(getattr(self._inner, "supports_history", False))
 
+    async def _control(self, method: str, path: str, json: dict | None = None) -> httpx.Response:
+        headers = {"Authorization": ("Bearer " + self.spec.control_token).rstrip()} if self.url_key == "mcp_url" else {}
+        async with self._httpx().AsyncClient(timeout=self.spec.timeout_s) as client:
+            kwargs = {"headers": headers} if headers else {}
+            if json is not None:
+                kwargs["json"] = json
+            resp = await getattr(client, method.lower())(f"{self.spec.testbed_url.rstrip('/')}{path}", **kwargs)
+            if getattr(resp, "status_code", None) in (401, 503) and self.url_key == "mcp_url":
+                raise ValueError('MCP testbed refused the control token; for a remote testbed set "control_token": "${ARGUS_TESTBED_TOKEN}" (status ' + str(resp.status_code) + ')')
+            resp.raise_for_status()
+            return resp
+
     async def _open_session(self) -> dict:
         if self._session is None:
-            async with self._httpx().AsyncClient(timeout=self.spec.timeout_s) as client:
-                resp = await client.post(
-                    f"{self.spec.testbed_url.rstrip('/')}/sessions", json=dict(self._script)
-                )
-                resp.raise_for_status()
-                self._session = resp.json()
+            self._session = (await self._control("post", "/sessions", json=dict(self._script))).json()
         return self._session
 
     async def _close_session(self) -> None:
@@ -69,11 +76,7 @@ class TestbedAgentTarget(Target):
             return
         sid = session.get("session_id")
         try:
-            async with self._httpx().AsyncClient(timeout=self.spec.timeout_s) as client:
-                resp = await client.delete(
-                    f"{self.spec.testbed_url.rstrip('/')}/sessions/{sid}"
-                )
-                resp.raise_for_status()
+            await self._control("delete", f"/sessions/{sid}")
         except Exception:
             logger.warning(
                 "%s refused teardown of session %s; it will expire by TTL",
@@ -159,10 +162,7 @@ class TestbedAgentTarget(Target):
         if self._session is None:
             return {}
         sid = self._session["session_id"]
-        async with self._httpx().AsyncClient(timeout=self.spec.timeout_s) as client:
-            resp = await client.get(f"{self.spec.testbed_url.rstrip('/')}/sessions/{sid}/evidence")
-            resp.raise_for_status()
-            return resp.json()
+        return (await self._control("get", f"/sessions/{sid}/evidence")).json()
 
 
 ENVIRONMENTS: dict[str, dict[str, str]] = {
@@ -180,6 +180,7 @@ class TestbedAgentSpec:
     script: dict[str, Any] = field(default_factory=dict)
     sandbox: bool = False
     timeout_s: float = 60.0
+    control_token: str = ""
 
     def __post_init__(self) -> None:
         if self.kind != "testbed_agent":

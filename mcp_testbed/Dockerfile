@@ -21,6 +21,8 @@ ENV PORT=8080
 # paired with. Empty means the demo agent refuses every outbound request
 # (fail closed) rather than being an unrestricted fetch pivot -- see README.
 ENV TESTBED_ORIGIN=""
+# Control endpoints fail closed until the deployment supplies a token.
+ENV TESTBED_CONTROL_TOKEN=""
 EXPOSE 8080
 
 # Overridden per deployment; the testbed is the safe default.

@@ -5,6 +5,7 @@ import asyncio
 import logging
 import os
 import socket
+import secrets
 import threading
 import time
 from collections.abc import Iterator
@@ -117,9 +118,12 @@ def _serve_testbed(mod, sock: socket.socket, name: str) -> Iterator[str]:
     try:
         # Inside the try, so a Ctrl-C right after the increment still reaches the decrement.
         with _PUBLIC_URL_LOCK:
-            users = _PUBLIC_URL_USERS.setdefault(mod.__name__, [0, None])
+            users = _PUBLIC_URL_USERS.setdefault(mod.__name__, [0, None, None])
             if users[0] == 0:
                 users[1] = mod.PUBLIC_BASE_URL
+                if hasattr(mod, "CONTROL_TOKEN"):
+                    users[2] = mod.CONTROL_TOKEN
+                    mod.CONTROL_TOKEN = secrets.token_urlsafe(32)
             users[0] += 1
             entered = True
             mod.PUBLIC_BASE_URL = ""
@@ -131,6 +135,8 @@ def _serve_testbed(mod, sock: socket.socket, name: str) -> Iterator[str]:
                 users[0] -= 1
                 if users[0] == 0:
                     mod.PUBLIC_BASE_URL = users[1]
+                    if hasattr(mod, "CONTROL_TOKEN"):
+                        mod.CONTROL_TOKEN = users[2]
 
 
 @contextmanager
@@ -149,6 +155,7 @@ def start_mcp_demo() -> Iterator[dict]:
             serve_demo_agent(_agent_mod, testbed_url) as agent_url:
         yield {
             "kind": "mcp_agent",
+            "control_token": _testbed_mod.CONTROL_TOKEN,
             "testbed_url": testbed_url,
             "sandbox": True,
             "inner": {"kind": "openai_compat", "endpoint_url": agent_url, "model": "demo"},
@@ -199,4 +206,4 @@ def local_testbed(spec: dict) -> Iterator[dict]:
             code="config") from e
     bypass_proxy_for_localhost()
     with _serve_testbed(mod, sock, f"bundled {LABELS[env]} testbed") as url:
-        yield {**spec, "testbed_url": url}
+        yield {**spec, "testbed_url": url, **({"control_token": mod.CONTROL_TOKEN} if env == "mcp" else {})}

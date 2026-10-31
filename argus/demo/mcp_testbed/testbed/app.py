@@ -10,14 +10,26 @@ JSON-RPC interaction back as evidence.
 from __future__ import annotations
 
 import os
+import hmac
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 
 from .rpc import handle_request
 from .scenarios import SCENARIOS
 from .session import Script, SessionStore
 
 PUBLIC_BASE_URL = os.environ.get("TESTBED_PUBLIC_URL", "").rstrip("/")
+
+CONTROL_TOKEN = os.environ.get("TESTBED_CONTROL_TOKEN", "")
+
+
+def require_control(request: Request) -> None:
+    if not CONTROL_TOKEN:
+        raise HTTPException(503, "TESTBED_CONTROL_TOKEN is not set")
+    supplied = request.headers.get("Authorization", "")
+    if not hmac.compare_digest(supplied, "Bearer " + CONTROL_TOKEN):
+        raise HTTPException(401, "invalid control token", headers={"WWW-Authenticate": "Bearer"})
+
 
 app = FastAPI(title="Argus MCP testbed")
 STORE = SessionStore()
@@ -34,7 +46,7 @@ def _require(sid: str):
     return session
 
 
-@app.post("/sessions")
+@app.post("/sessions", dependencies=[Depends(require_control)])
 async def open_session(request: Request):
     raw = await request.json() if await request.body() else {}
     script = Script.from_dict(raw)
@@ -61,12 +73,12 @@ async def mcp(sid: str, request: Request):
     return handle_request(session, body)
 
 
-@app.get("/sessions/{sid}/evidence")
+@app.get("/sessions/{sid}/evidence", dependencies=[Depends(require_control)])
 async def get_evidence(sid: str):
     return _require(sid).evidence()
 
 
-@app.delete("/sessions/{sid}", status_code=204)
+@app.delete("/sessions/{sid}", status_code=204, dependencies=[Depends(require_control)])
 async def close_session(sid: str):
     if not STORE.close(sid):
         raise HTTPException(status_code=404, detail="unknown or expired session")

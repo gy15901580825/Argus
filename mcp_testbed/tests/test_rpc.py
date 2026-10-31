@@ -2,7 +2,7 @@
 from fastapi.testclient import TestClient
 from testbed.app import app
 
-client = TestClient(app)
+client = TestClient(app, headers={"Authorization": "Bearer test-control-token"})
 
 
 def _open(scenario="tool_poisoning"):

@@ -529,3 +529,5 @@ To report a vulnerability, see [SECURITY.md](https://github.com/gy15901580825/Ar
 
 - Documentation: [docs/onboarding](https://github.com/gy15901580825/Argus/blob/main/docs/onboarding/)
 - Argus repo: https://github.com/gy15901580825/Argus
+
+For a remote MCP testbed, set `TESTBED_CONTROL_TOKEN` on the service and `"control_token": "${ARGUS_TESTBED_TOKEN}"` in your target JSON. Control endpoints reject unset or incorrect tokens. Local testbeds generate a token automatically.
