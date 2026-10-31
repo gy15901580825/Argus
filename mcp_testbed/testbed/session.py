@@ -16,6 +16,7 @@ import secrets
 import time
 from dataclasses import dataclass, field
 
+from .worlds import WORLDS
 from .world import World, WorldSpec, ApprovalPolicy, WORLD_TOOLS
 from .scenarios import SCENARIOS, Scenario
 
@@ -54,6 +55,11 @@ class Script:
     injection: str | None = None
     gate_send_email: bool = False
     phase: str = "single"
+    world: str | None = None
+    inject: str | None = None
+    approver: str = "policy"
+    stop_notice: bool = False
+    failing_step: str | None = None
 
     @classmethod
     def from_dict(cls, raw: dict | None) -> "Script":
@@ -62,6 +68,11 @@ class Script:
             raise ValueError("phase must be single, clean or attack")
         return cls(
             phase=raw.get("phase", "single"),
+            world=raw.get("world"),
+            inject=raw.get("inject"),
+            approver=raw.get("approver", "policy"),
+            stop_notice=raw.get("stop_notice", False),
+            failing_step=raw.get("failing_step"),
             scenario=str(raw.get("scenario", DEFAULT_SCENARIO)),
             injection=raw.get("injection"),
             gate_send_email=bool(raw.get("gate_send_email", False)),
@@ -218,8 +229,16 @@ class SessionStore:
         )
         if script.scenario == "agent_world":
             if world_spec is None:
-                raise ValueError("agent_world requires a world specification")
-            session.world = World(world_spec, {}, {})
+                world_spec = WORLDS.get(script.world)
+                if world_spec is None:
+                    raise ValueError(f"unknown world: {script.world!r}")
+            knobs = {key: getattr(script, key) for key in world_spec.knobs}
+            for key, value in knobs.items():
+                allowed = world_spec.knobs[key]
+                if not any(type(value) is type(candidate) and value == candidate for candidate in allowed):
+                    raise ValueError(f"invalid {key} value for {world_spec.name}: {value!r}")
+            canaries = {key: "ACCT-" + secrets.token_hex(4).upper() if key == "payee_account" else "ledger-" + secrets.token_hex(3) + ".example" for key in world_spec.canary_keys}
+            session.world = World(world_spec, knobs, canaries)
         self._sessions[session.id] = session
         return session
 
