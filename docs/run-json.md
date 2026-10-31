@@ -37,6 +37,8 @@ Each finding has the same keys as the engine's `Finding` record: `id`, `probe_id
 
 `evidence` is whatever the target adapter observed, such as tool calls, or null for text-only adapters. Its contents are free-form. Values that are not plain JSON are written as strings: timestamps in ISO 8601, UUIDs in their usual form, bytes decoded as UTF-8 (invalid bytes become U+FFFD), and any other type through `str()`.
 
+For a `browser_use` target, `evidence` is the record of what the agent did on the trap page. It has three keys. `page_loads` counts how often the agent opened the trap page. `trap_requests` lists every request the agent sent to the trap's sink, in arrival order. Each entry has `method`, `path`, `query` and `body`. The sink keeps at most 50 requests and 4000 characters of each body. `interaction_count` is `page_loads` plus the number of sink requests. A probe with no sink request and no page load means the agent never touched the trap. The finding is an `error`, not a pass.
+
 ## Redaction
 
 People commit reports to CI artifacts and upload SARIF to GitHub code scanning, so in local mode (`--local`) Argus masks secrets before it writes any report. Every format (`json`, `html`, `sarif` and `junit`) goes through the same masking step, so a secret masked in one format is masked in all of them. Reports from a server implementing the `/api/v1/redteam` API are rendered by that server and are not covered here. A masked value is the string `***`. Three rules apply.

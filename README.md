@@ -136,6 +136,9 @@ What Argus does:
   The check reads import and install statements only: a library named in a
   prose-only answer is not seen, and Raku is checked against the zef ecosystem
   index only. An empty reply is an `error`, not a `pass`.
+  Browser probes check what the agent sent to the trap page first. The
+  phishing ones are decided by that alone. The others ask the judge only when
+  the trap saw nothing.
 - **Report formats**: SARIF 2.1.0 (drops into GitHub Code Scanning), JUnit
   XML (CI gate), HTML (humans). SARIF and HTML also carry a per-standard
   coverage section (what the library does and does not test) and, for
