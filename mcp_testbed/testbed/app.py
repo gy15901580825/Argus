@@ -49,7 +49,10 @@ def _require(sid: str):
 @app.post("/sessions", dependencies=[Depends(require_control)])
 async def open_session(request: Request):
     raw = await request.json() if await request.body() else {}
-    script = Script.from_dict(raw)
+    try:
+        script = Script.from_dict(raw)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     if script.scenario not in SCENARIOS:
         raise HTTPException(
             status_code=400,
@@ -69,8 +72,14 @@ async def open_session(request: Request):
 @app.post("/s/{sid}/mcp")
 async def mcp(sid: str, request: Request):
     session = _require(sid)
-    body = await request.json()
-    return handle_request(session, body)
+    if session.sealed:
+        raise HTTPException(409, "world is sealed")
+    session.in_flight += 1
+    try:
+        body = await request.json()
+        return handle_request(session, body)
+    finally:
+        session.in_flight -= 1
 
 
 @app.get("/sessions/{sid}/evidence", dependencies=[Depends(require_control)])
@@ -83,3 +92,16 @@ async def close_session(sid: str):
     if not STORE.close(sid):
         raise HTTPException(status_code=404, detail="unknown or expired session")
     return Response(status_code=204)
+
+
+@app.post("/sessions/{sid}/conversations", dependencies=[Depends(require_control)])
+async def next_conversation(sid: str):
+    session = _require(sid)
+    if session.sealed:
+        raise HTTPException(409, "world is sealed")
+    return {"conversation": session.next_conversation()}
+
+
+@app.post("/sessions/{sid}/seal", dependencies=[Depends(require_control)])
+async def seal_session(sid: str):
+    return await _require(sid).seal()

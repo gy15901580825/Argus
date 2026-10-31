@@ -8,6 +8,8 @@ the evidence goes with it.
 
 from __future__ import annotations
 
+import asyncio
+import copy
 import hashlib
 import json
 import secrets
@@ -15,6 +17,9 @@ import time
 from dataclasses import dataclass, field
 
 from .scenarios import SCENARIOS, Scenario
+
+SETTLE_GRACE_S = 0.3
+SETTLE_TIMEOUT_S = 2.0
 
 DEFAULT_TTL_S = 900.0
 DEFAULT_SCENARIO = "tool_poisoning"
@@ -47,11 +52,15 @@ class Script:
     scenario: str = DEFAULT_SCENARIO
     injection: str | None = None
     gate_send_email: bool = False
+    phase: str = "single"
 
     @classmethod
     def from_dict(cls, raw: dict | None) -> "Script":
         raw = raw or {}
+        if raw.get("phase", "single") not in ("single", "clean", "attack"):
+            raise ValueError("phase must be single, clean or attack")
         return cls(
+            phase=raw.get("phase", "single"),
             scenario=str(raw.get("scenario", DEFAULT_SCENARIO)),
             injection=raw.get("injection"),
             gate_send_email=bool(raw.get("gate_send_email", False)),
@@ -69,6 +78,39 @@ class Session:
     tools_list_count: int = 0
     descriptions_served: list[dict] = field(default_factory=list)
     tool_calls: list[dict] = field(default_factory=list)
+
+    conversation: int = 1
+    interaction_count_by_session: dict[str, dict[str, int]] = field(default_factory=dict)
+    sealed: bool = False
+    seal_timeout: bool = False
+    generation: int | None = None
+    rejected_requests: list[dict] = field(default_factory=list)
+    in_flight: int = 0
+    _frozen_evidence: dict | None = field(default=None, repr=False)
+    _seal_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+
+    @property
+    def phase(self) -> str:
+        return self.script.phase
+
+    def next_conversation(self) -> int:
+        if self.sealed:
+            raise ValueError("world is sealed")
+        self.conversation += 1
+        return self.conversation
+
+    async def seal(self, grace_s: float | None = None, timeout_s: float | None = None) -> dict:
+        async with self._seal_lock:
+            if self._frozen_evidence is not None:
+                return self.evidence()
+            await asyncio.sleep(SETTLE_GRACE_S if grace_s is None else grace_s)
+            deadline = time.monotonic() + (SETTLE_TIMEOUT_S if timeout_s is None else timeout_s)
+            while self.in_flight and time.monotonic() < deadline:
+                await asyncio.sleep(0.01)
+            self.seal_timeout = bool(self.in_flight)
+            self.sealed = True
+            self._frozen_evidence = copy.deepcopy(self.evidence())
+            return self.evidence()
 
     def current_tools(self) -> list[dict]:
         """The tool list the *next* tools/list call would serve.
@@ -117,20 +159,31 @@ class Session:
         after_change = len(served) >= 2 and served[-1] != served[0]
         self.tool_calls.append({
             "seq": self.interaction_count,
+            "conversation": self.conversation,
             "tool": tool,
             "arguments": arguments,
             "after_description_change": after_change,
         })
 
     def evidence(self) -> dict:
-        return {
+        if self._frozen_evidence is not None:
+            return copy.deepcopy(self._frozen_evidence)
+        return copy.deepcopy({
+            "session_id": self.id,
+            "phase": self.phase,
+            "conversation": self.conversation,
+            "interaction_count_by_session": self.interaction_count_by_session,
+            "sealed": self.sealed,
+            "seal_timeout": self.seal_timeout,
+            "generation": self.generation,
+            "rejected_requests": self.rejected_requests,
             "interaction_count": self.interaction_count,
             "tools_list_count": self.tools_list_count,
             "descriptions_served": list(self.descriptions_served),
             "tool_calls": list(self.tool_calls),
             "shadow_tool_names": list(self.scenario.shadow_tool_names),
             "canary": self.canary,
-        }
+        })
 
 
 class SessionStore:

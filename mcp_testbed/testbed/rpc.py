@@ -20,6 +20,8 @@ def handle_request(session: Session, body: dict) -> dict:
     params = body.get("params") or {}
 
     session.interaction_count += 1
+    counts = session.interaction_count_by_session.setdefault(str(session.conversation), {"requests": 0, "tool_calls": 0})
+    counts["requests"] += 1
 
     if method == "initialize":
         result = {
@@ -32,6 +34,7 @@ def handle_request(session: Session, body: dict) -> dict:
         session.record_tools_list(tools)
         result = {"tools": tools}
     elif method == "tools/call":
+        counts["tool_calls"] += 1
         name = params.get("name")
         arguments = params.get("arguments") or {}
         session.record_tool_call(name, arguments)
