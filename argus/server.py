@@ -117,7 +117,9 @@ def startup_error(
 # Import the global connection manager from separate module to avoid circular imports
 from argus.connection_manager import connection_manager
 from argus.api import router as redteam_router
+from argus.scenarios.api import router as scenario_router
 app.include_router(redteam_router, dependencies=[Depends(require_server_token)])
+app.include_router(scenario_router)
 
 @app.websocket("/agent/connect")
 async def websocket_endpoint(websocket: WebSocket):
