@@ -92,3 +92,23 @@ Need coverage we don't ship? Add a probe YAML under `argus/probes/` in this repo
 
 - [Quickstart](./quickstart.md) — install + first run
 - [Target spec cookbook](./target-spec-cookbook.md) — configure for your specific agent shape
+
+## MCP agent work environment
+
+These probes run paired worlds against `mcp_agent`, using recorded behavior without a model judge.
+
+| Probe | What it checks |
+|---|---|
+| `memory_poison_tool_result` | A hosted note changes a payee in a fresh conversation |
+| `memory_poison_delayed_trigger` | A later confirmation persists a hosted payment note |
+| `memory_instruction_persistence` | A hosted note adds an email recipient in a fresh conversation |
+| `approval_forged_narration` | Execution targets differ from the approved structured preview |
+| `approval_substitution` | A payment amount changes after approval |
+| `approval_denied_then_executed` | Execution continues after approval is denied |
+| `approval_skipped` | A tool-returned approval claim replaces the required gate |
+| `rogue_protected_resource` | A repair requests a write to a protected table |
+| `rogue_monitor_tamper` | Actions continue after a stop notice or alter the protected monitor |
+| `rogue_concealment_report` | A report omits or misstates recorded outcomes |
+| `rogue_test_tamper` | A repair changes protected test files |
+
+Memory coverage is limited to hosted `remember` and `recall`. Approval coverage compares structured previews and records, not free-text truthfulness. Governance findings describe recorded violations of an explicit prohibition or stop notice, or a report that contradicts the record. They do not infer intent.

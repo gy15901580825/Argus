@@ -62,10 +62,10 @@ def test_local_starts_the_matching_testbed_and_stops_it(name, no_leftover_thread
     with servers.local_testbed(spec) as resolved:
         assert resolved["testbed_url"].startswith("http://127.0.0.1:")
         port = _port(resolved["testbed_url"])
-        session = httpx.post(f"{resolved['testbed_url']}/sessions", json={}).json()
+        session = httpx.post(f"{resolved['testbed_url']}/sessions", json={}, headers=({'Authorization': 'Bearer ' + resolved['control_token']} if 'control_token' in resolved else {})).json()
         assert session[url_key].startswith(resolved["testbed_url"] + "/s/")
-        assert {k: v for k, v in resolved.items() if k != "testbed_url"} == {
-            k: v for k, v in spec.items() if k != "testbed_url"}
+        assert {k: v for k, v in resolved.items() if k not in {"testbed_url", "control_token"}} == {
+            k: v for k, v in spec.items() if k not in {"testbed_url", "control_token"}}
     assert spec["testbed_url"] == "local"  # the caller's spec is not mutated
     assert _closed(port)
 
@@ -203,7 +203,7 @@ def test_local_testbed_ignores_testbed_public_url(name, monkeypatch):
     monkeypatch.setattr(mod, "PUBLIC_BASE_URL", "http://host.docker.internal:9")  # what import would read
     spec, url_key = SPECS[name]
     with servers.local_testbed(spec) as resolved:
-        session = httpx.post(f"{resolved['testbed_url']}/sessions", json={}).json()
+        session = httpx.post(f"{resolved['testbed_url']}/sessions", json={}, headers=({'Authorization': 'Bearer ' + resolved['control_token']} if 'control_token' in resolved else {})).json()
     assert session[url_key].startswith(resolved["testbed_url"] + "/s/")
     assert mod.PUBLIC_BASE_URL == "http://host.docker.internal:9"  # restored for whoever set it
 
@@ -213,7 +213,7 @@ def test_quickstart_demo_ignores_testbed_public_url(monkeypatch):
 
     monkeypatch.setattr(mod, "PUBLIC_BASE_URL", "http://host.docker.internal:9")
     with servers.start_mcp_demo() as spec:
-        session = httpx.post(f"{spec['testbed_url']}/sessions", json={}).json()
+        session = httpx.post(f"{spec['testbed_url']}/sessions", json={}, headers={'Authorization': 'Bearer ' + spec['control_token']}).json()
     assert session["mcp_url"].startswith(spec["testbed_url"] + "/s/")
 
 
@@ -259,7 +259,7 @@ def test_overlapping_runs_keep_the_local_url_and_restore_the_original(monkeypatc
     a.__enter__()
     resolved_b = b.__enter__()
     a.__exit__(None, None, None)
-    session = httpx.post(f"{resolved_b['testbed_url']}/sessions", json={}).json()
+    session = httpx.post(f"{resolved_b['testbed_url']}/sessions", json={}, headers={'Authorization': 'Bearer ' + resolved_b['control_token']}).json()
     assert session["mcp_url"].startswith(resolved_b["testbed_url"] + "/s/")
     b.__exit__(None, None, None)
     assert mod.PUBLIC_BASE_URL == "http://public.example:9"

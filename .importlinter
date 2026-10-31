@@ -29,13 +29,16 @@ source_modules =
     argus.mcp_trap
     argus.persona_loader
     argus.persona_strategy
+    argus.phases
     argus.probe
     argus.remediation
     argus.runner
     argus.skillscan
     argus.suites
     argus.targets
+    argus.trials
     argus.typesafe
+    argus.world_assertions
 forbidden_modules =
     argus.cli
     argus.server

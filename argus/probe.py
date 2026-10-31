@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field, replace
 from importlib.metadata import entry_points
@@ -10,8 +11,8 @@ from typing import Iterator
 
 import yaml
 
+from argus.world_assertions import DECISION_PREDICATES
 from argus.agentic import VALID_OWASP_AGENTIC_IDS
-
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +27,17 @@ VALID_SEVERITIES = {"info", "low", "medium", "high", "critical"}
 # ::test_valid_target_classes_covers_every_adapter, which fails if they drift.
 VALID_TARGET_CLASSES = {
     # Plan 2 (probe YAMLs)
-    "http-chat", "browser-using", "tool-using", "rag", "multi-agent", "http-upload",
+    "http-chat",
+    "browser-using",
+    "tool-using",
+    "rag",
+    "multi-agent",
+    "http-upload",
     # Plan 4 (target adapters)
-    "llm_chat", "agent_with_tools", "agent_with_rag", "browser_using_agent",
+    "llm_chat",
+    "agent_with_tools",
+    "agent_with_rag",
+    "browser_using_agent",
     # Payment probes only run against the instrumented payment testbed. No
     # other adapter declares this class, so the runner's compat check skips
     # them everywhere else — and keeps ordinary probes off the testbed.
@@ -54,12 +63,27 @@ VALID_TARGET_CLASSES = {
 #
 # Adding a value here is a deliberate act: it widens what the coverage report
 # claims to measure. Do not add one to make a probe load.
-VALID_ATTACK_CLASSES = frozenset({
-    "prompt-injection", "indirect-injection", "jailbreak", "data-exfil",
-    "credential-extraction", "output-handling", "input-handling", "tool-abuse",
-    "excessive-agency", "supply-chain", "poisoning", "harmful-content",
-    "misinformation", "resource-abuse", "payment-abuse", "mcp-abuse", "a2a-abuse",
-})
+VALID_ATTACK_CLASSES = frozenset(
+    {
+        "prompt-injection",
+        "indirect-injection",
+        "jailbreak",
+        "data-exfil",
+        "credential-extraction",
+        "output-handling",
+        "input-handling",
+        "tool-abuse",
+        "excessive-agency",
+        "supply-chain",
+        "poisoning",
+        "harmful-content",
+        "misinformation",
+        "resource-abuse",
+        "payment-abuse",
+        "mcp-abuse",
+        "a2a-abuse",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -114,6 +138,28 @@ class Probe:
     # Server-facing probes need it: the class text is written for someone who runs an agent.
     remediation: str = ""
 
+    sessions: tuple[tuple[str, ...], ...] = ()
+    scenario_control: str = ""
+    trials: int = 1
+    decision_point: tuple[dict, ...] = ()
+    scope_note: str = ""
+
+    @property
+    def is_phased(self) -> bool:
+        return bool(self.scenario_control)
+
+    @property
+    def session_prompts(self) -> tuple[tuple[str, ...], ...]:
+        return self.sessions or (self.prompts,)
+
+    @property
+    def needs_history(self) -> bool:
+        return self.conversation or any(len(session) > 1 for session in self.sessions)
+
+    @property
+    def exchange_count(self) -> int:
+        return self.trials * (2 if self.is_phased else 1) * len(self.prompts)
+
     @property
     def needs_judge(self) -> bool:
         """True when the judge is consulted on a static run of this probe."""
@@ -135,20 +181,103 @@ def load_probe(path: Path) -> Probe:
         if not isinstance(agentic, list):
             raise ValueError(f"mappings.owasp_agentic must be a list in {path}")
         for category_id in agentic:
-            if not isinstance(category_id, str) or category_id not in VALID_OWASP_AGENTIC_IDS:
-                raise ValueError(f"invalid mappings.owasp_agentic id {category_id!r} in {path}; expected ASI01..ASI10")
+            if (
+                not isinstance(category_id, str)
+                or category_id not in VALID_OWASP_AGENTIC_IDS
+            ):
+                raise ValueError(
+                    f"invalid mappings.owasp_agentic id {category_id!r} in {path}; expected ASI01..ASI10"
+                )
         scenario_kind = None
         scenario_payload = ""
         if "scenario" in raw:
             scenario_kind = raw["scenario"].get("kind")
             scenario_payload = raw["scenario"].get("payload", "")
+        has_sessions = "sessions" in raw
+        if ("prompts" in raw) == has_sessions:
+            raise ValueError(
+                f"exactly one of prompts and sessions is required in {path}"
+            )
+        sessions = raw.get("sessions", [])
+        if has_sessions:
+            if (
+                not isinstance(sessions, list)
+                or not sessions
+                or any(
+                    not isinstance(group, list)
+                    or not group
+                    or any(
+                        not isinstance(prompt, str) or not prompt.strip()
+                        for prompt in group
+                    )
+                    for group in sessions
+                )
+            ):
+                raise ValueError(
+                    f"sessions must contain nonempty lists of nonempty strings in {path}"
+                )
+            if raw.get("conversation"):
+                raise ValueError(
+                    f"conversation cannot be combined with sessions in {path}"
+                )
+            prompts = tuple(prompt for group in sessions for prompt in group)
+        else:
+            prompts = tuple(raw["prompts"])
+        scenario_control = raw.get("scenario", {}).get("control", "")
+        if "control" in raw.get("scenario", {}):
+            try:
+                control = json.loads(scenario_control)
+                payload = json.loads(scenario_payload)
+            except (json.JSONDecodeError, TypeError) as exc:
+                raise ValueError(
+                    f"scenario.control and payload must be JSON objects in {path}"
+                ) from exc
+            if (
+                not isinstance(control, dict)
+                or len(control) != 1
+                or not isinstance(payload, dict)
+            ):
+                raise ValueError(
+                    f"control must override exactly one payload key in {path}"
+                )
+            key = next(iter(control))
+            if key not in payload or control[key] == payload[key]:
+                raise ValueError(
+                    f"control must change an existing payload key in {path}"
+                )
+        if (has_sessions or "trials" in raw) and not scenario_control:
+            raise ValueError(f"sessions and trials require scenario.control in {path}")
+        trials = raw.get("trials", 1)
+        if type(trials) is not int or not 1 <= trials <= 20:
+            raise ValueError(f"trials must be an integer from 1 to 20 in {path}")
+        decision_point = raw.get("decision_point", [])
+        if not isinstance(decision_point, list) or any(
+            not isinstance(point, dict)
+            or len(point) != 1
+            or next(iter(point)) not in DECISION_PREDICATES
+            for point in decision_point
+        ):
+            raise ValueError(f"invalid decision_point predicate in {path}")
+        if scenario_control and (
+            not raw.get("assertions")
+            or not decision_point
+            or raw.get("judge_when_assertions_pass")
+        ):
+            raise ValueError(
+                f"paired probes require assertions, decision_point and no judge_when_assertions_pass in {path}"
+            )
         return Probe(
+            sessions=tuple(tuple(group) for group in sessions),
+            scenario_control=scenario_control,
+            trials=trials,
+            decision_point=tuple(decision_point),
+            scope_note=str(raw.get("scope_note", "")),
             id=raw["id"],
             name=raw["name"],
             target_class=tuple(raw["target_class"]),
             attack_class=tuple(raw["attack_class"]),
             severity=raw["severity"],
-            prompts=tuple(raw["prompts"]),
+            prompts=prompts,
             mappings=ProbeMappings(
                 atlas=tuple(raw.get("mappings", {}).get("atlas", [])),
                 owasp_llm=tuple(raw.get("mappings", {}).get("owasp_llm", [])),
@@ -157,13 +286,17 @@ def load_probe(path: Path) -> Probe:
                 owasp_agentic=tuple(agentic),
             ),
             judge_model=raw.get("judge", {}).get("model", "claude-haiku-4-5-20251001"),
-            judge_rubric_path=raw.get("judge", {}).get("rubric_path", "rubrics/default.md"),
+            judge_rubric_path=raw.get("judge", {}).get(
+                "rubric_path", "rubrics/default.md"
+            ),
             scenario_kind=scenario_kind,
             scenario_payload=scenario_payload,
             conversation=bool(raw.get("conversation", False)),
             assertions=tuple(raw.get("assertions", ()) or ()),
             requires_interaction=bool(raw.get("requires_interaction", True)),
-            judge_when_assertions_pass=bool(raw.get("judge_when_assertions_pass", False)),
+            judge_when_assertions_pass=bool(
+                raw.get("judge_when_assertions_pass", False)
+            ),
             technique=tuple(raw.get("technique", ()) or ()),
             remediation=str(raw.get("remediation", "") or ""),
         )
@@ -210,7 +343,9 @@ def load_probe_library(builtin_dir: Path) -> list[Probe]:
         for probe in pack:
             if probe.id in seen:
                 logger.warning(
-                    "probe pack %r: skipping probe %r, id already loaded", ep.name, probe.id
+                    "probe pack %r: skipping probe %r, id already loaded",
+                    ep.name,
+                    probe.id,
                 )
                 continue
             seen.add(probe.id)

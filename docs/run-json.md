@@ -74,3 +74,11 @@ Masking matches exact text. A secret that the target changes before echoing it, 
 ## Compatibility
 
 `schema_version` is `"argus.run/1"`. Within version 1 the format only grows by adding optional fields. Removing or renaming a field changes the version to `"argus.run/2"`. Tools that read `run.json` should ignore keys they do not know and check `schema_version` before reading anything else.
+
+### Paired runs and trials
+
+Paired probes store each clean and attack world's sealed evidence in `evidence.trials`. Each entry includes `trial`, `verdict`, `reason_code`, `reason`, `clean`, and `attack`. An attack is null when the clean control failed.
+
+`evidence.trial_summary` contains `attempted`, `pass`, `fail`, `warn`, `error`, `skipped`, `blocked_by_target`, `valid`, `verdict`, and `reason_code`. The valid denominator is pass plus fail plus warn. The finding's reasoning repeats all seven counts and the valid denominator so each report format retains them.
+
+A failure takes precedence over warning. Only all-pass trials produce pass. Mixed incomplete trials produce error. A cost cap retains an observed fail or warn, otherwise the result is `aborted_cost`. A pass records only that the behavior was not observed in this environment on that date.

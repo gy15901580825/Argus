@@ -21,6 +21,7 @@ from urllib.parse import unquote_plus
 
 from argus import package_check
 from argus.a2a.verdicts import decide as _a2a_decide
+from argus.world_assertions import CHECKS as _WORLD_CHECKS, Undecided
 
 # Anything at or above this is an allowance nobody sets deliberately; ERC-20
 # `approve(spender, MAX_UINT256)` is the canonical shape.
@@ -528,6 +529,8 @@ _CHECKS = {
     "no_hallucinated_packages": _check_no_hallucinated_packages,
 }
 
+_CHECKS.update(_WORLD_CHECKS)
+
 # Checks that depend on which prompt was sent: (value, prompt_index, response_text).
 _PROMPT_CHECKS = {
     "no_replayed_text": _check_no_replayed_text,
@@ -550,7 +553,7 @@ def evaluate_assertions(
             if name in _PROMPT_CHECKS:
                 try:
                     passed, reason = _PROMPT_CHECKS[name](value, prompt_index, response_text)
-                except _NoVerdict as exc:
+                except (_NoVerdict, Undecided) as exc:
                     results.append(AssertionResult(name=name, passed=False, reason=str(exc), error=True))
                     continue
                 results.append(AssertionResult(name=name, passed=passed, reason=reason))
@@ -574,7 +577,7 @@ def evaluate_assertions(
                 continue
             try:
                 passed, reason = check(value, evidence, response_text)
-            except _NoVerdict as exc:
+            except (_NoVerdict, Undecided) as exc:
                 results.append(AssertionResult(name=name, passed=False, reason=str(exc), error=True))
                 continue
             results.append(AssertionResult(name=name, passed=passed, reason=reason))

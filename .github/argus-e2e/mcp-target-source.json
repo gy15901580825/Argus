@@ -1,0 +1,11 @@
+{
+  "kind": "mcp_agent",
+  "testbed_url": "http://127.0.0.1:8092",
+  "sandbox": true,
+  "inner": {
+    "kind": "openai_compat",
+    "endpoint_url": "http://127.0.0.1:8093/v1/chat/completions",
+    "model": "demo"
+  },
+  "control_token": "${ARGUS_TESTBED_TOKEN}"
+}

@@ -2,7 +2,7 @@
 from fastapi.testclient import TestClient
 from testbed.app import app
 
-client = TestClient(app)
+client = TestClient(app, headers={"Authorization": "Bearer test-control-token"})
 
 
 def test_open_session_returns_an_unguessable_id_and_an_mcp_url():

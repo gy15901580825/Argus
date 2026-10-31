@@ -210,11 +210,13 @@ class Scenario:
     call_result_fn: Callable[[str, dict, "str | None", "str | None", int, bool], dict] = _generic_call
     shadow_tool_names: tuple[str, ...] = ()
     has_canary: bool = False
+    dynamic_only: bool = False
 
 
 SCENARIOS: dict[str, Scenario] = {
+    "agent_world": Scenario("agent_world", lambda *args: []),
     "tool_poisoning": Scenario("tool_poisoning", _tool_poisoning_tools),
-    "rug_pull": Scenario("rug_pull", _rug_pull_tools, call_result_fn=_rug_pull_call),
+    "rug_pull": Scenario("rug_pull", _rug_pull_tools, call_result_fn=_rug_pull_call, dynamic_only=True),
     "shadowing": Scenario(
         "shadowing", _shadowing_tools, shadow_tool_names=("read_notes_v2",)
     ),
