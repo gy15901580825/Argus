@@ -14,7 +14,7 @@ from fastapi import WebSocket, HTTPException, WebSocketDisconnect
 
 logger = logging.getLogger("ConnectionManager")
 
-ORCHESTRATOR_SECRET = os.getenv("ORCHESTRATOR_SECRET", "default_secret_change_me")
+ORCHESTRATOR_SECRET = os.getenv("ORCHESTRATOR_SECRET", "")
 
 
 class NoClientAgentError(RuntimeError):
@@ -64,17 +64,21 @@ class ConnectionManager:
         api_service_url = os.getenv("API_SERVICE_URL")
         if not api_service_url:
             return
+        if not ORCHESTRATOR_SECRET:
+            logger.error("Agent status reporting is disabled: ORCHESTRATOR_SECRET is not configured")
+            return
         try:
             async with httpx.AsyncClient() as client:
-                await client.post(
+                response = await client.post(
                     f"{api_service_url}/api/v1/internal/agent/status",
                     json={"agent_id": agent_id, "status": status},
                     headers={"x-orchestrator-secret": ORCHESTRATOR_SECRET},
                     timeout=5.0
                 )
+                response.raise_for_status()
             logger.info(f"Updated agent {agent_id} status to {status}")
         except Exception as e:
-            logger.error(f"Failed to update agent status to {status}: {e}")
+            logger.error("Failed to update agent status: %s", type(e).__name__)
 
     async def disconnect(self, agent_id: str, *, connection: Any = None):
         # A closing socket must not evict a newer socket that took its id.

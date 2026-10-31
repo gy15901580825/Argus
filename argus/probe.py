@@ -56,6 +56,14 @@ VALID_TARGET_CLASSES = {
     "vllm_server",
 }
 
+
+def registered_target_classes() -> set[str]:
+    from argus.targets import _plugin_builders
+    classes = set(VALID_TARGET_CLASSES)
+    for _, target in _plugin_builders().values():
+        classes.update(getattr(target, "compatible_classes", ()))
+    return classes
+
 # The controlled axis. `attack_class` answers WHAT THE ATTACK ACHIEVES; the free
 # `technique` field answers HOW IT IS DELIVERED. Splitting them is what lets the
 # coverage report state what was and was not tested — a single free-form field
@@ -172,7 +180,7 @@ def load_probe(path: Path) -> Probe:
         if raw["severity"] not in VALID_SEVERITIES:
             raise ValueError(f"invalid severity {raw['severity']!r} in {path}")
         for tc in raw["target_class"]:
-            if tc not in VALID_TARGET_CLASSES:
+            if tc not in registered_target_classes():
                 raise ValueError(f"invalid target_class {tc!r} in {path}")
         for ac in raw["attack_class"]:
             if ac not in VALID_ATTACK_CLASSES:

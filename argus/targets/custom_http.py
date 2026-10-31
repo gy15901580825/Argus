@@ -45,6 +45,9 @@ class CustomHTTPSpec:
     request_body_template: str = ""
     response_jsonpath: str = ""
     response_latency_jsonpath: Optional[str] = None
+    session_id_jsonpath: Optional[str] = None
+    run_id_jsonpath: Optional[str] = None
+    run_log_jsonpath: Optional[str] = None
     timeout_s: float = 120.0
 
     def __post_init__(self) -> None:
@@ -89,10 +92,16 @@ class CustomHTTPTarget(Target):
             jsonpath_parse(spec.response_latency_jsonpath) if spec.response_latency_jsonpath else None
         )
         self._conversation_id: str | None = None
+        self._last_run_log = None
+        self._log_paths = {name: jsonpath_parse(path) for name, path in {
+            "session_id": spec.session_id_jsonpath, "run_id": spec.run_id_jsonpath,
+            "events": spec.run_log_jsonpath,
+        }.items() if path}
 
     async def send_prompt(
         self, prompt: str, history: tuple[Turn, ...] = ()
     ) -> tuple[str, float]:
+        self._last_run_log = None
         # `history` is offered to the template as a list of {role, content} dicts.
         # Templates written before conversation support simply never reference it
         # and render exactly as they did before.
@@ -130,6 +139,19 @@ class CustomHTTPTarget(Target):
             data = resp.json() if is_json else {"_raw": resp.text}
         wall_latency_ms = (time.monotonic() - start) * 1000.0
 
+        if self._log_paths:
+            from argus.scenarios.models import TargetRunLog
+            fields = {}
+            for name, path in self._log_paths.items():
+                matches = path.find(data)
+                if matches:
+                    fields[name] = matches[0].value
+            events = fields.get("events", [])
+            if isinstance(events, dict):
+                fields["is_dry_run"] = bool(events.get("is_dry_run", False))
+                fields["events"] = events.get("events", events.get("tools", []))
+            self._last_run_log = TargetRunLog.model_validate(fields)
+
         matches = self._jsonpath.find(data)
         text = _as_text(matches[0].value) if matches else ""
 
@@ -140,3 +162,10 @@ class CustomHTTPTarget(Target):
                 latency_ms = float(latency_matches[0].value)
 
         return text, latency_ms
+
+    async def begin_probe(self, probe) -> None:
+        self._last_run_log = None
+        self._conversation_id = None
+
+    def last_run_log(self):
+        return self._last_run_log

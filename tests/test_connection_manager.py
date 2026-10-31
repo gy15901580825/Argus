@@ -10,15 +10,16 @@ from fastapi import HTTPException
 
 
 @pytest.fixture
-def quiet_status_notify():
+def quiet_status_notify(monkeypatch):
     """Stub out the outbound API Service status-update HTTP call.
 
     connect/disconnect post to API Service to flip agent status. In tests we
     don't want real HTTP — patch httpx.AsyncClient.post where it is used.
     """
+    monkeypatch.setattr("argus.connection_manager.ORCHESTRATOR_SECRET", "test-secret")
     with patch("argus.connection_manager.httpx.AsyncClient") as mock_client_cls:
         instance = AsyncMock()
-        instance.post = AsyncMock(return_value=AsyncMock(status_code=200))
+        instance.post = AsyncMock(return_value=httpx.Response(200, request=httpx.Request("POST", "http://api.invalid")))
         # Context manager: async with httpx.AsyncClient() as client:
         mock_client_cls.return_value.__aenter__.return_value = instance
         mock_client_cls.return_value.__aexit__.return_value = False
