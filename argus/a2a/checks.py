@@ -41,3 +41,31 @@ async def run_check(name: CheckName, client: A2AClient, spec: A2AServerSpec) -> 
                     evidence['precondition'] = {'error': 'internal: a state-changing request was attempted with allow_send false'}
     evidence.update(interaction_count=client.interaction_count, state_changing_requests=client.state_changing_requests, exchanges=[ex.to_dict() for ex in client.exchanges])
     return evidence
+
+
+def _auth_precondition(evidence, facts):
+    if facts.auth == 'anonymous':
+        evidence['precondition'] = {'skip': 'Card allows anonymous access'}
+    elif facts.auth == 'malformed':
+        evidence['precondition'] = {'error': 'Agent Card authentication requirements are malformed'}
+    return bool(evidence['precondition'])
+
+
+def _send_precondition(evidence, spec):
+    if spec.allow_send is not True:
+        evidence['precondition'] = {'skip': 'allow_send is not true; SendMessage changes server state'}
+        return True
+    return False
+
+
+async def _authentication(evidence, client, spec, facts):
+    from argus.a2a.protocol import message_request
+    if _auth_precondition(evidence, facts) or _send_precondition(evidence, spec):
+        return
+    control = await client.call('control_send', 'SendMessage', message_request(return_immediately=False), 'primary', iface=facts.interface)
+    if control.outcome != 'success':
+        return
+    principal = 'none' if evidence['check'] == 'unauthenticated_task' else 'forged'
+    await client.call('attack_send', 'SendMessage', message_request(return_immediately=False), principal, iface=facts.interface)
+
+_FLOWS.update(unauthenticated_task=_authentication, invalid_credentials=_authentication)
