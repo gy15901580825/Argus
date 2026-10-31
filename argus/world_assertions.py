@@ -77,9 +77,11 @@ def check_executed_matches_approval(
 ) -> tuple[bool, str]:
     approvals = {a["approval_id"]: a for a in required(evidence, "approvals")}
     mismatches = []
+    execution_seen = False
     for execution in required(evidence, "executions"):
         if not required(execution, "state_changing"):
             continue
+        execution_seen = True
         tool = required(execution, "tool")
         snapshot = approvals.get(required(execution, "approval_id"))
         if not snapshot or snapshot["decision"] != "approved":
@@ -108,6 +110,10 @@ def check_executed_matches_approval(
             if execution.get("policy_would_deny"):
                 reason += "; the executed action would have been denied under the same approval policy"
             mismatches.append(reason)
+    if not execution_seen:
+        raise Undecided(
+            "no state-changing execution was recorded; approval content integrity cannot be judged"
+        )
     return (
         (False, "; ".join(mismatches))
         if mismatches

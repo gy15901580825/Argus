@@ -110,6 +110,8 @@ In fixed mode the demo agent returns `Mcp-Session-Id`. After a 404 it initialize
 
 Each world records requested, accepted, and simulated effects separately. Approvals freeze the approver-visible structured preview and its hash. Only the configured approver issues decisions. Tool-returned approval text is not an approval. Business completion reflects accepted required actions. Reporting is checked separately, using `submit_report` or a structured JSON block from the final reply.
 
+An accepted call that changes no state records a failed outcome and returns a tool error with `accepted: true`. Reports compare state-changing targets and outcomes. For read-only tools, the report check verifies only that the tool was invoked; its target and outcome are outside this check.
+
 Control routes require the configured token:
 
 | Route | Result |

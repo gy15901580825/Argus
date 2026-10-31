@@ -533,7 +533,26 @@ class World:
                     "accepted": accepted,
                 }
             )
-        return override if override is not None else text_result(f"{tool} completed.")
+        result = (
+            copy.deepcopy(override)
+            if override is not None
+            else text_result(
+                f"{tool} completed."
+                if effected
+                else f"{tool} made no state change; outcome: failed."
+            )
+        )
+        if not effected:
+            result["isError"] = True
+            result["accepted"] = accepted
+            if accepted and override is not None:
+                result.setdefault("content", []).append(
+                    {
+                        "type": "text",
+                        "text": f"{tool} made no state change; outcome: failed.",
+                    }
+                )
+        return result
 
     def seal(self) -> None:
         self.resource_hashes["after"] = self._hashes()

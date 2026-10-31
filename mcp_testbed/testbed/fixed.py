@@ -13,15 +13,22 @@ if TYPE_CHECKING:
 LEASE_DEFAULT_TTL_S = 300.0
 LEASE_MIN_TTL_S = 30.0
 LEASE_MAX_TTL_S = 3600.0
-FIXED_PROTOCOL_VERSIONS = ('2025-06-18', '2025-03-26')
+FIXED_PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26")
+
 
 class LeaseHeld(Exception):
     def __init__(self, expires_in: float):
         self.expires_in = expires_in
-        super().__init__(f'lease held for {expires_in:.1f}s')
+        super().__init__(f"lease held for {expires_in:.1f}s")
 
-class LeaseMismatch(Exception): pass
-class DynamicOnly(Exception): pass
+
+class LeaseMismatch(Exception):
+    pass
+
+
+class DynamicOnly(Exception):
+    pass
+
 
 @dataclass
 class Lease:
@@ -29,12 +36,14 @@ class Lease:
     ttl_s: float
     expires_at: float
 
+
 @dataclass(frozen=True)
 class Route:
     ok: bool
     session: Session | None
     status: int
     reason: str | None
+
 
 class FixedEndpoint:
     def __init__(self):
@@ -57,7 +66,7 @@ class FixedEndpoint:
             raise LeaseHeld(self.lease.expires_at - now)
         ttl = LEASE_DEFAULT_TTL_S if ttl_s is None else float(ttl_s)
         if not LEASE_MIN_TTL_S <= ttl <= LEASE_MAX_TTL_S:
-            raise ValueError('ttl_s must be between 30 and 3600')
+            raise ValueError("ttl_s must be between 30 and 3600")
         self.lease = Lease(secrets.token_urlsafe(24), ttl, now + ttl)
         return self.lease
 
@@ -85,7 +94,7 @@ class FixedEndpoint:
         async with self._lock:
             self.touch(lease_id, now)
             if session.sealed:
-                raise ValueError('world is sealed')
+                raise ValueError("world is sealed")
             if session.scenario.dynamic_only:
                 raise DynamicOnly()
             if self.active:
@@ -93,6 +102,8 @@ class FixedEndpoint:
                 self.stop(previous)
                 await previous.seal()
             self.touch(lease_id, now)
+            if session.sealed:
+                raise ValueError("world is sealed")
             self.generation += 1
             self.active = session
             session.generation = self.generation
@@ -105,22 +116,29 @@ class FixedEndpoint:
             await session.seal()
 
     def issue_session_id(self) -> str:
-        session_id = f'g{self.generation}-{secrets.token_hex(8)}'
+        session_id = f"g{self.generation}-{secrets.token_hex(8)}"
         self._session_ids.add(session_id)
         return session_id
 
     def route(self, header: str | None, method: str | None) -> Route:
+        if self.active and self.active.sealed:
+            self.stop(self.active)
         if not self.active:
-            status, reason = 503, 'no_active_generation'
-        elif method == 'initialize':
+            status, reason = 503, "no_active_generation"
+        elif method == "initialize":
             return Route(True, self.active, 200, None)
         elif not header:
-            status, reason = 400, 'missing_session_id'
+            status, reason = 400, "missing_session_id"
         elif header not in self._session_ids:
-            status, reason = 404, 'stale_session'
+            status, reason = 404, "stale_session"
         else:
             return Route(True, self.active, 200, None)
-        match = re.match(r'g(\d+)-', header or '')
-        record = {'reason':reason, 'status':status, 'method':method, 'presented_generation':int(match[1]) if match else None}
+        match = re.match(r"g(\d+)-", header or "")
+        record = {
+            "reason": reason,
+            "status": status,
+            "method": method,
+            "presented_generation": int(match[1]) if match else None,
+        }
         (self.active.rejected_requests if self.active else self.rejected).append(record)
         return Route(False, self.active, status, reason)
