@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import StrEnum
+import re
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -154,11 +155,17 @@ class IntegrationScenario(BaseModel):
 
     @model_validator(mode="after")
     def check_references(self):
+        if any(key == "folder" or not re.fullmatch(r"[a-zA-Z0-9_-]{1,100}", key) for key in self.objects):
+            raise ValueError("object keys must be bounded identifiers; folder is reserved")
         if len({control.name for control in self.controls}) != len(self.controls):
             raise ValueError("control names must be unique")
         for key in self.test.plant:
             if key not in self.objects:
                 raise ValueError(f"unknown planted object: {key}")
+        if any(scope.object and scope.object not in self.objects for scope in self.observe):
+            raise ValueError("observation references an unknown object")
+        if any(assertion.object and assertion.object not in self.objects for assertion in self.assertions):
+            raise ValueError("assertion references an unknown object")
         for check in self.readiness:
             if check.object and check.object not in self.objects:
                 raise ValueError("readiness references an unknown object")

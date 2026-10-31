@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import timedelta
 
 import httpx
@@ -40,12 +41,19 @@ class GoogleDriver:
         token = await self.token(ctx, ref, scopes)
         ctx.budget.charge("third_party_calls", cleanup=ctx.cleanup_mode)
         headers = {"Authorization": "Bearer " + token, **kwargs.pop("headers", {})}
+        raw = kwargs.pop("raw", False)
+        limit = min(max(int(self.config.get("max_response_bytes", 1048576)), 1), 1048576)
         async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.request(method, url, headers=headers, **kwargs)
-        if response.status_code in {401, 403}:
-            raise CredentialUnavailable("Google connection is expired or lacks required permissions")
-        response.raise_for_status()
-        return response.json() if response.content else {}
+            async with client.stream(method, url, headers=headers, **kwargs) as response:
+                if response.status_code in {401, 403}:
+                    raise CredentialUnavailable("Google connection is expired or lacks required permissions")
+                response.raise_for_status()
+                body = bytearray()
+                async for chunk in response.aiter_bytes():
+                    if len(body) + len(chunk) > limit:
+                        raise RuntimeError("Google response exceeded its bounded content read")
+                    body.extend(chunk)
+        return bytes(body).decode("utf-8") if raw else json.loads(body) if body else {}
 
     async def pages(self, ctx, ref, scopes, url, key, params):
         params = dict(params)

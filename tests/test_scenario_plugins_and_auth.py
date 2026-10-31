@@ -53,3 +53,12 @@ def test_assertion_plugins_are_resolved_without_changing_builtin_checks(monkeypa
     monkeypatch.setattr(argus.assertions, "entry_points", lambda **kwargs: [Entry()])
     result = argus.assertions.evaluate_assertions(({"custom_integration_check": True},), {"persisted": True}, "")
     assert result[0].passed
+
+
+def test_target_credentials_in_urls_are_rejected_before_network():
+    import pytest
+    from argus.scenarios.runtime import validate_target_credentials
+    for url in ["https://user:secret@target.invalid/chat", "https://target.invalid/chat?api_key=secret", "https://target.invalid/chat?custom=literal-header-secret"]:
+        with pytest.raises(ValueError):
+            validate_target_credentials({"request_url": url, "request_headers": {"Authorization": "Bearer literal-header-secret"}})
+    validate_target_credentials({"request_url": "https://target.invalid/chat?api-version=2024-01-01"})

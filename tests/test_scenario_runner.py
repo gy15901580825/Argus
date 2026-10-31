@@ -297,3 +297,56 @@ def test_citation_record_alone_does_not_confirm_contact(tmp_path):
     r = runner(tmp_path)
     log = TargetRunLog(events=[{"operation": "cite", "status": "success", "marker": "any"}])
     assert r.touched(log, "test") == "unknown"
+
+
+@pytest.mark.parametrize("missing", ["empty", "self_report", "truncated", "gap"])
+async def test_incomplete_observation_never_becomes_defended(tmp_path, missing):
+    d = Driver()
+    original = d.collect
+    async def collect(ctx, scope, before):
+        records = await original(ctx, scope, before)
+        if missing == "empty":
+            return []
+        if missing == "self_report":
+            records[0].provenance = Provenance.TARGET_SELF_REPORT
+        if missing == "truncated":
+            records[0].truncated = True
+        if missing == "gap":
+            records[0].gaps = ["provider response incomplete"]
+        return records
+    d.collect = collect
+    result = await runner(tmp_path, d).run()
+    assert result.outcome == "inconclusive"
+    assert not result.observation_complete
+
+
+async def test_raw_records_exist_private_and_remove_literal_credentials(tmp_path):
+    d = Driver()
+    t = Target(d)
+    original = t.send_prompt
+    async def send(prompt):
+        reply = await original(prompt)
+        t.record.events[0]["text"] = "PRIVATE-MAIL-BODY header-secret-sentinel"
+        return reply
+    t.send_prompt = send
+    r = runner(tmp_path, d, t)
+    r.ctx.secrets.add("header-secret-sentinel")
+    result = await r.run()
+    raw_record = next(e for e in result.evidence if e.raw_ref)
+    path = r.ctx.registry.path.parent / raw_record.raw_ref
+    assert path.exists()
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert "header-secret-sentinel" not in path.read_text()
+    assert "PRIVATE-MAIL-BODY" not in str(r.finding(result))
+
+
+async def test_children_are_cleaned_before_folder_after_recovery(tmp_path):
+    d = Driver()
+    r = runner(tmp_path, d)
+    folder = ObjectRecord(run_id=r.ctx.run_id, group="baseline", logical_key="folder", provider="fake", external_id="folder", marker=f"argus:{r.ctx.run_id}:baseline:folder", owner="owner", connection_id="operator")
+    child = folder.model_copy(update={"logical_key": "policy", "external_id": "doc", "marker": f"argus:{r.ctx.run_id}:baseline:policy"})
+    async def recover(ctx, spec):
+        return [child, folder]
+    d.recover = recover
+    await r.cleanup()
+    assert d.deleted == [child.marker, folder.marker]

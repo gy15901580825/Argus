@@ -64,6 +64,8 @@ class GmailDriver(GoogleDriver):
         return mailbox.lower() in recipients and bool(senders.intersection(expected))
 
     async def check(self, ctx, ref, need):
+        if "send_seed" in need and not self.config.get("expected_seed_sender"):
+            return ConnCheck(active=False, detail="Gmail sending requires the declared operator sender address")
         check = await super().check(ctx, ref, need)
         if check.active and need != {"send_seed"}:
             await self.account(ctx, ref)
@@ -89,11 +91,15 @@ class GmailDriver(GoogleDriver):
         if pending:
             raise NotReady("seed delivery is uncertain; do not resend before checking the mailbox")
         ref = ctx.connection(spec.from_ or spec.connection)
+        sender = self.config.get("expected_seed_sender")
+        if not sender:
+            raise NotReady("Gmail sending requires the declared operator sender address")
         record = ObjectRecord(run_id=ctx.run_id, group=ctx.group, logical_key=key, provider=self.name, external_id="pending-send",
                               control_name=ctx.control_name,
-                              marker=marker, owner=ref.connection_id, connection_id=ref.connection_id)
+                              marker=marker, owner=owner_hash(sender), connection_id=ref.connection_id)
         ctx.registry.save(record)
         mail = EmailMessage()
+        mail["From"] = sender
         mail["To"] = ctx.target_identity if spec.to == "target_agent" else spec.to
         mail["Subject"] = spec.subject + " " + marker
         mail["Message-ID"] = "<" + hashlib.sha256(marker.encode()).hexdigest() + "@argus.invalid>"
@@ -110,9 +116,13 @@ class GmailDriver(GoogleDriver):
         return {row["id"]: await self.request(ctx, ref, {GMAIL_READ}, "GET", BASE + "/drafts/" + row["id"], params={"format": "full"}) for row in rows}
 
     async def snapshot(self, ctx, scope):
+        if scope.collect != "drafts_diff":
+            raise NotReady("unsupported Gmail observation operation")
         return await self.drafts(ctx, ctx.connection(scope.connection))
 
     async def collect(self, ctx, scope, since):
+        if scope.collect != "drafts_diff":
+            raise NotReady("unsupported Gmail observation operation")
         ref = ctx.connection(scope.connection)
         current = await self.drafts(ctx, ref)
         records = []
@@ -130,7 +140,7 @@ class GmailDriver(GoogleDriver):
             records.append(Evidence(run_id=ctx.run_id, group=ctx.group, source_system="gmail", provenance=Provenance.THIRD_PARTY_API,
                                     control_name=ctx.control_name,
                                     acquired_via="gmail_api", object_id=message.get("id", draft_id), operation="draft_created" if draft_id not in since else "draft_changed",
-                                    result="persisted", details={"marker": matches[0].marker, "unexpected_recipient": any(r not in allowed for r in recipients)}))
+                                    result="persisted", details={"marker": matches[0].marker, "unexpected_recipient": any(r not in allowed for r in recipients), "recipient_hashes": [owner_hash(r) for r in recipients]}))
         records.append(Evidence(run_id=ctx.run_id, group=ctx.group, source_system="gmail", provenance=Provenance.THIRD_PARTY_API,
                                 control_name=ctx.control_name,
                                 acquired_via="gmail_api", operation="draft_snapshot", result="complete", details={"draft_count": len(current)}))

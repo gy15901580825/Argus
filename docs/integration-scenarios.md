@@ -34,6 +34,8 @@ The run token is a separate credential capability, not server authentication.
 
 `GET /redteam/scenarios` returns `{id, name, description, scenario}` entries.
 The built-in scenario is `mail_policy_conflict_v1`.
+A catalog response includes resolved template content so a trusted broker can freeze the exact seed content with the run.
+Template files must stay within the catalog's `templates` directory and are limited to 64 KiB.
 A trusted server should select the catalog scenario and supply the connection IDs and declared target account.
 Do not let an untrusted browser choose credential-provider configuration, operation permissions or budgets.
 
@@ -76,6 +78,7 @@ The deterministic scenarios do not call a judge model and report zero judge cost
 Target prose, echoed markers, dry-run tool intentions and an empty log cannot establish contact.
 The baseline also requires successful structured retrieval of the expected marked object.
 Targets that cannot expose this proof finish `not_ready` or `inconclusive`.
+An empty collector response cannot establish a complete observation window. A driver must provide an independent checkpoint, and pagination, truncation or collection gaps make the result inconclusive.
 
 Structured run events used as proof must contain a successful `read`, `get`, `retrieve`, `search` or `fetch`,
 with the matching object ID or marker. Supplied run/group/version fields must match.
@@ -84,6 +87,7 @@ Conflicting IDs and markers are rejected. Citation prose is not a successful ret
 For a custom HTTP target, configure `session_id_jsonpath`, `run_id_jsonpath` and `run_log_jsonpath`.
 The run-log path may select an event list or an object containing `events` and `is_dry_run`.
 The endpoint must provide real execution records. Do not manufacture records from response prose.
+Scenario targets reject URL user information, credential query parameters and known credential values in query strings before making requests. Supply credentials through target headers instead.
 
 Scenario results remain regular findings under `evidence.scenario`:
 
@@ -113,6 +117,7 @@ The Gmail driver needs a trusted `expected_seed_sender` setting or a registered 
 It verifies the actual sender, recipient mailbox and marker before moving the message to trash.
 
 Drive objects carry `appProperties.argus_marker`.
+The driver reads Google Docs through `files.export` and plain-text files through `alt=media`, with a bounded response size. Evidence includes content hashes and private raw-file references, rather than document bodies.
 The driver records the version after intentional sharing, and retains objects with changed markers, owners or versions.
 On recovery, a modified object with no known original version is retained.
 Folders are deleted only after their contents are safely cleaned.

@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+from urllib.parse import quote
+from uuid import uuid4
 
 from argus.scenarios.models import CleanupResult, ConnCheck, Evidence, ObjectRecord, Provenance, object_marker
 from argus.scenarios.runtime import NotReady
@@ -10,6 +13,10 @@ from argus_drivers_google.common import DRIVE_FILE, GoogleDriver, owner_hash
 
 BASE = "https://www.googleapis.com/drive/v3"
 FIELDS = "id,name,mimeType,version,owners(emailAddress),appProperties,createdTime,modifiedTime,trashed"
+
+
+def content_hash(text: str) -> str:
+    return hashlib.sha256(text.replace("\r\n", "\n").rstrip("\n").encode()).hexdigest()
 
 
 class DriveDriver(GoogleDriver):
@@ -29,7 +36,30 @@ class DriveDriver(GoogleDriver):
         return await self.pages(ctx, ref, {DRIVE_FILE}, BASE + "/files", "files", {"q": "trashed = false and appProperties has { key='argus_marker' and value='" + marker + "' }", "fields": "nextPageToken,files(" + FIELDS + ")", "pageSize": 100})
 
     async def metadata(self, ctx, ref, file_id):
-        return await self.request(ctx, ref, {DRIVE_FILE}, "GET", BASE + "/files/" + file_id, params={"fields": FIELDS})
+        return await self.request(ctx, ref, {DRIVE_FILE}, "GET", BASE + "/files/" + quote(file_id, safe=""), params={"fields": FIELDS})
+
+    async def read_content(self, ctx, ref, data):
+        ctx.authorize("gdrive.read")
+        file_id = quote(data["id"], safe="")
+        if data.get("mimeType") == "application/vnd.google-apps.document":
+            url, params = BASE + "/files/" + file_id + "/export", {"mimeType": "text/plain"}
+        elif data.get("mimeType") == "text/plain":
+            url, params = BASE + "/files/" + file_id, {"alt": "media"}
+        else:
+            raise NotReady("Drive content observation supports documents and plain-text files")
+        return await self.request(ctx, ref, {DRIVE_FILE}, "GET", url, params=params, raw=True)
+
+    async def read_state(self, ctx, ref, file_id):
+        data = await self.metadata(ctx, ref, file_id)
+        text = await self.read_content(ctx, ref, data)
+        raw_id = uuid4().hex
+        directory = ctx.registry.path.parent / "raw"
+        directory.mkdir(exist_ok=True, mode=0o700)
+        fd = os.open(directory / (raw_id + ".txt"), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as out:
+            out.write(ctx.redact(text))
+        return {**data, "content_sha256": content_hash(text), "raw_ref": "raw/" + raw_id + ".txt",
+                "marker_present": data.get("appProperties", {}).get("argus_marker", "missing") in text}
 
     def record(self, ctx, key, data, ref, email, marker=None, group=None, control_name=None):
         return ObjectRecord(run_id=ctx.run_id, group=group or ctx.group, logical_key=key, provider=self.name,
@@ -68,11 +98,17 @@ class DriveDriver(GoogleDriver):
                 recovered.cleanup_status, recovered.cleanup_detail = "retained", "original version is unknown and object was modified"
                 ctx.registry.save(recovered)
                 raise NotReady("prepared Drive object's original version is unknown")
+            observed = await self.read_content(ctx, ref, found[0])
+            if content_hash(observed) != content_hash(spec.content + "\n\n" + marker):
+                recovered = previous or recovered
+                recovered.cleanup_status, recovered.cleanup_detail = "retained", "prepared Drive content changed"
+                ctx.registry.save(recovered)
+                raise NotReady("prepared Drive document content does not match its template")
             return previous or recovered
         folder = await self.folder(ctx, ref, spec.folder, email)
         content = spec.content + "\n\n" + marker
         metadata = {"name": spec.subject + " " + marker, "mimeType": "application/vnd.google-apps.document", "parents": [folder],
-                    "appProperties": {"argus_marker": marker, "argus_content_sha256": hashlib.sha256(content.encode()).hexdigest()}}
+                    "appProperties": {"argus_marker": marker, "argus_content_sha256": content_hash(content)}}
         boundary = "argus_" + hashlib.sha256(marker.encode()).hexdigest()
         upload = (f"--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{json.dumps(metadata)}\r\n"
                   f"--{boundary}\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n{content}\r\n--{boundary}--\r\n").encode()
@@ -86,9 +122,21 @@ class DriveDriver(GoogleDriver):
             await self.request(ctx, ref, {DRIVE_FILE}, "POST", BASE + "/files/" + created["id"] + "/permissions",
                                params={"sendNotificationEmail": "false"}, json={"type": "user", "role": "reader", "emailAddress": recipient})
         final = await self.metadata(ctx, ref, created["id"])
-        return self.record(ctx, key, final, ref, email)
+        obj = self.record(ctx, key, final, ref, email)
+        ctx.registry.save(obj)
+        try:
+            observed = await self.read_content(ctx, ref, final)
+            if marker not in observed or content_hash(observed) != content_hash(content):
+                raise NotReady("prepared Drive document content does not match its template and marker")
+        except Exception:
+            obj.cleanup_status, obj.cleanup_detail = "retained", "prepared document content could not be verified"
+            ctx.registry.save(obj)
+            raise
+        return obj
 
     async def readiness(self, ctx, check):
+        if check.check != "accessible_by":
+            return ConnCheck(active=False, detail="unsupported Drive readiness check")
         ctx.authorize("gdrive.read")
         obj = ctx.objects.get(check.object)
         if obj is None:
@@ -101,23 +149,29 @@ class DriveDriver(GoogleDriver):
         return ConnCheck(active=allowed, detail="" if allowed else "declared target is absent from the Drive sharing list")
 
     async def snapshot(self, ctx, scope):
+        if scope.collect not in {"object_diff", "versions_diff"}:
+            raise NotReady("unsupported Drive observation operation")
         ctx.authorize("gdrive.read")
         ref = ctx.connection(scope.connection)
         selected = [obj for key, obj in ctx.objects.items() if obj.provider == self.name and (not scope.object or key == scope.object)]
-        return {obj.external_id: await self.metadata(ctx, ref, obj.external_id) for obj in selected}
+        if not selected:
+            raise NotReady("Drive observation does not select any prepared object")
+        return {obj.external_id: await self.read_state(ctx, ref, obj.external_id) for obj in selected}
 
     async def collect(self, ctx, scope, since):
+        if scope.collect not in {"object_diff", "versions_diff"}:
+            raise NotReady("unsupported Drive observation operation")
         ctx.authorize("gdrive.read")
         ref = ctx.connection(scope.connection)
         records = []
         for file_id, before in since.items():
-            after = await self.metadata(ctx, ref, file_id)
+            after = await self.read_state(ctx, ref, file_id)
             obj = next(o for o in ctx.objects.values() if o.external_id == file_id)
-            changed = str(before.get("version")) != str(after.get("version"))
+            changed = str(before.get("version")) != str(after.get("version")) or before.get("content_sha256") != after.get("content_sha256") or before.get("appProperties") != after.get("appProperties")
             records.append(Evidence(run_id=ctx.run_id, group=ctx.group, source_system="gdrive", provenance=Provenance.THIRD_PARTY_API,
                                     control_name=ctx.control_name,
                                     acquired_via="drive_api", object_id=file_id, operation="object_changed" if changed else "object_snapshot",
-                                    result="persisted" if changed else "unchanged", details={"logical_key": obj.logical_key, "version": str(after.get("version"))}))
+                                    result="persisted" if changed else "unchanged", raw_ref=after["raw_ref"], details={"logical_key": obj.logical_key, "version": str(after.get("version")), "content_sha256": after["content_sha256"], "marker_present": after["marker_present"]}))
         return records
 
     async def recover(self, ctx, scenario):
@@ -135,6 +189,8 @@ class DriveDriver(GoogleDriver):
                         obj.cleanup_status, obj.cleanup_detail = "retained", "Drive object owner changed"
                     elif previous:
                         obj.version = previous.version
+                        if previous.cleanup_status == "retained":
+                            obj.cleanup_status, obj.cleanup_detail = previous.cleanup_status, previous.cleanup_detail
                     elif data.get("createdTime") != data.get("modifiedTime"):
                         obj.cleanup_status, obj.cleanup_detail = "retained", "original version is unknown and object was modified"
                     records.append(obj)

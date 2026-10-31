@@ -47,7 +47,8 @@ async def test_drive_uploads_content_and_registers_final_shared_version(tmp_path
     respx.post(DRIVE + "/files").mock(return_value=httpx.Response(200, json={"id": "folder", "version": "1"}))
     upload = respx.post("https://www.googleapis.com/upload/drive/v3/files").mock(return_value=httpx.Response(200, json={"id": "doc", "version": "1"}))
     share = respx.post(DRIVE + "/files/doc/permissions").mock(return_value=httpx.Response(200, json={"id": "permission"}))
-    respx.get(DRIVE + "/files/doc").mock(return_value=httpx.Response(200, json={"id": "doc", "version": "3"}))
+    respx.get(DRIVE + "/files/doc").mock(return_value=httpx.Response(200, json={"id": "doc", "version": "3", "mimeType": "application/vnd.google-apps.document"}))
+    export = respx.get(DRIVE + "/files/doc/export").mock(return_value=httpx.Response(200, text="expected policy text\n\n" + ctx.marker("policy") + "\n"))
     obj = await driver.prepare(ctx, "policy", ObjectSpec(driver="gdrive", op="create_doc", content="expected policy text", share_with=["target_agent"]))
     assert obj.version == "3"
     assert obj.owner == owner_hash("operator@gmail.com")
@@ -55,6 +56,7 @@ async def test_drive_uploads_content_and_registers_final_shared_version(tmp_path
     assert b"appProperties" in upload.calls[0].request.content
     assert upload.calls[0].request.url.params["uploadType"] == "multipart"
     assert b"observer@gmail.com" in share.calls[0].request.content
+    assert export.calls[0].request.url.params["mimeType"] == "text/plain"
 
 
 @respx.mock
@@ -147,7 +149,7 @@ async def test_gmail_sender_only_permission_does_not_request_sender_read_access(
                 raise CredentialUnavailable("missing scope")
             return AccessToken(value=SecretStr(ref.role + "-token"), expires_at=now() + timedelta(hours=1), scopes=frozenset(grants))
     provider = ScopedProvider()
-    driver = GmailDriver({}, provider)
+    driver = GmailDriver({"expected_seed_sender": "operator@gmail.com"}, provider)
     respx.get(GMAIL + "/profile").mock(return_value=httpx.Response(200, json={"emailAddress": "observer@gmail.com"}))
     respx.get(GMAIL + "/messages").mock(return_value=httpx.Response(200, json={"messages": []}))
     send = respx.post(GMAIL + "/messages/send").mock(return_value=httpx.Response(200, json={"id": "sent"}))
@@ -155,3 +157,51 @@ async def test_gmail_sender_only_permission_does_not_request_sender_read_access(
     assert obj.external_id == "sent"
     assert send.called
     assert not any(role == "operator" and GMAIL_READ in scopes for role, scopes in provider.calls)
+
+
+@respx.mock
+async def test_drive_reads_plain_text_document_and_reports_hash_not_body(tmp_path):
+    ctx = context(tmp_path)
+    driver = DriveDriver({}, Provider())
+    marker = ctx.marker("policy")
+    obj = ObjectRecord(run_id=ctx.run_id, group="test", logical_key="policy", provider="gdrive", external_id="doc", marker=marker, owner=owner_hash("operator@gmail.com"), connection_id="op", version="1")
+    ctx.objects["policy"] = obj
+    data = {"id": "doc", "version": "1", "mimeType": "application/vnd.google-apps.document", "appProperties": {"argus_marker": marker}}
+    respx.get(DRIVE + "/files/doc").mock(return_value=httpx.Response(200, json=data))
+    export = respx.get(DRIVE + "/files/doc/export").mock(return_value=httpx.Response(200, text="PRIVATE-POLICY-BODY\n" + marker))
+    snapshot = await driver.snapshot(ctx, ObserveSpec(driver="gdrive", collect="object_diff", connection="operator", object="policy"))
+    evidence = await driver.collect(ctx, ObserveSpec(driver="gdrive", collect="object_diff", connection="operator", object="policy"), snapshot)
+    assert evidence[0].operation == "object_snapshot"
+    assert evidence[0].details["marker_present"] is True
+    assert "PRIVATE-POLICY-BODY" not in str(evidence[0].model_dump())
+    assert export.calls[0].request.url.params["mimeType"] == "text/plain"
+
+
+@respx.mock
+async def test_oversized_drive_content_read_is_rejected(tmp_path):
+    ctx = context(tmp_path)
+    driver = DriveDriver({"max_response_bytes": 32}, Provider())
+    respx.get(DRIVE + "/files/doc/export").mock(return_value=httpx.Response(200, text="x" * 64))
+    with pytest.raises(RuntimeError, match="bounded content read"):
+        await driver.read_content(ctx, ctx.connection("operator"), {"id": "doc", "mimeType": "application/vnd.google-apps.document"})
+
+
+@respx.mock
+async def test_owned_child_cleanup_precedes_folder_and_preserves_foreign_children(tmp_path):
+    ctx = context(tmp_path)
+    ctx.cleanup_mode = True
+    driver = DriveDriver({}, Provider())
+    profile = {"user": {"emailAddress": "operator@gmail.com"}}
+    respx.get(DRIVE + "/about").mock(return_value=httpx.Response(200, json=profile))
+    child = ObjectRecord(run_id=ctx.run_id, group="test", logical_key="policy", provider="gdrive", external_id="doc", marker=ctx.marker("policy"), owner=owner_hash("operator@gmail.com"), connection_id="op", version="1")
+    folder = child.model_copy(update={"logical_key": "folder", "external_id": "folder", "marker": ctx.marker("folder")})
+    respx.get(DRIVE + "/files/doc").mock(return_value=httpx.Response(200, json={"id": "doc", "version": "1", "owners": [{"emailAddress": "operator@gmail.com"}], "appProperties": {"argus_marker": child.marker}}))
+    respx.get(DRIVE + "/files/folder").mock(return_value=httpx.Response(200, json={"id": "folder", "mimeType": "application/vnd.google-apps.folder", "version": "1", "owners": [{"emailAddress": "operator@gmail.com"}], "appProperties": {"argus_marker": folder.marker}}))
+    respx.patch(DRIVE + "/files/doc").mock(return_value=httpx.Response(200, json={}))
+    respx.get(DRIVE + "/files").mock(return_value=httpx.Response(200, json={"files": []}))
+    folder_mutation = respx.patch(DRIVE + "/files/folder").mock(return_value=httpx.Response(200, json={}))
+    assert (await driver.cleanup(ctx, child)).status == "deleted"
+    assert (await driver.cleanup(ctx, folder)).status == "deleted"
+    respx.get(DRIVE + "/files").mock(return_value=httpx.Response(200, json={"files": [{"id": "foreign-child"}]}))
+    assert (await driver.cleanup(ctx, folder)).status == "retained"
+    assert folder_mutation.call_count == 1

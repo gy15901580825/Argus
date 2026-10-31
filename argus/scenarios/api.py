@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from argus.scenarios.credentials import build_credential_provider
 from argus.scenarios.models import IntegrationScenario, ObjectRecord, now, object_marker
 from argus.scenarios.runner import ScenarioRunner
-from argus.scenarios.runtime import build_drivers
+from argus.scenarios.runtime import build_drivers, validate_target_credentials, read_template
 from argus.targets import build_target
 
 
@@ -65,7 +65,16 @@ class ScenarioCleanupRequest(BaseModel):
 
 def catalog() -> list[IntegrationScenario]:
     directory = Path(os.getenv("ARGUS_SCENARIO_CATALOG_DIR", str(CATALOG_DIR)))
-    return [IntegrationScenario.model_validate(yaml.safe_load(p.read_text())) for p in sorted(directory.glob("*.yaml"))]
+    scenarios = [IntegrationScenario.model_validate(yaml.safe_load(p.read_text())) for p in sorted(directory.glob("*.yaml"))]
+    for scenario in scenarios:
+        for spec in scenario.objects.values():
+            if spec.template:
+                spec.content, spec.template = read_template(directory, spec.template), None
+        for control in scenario.controls:
+            for key, name in control.replace.items():
+                control.contents[key] = read_template(directory, name)
+            control.replace = {}
+    return scenarios
 
 
 @router.get("/scenarios")
@@ -74,6 +83,7 @@ def list_scenarios():
 
 
 def create_runner(req, emit=None):
+    validate_target_credentials(req.target)
     provider = build_credential_provider(req.credential_provider.kind, req.credential_provider.config, req.run_token, req.connections)
     names = {spec.driver for spec in req.scenario.objects.values()} | {s.driver for s in req.scenario.observe} | {s.driver for s in req.scenario.readiness if s.driver}
     drivers = build_drivers(names, provider, req.credential_provider.drivers)

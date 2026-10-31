@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from importlib.metadata import entry_points
 from pathlib import Path
 from typing import Any, Protocol
+from urllib.parse import parse_qsl, urlsplit
 
 from argus.scenarios.credentials import ConnRef, CredentialProvider
 from argus.scenarios.models import BudgetSpec, CleanupResult, ConnCheck, Evidence, ObjectRecord, ObjectSpec, ObserveSpec, object_marker
@@ -19,6 +20,45 @@ class BudgetExceeded(RuntimeError):
 
 class NotReady(RuntimeError):
     pass
+
+
+def read_template(catalog_dir: Path, name: str) -> str:
+    root = (catalog_dir / "templates").resolve()
+    path = (root / name).resolve()
+    if root not in path.parents or not path.is_file() or path.stat().st_size > 65536:
+        raise NotReady("scenario template is missing, too large or outside the catalog")
+    return path.read_text()
+
+
+def validate_target_credentials(spec: dict):
+    secrets = []
+    urls = []
+    def visit(value):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                name = key.lower().replace("-", "_")
+                if isinstance(item, str) and any(part in name for part in ["api_key", "apikey", "token", "password", "secret"]):
+                    secrets.append(item)
+                if name.endswith("headers"):
+                    for header, text in item.items() if isinstance(item, dict) else item or []:
+                        if isinstance(text, str) and header.lower() not in {"content-type", "accept", "user-agent", "accept-encoding"}:
+                            secrets.extend([text, text.split(" ", 1)[-1]])
+                if isinstance(item, str) and (name.endswith("url") or name == "endpoint"):
+                    urls.append(item)
+                visit(item)
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                visit(item)
+    visit(spec)
+    for value in urls:
+        parsed = urlsplit(value)
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("target URL credentials are not allowed; use request headers")
+        for key, item in parse_qsl(parsed.query):
+            normalized = key.lower().replace("-", "_")
+            if normalized in {"key", "auth", "authorization"} or any(word in normalized for word in ["token", "api_key", "apikey", "password", "secret", "credential"]) or any(secret and secret in item for secret in secrets):
+                raise ValueError("target URL credentials are not allowed; use request headers")
+    return secrets
 
 
 class Budget:

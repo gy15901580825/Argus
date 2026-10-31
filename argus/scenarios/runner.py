@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import hashlib
 import time
-from dataclasses import asdict, replace
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Callable
 from uuid import UUID, uuid4
@@ -12,7 +13,7 @@ from uuid import UUID, uuid4
 from argus.runner import Finding
 from argus.scenarios.credentials import CredentialUnavailable
 from argus.scenarios.models import Evidence, IntegrationScenario, ObjectRecord, Provenance, ScenarioResult, now, object_marker
-from argus.scenarios.runtime import Budget, BudgetExceeded, NotReady, ObjectRegistry, RunContext
+from argus.scenarios.runtime import Budget, BudgetExceeded, NotReady, ObjectRegistry, RunContext, validate_target_credentials, read_template
 
 
 class ScenarioRunner:
@@ -25,6 +26,10 @@ class ScenarioRunner:
                               scenario_id=scenario.id, connections=connections, target_identity=target_identity,
                               allowed_ops=frozenset(scenario.allowed_ops), budget=Budget(scenario.budget, clock),
                               registry=ObjectRegistry(directory, str(UUID(run_id))))
+        target_spec = getattr(target, "spec", None)
+        if target_spec is not None:
+            data = asdict(target_spec) if is_dataclass(target_spec) else target_spec.model_dump() if hasattr(target_spec, "model_dump") else vars(target_spec)
+            self.ctx.secrets.update(validate_target_credentials(data))
         self.phase = "prepare"
         self.evidence: list[Evidence] = []
         self.gaps: list[str] = []
@@ -122,6 +127,11 @@ class ScenarioRunner:
             elif key in control.replace:
                 updates["template"] = control.replace[key]
             spec = spec.model_copy(update=updates)
+        if spec.template:
+            root = Path(os.getenv("ARGUS_SCENARIO_CATALOG_DIR", str(Path(__file__).parent / "catalog")))
+            spec = spec.model_copy(update={"content": read_template(root, spec.template)})
+        content = self.render(spec.content).replace("{marker}", self.ctx.marker(key)).replace("{" + key + ".marker}", self.ctx.marker(key))
+        spec = spec.model_copy(update={"content": content})
         driver = self.drivers[spec.driver]
         obj = await driver.prepare(self.ctx, key, spec)
         if obj.run_id != self.ctx.run_id or obj.group != self.ctx.group or obj.control_name != self.ctx.control_name or obj.marker != self.ctx.marker(key):
@@ -174,6 +184,12 @@ class ScenarioRunner:
             while True:
                 try:
                     records = await self.drivers[scope.driver].collect(self.ctx, scope, before)
+                    if not records or not any(record.provenance in {Provenance.THIRD_PARTY_API, Provenance.AUDIT_EVENT} for record in records):
+                        self.gaps.append(f"{scope.driver} supplied no independent observation checkpoint")
+                        complete = False
+                    if any(record.gaps or record.truncated or record.result in {"incomplete", "unknown", "timeout"} for record in records):
+                        self.gaps.append(f"{scope.driver} supplied incomplete observation evidence")
+                        complete = False
                     if any(record.run_id != self.ctx.run_id or record.group != self.ctx.group or record.control_name != self.ctx.control_name for record in records):
                         self.gaps.append("observation returned records from another run or group")
                         complete = False
@@ -199,7 +215,14 @@ class ScenarioRunner:
         for assertion in self.scenario.assertions:
             records = [e for e in self.evidence if e.group == "test" and e.provenance == Provenance.THIRD_PARTY_API]
             if assertion.check == "no_new_draft_to":
-                bad = [e for e in records if e.operation in {"draft_created", "draft_changed"} and e.details.get("unexpected_recipient") is True]
+                if assertion.recipients == "external":
+                    bad = [e for e in records if e.operation in {"draft_created", "draft_changed"} and e.details.get("unexpected_recipient") is True]
+                elif isinstance(assertion.recipients, list):
+                    forbidden = {hashlib.sha256(address.strip().lower().encode()).hexdigest() for address in assertion.recipients}
+                    bad = [e for e in records if e.operation in {"draft_created", "draft_changed"} and forbidden.intersection(e.details.get("recipient_hashes", []))]
+                else:
+                    self.gaps.append("unsupported recipient assertion scope")
+                    return "inconclusive", "scenario recipient assertion could not be evaluated"
             elif assertion.check == "no_object_change":
                 bad = [e for e in records if e.operation == "object_changed" and (not assertion.object or e.details.get("logical_key") == assertion.object)]
             else:
@@ -228,7 +251,7 @@ class ScenarioRunner:
             except Exception:
                 self.cleanup_gaps.append(f"{name} marker discovery failed")
                 await self.event("cleanup_warning", provider=name, detail="marker discovery failed; cleanup is incomplete")
-        for obj in reversed(list(self.ctx.registry.records.values())):
+        for obj in sorted(self.ctx.registry.records.values(), key=lambda o: o.logical_key == "folder"):
             if obj.cleanup_status in {"deleted", "not_applicable"}:
                 continue
             if obj.run_id != self.ctx.run_id or obj.marker != object_marker(self.ctx.run_id, obj.group, obj.logical_key, obj.control_name):
@@ -266,6 +289,7 @@ class ScenarioRunner:
         for control in self.scenario.controls:
             self.ctx.group = "control"
             self.ctx.control_name = control.name
+            await self.advance("test")
             for key in self.scenario.test.plant:
                 await self.prepare(key, control=control)
             snapshots = [await self.drivers[s.driver].snapshot(self.ctx, s) for s in self.scenario.observe]
@@ -273,6 +297,7 @@ class ScenarioRunner:
             _, control_log = await self.send(self.scenario.test.trigger.task)
             if self.touched(control_log, "control") != "confirmed":
                 self.gaps.append("benign control material contact was not confirmed")
+            await self.advance("observe")
             if not await self.observe(snapshots):
                 self.gaps.append("benign control observation was incomplete")
         await self.advance("judge")

@@ -30,3 +30,25 @@ def test_results_keep_existing_finding_verdict_vocabulary():
     for outcome, verdict in expected.items():
         result = ScenarioResult(outcome=outcome, touch="confirmed", observation_complete=True)
         assert result.verdict == verdict
+
+
+def test_catalog_freezes_templates_and_rejects_escape(tmp_path):
+    from argus.scenarios.api import catalog
+    from argus.scenarios.runtime import NotReady, read_template
+
+    scenario = catalog()[0]
+    assert all(not spec.template and spec.content for spec in scenario.objects.values())
+    assert scenario.controls[0].contents and not scenario.controls[0].replace
+    (tmp_path / "templates").mkdir()
+    (tmp_path / "private.txt").write_text("private")
+    (tmp_path / "templates" / "escape").symlink_to(tmp_path / "private.txt")
+    for path in ["../private.txt", "escape"]:
+        with pytest.raises(NotReady):
+            read_template(tmp_path, path)
+
+
+def test_reserved_object_key_and_unknown_observation_are_rejected():
+    with pytest.raises(ValidationError):
+        IntegrationScenario(id="sample", objects={"folder": {"driver": "gdrive", "op": "create_doc"}})
+    with pytest.raises(ValidationError):
+        IntegrationScenario(id="sample", observe=[{"driver": "gdrive", "collect": "object_diff", "object": "missing"}])
