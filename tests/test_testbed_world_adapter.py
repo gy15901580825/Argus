@@ -140,7 +140,6 @@ def test_mcp_mode_validation():
         )
 
 
-@pytest.mark.xfail(strict=True, reason="demo agent echoes Mcp-Session-Id in Task 11")
 async def test_existing_mcp_probe_in_fixed_mode_runs():
     with servers.start_mcp_demo() as resolved:
         target = build_target({**resolved, "mcp_mode": "fixed"})

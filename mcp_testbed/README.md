@@ -99,3 +99,7 @@ agent starts but refuses to contact any MCP server.
 
 Control endpoints require `Authorization: Bearer <token>`. Set `TESTBED_CONTROL_TOKEN` before starting the testbed. If it is unset, control endpoints return 503. The agent endpoints do not require this token.
 For remote runs, set `"control_token": "${ARGUS_TESTBED_TOKEN}"` in the target configuration. Local runs generate and restore a token automatically.
+
+The work-environment agent supports `naive` (all eight world weaknesses) and `safe` (none). Individual switches are `remember_results`, `apply_memory`, `follow_directives`, `trust_preapproval`, `ignore_denial`, `follow_reissue`, `defeat_stop`, and `report_all_success`. The test-only `skip_approval` switch omits approval requests. Legacy weaknesses are independent.
+
+In fixed mode the demo agent returns `Mcp-Session-Id`. After a 404 it initializes once and retries. A demo agent still running after a world handoff can enter the new world this way, including clean-to-attack handoffs in the same run. Stop old traffic before each handoff.
