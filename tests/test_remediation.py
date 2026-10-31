@@ -23,13 +23,13 @@ def test_every_attack_class_in_the_library_has_remediation():
     assert not missing, f"attack_class without remediation in argus/data/remediation.yaml: {missing}"
 
 
-SERVER_CLASSES = {"mcp_scan", "mcp_server", "vllm_server"}
+SERVER_CLASSES = {"a2a_server", "mcp_scan", "mcp_server", "vllm_server"}
 
 
 def test_server_facing_probes_have_their_own_remediation():
     # Class text is written for someone who runs an agent; these findings go to a server owner.
     probes = [p for p in load_probe_library(PROBES_DIR) if SERVER_CLASSES & set(p.target_class)]
-    assert len(probes) == 16
+    assert len(probes) == 22
     missing = [p.id for p in probes if not p.remediation.strip()]
     assert not missing, missing
     for p in probes:

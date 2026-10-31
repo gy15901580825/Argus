@@ -7,6 +7,7 @@ from importlib.metadata import entry_points
 from typing import Any
 
 from argus.targets._base import Target
+from argus.targets.a2a_server import A2AServerSpec, A2AServerTarget
 from argus.targets.anthropic_native import AnthropicNativeSpec, AnthropicNativeTarget
 from argus.targets.browser_use import BrowserUseSpec, BrowserUseTarget
 from argus.targets.custom_http import CustomHTTPSpec, CustomHTTPTarget
@@ -21,6 +22,7 @@ from argus.targets.vllm_server import VLLMServerSpec, VLLMServerTarget
 from argus.targets.web_chat import WebChatSpec, WebChatTarget
 
 _BUILDERS = {
+    "a2a_server": (A2AServerSpec, A2AServerTarget),
     "anthropic_native": (AnthropicNativeSpec, AnthropicNativeTarget),
     "browser_use": (BrowserUseSpec, BrowserUseTarget),
     "custom_http": (CustomHTTPSpec, CustomHTTPTarget),

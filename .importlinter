@@ -5,6 +5,7 @@ root_package = argus
 name = The engine must not import the CLI or the HTTP server
 type = forbidden
 source_modules =
+    argus.a2a
     argus.api
     argus.assertions
     argus.browser_runner

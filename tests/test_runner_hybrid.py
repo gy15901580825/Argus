@@ -225,7 +225,7 @@ def library(monkeypatch):
     asserted = ({"no_trap_request": True},)
     probes = [probe("det", assertions=asserted),
               probe("hyb", assertions=asserted, judge_when_assertions_pass=True),
-              probe("plain")]
+              probe("plain", assertions=())]
     monkeypatch.setattr("argus.api.load_probe_library", lambda *_: probes)
     monkeypatch.setattr("argus.local.load_probe_library", lambda *_: probes)
     return {p.id: p for p in probes}

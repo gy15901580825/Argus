@@ -51,7 +51,7 @@ def test_verdict_and_severity_values():
     verdicts = {runner.VERDICT_PASS, runner.VERDICT_FAIL, runner.VERDICT_ERROR, runner.VERDICT_BLOCKED_BY_TARGET,
                 runner.VERDICT_SKIPPED, runner.VERDICT_ABORTED}
     assert verdicts == {"pass", "fail", "error", "blocked_by_target", "skipped", "aborted_cost"}
-    # `warn` is the judge's human-review verdict.
+    assert runner.VERDICT_WARN == "warn"
     assert coverage._TESTED_VERDICTS == {"pass", "fail", "warn"}
     assert severity.SEVERITY_ORDER == ("info", "low", "medium", "high", "critical")
     assert probe.VALID_SEVERITIES == set(severity.SEVERITY_ORDER)
