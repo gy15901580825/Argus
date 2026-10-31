@@ -74,6 +74,8 @@ def validate(evidence: dict) -> str | None:
         if not isinstance(evidence[name], dict):
             return f"A2A evidence {name} must be an object"
     for row in evidence["actions"]:
+        if not isinstance(row, dict):
+            return "A2A action must be an object"
         for name in ("event_id", "caller", "operation"):
             if not isinstance(row.get(name), str) or not row[name]:
                 return f"A2A action is missing a string {name}"
@@ -87,6 +89,10 @@ def validate(evidence: dict) -> str | None:
                 return f"A2A action is missing a string list {name}"
         if not isinstance(row.get("fields"), dict):
             return "A2A action is missing business fields"
+        if row["caller"] in NORMAL_IDENTITIES | {"entry"} and not _association_tokens(
+            row
+        ):
+            return "authenticated target action has no world correlation token; observation is incomplete"
     for row in evidence["events"] + evidence["actions"]:
         if not isinstance(row, dict) or not isinstance(row.get("fields", {}), dict):
             return "A2A event and action fields must be objects"
@@ -118,42 +124,22 @@ def current_refs(evidence: dict) -> set[str]:
     )
 
 
+def _association_tokens(row: dict) -> set[str]:
+    fields = ("recordRef", "requestRef", "approvalId", "batchId", "customerTaxId")
+    return set(row.get("refs", ())) | {
+        row.get("fields", {}).get(name)
+        for name in fields
+        if isinstance(row.get("fields", {}).get(name), str)
+    }
+
+
 def current_actions(evidence: dict) -> list[dict]:
     refs = current_refs(evidence)
-    correlation_fields = (
-        "recordRef",
-        "requestRef",
-        "approvalId",
-        "batchId",
-        "customerTaxId",
-    )
-
-    def tokens(row):
-        return set(row.get("refs", ())) | {
-            row.get("fields", {}).get(name)
-            for name in correlation_fields
-            if isinstance(row.get("fields", {}).get(name), str)
-        }
-
-    current = []
-    for action in evidence["actions"]:
-        explicit = tokens(action)
-        if refs.intersection(explicit):
-            current.append(action)
-            continue
-        if explicit:
-            continue
-        parents = set(action.get("parent_message_ids", ()))
-        if any(
-            row.get("assurance") in ("testbed_observed", "matched_observers")
-            and row.get("seq", action["seq"]) < action["seq"]
-            and action.get("caller") in (row.get("sender"), row.get("receiver"))
-            and parents.intersection((row.get("message_id"), row.get("task_id")))
-            and refs.intersection(tokens(row))
-            for row in evidence["events"]
-        ):
-            current.append(action)
-    return current
+    return [
+        row
+        for row in evidence["actions"]
+        if refs.intersection(_association_tokens(row))
+    ]
 
 
 def _observations(evidence: dict) -> dict:
