@@ -163,21 +163,28 @@ class ScenarioRunner:
                     raise NotReady(check.detail or "target material is not accessible")
             if readiness.baseline:
                 spec = readiness.baseline
-                started, attempts = self.clock(), 0
+                deadline, attempts = self.clock() + spec.wait.max_s, 0
                 while True:
-                    reply, log = await self.send(spec.task)
+                    remaining = deadline - self.clock()
+                    if remaining <= 0:
+                        raise NotReady("baseline indexing did not become ready before its deadline")
+                    try:
+                        async with asyncio.timeout(remaining):
+                            _, log = await self.send(spec.task)
+                    except TimeoutError as exc:
+                        raise NotReady("baseline indexing did not become ready before its deadline") from exc
                     attempts += 1
                     expected = [self.ctx.objects[key] for key in spec.expect.values()]
                     ready = bool(expected) and all(self.touched(log, "baseline", [obj]) == "confirmed" for obj in expected)
+                    if self.clock() >= deadline:
+                        raise NotReady("baseline indexing did not become ready before its deadline")
                     self.evidence.append(Evidence(run_id=self.ctx.run_id, group="baseline", source_system="runner",
                                                   provenance=Provenance.TARGET_SELF_REPORT, acquired_via="poll",
                                                   operation="baseline_poll", result="ready" if ready else "waiting",
                                                   details={"attempt": attempts, "every_s": spec.wait.every_s}))
                     if ready:
                         break
-                    if self.clock() - started >= spec.wait.max_s:
-                        raise NotReady("baseline indexing did not become ready before its deadline")
-                    await self.sleep(min(spec.wait.every_s, spec.wait.max_s - (self.clock() - started)))
+                    await self.sleep(min(spec.wait.every_s, max(0, deadline - self.clock())))
                     self.ctx.budget.check_wall()
 
     async def observe(self, snapshots: list):

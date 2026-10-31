@@ -297,8 +297,101 @@ async def test_baseline_echoing_marker_is_not_ready_and_never_runs_attack(tmp_pa
     r = runner(tmp_path, d, t, spec=IntegrationScenario.model_validate(raw))
     result = await r.run()
     assert result.outcome == "not_ready"
-    assert t.calls == 3
+    assert t.calls == 2
     assert not any(obj.logical_key == "seed" for obj in result.objects)
+
+
+def baseline_scenario(max_s):
+    raw = scenario().model_dump(mode="json")
+    raw["objects"]["policy"] = {"driver": "fake", "op": "create"}
+    raw["readiness"] = [{"baseline": {"task": "baseline {policy.marker}", "expect": {"cites": "policy"},
+                                      "wait": {"max_s": max_s, "every_s": 0.125}}}]
+    return IntegrationScenario.model_validate(raw)
+
+
+class IndexingTarget(Target):
+    def __init__(self, driver, *, misses=0, response_s=0):
+        super().__init__(driver)
+        self.misses, self.response_s = misses, response_s
+        self.requests = []
+        self.closed = False
+
+    async def send_prompt(self, prompt):
+        self.requests.append((prompt, self.clock()))
+        reply = await super().send_prompt(prompt)
+        if prompt.startswith("baseline"):
+            if self.calls <= self.misses:
+                self.record = TargetRunLog(events=[])
+            await self.clock.sleep(self.response_s)
+        return reply
+
+    async def aclose(self):
+        self.closed = True
+
+
+async def test_delayed_baseline_indexing_advances_only_after_retrieval_and_cleans(tmp_path):
+    d = Driver()
+    t = IndexingTarget(d, misses=2)
+    r = runner(tmp_path, d, t, spec=baseline_scenario(1))
+    t.clock = r.clock
+    result = await r.run()
+    assert result.outcome == "defended"
+    assert [at for prompt, at in t.requests if prompt.startswith("baseline")] == [0, 0.125, 0.25]
+    assert [e.result for e in result.evidence if e.operation == "baseline_poll"] == ["waiting", "waiting", "ready"]
+    assert any(not prompt.startswith("baseline") for prompt, _ in t.requests)
+    assert result.cleanup_complete and len(d.deleted) == 2 and t.closed
+
+
+@pytest.mark.parametrize("misses,max_s", [(100, 0.25), (2, 0.25), (0, 0)])
+async def test_baseline_deadline_prevents_expired_requests_and_attack(tmp_path, misses, max_s):
+    d = Driver()
+    t = IndexingTarget(d, misses=misses)
+    r = runner(tmp_path, d, t, spec=baseline_scenario(max_s))
+    t.clock = r.clock
+    result = await r.run()
+    assert result.outcome == "not_ready"
+    assert "deadline" in result.reason
+    assert len(t.requests) == (2 if max_s else 0)
+    assert all(prompt.startswith("baseline") and at < max_s for prompt, at in t.requests)
+    assert result.cleanup_complete and len(d.deleted) == 1 and t.closed
+    assert not any(obj.logical_key == "seed" for obj in result.objects)
+
+
+@pytest.mark.parametrize("response_s", [0.25, 0.5])
+async def test_baseline_response_at_or_after_deadline_cannot_claim_readiness(tmp_path, response_s):
+    d = Driver()
+    t = IndexingTarget(d, response_s=response_s)
+    r = runner(tmp_path, d, t, spec=baseline_scenario(0.25))
+    t.clock = r.clock
+    result = await r.run()
+    assert result.outcome == "not_ready"
+    assert "deadline" in result.reason
+    assert len(t.requests) == 1 and t.requests[0][0].startswith("baseline")
+    assert not any(e.operation == "baseline_poll" and e.result == "ready" for e in result.evidence)
+    assert result.cleanup_complete and len(d.deleted) == 1 and t.closed
+
+
+async def test_baseline_deadline_cancels_blocked_target_before_cleanup(tmp_path):
+    d = Driver()
+    t = IndexingTarget(d)
+    stopped = asyncio.Event()
+    requests = []
+
+    async def blocked(prompt):
+        requests.append(prompt)
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+
+    t.send_prompt = blocked
+    r = runner(tmp_path, d, t, spec=baseline_scenario(0.02))
+    result = await asyncio.wait_for(r.run(), timeout=1)
+    assert result.outcome == "not_ready"
+    assert "deadline" in result.reason
+    assert len(requests) == 1 and requests[0].startswith("baseline")
+    assert stopped.is_set()
+    assert result.cleanup_complete and len(d.deleted) == 1 and t.closed
 
 
 async def test_multiple_controls_have_distinct_content_and_markers(tmp_path):
