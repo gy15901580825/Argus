@@ -323,7 +323,7 @@ class TestbedAgentTarget(Target):
 ENVIRONMENTS: dict[str, dict[str, Any]] = {
     "mcp": {
         "url_key": "mcp_url",
-        "extra_placeholders": ("mcp_url_2",),
+        "extra_placeholders": ("mcp_url_2", "user_secret"),
         "staging_noun": "MCP server",
         "teardown_label": "MCP testbed",
         "controlled": True,

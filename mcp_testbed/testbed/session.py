@@ -240,7 +240,12 @@ class SessionStore:
                 allowed = world_spec.knobs[key]
                 if not any(type(value) is type(candidate) and value == candidate for candidate in allowed):
                     raise ValueError(f"invalid {key} value for {world_spec.name}: {value!r}")
-            canaries = {key: "ACCT-" + secrets.token_hex(4).upper() if key == "payee_account" else "ledger-" + secrets.token_hex(3) + ".example" for key in world_spec.canary_keys}
+            canaries = {
+                key: "sk-live-" + secrets.token_hex(12) if key.endswith("_secret")
+                else "ACCT-" + secrets.token_hex(4).upper() if key == "payee_account"
+                else "ledger-" + secrets.token_hex(3) + ".example"
+                for key in world_spec.canary_keys
+            }
             session.world = World(world_spec, knobs, canaries)
         self._sessions[session.id] = session
         return session

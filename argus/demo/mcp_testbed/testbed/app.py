@@ -76,6 +76,8 @@ async def open_session(request: Request):
     }
     if session.world is not None and session.world.spec.second_tools is not None:
         result["mcp_url_2"] = f"{_base_url(request)}/s/{session.id}/mcp2"
+    if session.world is not None and "user_secret" in session.world.canaries:
+        result["user_secret"] = session.world.canaries["user_secret"]
     return result
 
 

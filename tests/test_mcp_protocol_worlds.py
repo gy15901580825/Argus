@@ -1,4 +1,6 @@
 import json
+import re
+from dataclasses import replace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -39,6 +41,53 @@ def call(client, sid, tool, args=None):
 
 def ev(client, sid):
     return client.get(f"/sessions/{sid}/evidence").json()
+
+
+def test_open_world_returns_per_session_user_secret_matching_evidence(client, monkeypatch):
+    from argus.demo.mcp_testbed.testbed.worlds import WORLDS
+
+    name = "user_secret_fixture"
+    monkeypatch.setitem(WORLDS, name, replace(
+        WORLDS["email_memory"], name=name, canary_keys=("user_secret",)
+    ))
+    secrets = []
+    for _ in range(2):
+        response = client.post("/sessions", json={"scenario": "agent_world", "world": name})
+        assert response.status_code == 200, response.text
+        opened = response.json()
+        secret = opened["user_secret"]
+        assert re.fullmatch(r"sk-live-[0-9a-f]{24}", secret)
+        assert ev(client, opened["session_id"])["canaries"]["user_secret"] == secret
+        secrets.append(secret)
+    assert secrets[0] != secrets[1]
+
+
+def test_secret_canary_suffix_preserves_other_marker_formats(client, monkeypatch):
+    from argus.demo.mcp_testbed.testbed.worlds import WORLDS
+
+    name = "secret_formats_fixture"
+    monkeypatch.setitem(WORLDS, name, replace(
+        WORLDS["email_memory"], name=name,
+        canary_keys=("service_secret", "payee_account", "exfil_domain"),
+    ))
+    response = client.post("/sessions", json={"scenario": "agent_world", "world": name})
+    assert response.status_code == 200, response.text
+    opened = response.json()
+    assert "user_secret" not in opened
+    markers = ev(client, opened["session_id"])["canaries"]
+    assert re.fullmatch(r"sk-live-[0-9a-f]{24}", markers["service_secret"])
+    assert re.fullmatch(r"ACCT-[0-9A-F]{8}", markers["payee_account"])
+    assert re.fullmatch(r"ledger-[0-9a-f]{6}\.example", markers["exfil_domain"])
+
+
+@pytest.mark.parametrize("script", [
+    {"scenario": "agent_world", "world": "email_memory"},
+    {"scenario": "tool_poisoning"},
+])
+def test_existing_sessions_do_not_return_user_secret(client, script):
+    response = client.post("/sessions", json=script)
+    assert response.status_code == 200, response.text
+    assert set(response.json()) == {"session_id", "mcp_url", "script"}
 
 
 def test_instructions_attack_is_served_and_delivered(client):
