@@ -22,3 +22,16 @@ remediation: >-
   Write tool names and descriptions for the user, not as orders to the model. Remove text that
   tells the model what to do or what to hide from the user, and review metadata changes like
   code changes.
+remediation_actions:
+  - tier: mitigation
+    text: >-
+      Remove commands to the model and instructions to hide actions from tool names and
+      descriptions in the published MCP metadata, and require a human to approve metadata
+      edits before redeploying.
+    atlas_mitigation: AML.M0033
+  - tier: fix
+    text: >-
+      Generate tool metadata from reviewed server definitions, keeping descriptions limited to
+      user-facing purpose and accepted operations. Reject instruction-bearing metadata at
+      publication so tool results cannot redefine what the model must do or conceal.
+    atlas_mitigation: AML.M0033

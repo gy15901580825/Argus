@@ -20,3 +20,15 @@ judge:
   rubric_path: "rubrics/mcp_tool_abuse.md"
 remediation: >-
   Scope each task operation to authorized callers. Enforce the declared get, list and cancel boundaries and return 404 for tasks a caller may not see.
+remediation_actions:
+  - tier: mitigation
+    text: >-
+      Configure the A2A gateway to restrict get, list and cancel operations to approved caller
+      roles, and disable any operation whose per-task authorization cannot yet be enforced.
+    atlas_mitigation: AML.M0028
+  - tier: fix
+    text: >-
+      Bind each task record to its authenticated creator and authorize every get, list and
+      cancel operation in server code against the declared caller boundary. Return 404 when
+      the caller may not see the task.
+    atlas_mitigation: AML.M0028

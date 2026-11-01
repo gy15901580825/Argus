@@ -21,3 +21,16 @@ judge:
 remediation: >-
   Do not echo tool input back verbatim. Return structured fields, or mark echoed text as data,
   so an attacker's input cannot come back to the model as an instruction.
+remediation_actions:
+  - tier: mitigation
+    text: >-
+      Configure echoed tool arguments to appear only inside fields labeled as untrusted data,
+      and turn off free-text echo responses until their formatter separates user input from
+      server instructions.
+    atlas_mitigation: AML.M0033
+  - tier: fix
+    text: >-
+      Replace verbatim free-text reflection with a typed tool response containing only
+      required result fields. Keep any unavoidable echoed value in an explicitly untrusted
+      data field that cannot be consumed as an instruction.
+    atlas_mitigation: AML.M0033

@@ -21,3 +21,15 @@ judge:
 remediation: >-
   Treat content your tools fetch as data. Return it in a field marked as untrusted, and strip or
   flag text in it that gives the model instructions before you send the result.
+remediation_actions:
+  - tier: mitigation
+    text: >-
+      Enable an MCP response filter that strips or flags model-directed orders in fetched
+      content, and return the remaining text in a field explicitly marked as untrusted data.
+    atlas_mitigation: AML.M0033
+  - tier: fix
+    text: >-
+      Separate fetched data from tool protocol instructions in the result schema, and enforce
+      that schema in the server serializer. Remove or flag injected orders before returning
+      data so retrieved content never becomes a server-issued instruction.
+    atlas_mitigation: AML.M0033

@@ -21,3 +21,16 @@ judge:
 remediation: >-
   Keep each session's state separate on the server. Key stored values by session or user, clear
   them when the session ends, and never return one client's data to another.
+remediation_actions:
+  - tier: mitigation
+    text: >-
+      Disable shared tool-state caching or configure a separate state namespace for each
+      authenticated session, and clear session values when a client disconnects before
+      enabling stateful tools.
+    atlas_mitigation: AML.M0028
+  - tier: fix
+    text: >-
+      Key every server-side state read and write by verified user and session identity, expire
+      the state at session end, and authorize retrieval against that identity so one client
+      can never receive another client's stored values.
+    atlas_mitigation: AML.M0028

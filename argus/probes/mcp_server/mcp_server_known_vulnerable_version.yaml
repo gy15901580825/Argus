@@ -23,3 +23,15 @@ judge:
 remediation: >-
   Upgrade the MCP server to a release that fixes the advisory named in the finding. Until then,
   keep it off untrusted networks and require authentication.
+remediation_actions:
+  - tier: mitigation
+    text: >-
+      Until the MCP advisory is fixed, remove the server from untrusted networks and require
+      authentication at its endpoint so unknown clients cannot reach the vulnerable release.
+    atlas_mitigation: AML.M0032
+  - tier: fix
+    text: >-
+      Upgrade the MCP server to a release that fixes the advisory identified in the finding,
+      pin that repaired version in deployment configuration, and remove the vulnerable image
+      from the deployment path.
+    atlas_mitigation: null

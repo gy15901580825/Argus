@@ -20,3 +20,15 @@ judge:
   rubric_path: "rubrics/mcp_tool_abuse.md"
 remediation: >-
   Require valid authentication on SendMessage and reject missing credentials at the authentication layer.
+remediation_actions:
+  - tier: mitigation
+    text: >-
+      Require a valid bearer token or the declared A2A credential at the reverse proxy for
+      every SendMessage route, and reject a request without credentials before forwarding it.
+    atlas_mitigation: AML.M0028
+  - tier: fix
+    text: >-
+      Authenticate SendMessage in the A2A server before accepting a message or allocating a
+      task. Resolve the caller from verified credentials and reject missing credentials at the
+      authentication boundary.
+    atlas_mitigation: AML.M0028

@@ -157,3 +157,36 @@ def test_check_entry_rejects_bad_text_and_atlas_ids():
            ("Require user approval\u2014before every irreversible tool call.", None, "long dash")]
     for text, mid, problem in bad:
         assert f"bad: {problem}" in check_entry([{"tier": "fix", "text": text, "atlas_mitigation": mid}], "bad")
+
+
+LIBRARY = load_probe_library(PROBES_DIR)
+
+
+def test_override_probes_declare_their_own_actions():
+    wrong = [p.id for p in LIBRARY if bool(p.remediation.strip()) != bool(p.remediation_actions)]
+    assert not wrong, wrong
+
+
+def test_override_probes_have_one_mitigation_then_one_fix():
+    bad = [p.id for p in LIBRARY if p.remediation_actions
+           and [a["tier"] for a in p.remediation_actions] != ["mitigation", "fix"]]
+    assert not bad, bad
+
+
+def test_override_actions_meet_the_bar():
+    problems = [m for p in LIBRARY if p.remediation_actions for m in check_entry(p.remediation_actions, p.id)]
+    assert not problems, problems
+
+
+def test_probes_sharing_override_text_share_actions():
+    by_text = {}
+    for p in LIBRARY:
+        if p.remediation.strip():
+            by_text.setdefault(p.remediation.strip(), set()).add(json.dumps(p.remediation_actions, sort_keys=True))
+    assert all(len(values) == 1 for values in by_text.values())
+
+
+def test_every_builtin_probe_resolves_a_mitigation_and_a_fix():
+    missing = [p.id for p in LIBRARY
+               if {a["tier"] for a in remediation.actions_for_probe(p)} != {"mitigation", "fix"}]
+    assert not missing, missing

@@ -21,3 +21,16 @@ judge:
 remediation: >-
   Set the read-only annotation only on tools that cannot write. Run those tools with a read-only
   filesystem or read-only credentials, or remove the annotation.
+remediation_actions:
+  - tier: mitigation
+    text: >-
+      Configure tools annotated as read-only to use read-only filesystem mounts or backend
+      credentials, and remove the read-only annotation from any tool that still has write
+      permissions.
+    atlas_mitigation: AML.M0028
+  - tier: fix
+    text: >-
+      Split read-only operations from write-capable implementations, enforce read-only
+      permissions at the filesystem or backend service, and publish the read-only annotation
+      only for tools whose execution path cannot mutate state.
+    atlas_mitigation: AML.M0028

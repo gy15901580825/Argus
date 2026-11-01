@@ -45,3 +45,17 @@ judge:
   model: claude-haiku-4-5-20251001
   rubric_path: rubrics/mcp_tool_abuse.md
 remediation: 'Treat text returned by tools as data: do not store it in long-term memory without the user''s confirmation, and never let a remembered note change a payee or recipient.'
+remediation_actions:
+  - tier: mitigation
+    text: >-
+      Disable automatic promotion of tool-returned text into persistent memory, and require
+      the user's confirmation for each proposed note. Do not populate execution payees or
+      recipients from remembered notes; show the current request's final values in the
+      approval preview.
+    atlas_mitigation: AML.M0029
+  - tier: fix
+    text: >-
+      Make a provenance-aware memory service authorize and record each update, preserving
+      known-good versions. Treat saved notes as data and let only the current approved
+      transaction choose its payee or recipient in execution code.
+    atlas_mitigation: AML.M0031

@@ -22,3 +22,16 @@ remediation: >-
   Keep the tool list stable within a session: never add, remove or change a tool's name,
   description, schema or behavior after a client has listed it. Ship tool changes as a new server
   version that clients review again.
+remediation_actions:
+  - tier: mitigation
+    text: >-
+      Disable live tool registration and hot metadata reloads while MCP sessions are active,
+      and require clients to reconnect and review a new server version before receiving a
+      changed tool list.
+    atlas_mitigation: null
+  - tier: fix
+    text: >-
+      Bind each MCP session to an immutable tool catalog version, including names,
+      descriptions, schemas and behavior. Publish changes as a new server version and create a
+      new reviewed session instead of mutating the active catalog.
+    atlas_mitigation: null
