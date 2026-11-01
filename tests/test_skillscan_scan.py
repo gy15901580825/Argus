@@ -487,7 +487,7 @@ def test_scan_skill_runs_tasks_and_builds_run_dict(tmp_path, monkeypatch):
     assert len(runs) == 3 and ev_decoys is decoys and ev_name == "md-format"
     assert calls["skill_files"] == {"SKILL.md": (src / "SKILL.md").read_text()}
 
-    assert run["findings"] == [{**finding, "remediation": "", "owasp_agentic": [], "remediation_actions": []}]
+    assert run["findings"] == [{**finding, "remediation": "", "owasp_agentic": [], "remediation_actions": [], "events": []}]
     assert run["target_spec"] == {"kind": "skill", "source": str(src), "skill": "md-format",
                                   "label": f"md-format ({src})"}
     assert run["coverage"] is None
@@ -614,7 +614,7 @@ def test_scan_skill_keeps_completed_tasks_when_one_fails(tmp_path, monkeypatch):
     run = scan_skill(str(_skill(tmp_path / "src")), subpath=None, n_tasks=3, echo=lambda s: None)
     assert len(fake.prompts) == 2
     assert len(calls["evaluate"][0]) == 1
-    assert run["findings"] == [{**finding, "remediation": "", "owasp_agentic": [], "remediation_actions": []}]
+    assert run["findings"] == [{**finding, "remediation": "", "owasp_agentic": [], "remediation_actions": [], "events": []}]
     assert run["status"] == "incomplete"
     assert run["stopped_reason"].startswith("docker exec (")
     assert run["notes"][-1] == ("Stopped after 1 of 3 tasks: docker exec ([REDACTED]) timed out after 300 seconds; "
@@ -742,3 +742,9 @@ def test_scan_skill_notes_a_task_with_no_successful_api_call(tmp_path, monkeypat
     run = scan_skill(str(_skill(tmp_path / "src")), subpath=None, n_tasks=2, echo=lambda s: None)
     assert run["monitoring_disrupted_tasks"] == 2
     assert run["notes"][-1] == "Monitoring was disrupted in 2 tasks; treat this result as incomplete."
+
+
+def test_normalised_skill_finding_has_empty_events():
+    finding = scan_mod._normalise({"probe_id": "skill_persistence", "verdict": "fail", "severity": "high"},
+                                 "2026-11-01T04:10:24Z")
+    assert finding["events"] == []

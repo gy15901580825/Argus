@@ -21,6 +21,8 @@ _FINDING_FIELDS = ("id", "probe_id", "verdict", "severity", "probed_at", "create
                    "confidence", "target_latency_ms", "atlas_id", "owasp_id", "owasp_agentic", "nist_id", "eu_ai_act_id",
                    "judge_model", "escalated_model", "remediation", "remediation_actions")
 
+_EVENT_FIELDS = ("event_id", "parent_event_ids", "ts", "operation", "basis", "source", "atlas_technique", "seq")
+
 
 def _default(obj: Any) -> Any:
     if isinstance(obj, (datetime, date)):
@@ -160,6 +162,9 @@ def scrub_run(run: dict, secret_values: Iterable[str] = ()) -> dict:
     for clean, orig in zip(out.get("findings") or [], plain.get("findings") or []):
         if isinstance(clean, dict) and isinstance(orig, dict):
             _restore(clean, orig, _FINDING_FIELDS)
+            for clean_event, orig_event in zip(clean.get("events") or [], orig.get("events") or []):
+                if isinstance(clean_event, dict) and isinstance(orig_event, dict):
+                    _restore(clean_event, orig_event, _EVENT_FIELDS)
     return out
 
 

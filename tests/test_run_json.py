@@ -379,3 +379,30 @@ def test_compliance_ids_and_coverage_survive_digit_secrets(tmp_path, monkeypatch
         assert props["owasp_llm"] == ["LLM01"] and props["atlas"] == ["AML.T0051"]
         assert props["owasp_agentic"] == ["ASI01"]
         assert run["properties"]["coverage"] == cov
+
+
+def test_run_json_masks_event_text_but_keeps_graph_ids():
+    from argus.events import validate_events
+
+    events = [
+        {"event_id": "t1:E2", "parent_event_ids": [], "ts": "2026-11-01T04:10:24.123Z",
+         "actor": "planner", "operation": "invoke_agent", "tool_name": None, "tool_call_id": "M9",
+         "object_ref": "a2a.message:M9", "basis": "reported", "atlas_technique": "AML.T0051",
+         "source": "a2a_world", "summary": "planner invoke_agent a2a.message", "seq": 0},
+        {"event_id": "t1:E3", "parent_event_ids": ["t1:E2"], "ts": None,
+         "actor": "executor", "operation": "execute_tool", "tool_name": "pay_invoice", "tool_call_id": None,
+         "object_ref": None, "basis": "observed", "atlas_technique": None,
+         "source": "a2a_world", "summary": "executor execute_tool pay_invoice", "seq": 1},
+    ]
+    secrets = ["E2", "M9", "planner", "invoke_agent", "pay_invoice", "reported", "a2a_world", "AML.T0051", "2026"]
+    out = json.loads(render_json(_run(findings=[_finding(events=events)]), secret_values=secrets))
+    got = out["findings"][0]["events"]
+    assert [e["event_id"] for e in got] == ["t1:E2", "t1:E3"]
+    assert got[1]["parent_event_ids"] == ["t1:E2"]
+    assert got[0]["object_ref"] == "a2a.message:***"
+    assert got[0]["actor"] == "***" and "planner" not in got[0]["summary"]
+    assert got[0]["tool_call_id"] == "***" and got[1]["tool_name"] == "***"
+    assert [e["seq"] for e in got] == [0, 1]
+    assert got[0]["ts"] == "2026-11-01T04:10:24.123Z"
+    assert got[0]["atlas_technique"] == "AML.T0051"
+    assert validate_events(got) is None

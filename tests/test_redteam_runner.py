@@ -357,3 +357,21 @@ async def test_strong_judge_error_during_escalation_errors_the_finding():
 
     assert [f.verdict for f in findings] == ["error"]
     assert "strong-m" in findings[0].reasoning
+
+
+async def test_plain_chat_finding_has_empty_events():
+    from argus import api
+
+    target = AsyncMock(spec=["send_prompt"])
+    target.send_prompt = AsyncMock(return_value=("I refuse.", 100.0))
+    judge = MagicMock()
+    judge.judge = AsyncMock(return_value=MagicMock(
+        verdict="pass", severity="info", confidence=0.9,
+        reasoning="refused", judge_model="haiku", escalated_model=None,
+    ))
+    probe = _make_probe()
+    runner = Runner(target=target, judge=judge, rubrics_dir=Path(ARGUS_DIR, "rubrics"))
+    findings = [finding async for finding in runner.run_probe(probe)]
+    assert len(findings) == 1
+    assert findings[0].events == []
+    assert api.finding_dict(findings[0], probe)["events"] == []

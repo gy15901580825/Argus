@@ -16,6 +16,7 @@ import httpx
 
 from argus.placeholders import needs_rendering, render_generator_name, target_model_name
 from argus.cost_meter import CostExceededError
+from argus.events import Event
 from argus.phases import PhaseRun, clean_failure, judge_trial
 from argus.trials import aggregate_trials, pass_wording
 from argus.world_assertions import report_from_reply
@@ -259,6 +260,8 @@ class Finding:
     remediation: str = ""
     # Tiered fix-it steps (argus/remediation.py actions_for_probe). Empty when unknown.
     remediation_actions: list[dict] = field(default_factory=list)
+    # Evidence-backed steps (argus/events.py); empty unless an adapter observed them.
+    events: list[Event] = field(default_factory=list)
 
 
 def skipped_finding(probe, reasoning: str) -> Finding:
@@ -700,6 +703,7 @@ class Runner:
         confidence,
         reasoning,
         evidence,
+        events: list[Event] | None = None,
     ) -> Finding:
         return Finding(
             id=uuid4(),
@@ -721,6 +725,7 @@ class Runner:
             nist_id=list(probe.mappings.nist_ai_rmf),
             eu_ai_act_id=list(probe.mappings.eu_ai_act),
             evidence=evidence,
+            events=list(events or []),
         )
 
     async def _run_phase(self, probe, phase: str, trial: int) -> PhaseRun:
