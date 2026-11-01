@@ -102,6 +102,10 @@ class Session:
     fixed_endpoint: object | None = field(default=None, repr=False)
     _frozen_evidence: dict | None = field(default=None, repr=False)
     _seal_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    client_capabilities: dict = field(default_factory=dict)
+    protocol_version: str | None = None
+    _elicitations: dict[str, asyncio.Future] = field(default_factory=dict, repr=False)
+    _elicitation_closing: bool = field(default=False, repr=False)
 
     @property
     def phase(self) -> str:
@@ -113,7 +117,50 @@ class Session:
         self.conversation += 1
         return self.conversation
 
+    def elicitation_allowed(self) -> bool:
+        return (
+            "elicitation" in self.client_capabilities
+            and self.protocol_version in ("2025-06-18", "2025-11-25")
+        )
+
+    def _register_elicitation(self, request_id: str) -> asyncio.Future:
+        future = self._elicitations.get(request_id)
+        if future is None:
+            future = asyncio.get_running_loop().create_future()
+            self._elicitations[request_id] = future
+            if self._elicitation_closing:
+                future.set_result(None)
+        return future
+
+    async def wait_elicitation(self, request_id: str, timeout_s: float) -> dict | None:
+        future = self._elicitations[request_id]
+        try:
+            return await asyncio.wait_for(future, timeout_s)
+        except asyncio.TimeoutError:
+            return None
+        finally:
+            if self._elicitations.get(request_id) is future:
+                del self._elicitations[request_id]
+
+    def resolve_elicitation(self, body: dict) -> bool:
+        request_id = body.get("id")
+        if not isinstance(request_id, str):
+            return False
+        future = self._elicitations.get(request_id)
+        if future is None or future.done():
+            return False
+        result = body.get("result")
+        if "result" in body and not isinstance(result, dict):
+            return False
+        future.set_result(result)
+        return True
+
     async def seal(self, grace_s: float | None = None, timeout_s: float | None = None) -> dict:
+        if self.world is not None and self.world.spec.elicit is not None:
+            self._elicitation_closing = True
+            for future in self._elicitations.values():
+                if not future.done():
+                    future.set_result(None)
         async with self._seal_lock:
             if self._frozen_evidence is not None:
                 return self.evidence()

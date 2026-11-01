@@ -9,17 +9,20 @@ JSON-RPC interaction back as evidence.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import hmac
 import time
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
+from anyio import CancelScope
 
 from .fixed import FixedEndpoint, LeaseHeld, LeaseMismatch, DynamicOnly, FIXED_PROTOCOL_VERSIONS
-from .rpc import handle_request
+from .rpc import ElicitPending, handle_request
 from .scenarios import SCENARIOS
-from .session import Script, SessionStore
+from .session import Script, Session, SessionStore
 
 PUBLIC_BASE_URL = os.environ.get("TESTBED_PUBLIC_URL", "").rstrip("/")
 
@@ -37,6 +40,120 @@ def require_control(request: Request) -> None:
 app = FastAPI(title="Argus MCP testbed")
 STORE = SessionStore()
 FIXED = FixedEndpoint()
+ELICIT_TIMEOUT_S = 10.0
+
+
+class _ElicitLifetime:
+    def __init__(self, session: Session, pending: ElicitPending):
+        self.session = session
+        self.pending = pending
+        self.future = session._register_elicitation(pending.request["id"])
+        self.reserved = True
+        self.terminal_recorded = False
+        session.in_flight += 1
+
+    def record_once(self, response: dict | None) -> None:
+        if self.terminal_recorded or self.session._frozen_evidence is not None:
+            return
+        if (
+            response is not None and response.get("action") == "disconnected"
+            and self.future.done() and not self.future.cancelled()
+            and self.future.exception() is None
+        ):
+            received = self.future.result()
+            if isinstance(received, dict):
+                response = {**response, "content": received.get("content")}
+        pending = self.pending
+        self.session.world.record_elicitation(
+            pending.tool, pending.request["params"], response,
+            seq=pending.seq, conversation=pending.conversation,
+        )
+        self.terminal_recorded = True
+
+    def finish(self) -> None:
+        self.record_once({"action": "disconnected"})
+        request_id = self.pending.request["id"]
+        if self.session._elicitations.get(request_id) is self.future:
+            del self.session._elicitations[request_id]
+        if self.reserved:
+            self.reserved = False
+            self.session.in_flight -= 1
+
+
+class _ElicitResponse(StreamingResponse):
+    def __init__(
+        self, session: Session, pending: ElicitPending, lifetime: _ElicitLifetime
+    ):
+        super().__init__(
+            _elicit_stream(session, pending, _lifetime=lifetime),
+            media_type="text/event-stream",
+        )
+        self._lifetime = lifetime
+
+    async def __call__(self, scope, receive, send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            try:
+                with CancelScope(shield=True):
+                    await self.body_iterator.aclose()
+            finally:
+                self._lifetime.finish()
+
+
+async def _elicit_stream(
+    session: Session, pending: ElicitPending, *, _lifetime: _ElicitLifetime
+):
+    try:
+        if session._frozen_evidence is not None:
+            return
+        session.world.elicitation_sent(
+            seq=pending.seq, conversation=pending.conversation
+        )
+        yield f"event: message\ndata: {json.dumps(pending.request)}\n\n"
+        response = await session.wait_elicitation(
+            pending.request["id"], ELICIT_TIMEOUT_S
+        )
+        if session._frozen_evidence is not None:
+            return
+        _lifetime.record_once(response)
+        result = session.world.call(
+            pending.tool, pending.arguments,
+            seq=pending.seq, conversation=pending.conversation,
+        )
+        final = {"jsonrpc": "2.0", "id": pending.call_id, "result": result}
+        yield f"event: message\ndata: {json.dumps(final)}\n\n"
+    except (asyncio.CancelledError, GeneratorExit):
+        _lifetime.record_once({"action": "disconnected"})
+        raise
+    finally:
+        _lifetime.finish()
+
+
+def _respond(session: Session, body: dict) -> dict | Response:
+    if (
+        session.world is not None
+        and session.world.spec.elicit is not None
+        and session._frozen_evidence is not None
+    ):
+        raise HTTPException(409, "world is sealed")
+    if "method" not in body and "id" in body and ("result" in body or "error" in body):
+        session.interaction_count += 1
+        counts = session.interaction_count_by_session.setdefault(
+            str(session.conversation), {"requests": 0, "tool_calls": 0}
+        )
+        counts["requests"] += 1
+        session.resolve_elicitation(body)
+        return Response(status_code=202)
+    result = handle_request(session, body)
+    if isinstance(result, ElicitPending):
+        lifetime = _ElicitLifetime(session, result)
+        try:
+            return _ElicitResponse(session, result, lifetime)
+        except BaseException:
+            lifetime.finish()
+            raise
+    return result
 
 
 def _base_url(request: Request) -> str:
@@ -104,7 +221,7 @@ async def mcp(sid: str, request: Request):
     session.in_flight += 1
     try:
         body = await request.json()
-        return handle_request(session, body)
+        return _respond(session, body)
     finally:
         session.in_flight -= 1
 
@@ -197,12 +314,13 @@ async def fixed_mcp(request: Request):
     session = route.session
     session.in_flight += 1
     try:
-        result = handle_request(session, body)
+        result = _respond(session, body)
         if "id" not in body and isinstance(method, str) and method.startswith("notifications/"):
             return Response(status_code=202)
         if method == "initialize":
             requested = (body.get("params") or {}).get("protocolVersion")
             result["result"]["protocolVersion"] = requested if requested in FIXED_PROTOCOL_VERSIONS else FIXED_PROTOCOL_VERSIONS[-1]
+            session.protocol_version = result["result"]["protocolVersion"]
             return JSONResponse(result, headers={"Mcp-Session-Id": FIXED.issue_session_id()})
         return result
     finally:
