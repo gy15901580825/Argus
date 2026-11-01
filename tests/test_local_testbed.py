@@ -45,9 +45,10 @@ def _closed(port: int) -> bool:
 @pytest.fixture
 def no_leftover_threads():
     # Closing the socket alone frees the port; the server thread must stop too.
-    before = threading.active_count()
+    before = set(threading.enumerate())
     yield
-    assert threading.active_count() == before
+    leftover = [t for t in threading.enumerate() if t not in before and t.is_alive()]
+    assert not leftover, leftover
 
 
 def _free_port() -> int:
