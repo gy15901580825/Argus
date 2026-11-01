@@ -27,9 +27,28 @@ The top-level keys always appear in this order. `incomplete_reason`, `notes` and
 | `argus_version` | string | The installed `argus-probe` version. It is `"unknown"` when the CLI runs from a source tree that was never installed. |
 | `target_spec` | object | The target spec after `${VAR}` expansion, with secrets masked (see below). |
 | `coverage` | object or null | The coverage summary per standard, as the engine reports it. Null if the engine sent none. |
+| `summary` | object | Counts of this run's findings: `total`, `evaluated`, `evaluated_verdicts`, `by_verdict` and `failed_by_severity`. Always present. See below. |
 | `findings` | array | One object per probe result. |
 | `notes` | array of strings | Only when there is something to say: the incomplete reasons, and the warning when almost every probe was blocked with one HTTP code. `run` writes it; `mcp-trap` and `scan-mcp` do not. |
 | `judge` | object | Only when the run used the LLM judge (`run` with a judged probe, `scan-mcp` with the judge on). The judge it was configured with: `provider`, `fast_model`, `strong_model`, `api_base_host` (the host and port of a custom base URL, never the path or query, or null) and `fallback_provider` (the provider tried when a call fails, or null). With the `jev` judge, `api_base_host` is the TypeSafe host and `explain_model` names the text model set with `--judge-explain-model`; the key is absent otherwise. Each finding's `judge_model` says which model gave that verdict. |
+
+### Run summary
+
+`summary` counts this run's findings:
+
+```json
+{
+  "total": 0,
+  "evaluated": 0,
+  "evaluated_verdicts": ["fail", "pass", "warn"],
+  "by_verdict": {"fail": 0, "pass": 0, "warn": 0, "skipped": 0, "blocked_by_target": 0, "aborted_cost": 0, "error": 0},
+  "failed_by_severity": {"info": 0, "low": 0, "medium": 0, "high": 0, "critical": 0}
+}
+```
+
+`total` counts findings. `evaluated` counts findings whose verdict is in `evaluated_verdicts`: the probe reached the target and came back with a verdict. This is the same rule coverage uses for `tested`. `blocked_by_target`, `skipped`, `aborted_cost` and `error` findings are not evaluated. `by_verdict` counts every finding and always lists all seven verdicts. `failed_by_severity` counts only `fail` findings and always lists all five severities. A verdict or severity outside these lists gets its own key. The summary has no score and no percentage. If you compute a rate, divide by `evaluated`, not `total`. `summary.total` counts findings, while `coverage.totals.probes_run` counts distinct probes that were evaluated, so the two numbers can differ.
+
+`run`, `mcp-trap` and `scan-mcp` all write `summary` in run.json. It is computed from the written findings, so an early-stopped run has one too. Files written before this field existed do not have it.
 
 Each finding has the same keys as the engine's `Finding` record: `id`, `probe_id`, `attack_prompt`, `target_response`, `target_latency_ms`, `probed_at`, `verdict`, `severity`, `confidence`, `reasoning`, `judge_model`, `escalated_model`, `atlas_id`, `owasp_id`, `owasp_agentic`, `nist_id`, `eu_ai_act_id`, `created_at`, `evidence` and `remediation`.
 
@@ -53,7 +72,7 @@ A target spec can reference environment variables as `$VAR` or `${VAR}` in any s
 
 This rule does not know which variables are secret. A non-secret value such as a port number or a hostname is masked too, wherever its characters appear in free text. This over-redaction is deliberate. These fields are always written as the engine produced them, never masked:
 
-- run: `schema_version`, `argus_version`, `id`, `status`, `started_at`, `finished_at`, `coverage` and `target_spec.kind`
+- run: `schema_version`, `argus_version`, `id`, `status`, `started_at`, `finished_at`, `coverage`, `summary` and `target_spec.kind`
 - each finding: `id`, `probe_id`, `verdict`, `severity`, `probed_at`, `created_at`, `confidence`, `target_latency_ms`, `atlas_id`, `owasp_id`, `owasp_agentic`, `nist_id`, `eu_ai_act_id`, `judge_model`, `escalated_model` and `remediation`
 
 ### Rule 2: secret-looking key names

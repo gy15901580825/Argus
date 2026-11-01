@@ -22,7 +22,7 @@ from argus.mcp_trap.wiring import TrapAddress, TrapPortInUse
 
 # Copied verbatim from tests/test_contract_freeze.py.
 RUN_JSON_KEYS = ["schema_version", "id", "status", "started_at", "finished_at",
-                 "argus_version", "target_spec", "coverage", "findings"]
+                 "argus_version", "target_spec", "coverage", "summary", "findings"]
 
 SPEC = {"kind": "openai_compat", "endpoint_url": "http://127.0.0.1:9/v1/chat/completions", "model": "m"}
 SPEC_ARG = json.dumps(SPEC)

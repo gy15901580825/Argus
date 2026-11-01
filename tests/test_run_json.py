@@ -10,10 +10,11 @@ from click.testing import CliRunner
 from argus.cli.__main__ import main
 from argus.cli.run_json import redact, render_json
 from argus.cli.target_loader import load_target_spec, load_target_spec_with_secrets
+from argus.coverage import build_summary
 from test_cmd_run_local import FAIL_FINDING, _LocalRunError, _install_fake_engine
 
 TOP_LEVEL_KEYS = ["schema_version", "id", "status", "started_at", "finished_at",
-                  "argus_version", "target_spec", "coverage", "findings"]
+                  "argus_version", "target_spec", "coverage", "summary", "findings"]
 
 
 def _finding(**overrides):
@@ -68,6 +69,34 @@ def test_run_json_has_schema_version_and_findings():
 
 def test_run_json_top_level_key_order():
     assert list(json.loads(render_json(_run())).keys()) == TOP_LEVEL_KEYS
+
+
+def test_run_json_summary_counts_findings_and_keeps_other_keys():
+    fs = [_finding(), _finding(verdict="pass", severity="info"),
+          _finding(verdict="error", severity="info")]
+    run = _run(findings=fs)
+    out = json.loads(render_json(run))
+    assert out["summary"] == build_summary(fs)
+    assert out["summary"]["total"] == 3
+    assert out["summary"]["evaluated"] == 2
+    assert out["summary"]["failed_by_severity"]["high"] == 1
+    assert [key for key in out if key != "summary"] == [key for key in TOP_LEVEL_KEYS if key != "summary"]
+    assert out["coverage"] == run["coverage"]
+    assert out["findings"] == fs
+    assert out["schema_version"] == "argus.run/1"
+
+
+def test_run_json_summary_survives_one_char_secret():
+    fs = [_finding(), _finding(verdict="pass", severity="info")]
+    out = json.loads(render_json(_run(findings=fs), secret_values=["a"]))
+    assert out["summary"] == build_summary(fs)
+    assert out["summary"]["evaluated_verdicts"] == ["fail", "pass", "warn"]
+
+
+def test_run_json_summary_for_no_findings():
+    out = json.loads(render_json(_run()))
+    assert out["summary"]["total"] == 0
+    assert out["summary"]["evaluated"] == 0
 
 
 def test_run_json_keeps_every_finding_key():
@@ -213,6 +242,9 @@ def test_cost_abort_writes_the_findings_so_far_marked_incomplete(tmp_path, monke
     record = json.loads((tmp_path / "run.json").read_text())
     assert record["status"] == "incomplete"
     assert len(record["findings"]) == 1
+    assert record["summary"]["total"] == 1
+    assert record["summary"]["by_verdict"]["fail"] == 1
+    assert record["summary"]["failed_by_severity"]["critical"] == 1
 
 
 def test_json_format_needs_local(tmp_path):

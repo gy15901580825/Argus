@@ -7,6 +7,8 @@ from importlib.metadata import PackageNotFoundError, version
 from typing import Any, Iterable
 from uuid import UUID
 
+from argus.coverage import build_summary
+
 SCHEMA_VERSION = "argus.run/1"
 MASK = "***"
 # Matched against the key lowercased with "_" and "-" removed, so apiKey, API_KEY and api-key
@@ -182,6 +184,8 @@ def render_json(run: dict, secret_values: Iterable[str] = (), include_notes: boo
         "argus_version": _argus_version(),
         "target_spec": plain["target_spec"],
         "coverage": plain.get("coverage"),
+        # Count after redaction restores verdict/severity, so short secrets cannot corrupt summary labels.
+        "summary": build_summary(plain.get("findings", [])),
         "findings": plain.get("findings", []),
         **({"notes": plain["notes"]} if include_notes and plain.get("notes") else {}),
         **({"judge": plain["judge"]} if plain.get("judge") else {}),
