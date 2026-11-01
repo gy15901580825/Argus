@@ -16,7 +16,7 @@ from fastapi import HTTPException
 
 from argus import api, decider, llm
 from argus.cost_meter import CostExceededError
-from argus.coverage import build_coverage
+from argus.coverage import build_coverage, build_summary
 from argus.probe import load_probe_library
 from argus.runner import NO_JUDGE_KEY, TargetUnreachableError, skipped_finding
 from argus.targets import build_target
@@ -151,7 +151,7 @@ async def run_local(
     env: Mapping[str, str] | None = None,
     skip_judged: bool = False,
 ) -> AsyncIterator[dict]:
-    """Yield events and finding dicts, then one {"type": "coverage", "coverage": dict} event.
+    """Yield events and finding dicts, then one {"type": "coverage", "coverage": dict, "summary": dict} event.
 
     Before any finding: {"type": "judge", "judge": llm.describe(cfg), "record": llm.judge_record(cfg),
     "disclosure": llm.disclosure(cfg)} when a probe will be judged, then {"type": "warning", "message": str} events.
@@ -211,6 +211,7 @@ async def run_local(
     yield {
         "type": "coverage",
         "coverage": build_coverage(load_probe_library(api.PROBES_DIR), emitted),
+        "summary": build_summary(emitted),
     }
 
 

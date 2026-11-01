@@ -41,6 +41,10 @@ async def test_run_local_yields_findings_then_coverage(monkeypatch):
     assert events[-1]["type"] == "coverage"
     assert isinstance(events[-1]["coverage"], dict)
     assert len(events) == 3
+    assert list(events[-1]) == ["type", "coverage", "summary"]
+    assert events[-1]["summary"]["total"] == 1
+    assert events[-1]["summary"]["by_verdict"]["fail"] == 1
+    assert events[-1]["summary"]["failed_by_severity"]["high"] == 1
 
 
 async def test_run_local_passes_the_key_to_run_probes(monkeypatch):

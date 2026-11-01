@@ -21,7 +21,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from argus import llm, remediation
-from argus.coverage import build_coverage
+from argus.coverage import build_coverage, build_summary
 from argus.cost_meter import CostExceededError, CostMeter
 from argus.judge import Judge
 from argus.probe import load_probe_library
@@ -410,6 +410,7 @@ async def run(req: RunRequest):
             coverage_event = {
                 "type": "coverage",
                 "coverage": build_coverage(load_probe_library(PROBES_DIR), emitted),
+                "summary": build_summary(emitted),
             }
             yield f"data: {json.dumps(coverage_event)}\n\n".encode()
             yield b"event: end\ndata: {}\n\n"
