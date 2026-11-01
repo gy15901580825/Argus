@@ -51,6 +51,12 @@ The server refuses to start, with exit code 1, when `ARGUS_SERVER_HOST` is not a
 | GET  | `/redteam/coverage` | Standards coverage |
 | WS   | `/agent/connect` | Client-agent WebSocket hub (requires the `x-agent-id` header, plus `x-agent-secret` when `AGENT_CONNECT_SECRET` is set; a second connection with a live agent id is refused) |
 
+### Finding events
+
+Each finding in the `POST /redteam/run` stream includes `events`. The `POST /redteam/scenario/run` stream also includes the array inside the finding object sent with `event: finding`. See [finding events in run.json](../run-json.md#finding-events) for the fields, operations, object kinds, and parent links. Findings without supported event evidence contain `[]`.
+
+The scenario finding passes through `ctx.redact` when serialized and when emitted in the SSE stream. That redaction masks credentials, email addresses, and values under keys with sensitive names. Trusted finding event structure fields survive both passes, including `event_id`, `parent_event_ids`, `ts`, `operation`, `basis`, `source`, `atlas_technique`, and `seq`. Event field names stay intact. `actor`, `tool_name`, `tool_call_id`, `object_ref`, and `summary` undergo normal text redaction. An object reference whose kind becomes unknown is null, and a summary remains at most 200 characters after redaction.
+
 ### `POST /redteam/run` stream
 
 The response is a Server-Sent Events stream: one `data:` line per finding, then one `data:` line with the coverage event, then `event: end` with `data: {}`. If the run fails, the stream ends with `event: error` instead, and no coverage event is sent.
