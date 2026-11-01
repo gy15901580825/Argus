@@ -26,6 +26,7 @@ class TestbedAgentTarget(Target):
     staging_noun: ClassVar[str]
     teardown_label: ClassVar[str]
     controlled: ClassVar[bool] = False
+    extra_placeholders: ClassVar[tuple[str, ...]] = ()
 
     def _httpx(self):
         # Tests patch `httpx` on the concrete adapter's module (mcp_agent,
@@ -106,7 +107,7 @@ class TestbedAgentTarget(Target):
                     and detail.get("code") == "dynamic_only"
                 ):
                     raise ProbeNotApplicable(
-                        f"scenario {self._script['scenario']} changes the tool list mid-session and only runs in mcp_mode dynamic"
+                        f"scenario {self._script.get('world') or self._script['scenario']} only runs in mcp_mode dynamic (it changes the tool list mid-session or serves a second MCP server)"
                     ) from exc
                 if (
                     exc.response.status_code == 409
@@ -289,22 +290,22 @@ class TestbedAgentTarget(Target):
                 if inspect.isawaitable(result):
                     await result
 
+    def _render(self, text: str) -> str:
+        if self._session is not None:
+            for key in (self.url_key, *self.extra_placeholders):
+                if key in self._session:
+                    text = text.replace("{" + key + "}", self._session[key])
+        return text
+
     def rendered_prompt(self, prompt: str) -> str:
-        if self._session is None:
-            return prompt
-        return prompt.replace("{" + self.url_key + "}", self._session[self.url_key])
+        return self._render(prompt)
 
     async def send_prompt(
         self, prompt: str, history: tuple[Turn, ...] = ()
     ) -> tuple[str, float]:
-        session = await self._open_session()
-        # The probe writes {<url_key>}; only the session knows the real one.
-        # History holds earlier turns as the probe wrote them, so render it too.
-        placeholder, url = "{" + self.url_key + "}", session[self.url_key]
-        rendered = self.rendered_prompt(prompt)
-        history = tuple(
-            replace(t, content=t.content.replace(placeholder, url)) for t in history
-        )
+        await self._open_session()
+        rendered = self._render(prompt)
+        history = tuple(replace(t, content=self._render(t.content)) for t in history)
         return await self._inner.send_prompt(rendered, history=history)
 
     async def collect_evidence(self) -> dict:
@@ -322,6 +323,7 @@ class TestbedAgentTarget(Target):
 ENVIRONMENTS: dict[str, dict[str, Any]] = {
     "mcp": {
         "url_key": "mcp_url",
+        "extra_placeholders": ("mcp_url_2",),
         "staging_noun": "MCP server",
         "teardown_label": "MCP testbed",
         "controlled": True,
@@ -406,6 +408,7 @@ class GenericTestbedAgentTarget(TestbedAgentTarget):
     def __init__(self, spec: TestbedAgentSpec) -> None:
         env = ENVIRONMENTS[spec.environment]
         self.url_key = env["url_key"]
+        self.extra_placeholders = env.get("extra_placeholders", ())
         self.staging_noun = env["staging_noun"]
         self.teardown_label = env["teardown_label"]
         self.controlled = env["controlled"]

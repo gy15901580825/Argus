@@ -123,6 +123,7 @@ async def test_rug_pull_probe_is_skipped_in_fixed_mode():
         assert (
             findings[0].verdict == "skipped"
             and "mcp_mode dynamic" in findings[0].reasoning
+            and "rug_pull" in findings[0].reasoning
         )
         await target.aclose()
 
@@ -156,3 +157,57 @@ async def test_existing_mcp_probe_in_fixed_mode_runs():
         ]
         assert findings[0].verdict != "error"
         await target.aclose()
+
+
+def _bare(kind_spec):
+    target = build_target(kind_spec)
+    target._session = {
+        "session_id": "s",
+        "mcp_url": "http://127.0.0.1:1/s/x/mcp",
+        "mcp_url_2": "http://127.0.0.1:1/s/x/mcp2",
+    }
+    return target
+
+
+def test_second_mcp_url_placeholder_is_rendered():
+    target = _bare(spec(testbed_url="http://127.0.0.1:1"))
+    assert target.rendered_prompt("A {mcp_url} B {mcp_url_2}") == (
+        "A http://127.0.0.1:1/s/x/mcp B http://127.0.0.1:1/s/x/mcp2"
+    )
+
+
+def test_generic_mcp_environment_renders_second_url_but_payment_does_not():
+    generic = _bare({**spec(testbed_url="http://127.0.0.1:1"), "kind": "testbed_agent", "environment": "mcp"})
+    assert generic.rendered_prompt("{mcp_url_2}") == "http://127.0.0.1:1/s/x/mcp2"
+    payment = _bare({**spec(testbed_url="http://127.0.0.1:1"), "kind": "testbed_agent", "environment": "payment"})
+    payment._session["merchant_url"] = "http://127.0.0.1:1/m"
+    assert payment.rendered_prompt("{mcp_url_2}") == "{mcp_url_2}"
+
+
+def test_missing_placeholder_value_is_left_verbatim():
+    target = _bare(spec(testbed_url="http://127.0.0.1:1"))
+    del target._session["mcp_url_2"]
+    assert target.rendered_prompt("{mcp_url} {mcp_url_2}") == (
+        "http://127.0.0.1:1/s/x/mcp {mcp_url_2}"
+    )
+
+
+async def test_send_prompt_renders_both_urls_in_prompt_and_history():
+    from argus.targets._base import Turn
+
+    target = _bare(spec(testbed_url="http://127.0.0.1:1"))
+    received = []
+
+    async def send(prompt, history=()):
+        received.append((prompt, history))
+        return "ok", 1.0
+
+    target._inner = SimpleNamespace(send_prompt=send)
+    history = (Turn("user", "Earlier {mcp_url} {mcp_url_2}"),)
+    result = await target.send_prompt("Now {mcp_url} {mcp_url_2}", history)
+    assert result == ("ok", 1.0)
+    assert received == [(
+        "Now http://127.0.0.1:1/s/x/mcp http://127.0.0.1:1/s/x/mcp2",
+        (Turn("user", "Earlier http://127.0.0.1:1/s/x/mcp http://127.0.0.1:1/s/x/mcp2"),),
+    )]
+    assert history[0].content == "Earlier {mcp_url} {mcp_url_2}"
