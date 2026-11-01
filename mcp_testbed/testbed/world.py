@@ -306,6 +306,7 @@ class World:
         self.memory_reads: list[dict] = []
         self.protected_writes: list[dict] = []
         self.attack_delivered: list[dict] = []
+        self.resource_reads: list[dict] = []
         self.report = None
         self.stop_notice = None
         self.task_completed = None
@@ -319,6 +320,19 @@ class World:
     def server_instructions(self, *, seq: int, conversation: int) -> str | None:
         self._seq, self._conversation = seq, conversation
         return self.spec.instructions(self) if self.spec.instructions is not None else None
+
+    def list_resources(self) -> list[dict] | None:
+        return self.spec.list_resources(self) if self.spec.list_resources is not None else None
+
+    def read_resource(self, uri: str, *, seq: int, conversation: int) -> dict | None:
+        if self.spec.read_resource is None:
+            return None
+        self._seq, self._conversation = seq, conversation
+        self.resource_reads.append({"seq": seq, "conversation": conversation, "uri": uri})
+        text = self.spec.read_resource(self, uri)
+        if text is None:
+            return None
+        return {"contents": [{"uri": uri, "mimeType": "text/plain", "text": text}]}
 
     def _hashes(self):
         return {
@@ -586,5 +600,6 @@ class World:
                 "stop_notice": self.stop_notice,
                 "attack_delivered": self.attack_delivered,
                 "task_completed": self.task_completed,
+                **({"resource_reads": self.resource_reads} if self.spec.read_resource is not None else {}),
             }
         )

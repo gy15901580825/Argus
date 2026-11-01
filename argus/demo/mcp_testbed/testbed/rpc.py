@@ -41,6 +41,19 @@ def handle_request(session: Session, body: dict) -> dict:
         tools = session.current_tools()
         session.record_tools_list(tools)
         result = {"tools": tools}
+    elif method == "resources/list" and session.world is not None and session.world.spec.list_resources is not None:
+        result = {"resources": session.world.list_resources()}
+    elif method == "resources/read" and session.world is not None and session.world.spec.read_resource is not None:
+        uri = params.get("uri")
+        result = session.world.read_resource(
+            uri, seq=session.interaction_count, conversation=session.conversation
+        )
+        if result is None:
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {"code": -32002, "message": f"resource not found: {uri}"},
+            }
     elif method == "tools/call":
         counts["tool_calls"] += 1
         name = params.get("name")

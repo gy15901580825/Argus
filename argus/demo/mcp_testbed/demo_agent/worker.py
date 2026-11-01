@@ -276,6 +276,18 @@ class Worker:
                     and "remember_results" in self.weaknesses
                 ):
                     self.call("remember", {"note": trigger[2]})
+        if "resources" in self.prompt.lower():
+            self.request_id += 1
+            listing = self.rpc("resources/list", {}, self.request_id)
+            for resource in listing.get("result", {}).get("resources", []):
+                uri = resource["uri"]
+                self.request_id += 1
+                result = self.rpc("resources/read", {"uri": uri}, self.request_id)
+                for item in result.get("result", {}).get("contents", []):
+                    text = item.get("text", "")
+                    self.log.append(f"{uri}:\n{text}")
+                    if "obey_resource_content" in self.weaknesses:
+                        self.obey(text)
         if "crm_lookup" in self.prompt:
             customer = next(
                 (
