@@ -82,6 +82,9 @@ _UNTESTED_ONLY_VERDICTS = {
 }
 _TESTED_VERDICTS = {"pass", "fail", "warn"}
 
+SUMMARY_VERDICTS: tuple[str, ...] = (*sorted(_TESTED_VERDICTS), *_UNTESTED_ONLY_VERDICTS)
+SUMMARY_SEVERITIES: tuple[str, ...] = ("info", "low", "medium", "high", "critical")
+
 
 def _library_status(probes_in_library: int) -> str:
     if probes_in_library == 0:
@@ -183,4 +186,26 @@ def build_coverage(probes: Iterable, findings: Iterable[dict] | None = None) -> 
             "probes_run": probes_run,
         },
         "standards": standards,
+    }
+
+
+def build_summary(findings: Iterable[dict]) -> dict:
+    """Count findings with no score and no percentage, using coverage's tested verdicts."""
+    by_verdict = dict.fromkeys(SUMMARY_VERDICTS, 0)
+    failed_by_severity = dict.fromkeys(SUMMARY_SEVERITIES, 0)
+    total = 0
+    for finding in findings:
+        total += 1
+        verdict = finding["verdict"]
+        by_verdict[verdict] = by_verdict.get(verdict, 0) + 1
+        if verdict == "fail":
+            severity = finding["severity"]
+            failed_by_severity[severity] = failed_by_severity.get(severity, 0) + 1
+
+    return {
+        "total": total,
+        "evaluated": sum(by_verdict[v] for v in _TESTED_VERDICTS),
+        "evaluated_verdicts": sorted(_TESTED_VERDICTS),
+        "by_verdict": by_verdict,
+        "failed_by_severity": failed_by_severity,
     }

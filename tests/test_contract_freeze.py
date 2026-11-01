@@ -55,6 +55,8 @@ def test_verdict_and_severity_values():
     assert coverage._TESTED_VERDICTS == {"pass", "fail", "warn"}
     assert severity.SEVERITY_ORDER == ("info", "low", "medium", "high", "critical")
     assert probe.VALID_SEVERITIES == set(severity.SEVERITY_ORDER)
+    assert set(coverage.SUMMARY_VERDICTS) == verdicts | {runner.VERDICT_WARN}
+    assert coverage.SUMMARY_SEVERITIES == severity.SEVERITY_ORDER
 
 
 def test_entry_point_group_names():
