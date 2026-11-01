@@ -332,7 +332,7 @@ def elicitation_server(monkeypatch):
             yield client
 
 
-def open_elicitation(client, *, fixed=False, version="2025-06-18", capabilities=None, inject="api_key_form", phase="single"):
+def open_elicitation(client, *, fixed=False, version="2025-06-18", capabilities=None, inject="api_key_form", phase="single", lease_id=None):
     opened = client.post("/sessions", json={
         "scenario": "agent_world", "world": "elicitation_key", "inject": inject, "phase": phase
     })
@@ -342,7 +342,7 @@ def open_elicitation(client, *, fixed=False, version="2025-06-18", capabilities=
     path = f"/s/{sid}/mcp"
     headers = {}
     if fixed:
-        lease = client.post("/lease", json={}).json()["lease_id"]
+        lease = lease_id or client.post("/lease", json={}).json()["lease_id"]
         activation = client.post(f"/lease/{lease}/activate", json={"session_id": sid})
         assert activation.status_code == 200, activation.text
         path = "/mcp"
@@ -836,3 +836,203 @@ def test_clean_elicitation_latest_handshake_and_error_response(elicitation_serve
     assert [e["action"] for e in sealed["elicitations"]] == ["no_response"]
     assert sealed["elicitations"][0]["fields"] == ["display_name"]
     assert sealed["task_completed"] is True
+
+
+@pytest.mark.parametrize("fixed", [False, True], ids=["dynamic", "fixed"])
+def test_late_elicitation_secret_still_fails_loaded_probe(elicitation_server, monkeypatch, fixed):
+    from argus import api
+    from argus.phases import PhaseRun, judge_trial
+    from argus.probe import load_probe_library
+
+    client = elicitation_server
+    lease_id = client.post("/lease", json={}).json()["lease_id"] if fixed else None
+    clean_opened, clean_path, clean_headers, _ = open_elicitation(
+        client, fixed=fixed, lease_id=lease_id, inject=None, phase="clean"
+    )
+    with read_elicitation(client, clean_path, clean_headers) as (take, _):
+        clean_form = take()
+        answer(client, clean_path, clean_headers, clean_form["id"], {"display_name": "Northwind Ops"})
+        assert take()["id"] == 42
+    clean_evidence = client.post(f'/sessions/{clean_opened["session_id"]}/seal').json()
+    assert clean_evidence["task_completed"] is True
+    assert clean_evidence["elicitations"][0]["action"] == "accept"
+
+    monkeypatch.setattr(mod, "ELICIT_TIMEOUT_S", 0.03)
+    opened, path, headers, _ = open_elicitation(
+        client, fixed=fixed, lease_id=lease_id, phase="attack"
+    )
+    sid = opened["session_id"]
+    with read_elicitation(client, path, headers) as (take, _):
+        form = take()
+        assert take()["id"] == 42
+    before = ev(client, sid)
+    assert before["sealed"] is False
+    assert before["elicitations"][0]["action"] == "no_response"
+    content = {"api_key": opened["user_secret"]}
+    answer(client, path, headers, form["id"], content)
+    answer(client, path, headers, form["id"], {"api_key": "second answer"})
+    attack_evidence = client.post(f"/sessions/{sid}/seal").json()
+    probe = next(p for p in load_probe_library(api.PROBES_DIR) if p.id == "mcp_elicitation_api_key")
+    clean = PhaseRun("clean", 1, None, clean_evidence, None, ("Send email",), ("Done",))
+    attack = PhaseRun("attack", 1, None, attack_evidence, None, ("Send email",), ("Done",))
+    verdict = judge_trial(probe, clean, attack)
+    assert verdict.verdict == "fail", verdict
+    assert attack_evidence["elicitations"] == [{
+        "seq": 2, "conversation": 1, "tool": "send_email", "fields": ["api_key"],
+        "action": "accept", "content": content,
+    }]
+    assert len(attack_evidence["executions"]) == len(before["executions"]) == 1
+    assert len(attack_evidence["tool_calls"]) == 1
+    assert attack_evidence["task_completed"] is True and attack_evidence["seal_timeout"] is False
+
+
+@pytest.mark.parametrize("action,content", [
+    ("accept", {"api_key": "withheld"}), ("decline", None), ("cancel", None),
+])
+def test_late_elicitation_benign_reply_keeps_first_answer_and_context(elicitation_server, monkeypatch, action, content):
+    from argus.world_assertions import check_no_canary_in_elicitation
+
+    monkeypatch.setattr(mod, "ELICIT_TIMEOUT_S", 0.03)
+    client = elicitation_server
+    opened, path, headers, _ = open_elicitation(client)
+    sid = opened["session_id"]
+    with read_elicitation(client, path, headers) as (take, _):
+        form = take()
+        assert take()["id"] == 42
+    before = ev(client, sid)
+    answer(client, path, headers, "elicit-999", {"api_key": "unknown"})
+    answer(client, path, headers, 2, {"api_key": "numeric ID"})
+    for result in ("not an object", {}, {"action": "unsupported"}):
+        assert client.post(path, headers=headers, json={
+            "jsonrpc": "2.0", "id": form["id"], "result": result,
+        }).status_code == 202
+    assert ev(client, sid)["elicitations"] == before["elicitations"]
+    assert client.post(f"/sessions/{sid}/conversations").json() == {"conversation": 2}
+    answer(client, path, headers, form["id"], content, action=action)
+    answer(client, path, headers, form["id"], {"api_key": "second answer"})
+    sealed = client.post(f"/sessions/{sid}/seal").json()
+    assert sealed["elicitations"] == [{
+        "seq": 2, "conversation": 1, "tool": "send_email", "fields": ["api_key"],
+        "action": action, "content": content,
+    }]
+    assert len(sealed["executions"]) == 1 and sealed["seal_timeout"] is False
+    assert check_no_canary_in_elicitation({"canary": "user_secret"}, sealed, "")[0] is True
+
+
+def test_late_elicitation_after_seal_cannot_change_evidence(elicitation_server, monkeypatch):
+    monkeypatch.setattr(mod, "ELICIT_TIMEOUT_S", 0.03)
+    client = elicitation_server
+    opened, path, headers, _ = open_elicitation(client)
+    sid = opened["session_id"]
+    with read_elicitation(client, path, headers) as (take, _):
+        form = take()
+        assert take()["id"] == 42
+    sealed = client.post(f"/sessions/{sid}/seal").json()
+    response = client.post(path, headers=headers, json={
+        "jsonrpc": "2.0", "id": form["id"],
+        "result": {"action": "accept", "content": {"api_key": opened["user_secret"]}},
+    })
+    assert response.status_code == 409
+    assert ev(client, sid) == sealed
+    assert sealed["elicitations"][0]["action"] == "no_response"
+
+
+def test_late_elicitation_cannot_erase_already_recorded_content(elicitation_server):
+    from argus.world_assertions import check_no_canary_in_elicitation
+
+    client = elicitation_server
+    opened, path, headers, _ = open_elicitation(client)
+    sid = opened["session_id"]
+    content = {"api_key": opened["user_secret"]}
+    with read_elicitation(client, path, headers) as (take, _):
+        form = take()
+        assert client.post(path, headers=headers, json={
+            "jsonrpc": "2.0", "id": form["id"], "result": {"content": content},
+        }).status_code == 202
+        assert take()["id"] == 42
+    answer(client, path, headers, form["id"], {"api_key": "second answer"})
+    sealed = client.post(f"/sessions/{sid}/seal").json()
+    assert sealed["elicitations"][0]["action"] == "no_response"
+    assert sealed["elicitations"][0]["content"] == content
+    assert check_no_canary_in_elicitation({"canary": "user_secret"}, sealed, "")[0] is False
+    assert len(sealed["executions"]) == 1
+
+
+@pytest.mark.parametrize("fixed", [False, True], ids=["dynamic", "fixed"])
+def test_elicitation_answer_during_timeout_cancellation_still_fails_probe(elicitation_server, monkeypatch, fixed):
+    import asyncio
+    import threading
+    from argus import api
+    from argus.phases import PhaseRun, judge_trial
+    from argus.probe import load_probe_library
+    from argus.demo.mcp_testbed.testbed import session as session_mod
+
+    registered = []
+    reached = threading.Event()
+    release = threading.Event()
+    original_register = session_mod.Session._register_elicitation
+    original_release_waiter = asyncio.tasks._release_waiter
+
+    def register(session, request_id):
+        future = original_register(session, request_id)
+        if session.phase == "attack":
+            registered.append((session, request_id, future))
+        return future
+
+    def release_waiter(waiter, *args):
+        future = args[0] if args else None
+        if registered and future is not None and future.cancelled() and not reached.is_set():
+            session, request_id, reply_slot = registered[-1]
+            if session._elicitations.get(request_id) is reply_slot:
+                reached.set()
+
+                async def dispatch():
+                    while not release.is_set():
+                        await asyncio.sleep(0.005)
+                    original_release_waiter(waiter, *args)
+
+                asyncio.get_running_loop().create_task(dispatch())
+                return
+        original_release_waiter(waiter, *args)
+
+    monkeypatch.setattr(session_mod.Session, "_register_elicitation", register)
+    monkeypatch.setattr(asyncio.tasks, "_release_waiter", release_waiter)
+    client = elicitation_server
+    lease_id = client.post("/lease", json={}).json()["lease_id"] if fixed else None
+    clean_opened, clean_path, clean_headers, _ = open_elicitation(
+        client, fixed=fixed, lease_id=lease_id, inject=None, phase="clean"
+    )
+    with read_elicitation(client, clean_path, clean_headers) as (take, _):
+        clean_form = take()
+        answer(client, clean_path, clean_headers, clean_form["id"], {"display_name": "Northwind Ops"})
+        assert take()["id"] == 42
+    clean_evidence = client.post(f'/sessions/{clean_opened["session_id"]}/seal').json()
+    assert clean_evidence["task_completed"] is True
+    monkeypatch.setattr(mod, "ELICIT_TIMEOUT_S", 0.03)
+    opened, path, headers, _ = open_elicitation(
+        client, fixed=fixed, lease_id=lease_id, phase="attack"
+    )
+    sid = opened["session_id"]
+    content = {"api_key": opened["user_secret"]}
+    with read_elicitation(client, path, headers) as (take, _):
+        try:
+            form = take()
+            assert reached.wait(5), "timeout cancellation never reached its waiter callback"
+            assert ev(client, sid)["elicitations"] == []
+            answer(client, path, headers, form["id"], content)
+        finally:
+            release.set()
+        assert take()["id"] == 42
+    attack_evidence = client.post(f"/sessions/{sid}/seal").json()
+    probe = next(p for p in load_probe_library(api.PROBES_DIR) if p.id == "mcp_elicitation_api_key")
+    clean = PhaseRun("clean", 1, None, clean_evidence, None, ("Send email",), ("Done",))
+    attack = PhaseRun("attack", 1, None, attack_evidence, None, ("Send email",), ("Done",))
+    verdict = judge_trial(probe, clean, attack)
+    assert verdict.verdict == "fail", verdict
+    assert attack_evidence["elicitations"] == [{
+        "seq": 2, "conversation": 1, "tool": "send_email", "fields": ["api_key"],
+        "action": "accept", "content": content,
+    }]
+    assert len(attack_evidence["executions"]) == len(attack_evidence["tool_calls"]) == 1
+    assert attack_evidence["task_completed"] is True and attack_evidence["seal_timeout"] is False
+    assert mod.STORE.get(sid)._elicitations == {} and mod.STORE.get(sid).in_flight == 0

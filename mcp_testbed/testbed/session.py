@@ -135,9 +135,9 @@ class Session:
     async def wait_elicitation(self, request_id: str, timeout_s: float) -> dict | None:
         future = self._elicitations[request_id]
         try:
-            return await asyncio.wait_for(future, timeout_s)
+            return await asyncio.wait_for(asyncio.shield(future), timeout_s)
         except asyncio.TimeoutError:
-            return None
+            return future.result() if future.done() and not future.cancelled() else None
         finally:
             if self._elicitations.get(request_id) is future:
                 del self._elicitations[request_id]
@@ -146,11 +146,25 @@ class Session:
         request_id = body.get("id")
         if not isinstance(request_id, str):
             return False
-        future = self._elicitations.get(request_id)
-        if future is None or future.done():
-            return False
         result = body.get("result")
         if "result" in body and not isinstance(result, dict):
+            return False
+        future = self._elicitations.get(request_id)
+        if future is None:
+            if self.world is None or self._frozen_evidence is not None:
+                return False
+            if not isinstance(result, dict) or result.get("action") not in ("accept", "decline", "cancel"):
+                return False
+            for record in self.world.elicitations:
+                if (
+                    record["action"] == "no_response" and record["content"] is None
+                    and request_id == f"elicit-{record['seq']}"
+                ):
+                    record["action"] = result["action"]
+                    record["content"] = copy.deepcopy(result.get("content"))
+                    return True
+            return False
+        if future.done():
             return False
         future.set_result(result)
         return True

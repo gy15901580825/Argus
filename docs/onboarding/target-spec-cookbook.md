@@ -592,6 +592,8 @@ The default `mcp_mode` is `dynamic`, with a separate `/s/{sid}/mcp` URL per worl
 
 Probes may also use `{mcp_url_2}`, a second MCP endpoint in the same world, available only in dynamic mode.
 
+`{user_secret}` is a per-world secret the probe hands to the agent as the user's own.
+
 ## a2a_agent
 
 Use `a2a_agent` to drive your agent against Argus's A2A 1.0 HTTP+JSON peer world. The controller stays on this host's loopback interface. `testbed_url: "local"` starts a private controller and a separate peer listener for the run. Argus sends a normal control run before each attack and judges the sealed record without a model key.

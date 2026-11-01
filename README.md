@@ -25,7 +25,7 @@ an agent through the things it trusts, then checks what the agent actually did.
   that use it, and reports risky behaviour: decoy secrets it read, suspicious
   commands it ran and requests it tried to send to other hosts.
 
-Around those sits a library of 260 adversarial probes in all (OWASP LLM Top
+Around those sits a library of 261 adversarial probes in all (OWASP LLM Top
 10, MITRE ATLAS, NIST AI RMF, garak wrappers), most of them for chat, gRPC and
 browser-using agents. Findings come out as SARIF 2.1.0, JUnit XML and HTML;
 failed findings from the library carry fix-it text, and the SARIF can be
@@ -56,11 +56,11 @@ AI RMF** controls without translation.
 
 What Argus does:
 
-- **260 probes** in the bundled library — 15 OWASP LLM Top 10 hand-authored,
+- **261 probes** in the bundled library — 15 OWASP LLM Top 10 hand-authored,
   5 from public LLM system cards (best-of-N, crescendo, confused deputy,
   many-shot jailbreak, sleeper agent), 31 browser-agent specific, 26
-  payment-abuse probes (x402 wallet flows, against `payment_agent`), 47
-  MCP-abuse probes (12 poisoned tool servers, 11 agent work-environment probes and 4 MCP protocol-surface probes, against `mcp_agent`; 5
+  payment-abuse probes (x402 wallet flows, against `payment_agent`), 48
+  MCP-abuse probes (12 poisoned tool servers, 11 agent work-environment probes and 5 MCP protocol-surface probes, against `mcp_agent`; 5
   hostile-server scenarios for `argus-probe mcp-trap`; 4 exposure checks of an
   MCP server itself, against `mcp_server`; 11 checks of an MCP server's tools
   for `argus-probe scan-mcp`), 16
@@ -340,7 +340,7 @@ argus-probe scan-skill --sample key-grab
 │  argus  (engine; argus.server is the FastAPI app for server mode)       │
 │    probe loader  ──▶  target adapter  ──▶  judge harness                │
 │        │                  │                      │                      │
-│        └──── 260 YAML     │                      └──▶ fast model, then  │
+│        └──── 261 YAML     │                      └──▶ fast model, then  │
 │              probes       │                           strong model on   │
 │                           │                           high/critical,    │
 │                  ┌────────┴─────────┐                 confidence ≥ 0.7  │
