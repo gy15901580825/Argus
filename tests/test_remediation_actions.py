@@ -110,3 +110,50 @@ def test_probe_own_actions_win():
     act = {"tier": "fix", "text": "Fix the tool.", "atlas_mitigation": None}
     p = SimpleNamespace(remediation_actions=(act,), remediation="Own text.", attack_class=("jailbreak",))
     assert remediation.actions_for_probe(p) == [act]
+
+
+FORBIDDEN_ATLAS = {"AML.M0035", "AML.M0018", "AML.M0042"}
+FILLER = ("validate input", "validate inputs", "sanitize input", "sanitize inputs", "best practice",
+          "be careful", "as appropriate", "appropriate measures", "proper security", "implement proper",
+          "ensure security", "security controls", "regularly review", "consider using")
+
+
+def check_entry(actions, where):
+    problems = []
+    names = remediation.atlas_mitigations()
+    for action in actions:
+        text = action["text"]
+        if not 40 <= len(text) <= 300:
+            problems.append(f"{where}: length")
+        if not text.endswith("."):
+            problems.append(f"{where}: final period")
+        if "\u2014" in text or "\u2013" in text:
+            problems.append(f"{where}: long dash")
+        if any(word in text.lower() for word in FILLER):
+            problems.append(f"{where}: filler")
+        mid = action["atlas_mitigation"]
+        if mid is not None and (mid not in names or mid in FORBIDDEN_ATLAS):
+            problems.append(f"{where}: ATLAS id")
+    if len({a["text"] for a in actions}) != len(actions):
+        problems.append(f"{where}: repeated text")
+    return problems
+
+
+@pytest.mark.parametrize("cls", sorted(VALID_ATTACK_CLASSES))
+def test_class_has_one_mitigation_then_one_fix(cls):
+    assert [a["tier"] for a in remediation.actions_table()[cls]] == ["mitigation", "fix"]
+
+
+@pytest.mark.parametrize("cls", sorted(VALID_ATTACK_CLASSES))
+def test_class_actions_meet_the_bar(cls):
+    assert check_entry(remediation.actions_table()[cls], cls) == []
+
+
+def test_check_entry_rejects_bad_text_and_atlas_ids():
+    bad = [("Configure the tool gateway to validate inputs before each model call.", None, "filler"),
+           ("Require user approval before every irreversible tool call.", "AML.M0035", "ATLAS id"),
+           ("Require user approval before every irreversible tool call.", "AML.M0099", "ATLAS id"),
+           ("x" * 301 + ".", None, "length"),
+           ("Require user approval\u2014before every irreversible tool call.", None, "long dash")]
+    for text, mid, problem in bad:
+        assert f"bad: {problem}" in check_entry([{"tier": "fix", "text": text, "atlas_mitigation": mid}], "bad")
