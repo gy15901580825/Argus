@@ -1,12 +1,3 @@
-"""JSON-RPC 2.0 surface for the hostile MCP testbed.
-
-Handles exactly the calls a probe needs to stage a scenario: `initialize`,
-`tools/list`, `tools/call`. Everything else returns a JSON-RPC error rather
-than a 500, and every request -- including errors -- counts toward
-`interaction_count`, so the runner can tell "the agent defended itself" apart
-from "the probe never actually ran".
-"""
-
 from __future__ import annotations
 
 from .session import Session
