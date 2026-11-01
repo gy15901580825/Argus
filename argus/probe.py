@@ -17,6 +17,7 @@ from argus.a2a.world import (
     DECISION_PREDICATES as A2A_DECISION_PREDICATES,
 )
 from argus.agentic import VALID_OWASP_AGENTIC_IDS
+from argus.remediation import parse_actions
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +153,7 @@ class Probe:
     # Fix-it text for this probe, overriding the attack_class text in argus/data/remediation.yaml.
     # Server-facing probes need it: the class text is written for someone who runs an agent.
     remediation: str = ""
+    remediation_actions: tuple[dict, ...] = ()
 
     sessions: tuple[tuple[str, ...], ...] = ()
     scenario_control: str = ""
@@ -345,6 +347,7 @@ def load_probe(path: Path) -> Probe:
             ),
             technique=tuple(raw.get("technique", ()) or ()),
             remediation=str(raw.get("remediation", "") or ""),
+            remediation_actions=parse_actions(raw.get("remediation_actions"), str(path)),
         )
     except KeyError as exc:
         raise ValueError(f"missing required key {exc.args[0]!r} in {path}") from exc

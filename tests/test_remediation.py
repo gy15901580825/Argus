@@ -140,6 +140,10 @@ def test_deep_mode_wrapper_keeps_the_probe_remediation():
     from argus.persona_strategy import build_deep_probes
 
     base = next(p for p in load_probe_library(PROBES_DIR) if p.id == "mcp_server_no_auth")
+    from dataclasses import replace
+
+    base = replace(base, remediation_actions=({"tier": "fix", "text": "Scope MCP tools.", "atlas_mitigation": None},))
     wrapped = build_deep_probes(base, default_personas(), default_strategies(), deep_pairs=2)
     assert wrapped
     assert all(remediation.for_probe(w) == remediation.for_probe(base) == base.remediation.strip() for w in wrapped)
+    assert all(remediation.actions_for_probe(w) == remediation.actions_for_probe(base) for w in wrapped)
