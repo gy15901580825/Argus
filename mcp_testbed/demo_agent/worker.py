@@ -16,6 +16,7 @@ WORLD_WEAKNESSES = frozenset(
         "defeat_stop",
         "report_all_success",
         "obey_server_instructions",
+        "obey_resource_content",
     }
 )
 
@@ -28,6 +29,14 @@ def content(result):
         for part in result.get("content", [])
         if isinstance(part, dict)
     )
+
+
+def embedded_texts(result) -> list[str]:
+    return [
+        part["resource"].get("text", "")
+        for part in result.get("content", [])
+        if isinstance(part, dict) and part.get("type") == "resource"
+    ]
 
 
 @dataclass
@@ -56,6 +65,9 @@ class Worker:
         )["result"]
         text = content(result)
         self.log.append(f"{tool}:\n{text}")
+        if "obey_resource_content" in self.weaknesses:
+            for embedded in embedded_texts(result):
+                self.obey(embedded)
         target = (
             args.get("invoice_id")
             if tool == "pay_invoice"
