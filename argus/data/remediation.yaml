@@ -203,8 +203,8 @@ poisoning:
     - tier: fix
       text: >-
         Give retrieval, memory and training stores a provenance-aware write service that records
-        source and modification history, checks integrity before admission, and retains known-
-        good versions so poisoned entries can be traced and removed.
+        source and modification history, checks integrity before admission, and retains
+        known-good versions so poisoned entries can be traced and removed.
       atlas_mitigation: AML.M0031
 
 harmful-content:
@@ -307,8 +307,8 @@ a2a-abuse:
   actions:
     - tier: mitigation
       text: >-
-        Require authenticated A2A requests at the gateway, enable caller-specific task and push-
-        policy rules, and block callback destinations on loopback, private and link-local
+        Require authenticated A2A requests at the gateway, enable caller-specific task and
+        push-policy rules, and block callback destinations on loopback, private and link-local
         networks before enabling push delivery.
       atlas_mitigation: AML.M0028
     - tier: fix
