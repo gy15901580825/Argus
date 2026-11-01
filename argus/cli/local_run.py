@@ -1,4 +1,5 @@
 """Run probes in this process (`argus-probe run --local`) and render the report."""
+
 from __future__ import annotations
 
 import asyncio
@@ -10,7 +11,12 @@ from typing import Iterable, NamedTuple
 import click
 
 from argus.cli import reports, run_json
-from argus.cli.severity import blocked_warning, incomplete_lines, judge_skip_line, run_exit_code
+from argus.cli.severity import (
+    blocked_warning,
+    incomplete_lines,
+    judge_skip_line,
+    run_exit_code,
+)
 
 
 class LocalRunResult(NamedTuple):
@@ -23,8 +29,13 @@ class LocalRunResult(NamedTuple):
 
 
 def run_local_and_render(
-    spec: dict, probe_ids: list[str], per_run_cap: float | None, report_format: str,
-    secret_values: Iterable[str] = (), fail_on: str | None = None, skip_judged: bool = False,
+    spec: dict,
+    probe_ids: list[str],
+    per_run_cap: float | None,
+    report_format: str,
+    secret_values: Iterable[str] = (),
+    fail_on: str | None = None,
+    skip_judged: bool = False,
 ) -> LocalRunResult:
     """Run the probes, print one line per finding, return the rendered report and findings.
 
@@ -44,15 +55,34 @@ def run_local_and_render(
         # Nothing to start, so the demo servers stay unimported.
         env, testbed = None, nullcontext(spec)
     with testbed as resolved:
-        if env:
-            click.echo(f"Started the bundled {servers.LABELS[env]} testbed on {resolved['testbed_url']} for this "
-                       "run. The agent under test must be able to reach that address.")
-        return _run_and_render(resolved, probe_ids, per_run_cap, report_format, secret_values, fail_on, skip_judged)
+        if env == "a2a":
+            click.echo(
+                f"Started the bundled A2A testbed for this run: peers at {resolved['peer_url']}, control at {resolved['testbed_url']} (private, this host only). The agents under test must be able to reach the peer address."
+            )
+        elif env:
+            click.echo(
+                f"Started the bundled {servers.LABELS[env]} testbed on {resolved['testbed_url']} for this "
+                "run. The agent under test must be able to reach that address."
+            )
+        return _run_and_render(
+            resolved,
+            probe_ids,
+            per_run_cap,
+            report_format,
+            secret_values,
+            fail_on,
+            skip_judged,
+        )
 
 
 def _run_and_render(
-    spec: dict, probe_ids: list[str], per_run_cap: float | None, report_format: str,
-    secret_values: Iterable[str], fail_on: str | None, skip_judged: bool,
+    spec: dict,
+    probe_ids: list[str],
+    per_run_cap: float | None,
+    report_format: str,
+    secret_values: Iterable[str],
+    fail_on: str | None,
+    skip_judged: bool,
 ) -> LocalRunResult:
     from argus.local import LocalRunError, run_local
 
@@ -63,7 +93,9 @@ def _run_and_render(
 
     async def _consume() -> None:
         nonlocal coverage, judge
-        async for event in run_local(spec, probe_ids, per_run_cap_usd=per_run_cap, skip_judged=skip_judged):
+        async for event in run_local(
+            spec, probe_ids, per_run_cap_usd=per_run_cap, skip_judged=skip_judged
+        ):
             if event.get("type") == "coverage":
                 coverage = event.get("coverage")
                 continue
@@ -76,7 +108,9 @@ def _run_and_render(
                 click.echo(f"Warning: {event['message']}", err=True)
                 continue
             findings.append(event)
-            click.echo(f"  {event.get('verdict', '?'):<18} {event.get('severity', '?'):<9} {event.get('probe_id', '?')}")
+            click.echo(
+                f"  {event.get('verdict', '?'):<18} {event.get('severity', '?'):<9} {event.get('probe_id', '?')}"
+            )
 
     stopped_by: Exception | None = None
     stop_reason: str | None = None
@@ -127,9 +161,23 @@ def _run_and_render(
     if notes:
         run["notes"] = notes
     if report_format == "json":
-        return LocalRunResult(run_json.render_json(run, secret_values, include_notes=True), findings, stopped_by,
-                              stop_reason, exit_code)
+        return LocalRunResult(
+            run_json.render_json(run, secret_values, include_notes=True),
+            findings,
+            stopped_by,
+            stop_reason,
+            exit_code,
+        )
     # Same scrub as run.json, so no format can leak what another one masks.
-    render = {"html": reports.render_html, "sarif": reports.render_sarif, "junit": reports.render_junit}[report_format]
-    return LocalRunResult(render(run_json.scrub_run(run, secret_values)), findings, stopped_by, stop_reason,
-                          exit_code)
+    render = {
+        "html": reports.render_html,
+        "sarif": reports.render_sarif,
+        "junit": reports.render_junit,
+    }[report_format]
+    return LocalRunResult(
+        render(run_json.scrub_run(run, secret_values)),
+        findings,
+        stopped_by,
+        stop_reason,
+        exit_code,
+    )

@@ -55,7 +55,7 @@ def test_the_cli_does_not_invent_kinds_of_its_own():
     assert not sorted(_cli_kinds() - _builder_kinds())
 
 
-@pytest.mark.parametrize("kind", ["payment_agent", "mcp_agent", "testbed_agent"])
+@pytest.mark.parametrize("kind", ["payment_agent", "mcp_agent", "testbed_agent", "a2a_agent"])
 def test_world_acting_adapters_demand_sandbox_true_in_the_cli(kind):
     """`sandbox` is a safety interlock, not a convenience default: these two
     adapters move real money / reach a real MCP server if it is wrong. The

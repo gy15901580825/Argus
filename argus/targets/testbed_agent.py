@@ -25,6 +25,7 @@ class TestbedAgentTarget(Target):
     url_key: ClassVar[str]
     staging_noun: ClassVar[str]
     teardown_label: ClassVar[str]
+    controlled: ClassVar[bool] = False
 
     def _httpx(self):
         # Tests patch `httpx` on the concrete adapter's module (mcp_agent,
@@ -51,7 +52,7 @@ class TestbedAgentTarget(Target):
     ) -> httpx.Response:
         headers = (
             {"Authorization": ("Bearer " + self.spec.control_token).rstrip()}
-            if self.url_key == "mcp_url"
+            if self.controlled
             else {}
         )
         async with self._httpx().AsyncClient(timeout=self.spec.timeout_s) as client:
@@ -61,12 +62,9 @@ class TestbedAgentTarget(Target):
             resp = await getattr(client, method.lower())(
                 f"{self.spec.testbed_url.rstrip('/')}{path}", **kwargs
             )
-            if (
-                getattr(resp, "status_code", None) in (401, 503)
-                and self.url_key == "mcp_url"
-            ):
+            if getattr(resp, "status_code", None) in (401, 503) and self.controlled:
                 raise ValueError(
-                    'MCP testbed refused the control token; for a remote testbed set "control_token": "${ARGUS_TESTBED_TOKEN}" (status '
+                    f'{self.teardown_label} refused the control token; for a remote testbed set "control_token": "${{ARGUS_TESTBED_TOKEN}}" (status '
                     + str(resp.status_code)
                     + ")"
                 )
@@ -75,7 +73,7 @@ class TestbedAgentTarget(Target):
 
     @property
     def supports_phases(self) -> bool:
-        return self.url_key == "mcp_url"
+        return self.controlled
 
     async def _acquire_lease(self) -> None:
         if self._lease_id is not None:
@@ -124,10 +122,35 @@ class TestbedAgentTarget(Target):
             self._session["mcp_url"] = activated["mcp_url"]
             return
 
+    def _session_settings(self) -> dict:
+        settings = dict(self._script)
+        for name, key in (
+            ("agent_credentials", "principals"),
+            ("capabilities", "capabilities"),
+        ):
+            value = getattr(self.spec, name, None)
+            if value:
+                settings[key] = list(value) if name == "capabilities" else dict(value)
+        return settings
+
+    async def _deliver_session_ingress(self) -> None:
+        ingress = self._session.get("ingress")
+        if ingress:
+            from argus.targets.a2a_agent import deliver_ingress
+
+            async def log(row):
+                await self._control(
+                    "post",
+                    f"/sessions/{self._session['session_id']}/ingress-log",
+                    json=row,
+                )
+
+            await deliver_ingress(self.spec, ingress["deliveries"], log)
+
     async def _open_session(self) -> dict:
         if self._session is None:
             self._session = (
-                await self._control("post", "/sessions", json=dict(self._script))
+                await self._control("post", "/sessions", json=self._session_settings())
             ).json()
         return self._session
 
@@ -208,11 +231,19 @@ class TestbedAgentTarget(Target):
         if getattr(self.spec, "mcp_mode", "dynamic") == "fixed":
             await self._acquire_lease()
         await self._open_session()
+        await self._deliver_session_ingress()
         if getattr(self.spec, "mcp_mode", "dynamic") == "fixed":
             await self._activate()
 
     async def begin_phase(self, probe, phase: str, trial: int) -> None:
         script = self._script_for(probe)
+        missing = [
+            c
+            for c in getattr(probe, "requires_capabilities", ())
+            if c not in getattr(self.spec, "capabilities", ())
+        ]
+        if missing:
+            raise ProbeNotApplicable(f"target does not declare capability {missing[0]}")
         if phase == "clean":
             script.update(json.loads(probe.scenario_control))
         script["phase"] = phase
@@ -221,6 +252,7 @@ class TestbedAgentTarget(Target):
         if getattr(self.spec, "mcp_mode", "dynamic") == "fixed":
             await self._acquire_lease()
         await self._open_session()
+        await self._deliver_session_ingress()
         if getattr(self.spec, "mcp_mode", "dynamic") == "fixed":
             await self._activate()
 
@@ -287,16 +319,24 @@ class TestbedAgentTarget(Target):
         return (await self._control("get", f"/sessions/{sid}/evidence")).json()
 
 
-ENVIRONMENTS: dict[str, dict[str, str]] = {
+ENVIRONMENTS: dict[str, dict[str, Any]] = {
     "mcp": {
         "url_key": "mcp_url",
         "staging_noun": "MCP server",
         "teardown_label": "MCP testbed",
+        "controlled": True,
     },
     "payment": {
         "url_key": "merchant_url",
         "staging_noun": "merchant",
         "teardown_label": "payment testbed",
+        "controlled": False,
+    },
+    "a2a": {
+        "url_key": "a2a_url",
+        "staging_noun": "A2A peer world",
+        "teardown_label": "A2A testbed",
+        "controlled": True,
     },
 }
 
@@ -312,6 +352,10 @@ class TestbedAgentSpec:
     timeout_s: float = 60.0
     control_token: str = ""
     mcp_mode: str = "dynamic"
+    capabilities: tuple[str, ...] = ()
+    agent_credentials: dict[str, str] = field(default_factory=dict)
+    receiver: dict[str, Any] = field(default_factory=dict)
+    peer_url: str = ""
 
     def __post_init__(self) -> None:
         if self.kind != "testbed_agent":
@@ -326,6 +370,24 @@ class TestbedAgentSpec:
             raise ValueError("mcp_mode must be dynamic or fixed")
         if self.mcp_mode == "fixed" and self.environment != "mcp":
             raise ValueError("fixed mode is only available for the MCP environment")
+        if self.environment == "a2a":
+            if self.sandbox is not True:
+                raise ValueError("a2a environment requires sandbox: true")
+            from argus.targets.a2a_agent import validate_a2a_settings
+
+            validate_a2a_settings(
+                testbed_url=self.testbed_url,
+                capabilities=self.capabilities,
+                agent_credentials=self.agent_credentials,
+                receiver=self.receiver,
+            )
+        elif (
+            self.capabilities
+            or self.agent_credentials
+            or self.receiver
+            or self.peer_url
+        ):
+            raise ValueError("A2A settings only apply to the a2a environment")
         if not self.testbed_url:
             raise ValueError("testbed_url is required")
         if not self.inner:
@@ -346,6 +408,7 @@ class GenericTestbedAgentTarget(TestbedAgentTarget):
         self.url_key = env["url_key"]
         self.staging_noun = env["staging_noun"]
         self.teardown_label = env["teardown_label"]
+        self.controlled = env["controlled"]
         # The runner reads compatible_classes from the instance.
         self.compatible_classes = frozenset({f"{spec.environment}_agent"})  # type: ignore[misc]
         super().__init__(spec)

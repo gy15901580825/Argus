@@ -1,4 +1,5 @@
 """In-process servers: the bundled testbeds for `testbed_url: "local"`, and the demo agents `quickstart` runs."""
+
 from __future__ import annotations
 
 import asyncio
@@ -38,8 +39,8 @@ PROBE_IDS: tuple[str, ...] = (
 LOCAL = "local"
 # Pins that testbed's port, for an agent that may only call allowlisted origins. Unset: a free port.
 PORT_ENV = "ARGUS_TESTBED_PORT"
-LABELS = {"mcp": "MCP", "payment": "payment"}
-_KIND_ENVIRONMENT = {"mcp_agent": "mcp", "payment_agent": "payment"}
+LABELS = {"mcp": "MCP", "payment": "payment", "a2a": "A2A"}
+_KIND_ENVIRONMENT = {"mcp_agent": "mcp", "payment_agent": "payment", "a2a_agent": "a2a"}
 
 
 def _bind(port: int = 0) -> socket.socket:
@@ -72,7 +73,9 @@ def _serve(app, sock: socket.socket, name: str = "local server") -> Iterator[str
     errors = _StartupErrors()
     try:
         # A bounded graceful shutdown: an agent cut off mid-request must not hold the thread.
-        server = uvicorn.Server(uvicorn.Config(app, log_level="warning", timeout_graceful_shutdown=2))
+        server = uvicorn.Server(
+            uvicorn.Config(app, log_level="warning", timeout_graceful_shutdown=2)
+        )
         failure: list[BaseException] = []
 
         def run() -> None:
@@ -87,7 +90,11 @@ def _serve(app, sock: socket.socket, name: str = "local server") -> Iterator[str
         deadline = time.monotonic() + 10
         while not server.started:
             if not thread.is_alive() or time.monotonic() > deadline:
-                why = errors.lines[0] if errors.lines else repr(failure[0]) if failure else "timed out"
+                why = (
+                    errors.lines[0]
+                    if errors.lines
+                    else repr(failure[0]) if failure else "timed out"
+                )
                 raise RuntimeError(f"the {name} did not start: {why}")
             time.sleep(0.02)
         yield f"http://127.0.0.1:{sock.getsockname()[1]}"
@@ -151,22 +158,32 @@ def serve_demo_agent(agent_mod, testbed_url: str) -> Iterator[str]:
 def start_mcp_demo() -> Iterator[dict]:
     # Pre-bound sockets avoid a port race between picking and listening.
     _agent_mod.set_weaknesses(None)
-    with _serve_testbed(_testbed_mod, _bind(), "bundled MCP testbed") as testbed_url, \
-            serve_demo_agent(_agent_mod, testbed_url) as agent_url:
+    with (
+        _serve_testbed(_testbed_mod, _bind(), "bundled MCP testbed") as testbed_url,
+        serve_demo_agent(_agent_mod, testbed_url) as agent_url,
+    ):
         yield {
             "kind": "mcp_agent",
             "control_token": _testbed_mod.CONTROL_TOKEN,
             "testbed_url": testbed_url,
             "sandbox": True,
-            "inner": {"kind": "openai_compat", "endpoint_url": agent_url, "model": "demo"},
+            "inner": {
+                "kind": "openai_compat",
+                "endpoint_url": agent_url,
+                "model": "demo",
+            },
         }
 
 
 def local_environment(spec) -> str | None:
-    """"mcp" or "payment" when `spec` asks for the bundled testbed, else None."""
+    """ "mcp", "payment" or "a2a" when `spec` asks for the bundled testbed, else None."""
     if not isinstance(spec, dict) or spec.get("testbed_url") != LOCAL:
         return None
-    env = spec.get("environment") if spec.get("kind") == "testbed_agent" else _KIND_ENVIRONMENT.get(spec.get("kind"))
+    env = (
+        spec.get("environment")
+        if spec.get("kind") == "testbed_agent"
+        else _KIND_ENVIRONMENT.get(spec.get("kind"))
+    )
     return env if env in LABELS else None
 
 
@@ -177,7 +194,9 @@ def _pinned_port() -> int:
     if not raw:
         return 0
     if not raw.isdigit() or not 1 <= int(raw) <= 65535:
-        raise LocalRunError(f"{PORT_ENV}={raw!r} is not a port number (1-65535)", code="config")
+        raise LocalRunError(
+            f"{PORT_ENV}={raw!r} is not a port number (1-65535)", code="config"
+        )
     return int(raw)
 
 
@@ -192,6 +211,38 @@ def local_testbed(spec: dict) -> Iterator[dict]:
         return
     from argus.local import LocalRunError
 
+    if env == "a2a":
+        from argus.demo.a2a_testbed.testbed.app import create_testbed
+
+        control_sock = _bind()
+        peer_sock = None
+        try:
+            peer_sock = _bind(_pinned_port())
+            peer_url = f"http://127.0.0.1:{peer_sock.getsockname()[1]}"
+            token = secrets.token_urlsafe(32)
+            instance = create_testbed(control_token=token, public_base_url=peer_url)
+            bypass_proxy_for_localhost()
+            with (
+                _serve(
+                    instance.control_app, control_sock, "bundled A2A controller"
+                ) as control_url,
+                _serve(instance.peer_app, peer_sock, "bundled A2A peers"),
+            ):
+                yield {
+                    **spec,
+                    "testbed_url": control_url,
+                    "control_token": token,
+                    "peer_url": peer_url,
+                }
+        except OSError as exc:
+            raise LocalRunError(
+                f"cannot start the bundled A2A testbed: {exc}", code="config"
+            ) from exc
+        finally:
+            control_sock.close()
+            if peer_sock is not None:
+                peer_sock.close()
+        return
     if env == "mcp":
         mod = _testbed_mod
     else:
@@ -203,7 +254,12 @@ def local_testbed(spec: dict) -> Iterator[dict]:
         hint = f"; free it or change {PORT_ENV}" if port else ""
         raise LocalRunError(
             f"cannot start the bundled {LABELS[env]} testbed on 127.0.0.1:{port}: {e.strerror or e}{hint}",
-            code="config") from e
+            code="config",
+        ) from e
     bypass_proxy_for_localhost()
     with _serve_testbed(mod, sock, f"bundled {LABELS[env]} testbed") as url:
-        yield {**spec, "testbed_url": url, **({"control_token": mod.CONTROL_TOKEN} if env == "mcp" else {})}
+        yield {
+            **spec,
+            "testbed_url": url,
+            **({"control_token": mod.CONTROL_TOKEN} if env == "mcp" else {}),
+        }

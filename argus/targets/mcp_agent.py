@@ -59,6 +59,7 @@ class MCPAgentSpec:
 
 class MCPAgentTarget(TestbedAgentTarget):
     compatible_classes: ClassVar[frozenset[str]] = frozenset({"mcp_agent"})
+    controlled = True
     url_key = "mcp_url"
     staging_noun = "MCP server"
     teardown_label = "MCP testbed"

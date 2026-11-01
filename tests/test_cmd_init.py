@@ -361,3 +361,14 @@ def test_init_server_kinds_write_a_loadable_spec(tmp_path, monkeypatch, kind, ur
     spec = json.loads((tmp_path / "argus-target.json").read_text())
     assert spec == {"kind": kind, "url": url}
     assert load_target_spec(str(tmp_path / "argus-target.json")) == spec
+
+
+def test_init_a2a_agent_writes_loadable_spec_with_sandbox(tmp_path, monkeypatch):
+    from argus.targets import build_target
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(init_command, ["--kind", "a2a_agent", "--no-workflow"], input="\n\n\n")
+    assert result.exit_code == 0, result.output
+    spec = json.loads((tmp_path / "argus-target.json").read_text())
+    assert spec["sandbox"] is True
+    assert spec["capabilities"] == ["peer_http_json_1_0"]
+    assert build_target(spec).compatible_classes == {"a2a_agent"}

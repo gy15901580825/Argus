@@ -5,6 +5,7 @@ that `kind` is one of the known kinds (`_KNOWN_KINDS`) and that the file is vali
 the per-kind required fields. This catches most operator mistakes before
 round-tripping to the server.
 """
+
 from __future__ import annotations
 
 import json
@@ -13,11 +14,24 @@ import re
 from pathlib import Path
 from typing import Any
 
-_KNOWN_KINDS = frozenset({
-    "openai_compat", "anthropic_native", "custom_http", "grpc", "browser_use",
-    "payment_agent", "mcp_agent", "testbed_agent", "http_upload", "mcp_server",
-    "vllm_server", "web_chat", "a2a_server",
-})
+_KNOWN_KINDS = frozenset(
+    {
+        "openai_compat",
+        "anthropic_native",
+        "custom_http",
+        "grpc",
+        "browser_use",
+        "payment_agent",
+        "mcp_agent",
+        "a2a_agent",
+        "testbed_agent",
+        "http_upload",
+        "mcp_server",
+        "vllm_server",
+        "web_chat",
+        "a2a_server",
+    }
+)
 
 _REQUIRED_FIELDS = {
     "openai_compat": {"endpoint_url", "model"},
@@ -26,6 +40,7 @@ _REQUIRED_FIELDS = {
     "grpc": {"endpoint", "service_method"},
     "browser_use": {"agent_url", "scenario_kind"},
     "payment_agent": {"testbed_url", "inner", "sandbox"},
+    "a2a_agent": {"testbed_url", "inner", "sandbox"},
     "mcp_agent": {"testbed_url", "inner", "sandbox"},
     "testbed_agent": {"environment", "testbed_url", "inner", "sandbox"},
     "http_upload": {"upload_url"},
@@ -41,6 +56,7 @@ _REQUIRED_FIELDS = {
 # shown to the operator, so each family says what it would actually reach.
 _SANDBOX_REQUIRED_KINDS = {
     "payment_agent": "drives an agent that spends money",
+    "a2a_agent": "drives an agent that sends messages to A2A peers and requests actions",
     "mcp_agent": "drives an agent against a live MCP server",
     "testbed_agent": "drives an agent inside a simulated environment",
 }
