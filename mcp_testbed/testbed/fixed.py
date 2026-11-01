@@ -95,7 +95,9 @@ class FixedEndpoint:
             self.touch(lease_id, now)
             if session.sealed:
                 raise ValueError("world is sealed")
-            if session.scenario.dynamic_only:
+            if session.scenario.dynamic_only or (
+                session.world is not None and session.world.spec.second_tools is not None
+            ):
                 raise DynamicOnly()
             if self.active:
                 previous = self.active

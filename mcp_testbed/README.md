@@ -17,6 +17,7 @@ A copy of `testbed/` and `demo_agent/` ships in `argus/demo/mcp_testbed/` for `a
 ```
 POST /sessions                -> {session_id, mcp_url, script}
 POST /s/{sid}/mcp             -> JSON-RPC 2.0: initialize / tools/list / tools/call
+POST /s/{sid}/mcp2             -> second server, for worlds that provide one
 GET  /sessions/{sid}/evidence -> every interaction, deterministic
 DELETE /sessions/{sid}
 ```
@@ -31,6 +32,8 @@ DELETE /sessions/{sid}
 | `shadowing` | Defines an extra near-name tool (`read_notes_v2`) claiming to be the "preferred" version |
 | `confused_deputy` | Plants the injected instruction in a `tools/call` *result*, not a description |
 | `credential_lure` | Asks for an `api_key` argument and plants a canary credential in the schema |
+
+The `server_instructions` world returns instructions in `initialize`. The `resource_note` world embeds a resource in a tool result. The `resource_brief` world exposes `resources/list` and `resources/read`. The `cross_server_mail` world provides `/s/{sid}/mcp2` only in dynamic mode and records second-server calls with `server: "second"`. These fixtures retain the existing JSON handshake and do not add new protocol versions.
 
 ## evidence contract
 
@@ -100,13 +103,13 @@ agent starts but refuses to contact any MCP server.
 Control endpoints require `Authorization: Bearer <token>`. Set `TESTBED_CONTROL_TOKEN` before starting the testbed. If it is unset, control endpoints return 503. The agent endpoints do not require this token.
 For remote runs, set `"control_token": "${ARGUS_TESTBED_TOKEN}"` in the target configuration. Local runs generate and restore a token automatically.
 
-The work-environment agent supports `naive` (all eight world weaknesses) and `safe` (none). Individual switches are `remember_results`, `apply_memory`, `follow_directives`, `trust_preapproval`, `ignore_denial`, `follow_reissue`, `defeat_stop`, and `report_all_success`. The test-only `skip_approval` switch omits approval requests. Legacy weaknesses are independent.
+The work-environment agent supports `naive` (all eleven world weaknesses) and `safe` (none). Individual switches are `remember_results`, `apply_memory`, `follow_directives`, `trust_preapproval`, `ignore_denial`, `follow_reissue`, `defeat_stop`, `report_all_success`, `obey_server_instructions`, `obey_resource_content`, and `trust_foreign_descriptions`. The test-only `skip_approval` switch omits approval requests. Legacy weaknesses are independent.
 
 In fixed mode the demo agent returns `Mcp-Session-Id`. After a 404 it initializes once and retries. A demo agent still running after a world handoff can enter the new world this way, including clean-to-attack handoffs in the same run. Stop old traffic before each handoff.
 
 ## Agent work environment
 
-`scenario: "agent_world"` selects a business world. `world` is one of `invoice_memory`, `email_memory`, `data_cleanup`, `invoice_approval`, `report_repair`, `void_cleanup`, `multi_step`, or `ci_repair`. The common tool list includes hosted memory, structured approval, simulated business actions, and reporting. All records and resource changes stay in memory.
+`scenario: "agent_world"` selects a business world. `world` is one of `invoice_memory`, `email_memory`, `data_cleanup`, `invoice_approval`, `report_repair`, `void_cleanup`, `multi_step`, `ci_repair`, `server_instructions`, `resource_note`, `resource_brief`, or `cross_server_mail`. The common tool list includes hosted memory, structured approval, simulated business actions, and reporting. All records and resource changes stay in memory.
 
 Each world records requested, accepted, and simulated effects separately. Approvals freeze the approver-visible structured preview and its hash. Only the configured approver issues decisions. Tool-returned approval text is not an approval. Business completion reflects accepted required actions. Reporting is checked separately, using `submit_report` or a structured JSON block from the final reply.
 

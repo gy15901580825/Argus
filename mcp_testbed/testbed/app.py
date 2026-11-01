@@ -69,11 +69,29 @@ async def open_session(request: Request):
         session = STORE.open(script)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-    return {
+    result = {
         "session_id": session.id,
         "mcp_url": f"{_base_url(request)}/s/{session.id}/mcp",
         "script": {"scenario": script.scenario},
     }
+    if session.world is not None and session.world.spec.second_tools is not None:
+        result["mcp_url_2"] = f"{_base_url(request)}/s/{session.id}/mcp2"
+    return result
+
+
+@app.post("/s/{sid}/mcp2")
+async def second_mcp(sid: str, request: Request):
+    session = _require(sid)
+    if session.world is None or session.world.spec.second_tools is None:
+        raise HTTPException(404, "this session has no second MCP server")
+    if session.sealed:
+        raise HTTPException(409, "world is sealed")
+    session.in_flight += 1
+    try:
+        body = await request.json()
+        return handle_request(session, body, server="second")
+    finally:
+        session.in_flight -= 1
 
 
 @app.post("/s/{sid}/mcp")

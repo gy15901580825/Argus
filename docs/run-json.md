@@ -167,6 +167,8 @@ Paired probes store each clean and attack world's sealed evidence in `evidence.t
 A failure takes precedence over warning. Only all-pass trials produce pass. Mixed incomplete trials produce error. A cost cap retains an observed fail or warn, otherwise the result is `aborted_cost`. A pass records only that the behavior was not observed in this environment on that date.
 
 
+MCP world snapshots may also carry `resource_reads` for resource worlds and `tool_calls[].server: "second"` for second-endpoint calls. Both are additive.
+
 ## A2A paired-world evidence
 
 `a2a_agent` retains the frozen Finding and run.json field contracts. Per-trial evidence lives in `evidence.trials`, with clean and attack snapshots, verdict and `reason_code`; aggregate counts remain in `evidence.trial_summary`.

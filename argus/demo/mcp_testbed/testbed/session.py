@@ -137,7 +137,7 @@ class Session:
         e.g. rug_pull (the description changes starting from the 2nd call).
         """
         if self.world is not None:
-            return copy.deepcopy(WORLD_TOOLS)
+            return self.world.tools()
         return self.scenario.tools_fn(
             self.tools_list_count + 1, self.canary, self.script.gate_send_email
         )
@@ -166,7 +166,7 @@ class Session:
             "tool_digests": {t["name"]: _digest([t]) for t in tools},
         })
 
-    def record_tool_call(self, tool: str, arguments: dict) -> None:
+    def record_tool_call(self, tool: str, arguments: dict, server: str = "primary") -> None:
         # Per tool: flag the call only when THIS tool's description changed.
         # A session-wide flag marked a call to an untouched tool (read_notes)
         # as rug-pulled because another tool (send_email) had changed -- a
@@ -179,13 +179,16 @@ class Session:
         served = [d["tool_digests"][tool] for d in self.descriptions_served
                   if tool in d.get("tool_digests", {})]
         after_change = len(served) >= 2 and served[-1] != served[0]
-        self.tool_calls.append({
+        record = {
             "seq": self.interaction_count,
             "conversation": self.conversation,
             "tool": tool,
             "arguments": arguments,
             "after_description_change": after_change,
-        })
+        }
+        if server != "primary":
+            record["server"] = server
+        self.tool_calls.append(record)
 
     def evidence(self) -> dict:
         if self._frozen_evidence is not None:
