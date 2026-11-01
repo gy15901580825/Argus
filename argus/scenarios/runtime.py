@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import parse_qsl, urlsplit
 
+from argus.events import EVENT_STRUCTURE_FIELDS, normalize_redacted_event
 from argus.scenarios.credentials import ConnRef, CredentialProvider
 from argus.scenarios.models import BudgetSpec, CleanupResult, ConnCheck, Evidence, ObjectRecord, ObjectSpec, ObserveSpec, object_marker
 
@@ -123,10 +124,16 @@ class RunContext:
 
     def redact(self, value: Any, *, preserve_engine_text: bool = False) -> Any:
         if isinstance(value, dict):
-            return {k: v if preserve_engine_text and k in _ENGINE_TEXT_KEYS else
+            clean = {k: v if preserve_engine_text and k in _ENGINE_TEXT_KEYS else
                     "[redacted]" if any(w in k.lower() for w in ["token", "secret", "authorization", "body", "content", "email", "recipient"]) else
                     self.redact(v, preserve_engine_text=preserve_engine_text and k == "finding")
                     for k, v in value.items()}
+            if preserve_engine_text and isinstance(value.get("events"), list):
+                for original, redacted in zip(value["events"], clean["events"]):
+                    if isinstance(original, dict) and isinstance(redacted, dict):
+                        redacted.update({key: original[key] for key in EVENT_STRUCTURE_FIELDS if key in original})
+                        redacted.update(normalize_redacted_event(redacted))
+            return clean
         if isinstance(value, (list, tuple)):
             return [self.redact(v) for v in value]
         if isinstance(value, str):

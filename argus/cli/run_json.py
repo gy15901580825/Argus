@@ -8,6 +8,7 @@ from typing import Any, Iterable
 from uuid import UUID
 
 from argus.coverage import build_summary
+from argus.events import EVENT_STRUCTURE_FIELDS, normalize_redacted_event
 
 SCHEMA_VERSION = "argus.run/1"
 MASK = "***"
@@ -20,6 +21,8 @@ _RUN_FIELDS = ("id", "status", "started_at", "finished_at", "coverage")
 _FINDING_FIELDS = ("id", "probe_id", "verdict", "severity", "probed_at", "created_at",
                    "confidence", "target_latency_ms", "atlas_id", "owasp_id", "owasp_agentic", "nist_id", "eu_ai_act_id",
                    "judge_model", "escalated_model", "remediation", "remediation_actions")
+
+_EVENT_FIELDS = EVENT_STRUCTURE_FIELDS
 
 
 def _default(obj: Any) -> Any:
@@ -160,6 +163,10 @@ def scrub_run(run: dict, secret_values: Iterable[str] = ()) -> dict:
     for clean, orig in zip(out.get("findings") or [], plain.get("findings") or []):
         if isinstance(clean, dict) and isinstance(orig, dict):
             _restore(clean, orig, _FINDING_FIELDS)
+            for clean_event, orig_event in zip(clean.get("events") or [], orig.get("events") or []):
+                if isinstance(clean_event, dict) and isinstance(orig_event, dict):
+                    _restore(clean_event, orig_event, _EVENT_FIELDS)
+                    clean_event.update(normalize_redacted_event(clean_event))
     return out
 
 

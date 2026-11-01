@@ -15,7 +15,9 @@ from uuid import UUID, uuid4
 import httpx
 
 from argus.placeholders import needs_rendering, render_generator_name, target_model_name
+from argus.a2a.events import events_from_trials
 from argus.cost_meter import CostExceededError
+from argus.events import Event
 from argus.phases import PhaseRun, clean_failure, judge_trial
 from argus.trials import aggregate_trials, pass_wording
 from argus.world_assertions import report_from_reply
@@ -259,6 +261,8 @@ class Finding:
     remediation: str = ""
     # Tiered fix-it steps (argus/remediation.py actions_for_probe). Empty when unknown.
     remediation_actions: list[dict] = field(default_factory=list)
+    # Evidence-backed steps (argus/events.py); empty unless an adapter observed them.
+    events: list[Event] = field(default_factory=list)
 
 
 def skipped_finding(probe, reasoning: str) -> Finding:
@@ -700,6 +704,7 @@ class Runner:
         confidence,
         reasoning,
         evidence,
+        events: list[Event] | None = None,
     ) -> Finding:
         return Finding(
             id=uuid4(),
@@ -721,6 +726,7 @@ class Runner:
             nist_id=list(probe.mappings.nist_ai_rmf),
             eu_ai_act_id=list(probe.mappings.eu_ai_act),
             evidence=evidence,
+            events=list(events or []),
         )
 
     async def _run_phase(self, probe, phase: str, trial: int) -> PhaseRun:
@@ -864,6 +870,9 @@ class Runner:
             severity=probe.severity if summary.verdict in ("fail", "warn") else "info",
             confidence=1.0,
             reasoning=reasoning.strip(),
+            events=events_from_trials([(r.trial, r.attack.evidence) for r in results
+                                       if r.attack is not None and r.attack.evidence is not None])
+            if getattr(probe, "scenario_kind", None) == "a2a_world" else None,
             evidence={
                 "trial_summary": summary.as_dict(),
                 "trials": [r.as_dict() for r in results],

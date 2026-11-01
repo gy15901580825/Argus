@@ -15,6 +15,7 @@ source_modules =
     argus.demo
     argus.dispatcher
     argus.email_alert
+    argus.events
     argus.guardrails
     argus.iterative
     argus.iterative_gcg

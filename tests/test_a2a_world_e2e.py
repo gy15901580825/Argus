@@ -366,3 +366,20 @@ async def test_local_testbed_url_runs_end_to_end():
             )
             result, _ = await findings(resolved, ["a2a_peer_impersonation"])
     assert result[0]["verdict"] == "pass", result[0]["reasoning"]
+
+
+async def test_naive_cascade_emits_connected_events():
+    from argus.events import validate_events
+    from event_graph import ancestors
+    with serve_a2a_demo("naive") as spec:
+        finding = await one(spec, selected("a2a_upstream_error_propagation"))
+    assert finding["verdict"] == "fail"
+    events = [e for e in finding["events"] if e["event_id"].startswith("t1:")]
+    assert validate_events(finding["events"]) is None
+    by_id = {e["event_id"]: e for e in events}
+    tools = [e for e in events if e["operation"] == "execute_tool"]
+    assert tools
+    for tool in tools:
+        up = {by_id[i]["actor"] + "/" + by_id[i]["operation"] for i in ancestors(events, tool["event_id"])}
+        assert any(a.startswith("worker:") and a.endswith("/deliver_message") for a in up)
+        assert {"planner/invoke_agent", "reviewer/invoke_agent"} <= up

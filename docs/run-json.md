@@ -50,7 +50,7 @@ The top-level keys always appear in this order. `incomplete_reason`, `notes` and
 
 `run`, `mcp-trap` and `scan-mcp` all write `summary` in run.json. It is computed from the written findings, so an early-stopped run has one too. Files written before this field existed do not have it.
 
-Each finding has the same keys as the engine's `Finding` record: `id`, `probe_id`, `attack_prompt`, `target_response`, `target_latency_ms`, `probed_at`, `verdict`, `severity`, `confidence`, `reasoning`, `judge_model`, `escalated_model`, `atlas_id`, `owasp_id`, `owasp_agentic`, `nist_id`, `eu_ai_act_id`, `created_at`, `evidence`, `remediation` and `remediation_actions`.
+Each finding has the same keys as the engine's `Finding` record: `id`, `probe_id`, `attack_prompt`, `target_response`, `target_latency_ms`, `probed_at`, `verdict`, `severity`, `confidence`, `reasoning`, `judge_model`, `escalated_model`, `atlas_id`, `owasp_id`, `owasp_agentic`, `nist_id`, `eu_ai_act_id`, `created_at`, `evidence`, `remediation`, `remediation_actions` and `events`.
 
 `owasp_agentic` is a list of direct-risk tags from the OWASP Top 10 for Agentic Applications, 2026 edition (`ASI01` through `ASI10`). Unmapped findings contain `[]`. Older records may omit this additive field; reports render those records with empty agentic mappings. Coverage uses the key `owasp-agentic-top10` and always lists all ten categories, including `absent` cells.
 
@@ -59,6 +59,65 @@ HTML shows agentic tags beside each finding. SARIF stores the exact array in rul
 `remediation` is how to fix the weakness the probe tests: the probe's own text when it has one, else a few sentences for each of the probe's attack classes, one class per line. It is the same for every finding of a probe, whatever the verdict, and it is an empty string when there is no text for the probe. Files written before this field existed do not have it.
 
 `remediation_actions` splits the same advice into steps by how fast you can ship them. Each entry has `tier`, `text` and `atlas_mitigation`. `tier` is `mitigation` (a configuration change you can make today, such as an approval gate, a filter or an allowlist) or `fix` (the design change that removes the weakness). `atlas_mitigation` is a MITRE ATLAS mitigation id such as `AML.M0030`, used as a tag, or null. Every built-in probe has at least one entry of each tier: one of each for a single attack class or a probe with its own text, and one of each per attack class otherwise, in the probe's class order. The list is the same for every finding of a probe. It is `[]` for `scan-skill` findings, for integration scenarios without `attack_class`, and for a probe-pack probe that sets its own `remediation` without `remediation_actions`. `remediation` keeps its old text, so tools that read only that field see no change. Files written before this field existed do not have it.
+
+### Finding events
+
+`events` records steps backed by evidence that Argus observed or the target reported. Every new finding includes the key. Findings without a supported source of events contain `[]`, including plain chat, MCP `agent_world`, browser, payment, and direct `scan-skill` findings. Files written before this field existed do not have it. The format remains `argus.run/1`.
+
+Each event has these fields in this order:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `event_id` | string | Nonempty identifier, unique within this finding. |
+| `parent_event_ids` | array of strings | IDs of earlier evidence-backed steps in the same finding. Empty when no parent identifier resolves. |
+| `ts` | string or null | UTC wall-clock time with milliseconds and a trailing `Z`, such as `2026-11-01T04:10:24.123Z`. Null when the source has no timezone-aware wall-clock time. |
+| `actor` | string | Nonempty role name, such as `argus`, `target_agent`, `planner`, `reviewer`, `executor`, `entry`, or `worker:<peer>`. |
+| `operation` | string | One of the six values below. |
+| `tool_name` | string or null | Tool or action name when recorded. Corresponds to OTel `gen_ai.tool.name`. |
+| `tool_call_id` | string or null | Tool-call identifier when recorded. Corresponds to OTel `gen_ai.tool.call.id`. |
+| `object_ref` | string or null | `<kind>:<id>`, with a kind from the table below and a nonempty ID without whitespace. Null when no supported object identifier exists. |
+| `basis` | string | `observed` when Argus, the testbed, or a third-party API observed the step. `reported` when the target supplied it in telemetry or a run log. |
+| `atlas_technique` | string or null | ATLAS technique ID such as `AML.T0051` or `AML.T0051.001`. Both current adapters emit null. Finding-level mappings remain in `atlas_id`. |
+| `source` | string | `a2a_world` or `integration_scenario`. |
+| `summary` | string or null | At most 200 characters, assembled only from `actor`, `operation`, `tool_name`, and the object kind. Contains no object ID or payload. |
+| `seq` | integer or null | source record order within a finding; does not guarantee event occurrence order; nullable. |
+
+Non-null `seq` values are nonnegative and unique within a finding. They support layout ordering and are not comparable across findings. When both a parent and its child have `seq`, the parent's value is smaller. A2A uses the testbed row's `seq`, with a trial-index offset of 1,000,000 per trial when combining trials. Integration scenarios record planted objects in registry order, then retain each evidence row's position after those objects. Deduplicated events keep their first recorded position.
+
+The operation set is closed:
+
+| Operation | Meaning | Current source |
+|---|---|---|
+| `invoke_agent` | An actor hands a task or message to an agent. | The scenario trigger, A2A `agent_message`, or A2A `peer_message` when `peer_trusted` is not false. |
+| `execute_tool` | An agent calls a tool or action interface. | An A2A action sink row. `tool_name` contains the recorded action name. |
+| `deliver_message` | A message enters a channel that an agent can read. | An A2A `peer_reply` or a scenario seed email sent by Argus. |
+| `read_object` | An actor reads an object. | A successful target run-log `read`, `retrieve`, `search`, `get`, or `fetch` operation that is not a dry run. |
+| `write_object` | An actor creates or changes an object. | An Argus-planted document or a Gmail `draft_created` or `draft_changed` observation. |
+| `send_external` | Data goes to a destination outside the target's trust boundary, with an observed boundary marker. | An A2A `peer_message` with `peer_trusted` false. |
+
+`invoke_agent` and `execute_tool` reuse OTel names. Argus adds no OpenTelemetry dependency. Writing a draft is `write_object`, even if its recipient is unexpected. A draft is not an observed send.
+
+The object-kind set is closed:
+
+| Kind | Identifier |
+|---|---|
+| `a2a.message` | A2A message ID. |
+| `a2a.task` | A2A task ID, preferred for a peer reply when available. |
+| `acs.email` | ID returned for a seed email sent through ACS. |
+| `gdrive.file` | Google Drive file ID. |
+| `gmail.message` | Gmail message ID, including the message inside a draft. |
+
+`gmail.draft` is not a kind because the Gmail observer records the draft's message ID, which differs from its draft ID. `mcp.tool` has no emitter in this version. An A2A action has no object reference because its business references are canaries, not object IDs.
+
+Downstream consumers build edges from `parent_event_ids`. Argus defines no separate edge or node types. Every parent ID resolves within the finding, and the graph has no cycles. An invalid adapter graph produces a warning and `events: []`. The two supported bases are `observed` and `reported`. There is no `inferred` basis, and judge reasoning never creates an event or a parent edge.
+
+Only A2A world attack phases and the `mail_policy_conflict_v1` integration scenario currently emit events. A2A event IDs have a `t<trial>:` prefix. Invalid trial evidence emits no events. Discovery reads (`bootstrap_read`, `card_read`, and `task_poll`) and clean-phase rows are excluded. A2A parents resolve only recorded `parent_event_ids` and `parent_message_ids` against earlier emitted rows' event, message, or task IDs. Unresolved and forward references are dropped. Shared business values alone never create a parent edge.
+
+The mail scenario uses test-group evidence plus the planted objects that evidence references, including a baseline policy document when referenced. Only a runner-created `response` row with `TARGET_SELF_REPORT` provenance becomes the observed Argus trigger. That trigger links to objects whose markers or IDs Argus put in the prompt. A target run-log or third-party row named `response` does not become an Argus invocation. Successful run-log reads remain `reported` and link to the recorded call and the object identified by marker or ID. Target identity claims do not become observations through these links. A draft links to the seed object's marker, not to the trigger call. No recorded identifier ties the draft to that call. Repeated observations with the same draft operation and message ID produce one event. Control and baseline evidence rows, infrastructure folders, `baseline_poll`, `draft_snapshot`, `object_changed`, and failed, non-read, or dry-run run-log rows produce no events.
+
+All A2A `ts` values are null because the testbed's monotonic offsets have no wall-clock anchor. Mail triggers use Argus's timezone-aware response timestamp. Planted objects have no timestamp, and mail draft and run-log observations have no occurrence time, so their `ts` values are null. Poll time is not occurrence time. Naive datetimes also become null. Parent links express the recorded relationships. Neither `seq` nor array position guarantees event occurrence order.
+
+Events exclude prompts, replies, raw tool arguments and outputs, email bodies, field values, and A2A references or canaries. Those payloads remain only in `evidence`, under its existing redaction rules. Event text is masked as described below. SARIF does not include events or `codeFlows`.
 
 `evidence` is whatever the target adapter observed, such as tool calls, or null for text-only adapters. Its contents are free-form. Values that are not plain JSON are written as strings: timestamps in ISO 8601, UUIDs in their usual form, bytes decoded as UTF-8 (invalid bytes become U+FFFD), and any other type through `str()`.
 
@@ -76,6 +135,9 @@ This rule does not know which variables are secret. A non-secret value such as a
 
 - run: `schema_version`, `argus_version`, `id`, `status`, `started_at`, `finished_at`, `coverage`, `summary` and `target_spec.kind`
 - each finding: `id`, `probe_id`, `verdict`, `severity`, `probed_at`, `created_at`, `confidence`, `target_latency_ms`, `atlas_id`, `owasp_id`, `owasp_agentic`, `nist_id`, `eu_ai_act_id`, `judge_model`, `escalated_model`, `remediation` and `remediation_actions`
+- each `events` entry: `event_id`, `parent_event_ids`, `ts`, `operation`, `basis`, `source`, `atlas_technique` and `seq`
+
+Only these event structure fields are restored after masking. `actor`, `tool_name`, `tool_call_id`, `object_ref`, and `summary` undergo normal text masking. If masking makes an object kind unknown, `object_ref` becomes null. `summary` is clipped to 200 characters after masking.
 
 ### Rule 2: secret-looking key names
 
@@ -113,4 +175,4 @@ Each snapshot uses `schema_version: argus-a2a-evidence-v1`, with `world`, `phase
 
 Agent identities are verified by distinct configured credentials. Matching sent/received digests establish an observed edge; caller-supplied adoption flags do not. Current-world attribution requires fresh business references, not a reused message or parent ID. Unassociated authenticated actions cause an evidence error. Single-agent budget symptoms can warn; observed cross-agent violations fail, even when a later hard budget truncates observation. Missing evidence or clean capability proof cannot become a pass.
 
-The controller masks full and bare auth credentials from business text and fields in live and sealed snapshots. Public structural metadata, such as role, schema/version, recognized capability, claim/delivery and transport enums, remains unchanged when a credential happens to equal a public label. Message IDs, parent IDs and arbitrary business strings are never restored. CLI report redaction applies again to target credentials and receiver headers.
+The controller masks full and bare auth credentials from business text and fields in live and sealed snapshots. Public structural metadata, such as role, schema/version, recognized capability, claim/delivery and transport enums, remains unchanged when a credential happens to equal a public label. Message IDs, parent IDs and arbitrary business strings inside these evidence snapshots are never restored. Normalized finding event IDs follow the separate restoration rule above. CLI report redaction applies again to target credentials and receiver headers.

@@ -13,6 +13,7 @@ from uuid import UUID, uuid4
 from argus import remediation
 from argus.runner import Finding
 from argus.scenarios.credentials import CredentialUnavailable
+from argus.scenarios.events import scenario_events
 from argus.scenarios.models import Evidence, IntegrationScenario, ObjectRecord, Provenance, ScenarioResult, now, object_marker
 from argus.scenarios.runtime import Budget, BudgetExceeded, NotReady, ObjectRegistry, RunContext, validate_target_credentials, read_template
 
@@ -72,10 +73,14 @@ class ScenarioRunner:
         log = None
         if hasattr(self.target, "last_run_log"):
             log = self.target.last_run_log()
-        self.evidence.append(Evidence(run_id=self.ctx.run_id, group=self.ctx.group, source_system="target",
+        # Recorded so the event graph links calls and reads to planted objects by identifier.
+        response = Evidence(run_id=self.ctx.run_id, group=self.ctx.group, source_system="target",
                                       control_name=self.ctx.control_name,
                                       provenance=Provenance.TARGET_SELF_REPORT, acquired_via="target_api",
-                                      operation="response", result="received"))
+                                      operation="response", result="received",
+                                      details={"markers": [obj.marker for key, obj in self.ctx.objects.items()
+                                                           if "{" + key + ".marker}" in task or "{" + key + ".id}" in task]})
+        self.evidence.append(response)
         if log is not None:
             for raw in log.events:
                 raw_id = uuid4().hex
@@ -91,7 +96,8 @@ class ScenarioRunner:
                                               operation=str(raw.get("operation", raw.get("name", "tool_intent"))),
                                               result="intent" if log.is_dry_run else str(raw.get("result", raw.get("status", "unknown"))),
                                               object_id=raw.get("object_id"), raw_ref="raw/" + raw_id + ".json",
-                                              details={"record": safe_record, "is_dry_run": log.is_dry_run}))
+                                              details={"record": safe_record, "is_dry_run": log.is_dry_run,
+                                                       "response_event_id": response.event_id}))
         return reply, log
 
     def touched(self, log, group: str, expected=None) -> str:
@@ -363,5 +369,6 @@ class ScenarioRunner:
                           reasoning=result.reason, judge_model="deterministic_scenario", escalated_model=None,
                           evidence={"scenario": result.model_dump(mode="json")},
                           remediation=remediation.for_classes(self.scenario.attack_class),
-                          remediation_actions=remediation.actions_for_classes(self.scenario.attack_class))
+                          remediation_actions=remediation.actions_for_classes(self.scenario.attack_class),
+                          events=scenario_events(result))
         return self.ctx.redact(json.loads(json.dumps(asdict(finding), default=str)), preserve_engine_text=True)

@@ -39,6 +39,7 @@ def event(
     refs=("Q1",),
     fields=None,
     parent=(),
+    parent_events=(),
 ):
     return dict(
         event_id=f"E{seq}",
@@ -53,7 +54,7 @@ def event(
         refs=list(refs),
         fields={"amountMinor": 100000} if fields is None else fields,
         parent_message_ids=list(parent),
-        parent_event_ids=[],
+        parent_event_ids=list(parent_events),
         peer="invoice-records",
         http_status=200,
         a2a_version_ok=True,
@@ -89,4 +90,17 @@ def chain(*, middle_assurance="matched_observers", actions_count=1):
             event(3, "reviewer", "executor", assurance=middle_assurance),
         ],
         actions=[action(4 + i) for i in range(actions_count)],
+    )
+
+
+def linked_chain(**overrides):
+    return make_evidence(
+        events=[
+            event(1, "planner", "worker:invoice-records", kind="peer_message", assurance="testbed_observed"),
+            event(2, "worker:invoice-records", "planner", kind="peer_reply", assurance="testbed_observed", parent_events=("E1",)),
+            event(3, "planner", "reviewer", parent=("T2",)),
+            event(4, "reviewer", "executor", parent=("M3",)),
+        ],
+        actions=[action(5, parent=("M4",))],
+        **overrides,
     )
