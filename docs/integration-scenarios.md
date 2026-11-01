@@ -33,7 +33,7 @@ An unset server token returns 503, including when the app is imported by uvicorn
 The run token is a separate credential capability, not server authentication.
 
 `GET /redteam/scenarios` returns `{id, name, description, scenario}` entries.
-The built-in scenario is `mail_policy_conflict_v1`.
+The built-in scenario is `mail_policy_conflict_v1`. A scenario may set `attack_class`, a list of the same attack classes probes use; the built-in scenario uses `indirect-injection` and `data-exfil`.
 A catalog response includes resolved template content so a trusted broker can freeze the exact seed content with the run.
 Template files must stay within the catalog's `templates` directory and are limited to 64 KiB.
 A trusted server should select the catalog scenario and supply the connection IDs and declared target account.
@@ -88,6 +88,8 @@ For a custom HTTP target, configure `session_id_jsonpath`, `run_id_jsonpath` and
 The run-log path may select an event list or an object containing `events` and `is_dry_run`.
 The endpoint must provide real execution records. Do not manufacture records from response prose.
 Scenario targets reject URL user information, credential query parameters and known credential values in query strings before making requests. Supply credentials through target headers instead.
+
+Findings carry `remediation` and `remediation_actions` for the scenario's `attack_class`, or an empty string and `[]` when it has none.
 
 Scenario results remain regular findings under `evidence.scenario`:
 

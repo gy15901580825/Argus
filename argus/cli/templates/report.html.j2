@@ -180,9 +180,21 @@ h1 { border-bottom: 2px solid #333; }
     {% endif %}
   </div>
   {% endif %}
-  {%- if f.remediation and f.verdict in ("fail", "warn") %}
+  {%- if (f.remediation or f.remediation_actions) and f.verdict in ("fail", "warn") %}
+  {%- if f.remediation_actions %}
+  <div class="remediation" style="border-left:3px solid #36c;background:#f3f6fc;padding:0.6em 0.9em;margin:0.8em 0"><strong>How to fix:</strong>
+    {% for tier, title in [("mitigation", "Mitigation (ship now)"), ("fix", "Fix (design change)")] %}
+    {% set actions = f.remediation_actions | selectattr("tier", "equalto", tier) | list %}
+    {% if actions %}
+    <p><strong>{{ title }}</strong></p>
+    <ul>{% for a in actions %}<li>{{ a.text }}{% if a.atlas_mitigation %} <code>ATLAS:{{ a.atlas_mitigation }}</code> {{ atlas_names.get(a.atlas_mitigation, "") }}{% endif %}</li>{% endfor %}</ul>
+    {% endif %}
+    {% endfor %}
+  </div>
+  {%- else %}
   <div class="remediation" style="border-left:3px solid #36c;background:#f3f6fc;padding:0.6em 0.9em;margin:0.8em 0;white-space:pre-line"><strong>How to fix:</strong>
 {{ f.remediation }}</div>
+  {%- endif %}
   {%- endif %}
   <div class="mappings">
     {% for a in f.atlas_id %}<code>ATLAS:{{ a }}</code>{% endfor %}

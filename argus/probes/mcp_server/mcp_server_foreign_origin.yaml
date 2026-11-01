@@ -24,3 +24,15 @@ remediation: >-
   Reject requests whose Origin header is not one you trust, and send no permissive CORS headers.
   Bind a local server to 127.0.0.1 and check the Host header so a web page cannot reach it
   through DNS rebinding.
+remediation_actions:
+  - tier: mitigation
+    text: >-
+      Bind local MCP listeners to 127.0.0.1, configure trusted Origin and Host allowlists, and
+      remove permissive CORS headers before exposing the endpoint to browser traffic.
+    atlas_mitigation: AML.M0032
+  - tier: fix
+    text: >-
+      Enforce trusted Origin and Host checks in the MCP server before protocol handling,
+      reject foreign browser origins, and send CORS headers only for explicitly trusted
+      origins so a web page cannot drive the local service through DNS rebinding.
+    atlas_mitigation: null

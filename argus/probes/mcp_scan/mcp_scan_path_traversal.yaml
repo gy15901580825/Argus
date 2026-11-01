@@ -22,3 +22,16 @@ remediation: >-
   Resolve every path argument to an absolute path and refuse it unless it stays inside the
   tool's root directory. Reject parent-directory steps, absolute paths and symlinks that lead
   outside the root.
+remediation_actions:
+  - tier: mitigation
+    text: >-
+      Disable arbitrary-path tools or configure a fixed tool root with read-only filesystem
+      access, and reject parent-directory segments and absolute path arguments at the MCP
+      gateway.
+    atlas_mitigation: AML.M0032
+  - tier: fix
+    text: >-
+      Resolve each path argument and symlink to its canonical absolute destination in server
+      code, and refuse access unless the result remains inside the tool's fixed root. Never
+      let a supplied path expand the tool's authorized filesystem scope.
+    atlas_mitigation: AML.M0028

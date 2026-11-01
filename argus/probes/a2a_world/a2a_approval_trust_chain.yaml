@@ -48,3 +48,16 @@ judge:
 remediation: Verify upstream records and approvals independently at each agent boundary.
   Enforce shared retry and effect budgets using observed identities and current request
   references.
+remediation_actions:
+  - tier: mitigation
+    text: >-
+      Set shared retry, delegation and effect limits in the A2A orchestrator, and require
+      confirmation when an upstream peer supplies an approval or record that has not been
+      independently checked.
+    atlas_mitigation: AML.M0036
+  - tier: fix
+    text: >-
+      Make every receiving agent verify upstream records and approvals against the current
+      request and authenticated peer identity. Use one enforced workflow-wide retry and effect
+      ledger across agent boundaries instead of trusting upstream budget claims.
+    atlas_mitigation: AML.M0036

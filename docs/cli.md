@@ -241,7 +241,7 @@ Secret references in your target spec (`${OPENAI_API_KEY}`, etc.) are resolved f
 - `sarif` — SARIF 2.1.0, uploads cleanly to GitHub code-scanning (Security tab)
 - `junit` — JUnit XML for any CI tool that parses test results
 
-Each finding from a library probe says how to fix the weakness it tests: the probe's own text when it has one (the MCP server and vLLM probes do), else a few lines for each attack class the probe covers. `scan-skill` findings have an empty `remediation`. You find it under "How to fix" on `fail` and `warn` findings in HTML, as the rule's `help` in SARIF, on the last line of the `<failure>` text in JUnit, and in the `remediation` field in run.json.
+Each finding from a library probe says how to fix the weakness it tests: the probe's own text when it has one (the MCP server and vLLM probes do), else a few lines for each attack class the probe covers. `scan-skill` findings have an empty `remediation` and an empty `remediation_actions` list. You find it under "How to fix" on `fail` and `warn` findings in HTML (as a "Mitigation (ship now)" list and a "Fix (design change)" list when the finding has `remediation_actions`), as the rule's `help` in SARIF (`help.text` is the `remediation` text; `help.markdown`, which GitHub code scanning shows, lists both tiers), on the last line of the `<failure>` text in JUnit, and in the `remediation` and `remediation_actions` fields in run.json.
 
 ## CI integration
 

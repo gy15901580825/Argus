@@ -50,13 +50,15 @@ The top-level keys always appear in this order. `incomplete_reason`, `notes` and
 
 `run`, `mcp-trap` and `scan-mcp` all write `summary` in run.json. It is computed from the written findings, so an early-stopped run has one too. Files written before this field existed do not have it.
 
-Each finding has the same keys as the engine's `Finding` record: `id`, `probe_id`, `attack_prompt`, `target_response`, `target_latency_ms`, `probed_at`, `verdict`, `severity`, `confidence`, `reasoning`, `judge_model`, `escalated_model`, `atlas_id`, `owasp_id`, `owasp_agentic`, `nist_id`, `eu_ai_act_id`, `created_at`, `evidence` and `remediation`.
+Each finding has the same keys as the engine's `Finding` record: `id`, `probe_id`, `attack_prompt`, `target_response`, `target_latency_ms`, `probed_at`, `verdict`, `severity`, `confidence`, `reasoning`, `judge_model`, `escalated_model`, `atlas_id`, `owasp_id`, `owasp_agentic`, `nist_id`, `eu_ai_act_id`, `created_at`, `evidence`, `remediation` and `remediation_actions`.
 
 `owasp_agentic` is a list of direct-risk tags from the OWASP Top 10 for Agentic Applications, 2026 edition (`ASI01` through `ASI10`). Unmapped findings contain `[]`. Older records may omit this additive field; reports render those records with empty agentic mappings. Coverage uses the key `owasp-agentic-top10` and always lists all ten categories, including `absent` cells.
 
 HTML shows agentic tags beside each finding. SARIF stores the exact array in rule and result `properties.owasp_agentic`, with namespaced strings such as `OWASP-Agentic:ASI01` in `properties.tags`. JUnit stores one suite property per finding, named `owasp_agentic.1`, `owasp_agentic.2`, and so on in testcase order. Each value is a JSON array, including `[]` when unmapped. Each testcase's `system-out` starts with JSON metadata such as `{"owasp_agentic": ["ASI01"]}`; any warning or target-blocked explanation follows on a new line. This uses elements supported by strict xUnit2 consumers.
 
 `remediation` is how to fix the weakness the probe tests: the probe's own text when it has one, else a few sentences for each of the probe's attack classes, one class per line. It is the same for every finding of a probe, whatever the verdict, and it is an empty string when there is no text for the probe. Files written before this field existed do not have it.
+
+`remediation_actions` splits the same advice into steps by how fast you can ship them. Each entry has `tier`, `text` and `atlas_mitigation`. `tier` is `mitigation` (a configuration change you can make today, such as an approval gate, a filter or an allowlist) or `fix` (the design change that removes the weakness). `atlas_mitigation` is a MITRE ATLAS mitigation id such as `AML.M0030`, used as a tag, or null. Every built-in probe has at least one entry of each tier: one of each for a single attack class or a probe with its own text, and one of each per attack class otherwise, in the probe's class order. The list is the same for every finding of a probe. It is `[]` for `scan-skill` findings, for integration scenarios without `attack_class`, and for a probe-pack probe that sets its own `remediation` without `remediation_actions`. `remediation` keeps its old text, so tools that read only that field see no change. Files written before this field existed do not have it.
 
 `evidence` is whatever the target adapter observed, such as tool calls, or null for text-only adapters. Its contents are free-form. Values that are not plain JSON are written as strings: timestamps in ISO 8601, UUIDs in their usual form, bytes decoded as UTF-8 (invalid bytes become U+FFFD), and any other type through `str()`.
 
@@ -73,7 +75,7 @@ A target spec can reference environment variables as `$VAR` or `${VAR}` in any s
 This rule does not know which variables are secret. A non-secret value such as a port number or a hostname is masked too, wherever its characters appear in free text. This over-redaction is deliberate. These fields are always written as the engine produced them, never masked:
 
 - run: `schema_version`, `argus_version`, `id`, `status`, `started_at`, `finished_at`, `coverage`, `summary` and `target_spec.kind`
-- each finding: `id`, `probe_id`, `verdict`, `severity`, `probed_at`, `created_at`, `confidence`, `target_latency_ms`, `atlas_id`, `owasp_id`, `owasp_agentic`, `nist_id`, `eu_ai_act_id`, `judge_model`, `escalated_model` and `remediation`
+- each finding: `id`, `probe_id`, `verdict`, `severity`, `probed_at`, `created_at`, `confidence`, `target_latency_ms`, `atlas_id`, `owasp_id`, `owasp_agentic`, `nist_id`, `eu_ai_act_id`, `judge_model`, `escalated_model`, `remediation` and `remediation_actions`
 
 ### Rule 2: secret-looking key names
 

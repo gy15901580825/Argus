@@ -21,3 +21,16 @@ judge:
 remediation: >-
   Never build a shell command from tool input. Call the program directly with an argument list,
   check each argument against an allowlist, and run the tool with the least privilege it needs.
+remediation_actions:
+  - tier: mitigation
+    text: >-
+      Disable the command-execution tool until repaired, or configure it with an approved
+      program and argument allowlist plus a least-privilege execution account. Do not forward
+      free-form tool input to a shell.
+    atlas_mitigation: AML.M0028
+  - tier: fix
+    text: >-
+      Replace shell-command construction with direct program execution using an argument list.
+      Check each argument against the tool's allowlist in server code and run the process with
+      only the filesystem and service permissions that task needs.
+    atlas_mitigation: AML.M0033

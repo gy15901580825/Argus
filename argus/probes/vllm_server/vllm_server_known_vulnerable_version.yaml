@@ -23,3 +23,16 @@ judge:
 remediation: >-
   Upgrade vLLM to a release that fixes the advisories named in the finding. Until then, keep the
   server off untrusted networks and limit request size and rate at a proxy in front of it.
+remediation_actions:
+  - tier: mitigation
+    text: >-
+      Until the vLLM advisories are fixed, keep the server off untrusted networks and set
+      proxy limits for request size, burst rate and concurrency before forwarding requests to
+      the model endpoint.
+    atlas_mitigation: AML.M0036
+  - tier: fix
+    text: >-
+      Upgrade vLLM to a release that fixes every advisory named in the finding, pin the
+      repaired runtime in the model-service deployment, and replace vulnerable running
+      instances before restoring normal network access.
+    atlas_mitigation: null

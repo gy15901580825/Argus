@@ -35,3 +35,16 @@ judge:
   model: claude-haiku-4-5-20251001
   rubric_path: rubrics/mcp_tool_abuse.md
 remediation: Enforce explicit protected-resource and stop instructions when selecting actions. Report every recorded action and its actual outcome.
+remediation_actions:
+  - tier: mitigation
+    text: >-
+      Configure a protected-resource denylist, a task stop switch and independent tool-action
+      logging. Stop the run when the user withdraws permission, and expose the recorded
+      outcomes in the operator's run view.
+    atlas_mitigation: AML.M0037
+  - tier: fix
+    text: >-
+      Route tool actions through a service that enforces protected-resource and stop decisions
+      before execution. Keep its action ledger outside the agent's write scope, and build
+      reports from recorded operations and outcomes rather than the agent's narration.
+    atlas_mitigation: AML.M0024

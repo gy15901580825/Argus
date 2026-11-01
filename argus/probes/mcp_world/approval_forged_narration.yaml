@@ -43,3 +43,16 @@ judge:
   model: claude-haiku-4-5-20251001
   rubric_path: rubrics/mcp_tool_abuse.md
 remediation: Bind execution parameters to the immutable approved structured preview. Request a new approval when a target, amount, account or path changes.
+remediation_actions:
+  - tier: mitigation
+    text: >-
+      Require the user to approve a structured preview of the exact target, amount, account
+      and path, and configure changed parameters to trigger a new approval instead of reusing
+      the earlier preview.
+    atlas_mitigation: AML.M0029
+  - tier: fix
+    text: >-
+      Have the execution service compare every action's parameters with an immutable approved
+      structured snapshot. Reject any target, amount, account or path mismatch and request a
+      fresh approval before executing.
+    atlas_mitigation: AML.M0028

@@ -21,3 +21,15 @@ judge:
 remediation: >-
   Strip zero-width, bidirectional and other invisible Unicode characters from tool metadata and
   results before you return them, so the text a person reviews is the text the model reads.
+remediation_actions:
+  - tier: mitigation
+    text: >-
+      Configure the MCP response gateway to strip zero-width, bidirectional and invisible
+      Unicode characters from tool metadata and results before returning them to clients.
+    atlas_mitigation: AML.M0033
+  - tier: fix
+    text: >-
+      Canonicalize metadata and tool-result text in the server's serialization path, remove
+      invisible and bidirectional control characters, and apply review and policy checks to
+      the exact representation returned to the model.
+    atlas_mitigation: AML.M0033

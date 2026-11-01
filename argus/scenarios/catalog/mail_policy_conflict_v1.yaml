@@ -2,6 +2,7 @@ id: mail_policy_conflict_v1
 kind: integration_scenario
 name: Mail and document policy conflict
 description: Compare a hostile external email with a benign control, using independent draft evidence.
+attack_class: [indirect-injection, data-exfil]
 identities:
   operator: {connection: google/operator}
   observer: {connection: google/observer}

@@ -1,81 +1,319 @@
-# How to fix a failed probe, one entry per attack_class (argus/probe.py VALID_ATTACK_CLASSES).
+# Fix-it text and tiered actions, one entry per attack_class (argus/probe.py VALID_ATTACK_CLASSES).
 # Reports show the entries for each class a probe declares. Keep each entry short, concrete
 # and vendor-neutral. tests/test_remediation.py fails when a class has no entry.
 
-prompt-injection: >-
-  A user message can ask for things but cannot change the system prompt's rules or the agent's
-  tool permissions. Keep both fixed for the whole session, and enforce high-impact limits in code
-  instead of relying on the model to refuse.
+prompt-injection:
+  text: >-
+    A user message can ask for things but cannot change the system prompt's rules or the agent's
+    tool permissions. Keep both fixed for the whole session, and enforce high-impact limits in code
+    instead of relying on the model to refuse.
+  actions:
+    - tier: mitigation
+      text: >-
+        Configure the agent gateway to reject user requests that try to replace system rules or
+        tool permissions, and keep the system prompt and enabled tool set fixed throughout the
+        session.
+      atlas_mitigation: AML.M0020
+    - tier: fix
+      text: >-
+        Move tool permissions and high-impact operation limits into the tool service, keyed to
+        authenticated callers and trusted task policy. The model's interpretation of a user
+        message must never grant a new operation.
+      atlas_mitigation: AML.M0028
 
-indirect-injection: >-
-  Mark web pages, files, emails and tool results as untrusted content that cannot give orders.
-  Only the user's own request may authorize a tool call, so ask the user before acting on
-  anything that fetched content asks for.
+indirect-injection:
+  text: >-
+    Mark web pages, files, emails and tool results as untrusted content that cannot give orders.
+    Only the user's own request may authorize a tool call, so ask the user before acting on
+    anything that fetched content asks for.
+  actions:
+    - tier: mitigation
+      text: >-
+        Once a web page, file, email or tool result is in the context, switch every tool that
+        sends, writes, deletes or pays to ask-the-user mode for the rest of the session, and
+        show the user the exact arguments before the call runs.
+      atlas_mitigation: AML.M0029
+    - tier: fix
+      text: >-
+        Give the model that reads fetched content no tools, and pass only typed fields it
+        extracts, never free text, to the planner that can call tools. Check each tool call
+        against the user's own request in code, not by asking the model.
+      atlas_mitigation: AML.M0030
 
-jailbreak: >-
-  Filter both input and output for the content your policy forbids, whatever the role-play,
-  encoding or framing. Check the whole conversation, not only the last message, so a request
-  split over several turns is still refused.
+jailbreak:
+  text: >-
+    Filter both input and output for the content your policy forbids, whatever the role-play,
+    encoding or framing. Check the whole conversation, not only the last message, so a request
+    split over several turns is still refused.
+  actions:
+    - tier: mitigation
+      text: >-
+        Enable input and output policy filters on the agent gateway, including decoded payloads
+        and the full conversation history, so role-play or requests split across turns do not
+        bypass the configured content rules.
+      atlas_mitigation: AML.M0020
+    - tier: fix
+      text: >-
+        Route every conversation turn and model response through a policy service outside the
+        model before accepting it. Preserve prior turns and decoded representations there, and
+        reject forbidden content before it reaches a user or tool.
+      atlas_mitigation: AML.M0020
 
-data-exfil: >-
-  Allowlist the domains, email addresses and tools the agent may send data to, and block the
-  rest in code. Strip sensitive fields from tool results before the model sees them, and log
-  every outbound send.
+data-exfil:
+  text: >-
+    Allowlist the domains, email addresses and tools the agent may send data to, and block the
+    rest in code. Strip sensitive fields from tool results before the model sees them, and log
+    every outbound send.
+  actions:
+    - tier: mitigation
+      text: >-
+        Configure the outbound tool gateway with approved domains and email recipients, deny
+        every other destination, and enable logs for each attempted send before allowing the
+        agent to transmit data.
+      atlas_mitigation: AML.M0028
+    - tier: fix
+      text: >-
+        Separate sensitive-data tools from the model-facing reader. Return only permitted
+        fields, and make a dedicated outbound service enforce caller-specific destination rules
+        so raw private data cannot flow directly from retrieval to a send tool.
+      atlas_mitigation: AML.M0032
 
-credential-extraction: >-
-  Keep keys, tokens, passwords and wallet seeds out of the model's context: load them inside the
-  tool layer, never in a prompt. Scan replies for secret patterns and redact them before they
-  leave the agent.
+credential-extraction:
+  text: >-
+    Keep keys, tokens, passwords and wallet seeds out of the model's context: load them inside the
+    tool layer, never in a prompt. Scan replies for secret patterns and redact them before they
+    leave the agent.
+  actions:
+    - tier: mitigation
+      text: >-
+        Add an output filter that matches secret formats (cloud access keys, bearer and JWT
+        tokens, PEM private keys, wallet seed phrases) in replies and tool arguments, replaces
+        each match before it leaves the agent, and alerts on every hit.
+      atlas_mitigation: AML.M0020
+    - tier: fix
+      text: >-
+        Take every key, token, password and seed out of system prompts, memory and tool results.
+        Have the tool layer fetch secrets from a secret manager and attach them to outbound
+        calls itself, so the model never holds a value it could repeat.
+      atlas_mitigation: AML.M0027
 
-output-handling: >-
-  Treat model output as untrusted input to the next system. Escape it before you render HTML,
-  use parameterized queries, and never pass it to a shell, eval or interpreter without a strict
-  allowlist.
+output-handling:
+  text: >-
+    Treat model output as untrusted input to the next system. Escape it before you render HTML,
+    use parameterized queries, and never pass it to a shell, eval or interpreter without a strict
+    allowlist.
+  actions:
+    - tier: mitigation
+      text: >-
+        Enable HTML escaping in the report renderer and disable model-driven shell or eval tools
+        until their accepted commands are allowlisted. Reject executable model output at the
+        downstream gateway rather than trusting its wording.
+      atlas_mitigation: AML.M0033
+    - tier: fix
+      text: >-
+        Give each downstream consumer a typed output boundary: escape HTML in its rendering
+        code, bind SQL values as query parameters, and accept shell or interpreter requests only
+        through an explicit command and argument allowlist.
+      atlas_mitigation: AML.M0033
 
-input-handling: >-
-  Check the size, type and encoding of every input before the model sees it. Decode or reject
-  base64, hidden Unicode characters and unexpected file types instead of passing them through.
+input-handling:
+  text: >-
+    Check the size, type and encoding of every input before the model sees it. Decode or reject
+    base64, hidden Unicode characters and unexpected file types instead of passing them through.
+  actions:
+    - tier: mitigation
+      text: >-
+        Set model gateway limits for input bytes, accepted MIME types and character encodings.
+        Reject unexpected file types, undecoded base64 and hidden or bidirectional Unicode
+        before adding an input to the agent's context.
+      atlas_mitigation: AML.M0033
+    - tier: fix
+      text: >-
+        Put a canonical decoding and schema-checking service before prompt construction. It must
+        expose decoded text to policy checks, reject unsupported formats and hidden Unicode, and
+        pass only size-bounded typed inputs to the model.
+      atlas_mitigation: AML.M0033
 
-tool-abuse: >-
-  Give each tool the narrowest scope it needs and validate every argument in code against an
-  allowlist. Ask the user to confirm any tool call that writes, deletes, sends or spends.
+tool-abuse:
+  text: >-
+    Give each tool the narrowest scope it needs and validate every argument in code against an
+    allowlist. Ask the user to confirm any tool call that writes, deletes, sends or spends.
+  actions:
+    - tier: mitigation
+      text: >-
+        Switch tools that write, delete, send or spend to user-confirmation mode, and show their
+        exact arguments and target resources in the approval prompt before the call can execute.
+      atlas_mitigation: AML.M0029
+    - tier: fix
+      text: >-
+        Make the tool service authorize each operation and argument against the verified
+        caller's task and resource allowlists. Give each tool narrowly scoped backend
+        credentials so a model-selected argument cannot expand its reach.
+      atlas_mitigation: AML.M0028
 
-excessive-agency: >-
-  Ask the user to confirm irreversible or high-impact actions such as deleting data, sending
-  messages, installing packages or calling cloud APIs. Run the agent with least-privilege
-  credentials so one wrong decision cannot do much damage.
+excessive-agency:
+  text: >-
+    Ask the user to confirm irreversible or high-impact actions such as deleting data, sending
+    messages, installing packages or calling cloud APIs. Run the agent with least-privilege
+    credentials so one wrong decision cannot do much damage.
+  actions:
+    - tier: mitigation
+      text: >-
+        Enable human approval for deletion, external messages, package installs and cloud API
+        actions, and assign the agent an existing least-privilege role instead of the user's
+        full account permissions.
+      atlas_mitigation: AML.M0029
+    - tier: fix
+      text: >-
+        Introduce a task-scoped credential broker that grants only preapproved resources and
+        operations. New targets or credentials discovered during a run must be denied unless an
+        independent approval explicitly expands the task scope.
+      atlas_mitigation: AML.M0037
 
-supply-chain: >-
-  Pin and verify every package, model, plugin and MCP server the agent installs or loads. Block
-  install scripts and new dependencies until a person approves them.
+supply-chain:
+  text: >-
+    Pin and verify every package, model, plugin and MCP server the agent installs or loads. Block
+    install scripts and new dependencies until a person approves them.
+  actions:
+    - tier: mitigation
+      text: >-
+        Pin approved models, agent configurations and dependencies to publisher-verified
+        versions and digests in the deployment manifest. Disable automatic plugin installs and
+        install scripts until a person approves the exact change.
+      atlas_mitigation: AML.M0014
+    - tier: fix
+      text: >-
+        Make the artifact loader consume an approved AI component registry with versions,
+        sources and trusted digests. Verify each package, model, plugin and MCP configuration
+        before loading it, and reject new dependencies or install scripts without recorded
+        approval.
+      atlas_mitigation: AML.M0014
 
-poisoning: >-
-  Check the source and integrity of content before it enters a retrieval index, agent memory or
-  training data. Record where each entry came from so you can find and remove poisoned content.
+poisoning:
+  text: >-
+    Check the source and integrity of content before it enters a retrieval index, agent memory or
+    training data. Record where each entry came from so you can find and remove poisoned content.
+  actions:
+    - tier: mitigation
+      text: >-
+        Disable automatic writes from tool results into persistent agent memory, require user
+        confirmation for each proposed update, and quarantine retrieved or training content
+        whose source and integrity have not been checked.
+      atlas_mitigation: AML.M0031
+    - tier: fix
+      text: >-
+        Give retrieval, memory and training stores a provenance-aware write service that records
+        source and modification history, checks integrity before admission, and retains
+        known-good versions so poisoned entries can be traced and removed.
+      atlas_mitigation: AML.M0031
 
-harmful-content: >-
-  Filter input and output for the harm categories your use case forbids, and test the filter
-  with reworded and multi-turn requests.
+harmful-content:
+  text: >-
+    Filter input and output for the harm categories your use case forbids, and test the filter
+    with reworded and multi-turn requests.
+  actions:
+    - tier: mitigation
+      text: >-
+        Enable the use case's harm-category filters on agent inputs and replies, feed them the
+        full conversation, and check their configured rules with reworded and multi-turn
+        requests before exposing the agent.
+      atlas_mitigation: AML.M0020
+    - tier: fix
+      text: >-
+        Place a mandatory moderation service outside the model on every input, tool result and
+        response path. It must apply the same harm policy across conversation turns and prevent
+        rejected content from reaching users or downstream tools.
+      atlas_mitigation: AML.M0020
 
-misinformation: >-
-  Ground answers in sources the agent can cite, and have it say it does not know when the sources
-  do not support an answer. Show the citations so users can check each claim.
+misinformation:
+  text: >-
+    Ground answers in sources the agent can cite, and have it say it does not know when the sources
+    do not support an answer. Show the citations so users can check each claim.
+  actions:
+    - tier: mitigation
+      text: >-
+        Set the agent's system policy to cite the retrieved source for each factual claim and
+        say it does not know when the available sources do not support an answer. Enable visible
+        citations in the response renderer.
+      atlas_mitigation: AML.M0021
+    - tier: fix
+      text: >-
+        Pass source identifiers with retrieved passages through the answer pipeline, and put a
+        groundedness check before response delivery. Reject unsupported claims there and render
+        citations from the verified source identifiers, not model-invented references.
+      atlas_mitigation: AML.M0020
 
-resource-abuse: >-
-  Set hard limits per task on tool calls, loop iterations, tokens, time and spend, and stop the
-  task when it reaches one. Alert on runs that come close to a limit.
+resource-abuse:
+  text: >-
+    Set hard limits per task on tool calls, loop iterations, tokens, time and spend, and stop the
+    task when it reaches one. Alert on runs that come close to a limit.
+  actions:
+    - tier: mitigation
+      text: >-
+        Configure hard per-task limits for tool calls, loop iterations, tokens, elapsed time and
+        spend, including retry totals, and enable alerts before a run reaches any configured
+        ceiling.
+      atlas_mitigation: AML.M0036
+    - tier: fix
+      text: >-
+        Make the orchestrator enforce a single task-wide resource ledger across model calls,
+        tools and retries. Reserve cost and call capacity before each action, and stop the
+        workflow when any time, token, iteration or spending bound is exhausted.
+      atlas_mitigation: AML.M0036
 
-payment-abuse: >-
-  Enforce spending rules in code, outside the model: a budget per payment and per task, a payee
-  allowlist, and a check that the amount and payee match what the user approved. Ask the user
-  before paying more than the limit or paying a new payee, and cap the total across retries.
+payment-abuse:
+  text: >-
+    Enforce spending rules in code, outside the model: a budget per payment and per task, a payee
+    allowlist, and a check that the amount and payee match what the user approved. Ask the user
+    before paying more than the limit or paying a new payee, and cap the total across retries.
+  actions:
+    - tier: mitigation
+      text: >-
+        Enable approval for payments above the configured amount or to new payees, display the
+        exact amount and recipient, and set gateway budgets per payment and per task that
+        include all retries.
+      atlas_mitigation: AML.M0029
+    - tier: fix
+      text: >-
+        Make the payment service bind each transfer to an immutable approved amount and payee,
+        enforce the payee allowlist, and debit a task-wide budget before execution so split
+        charges and retries cannot exceed the user's authorization.
+      atlas_mitigation: AML.M0028
 
-mcp-abuse: >-
-  Connect only to MCP servers you have approved, and pin each tool's name and description. Stop
-  the session when a server changes a tool mid-session, ignore instructions inside tool
-  descriptions and results, and call only the tools the user's task needs.
+mcp-abuse:
+  text: >-
+    Connect only to MCP servers you have approved, and pin each tool's name and description. Stop
+    the session when a server changes a tool mid-session, ignore instructions inside tool
+    descriptions and results, and call only the tools the user's task needs.
+  actions:
+    - tier: mitigation
+      text: >-
+        Allow connections only to approved MCP endpoints, pin their tool names and descriptions
+        in client configuration, and stop the session if a server changes listed metadata or
+        offers an unapproved tool.
+      atlas_mitigation: AML.M0037
+    - tier: fix
+      text: >-
+        Put MCP calls behind an authorization gateway that derives allowed tools from the user's
+        task, treats descriptions and results as untrusted data, and checks each call against
+        verified caller scope without letting returned text grant permissions.
+      atlas_mitigation: AML.M0028
 
-a2a-abuse: >-
-  Require authentication on every A2A operation, scope tasks and push configurations to the caller
-  that created them, return 404 for tasks the caller may not see, and reject push callback URLs
-  that point at loopback, private or link-local addresses.
+a2a-abuse:
+  text: >-
+    Require authentication on every A2A operation, scope tasks and push configurations to the caller
+    that created them, return 404 for tasks the caller may not see, and reject push callback URLs
+    that point at loopback, private or link-local addresses.
+  actions:
+    - tier: mitigation
+      text: >-
+        Require authenticated A2A requests at the gateway, enable caller-specific task and
+        push-policy rules, and block callback destinations on loopback, private and link-local
+        networks before enabling push delivery.
+      atlas_mitigation: AML.M0028
+    - tier: fix
+      text: >-
+        Make the A2A server authenticate every operation, bind task and push records to their
+        creator, return 404 for unseen tasks, and recheck callback hosts before registration and
+        outbound delivery so delegation cannot cross caller boundaries.
+      atlas_mitigation: AML.M0028

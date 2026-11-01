@@ -20,3 +20,15 @@ judge:
   rubric_path: "rubrics/mcp_tool_abuse.md"
 remediation: >-
   Consider signing the Agent Card with JWS so clients can verify its source and integrity. Signatures are optional in A2A 1.0.
+remediation_actions:
+  - tier: mitigation
+    text: >-
+      Publish the reviewed Agent Card contents and canonical endpoint through an existing
+      trusted channel, and ask clients to pin both until optional JWS signing is enabled.
+    atlas_mitigation: null
+  - tier: fix
+    text: >-
+      Add optional JWS signing to the Agent Card publishing path and distribute the
+      verification key through a trusted channel so clients can check publisher identity and
+      card integrity. A2A 1.0 does not require signatures.
+    atlas_mitigation: null

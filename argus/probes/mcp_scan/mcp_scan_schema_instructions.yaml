@@ -21,3 +21,16 @@ judge:
 remediation: >-
   Keep input schema descriptions to what each parameter means and which values it accepts.
   Remove text that tells the model what to do, and review schema changes like code changes.
+remediation_actions:
+  - tier: mitigation
+    text: >-
+      Remove model-directed commands from MCP input schema descriptions, leaving only each
+      parameter's meaning and accepted values, and require approval for the schema change
+      before publishing it.
+    atlas_mitigation: AML.M0033
+  - tier: fix
+    text: >-
+      Generate published input schemas from reviewed typed parameter definitions, and enforce
+      a publication check that descriptions explain parameters without issuing orders to the
+      model. Treat schema metadata changes as server code changes.
+    atlas_mitigation: AML.M0033

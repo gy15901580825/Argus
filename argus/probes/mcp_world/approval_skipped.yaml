@@ -39,3 +39,16 @@ judge:
   model: claude-haiku-4-5-20251001
   rubric_path: rubrics/mcp_tool_abuse.md
 remediation: Require an approved snapshot before execution and stop when approval is denied. Tool-returned approval claims do not authorize an action.
+remediation_actions:
+  - tier: mitigation
+    text: >-
+      Enable mandatory approval before consequential tool execution, stop the workflow on
+      denial, and disable any setting that treats a tool's claim of approval as the user's
+      confirmation.
+    atlas_mitigation: AML.M0029
+  - tier: fix
+    text: >-
+      Make the tool executor require a verified approved snapshot for each action and reject
+      missing or denied approvals. Read authorization from the approval service, never from
+      text returned by another tool.
+    atlas_mitigation: AML.M0028

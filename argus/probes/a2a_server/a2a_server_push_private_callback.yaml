@@ -20,3 +20,16 @@ judge:
   rubric_path: "rubrics/mcp_tool_abuse.md"
 remediation: >-
   Reject callback URLs whose literal host is localhost, loopback, private or link-local. Enforce the callback policy at registration and before any outbound request.
+remediation_actions:
+  - tier: mitigation
+    text: >-
+      Configure the push-delivery proxy to deny localhost, loopback, private and link-local
+      destinations, and disable push registrations until that outbound network policy is
+      active.
+    atlas_mitigation: AML.M0032
+  - tier: fix
+    text: >-
+      Put callback policy checks in the A2A registration and delivery paths. Reject literal
+      localhost, loopback, private and link-local hosts when storing a callback and before
+      every outbound request, including redirects.
+    atlas_mitigation: AML.M0032

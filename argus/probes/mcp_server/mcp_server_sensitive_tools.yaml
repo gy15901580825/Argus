@@ -23,3 +23,16 @@ judge:
 remediation: >-
   Remove tools that dump environment variables, run arbitrary commands or read arbitrary files.
   If a tool must stay, limit it to named values or one directory, and require authentication.
+remediation_actions:
+  - tier: mitigation
+    text: >-
+      Disable tools that dump environment values, run arbitrary commands or read arbitrary
+      files, and require authenticated access before enabling any replacement with a
+      named-value or fixed-directory allowlist.
+    atlas_mitigation: AML.M0028
+  - tier: fix
+    text: >-
+      Replace broad environment, shell and filesystem tools with operations that accept only
+      named values or resources under one fixed directory. Enforce caller authentication and
+      resource permissions inside each server-side tool implementation.
+    atlas_mitigation: AML.M0028

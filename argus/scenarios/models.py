@@ -6,7 +6,9 @@ import re
 from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from argus.probe import VALID_ATTACK_CLASSES
 
 
 def now() -> datetime:
@@ -143,6 +145,7 @@ class IntegrationScenario(BaseModel):
     name: str = "Integration scenario"
     description: str = ""
     severity: Literal["info", "low", "medium", "high", "critical"] = "high"
+    attack_class: list[str] = Field(default_factory=list)
     identities: dict[str, dict[str, str]] = Field(default_factory=dict)
     objects: dict[str, ObjectSpec] = Field(default_factory=dict)
     readiness: list[ReadinessSpec] = Field(default_factory=list)
@@ -152,6 +155,14 @@ class IntegrationScenario(BaseModel):
     controls: list[ControlSpec] = Field(default_factory=list)
     allowed_ops: list[str] = Field(default_factory=list)
     budget: BudgetSpec = Field(default_factory=BudgetSpec)
+
+    @field_validator("attack_class")
+    @classmethod
+    def check_attack_classes(cls, values):
+        for value in values:
+            if value not in VALID_ATTACK_CLASSES:
+                raise ValueError(f"invalid attack_class {value!r}")
+        return values
 
     @model_validator(mode="after")
     def check_references(self):

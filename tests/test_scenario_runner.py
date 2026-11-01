@@ -472,3 +472,29 @@ async def test_children_are_cleaned_before_folder_after_recovery(tmp_path):
     d.recover = recover
     await r.cleanup()
     assert d.deleted == [child.marker, folder.marker]
+
+
+async def test_scenario_finding_carries_class_remediation(tmp_path):
+    from argus import remediation
+    classes = ["indirect-injection", "data-exfil"]
+    r = runner(tmp_path, spec=scenario(attack_class=classes))
+    f = r.finding(await r.run())
+    assert f["remediation"] == remediation.for_classes(classes) != ""
+    assert f["remediation_actions"] == remediation.actions_for_classes(classes)
+    assert {a["tier"] for a in f["remediation_actions"]} == {"mitigation", "fix"}
+
+
+async def test_scenario_without_attack_class_has_empty_remediation(tmp_path):
+    r = runner(tmp_path)
+    f = r.finding(await r.run())
+    assert f["remediation"] == "" and f["remediation_actions"] == []
+
+
+async def test_scenario_remediation_survives_redaction(tmp_path):
+    from argus import remediation
+    assert "tool" in remediation.for_classes(["indirect-injection"])
+    r = runner(tmp_path, spec=scenario(attack_class=["indirect-injection"]))
+    r.ctx.secrets.add("tool")
+    f = r.finding(await r.run())
+    assert f["remediation"] == remediation.for_classes(["indirect-injection"])
+    assert f["remediation_actions"] == remediation.actions_for_classes(["indirect-injection"])

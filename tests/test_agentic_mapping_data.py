@@ -98,3 +98,14 @@ def test_a2a_server_probes_map_to_asi07_only():
     module = mapper()
     rows = [row for name, row in module.APPROVED.items() if name.startswith('a2a_server_')]
     assert len(rows) == 6 and all(row['ids'] == ['ASI07'] for row in rows)
+
+
+def test_fix_it_text_is_not_mapping_evidence():
+    module = mapper()
+    data = yaml.safe_load((ROOT / "argus/probes/mcp_server/mcp_server_no_auth.yaml").read_text())
+    original = module.evidence_hash(data)
+    data["remediation"] = "Different fix-it text."
+    data["remediation_actions"] = [{"tier": "fix", "text": "Different tool design.", "atlas_mitigation": None}]
+    assert module.evidence_hash(data) == original
+    data["prompts"] = ["A different attack"]
+    assert module.evidence_hash(data) != original

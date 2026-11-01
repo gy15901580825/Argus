@@ -20,3 +20,16 @@ judge:
   rubric_path: "rubrics/mcp_tool_abuse.md"
 remediation: >-
   Require valid authentication when returning an extended Agent Card whose public Card declares authentication requirements.
+remediation_actions:
+  - tier: mitigation
+    text: >-
+      Apply the public Agent Card's authentication requirements to the extended-card route in
+      the reverse proxy, and block requests with missing, expired or unknown credentials
+      before they reach the server.
+    atlas_mitigation: AML.M0028
+  - tier: fix
+    text: >-
+      Authenticate extended Agent Card requests inside the A2A server using the same verified
+      identity and credential rules declared by the public Card, and deny access before
+      returning any protected card fields.
+    atlas_mitigation: AML.M0028

@@ -52,3 +52,16 @@ def test_reserved_object_key_and_unknown_observation_are_rejected():
         IntegrationScenario(id="sample", objects={"folder": {"driver": "gdrive", "op": "create_doc"}})
     with pytest.raises(ValidationError):
         IntegrationScenario(id="sample", observe=[{"driver": "gdrive", "collect": "object_diff", "object": "missing"}])
+
+
+def test_attack_class_is_validated():
+    with pytest.raises(ValidationError, match="invalid attack_class 'nope'"):
+        IntegrationScenario(id="sample", attack_class=["nope"])
+
+
+def test_catalog_scenarios_resolve_both_tiers():
+    from argus import remediation
+    from argus.scenarios.api import catalog
+    for s in catalog():
+        assert s.attack_class, s.id
+        assert {a["tier"] for a in remediation.actions_for_classes(s.attack_class)} == {"mitigation", "fix"}

@@ -55,6 +55,8 @@ The server refuses to start, with exit code 1, when `ARGUS_SERVER_HOST` is not a
 
 The response is a Server-Sent Events stream: one `data:` line per finding, then one `data:` line with the coverage event, then `event: end` with `data: {}`. If the run fails, the stream ends with `event: error` instead, and no coverage event is sent.
 
+Each finding includes `remediation_actions`; see [the run.json finding format](../run-json.md) for its shape.
+
 The coverage event has three keys:
 
 ```json

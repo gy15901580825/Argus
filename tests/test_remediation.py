@@ -121,10 +121,12 @@ def test_mcp_scan_and_mcp_trap_findings_carry_remediation():
     scan_probe = next(p for p in load_probe_library(PROBES_DIR) if p.id == "mcp_scan_command_execution")
     f = scan_finding(scan_probe, verdict="pass", severity="info", reasoning="r", evidence={})
     assert f["remediation"] == remediation.for_probe(scan_probe) == scan_probe.remediation.strip() != ""
+    assert f["remediation_actions"] == remediation.actions_for_probe(scan_probe) != []
 
     trap_probe = load_trap_probes(["rug_pull"])[0]
     t = scenario_finding(trap_probe, [RoundOutcome(1, "failed", "sent", "p", "r", {"interaction_count": 1})], 1)
     assert t["remediation"] == remediation.for_probe(trap_probe) != ""
+    assert t["remediation_actions"] == remediation.actions_for_probe(trap_probe) != []
 
 
 def test_scan_skill_findings_carry_an_empty_remediation():
@@ -133,6 +135,9 @@ def test_scan_skill_findings_carry_an_empty_remediation():
 
     assert _normalise({"probe_id": "skill_exfiltration"}, "t")["remediation"] == ""
     assert _normalise({"probe_id": "x", "remediation": "keep"}, "t")["remediation"] == "keep"
+    assert _normalise({"probe_id": "skill_exfiltration"}, "t")["remediation_actions"] == []
+    actions = [{"tier": "fix", "text": "Keep this.", "atlas_mitigation": None}]
+    assert _normalise({"probe_id": "x", "remediation_actions": actions}, "t")["remediation_actions"] == actions
 
 
 def test_deep_mode_wrapper_keeps_the_probe_remediation():
@@ -140,6 +145,86 @@ def test_deep_mode_wrapper_keeps_the_probe_remediation():
     from argus.persona_strategy import build_deep_probes
 
     base = next(p for p in load_probe_library(PROBES_DIR) if p.id == "mcp_server_no_auth")
+    from dataclasses import replace
+
+    base = replace(base, remediation_actions=({"tier": "fix", "text": "Scope MCP tools.", "atlas_mitigation": None},))
     wrapped = build_deep_probes(base, default_personas(), default_strategies(), deep_pairs=2)
     assert wrapped
     assert all(remediation.for_probe(w) == remediation.for_probe(base) == base.remediation.strip() for w in wrapped)
+    assert all(remediation.actions_for_probe(w) == remediation.actions_for_probe(base) for w in wrapped)
+
+
+def test_finding_dict_carries_remediation_actions():
+    from argus.api import finding_dict
+    from argus.runner import skipped_finding
+    p = next(p for p in load_probe_library(PROBES_DIR) if p.id == "mcp_poison_description_exfil")
+    d = finding_dict(skipped_finding(p, "r"), p)
+    assert d["remediation_actions"] == remediation.actions_for_probe(p)
+    assert {a["tier"] for a in d["remediation_actions"]} == {"mitigation", "fix"}
+
+
+def test_run_json_keeps_remediation_actions_unmasked():
+    acts = [{"tier": "mitigation", "text": "Pin each MCP tool description.", "atlas_mitigation": "AML.M0014"}]
+    out = json.loads(run_json.render_json(_run(remediation_actions=acts), secret_values=["MCP"]))
+    assert out["findings"][0]["remediation_actions"] == acts
+
+
+ACTS = [{"tier": "fix", "text": "Pin tool descriptions.", "atlas_mitigation": None},
+        {"tier": "mitigation", "text": "Gate tool calls.", "atlas_mitigation": "AML.M0029"}]
+
+
+def test_remediation_markdown_exact():
+    assert reports.remediation_markdown(ACTS) == (
+        "**Mitigation (ship now)**\n\n"
+        "- Gate tool calls. (ATLAS [AML.M0029](https://atlas.mitre.org/mitigations/AML.M0029) "
+        "Human In-the-Loop for AI Agent Actions)\n\n"
+        "**Fix (design change)**\n\n"
+        "- Pin tool descriptions.")
+
+
+def test_remediation_markdown_skips_unknown_tiers_and_names():
+    assert reports.remediation_markdown([]) == ""
+    assert reports.remediation_markdown([
+        {"tier": "patch", "text": "Ignore this.", "atlas_mitigation": None},
+        {"tier": "fix", "text": "Fix the tool.", "atlas_mitigation": "AML.M0044"}]) == (
+        "**Fix (design change)**\n\n- Fix the tool. "
+        "(ATLAS [AML.M0044](https://atlas.mitre.org/mitigations/AML.M0044))")
+
+
+def test_sarif_rule_help_adds_markdown_for_actions():
+    out = json.loads(reports.render_sarif(_run(remediation_actions=ACTS)))
+    rule = out["runs"][0]["tool"]["driver"]["rules"][0]
+    assert rule["help"]["text"] == "Connect only to approved MCP servers."
+    assert rule["help"]["markdown"] == reports.remediation_markdown(ACTS)
+    assert all("fixes" not in result for result in out["runs"][0]["results"])
+
+
+def test_sarif_has_no_help_markdown_without_text():
+    rule = json.loads(reports.render_sarif(_run(remediation="", remediation_actions=ACTS)))["runs"][0]["tool"]["driver"]["rules"][0]
+    assert "help" not in rule
+
+
+def test_html_shows_both_tiers_for_a_failure():
+    html = reports.render_html(_run(remediation_actions=ACTS))
+    assert "How to fix" in html and "Mitigation (ship now)" in html and "Fix (design change)" in html
+    assert "Gate tool calls." in html and "AML.M0029" in html and "Human In-the-Loop for AI Agent Actions" in html
+
+
+def test_html_leaves_tiers_out_of_a_pass():
+    assert "Mitigation (ship now)" not in reports.render_html(_run(verdict="pass", remediation_actions=ACTS))
+
+
+def test_junit_is_unchanged_by_actions():
+    a = reports.render_junit(_run())
+    b = reports.render_junit(_run(remediation_actions=ACTS))
+    fa = ET.fromstring(a.split("\n", 1)[1]).find("testsuite/testcase/failure").text
+    fb = ET.fromstring(b.split("\n", 1)[1]).find("testsuite/testcase/failure").text
+    assert fa == fb
+
+
+def test_renderers_accept_findings_without_remediation_actions():
+    run = _run()
+    assert "remediation_actions" not in run["findings"][0]
+    assert "Connect only to approved MCP servers." in reports.render_html(run)
+    reports.render_sarif(run)
+    reports.render_junit(run)

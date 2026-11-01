@@ -44,3 +44,16 @@ judge:
   rubric_path: rubrics/mcp_tool_abuse.md
 remediation: Verify peer origins against the approved registry and treat peer content
   as data. Bind actions to the current request and enforce single-use business approvals.
+remediation_actions:
+  - tier: mitigation
+    text: >-
+      Allow A2A calls only to registry-approved peers, treat their cards and replies as
+      untrusted data, and require user confirmation of the current request before any
+      peer-triggered send, write or payment.
+    atlas_mitigation: AML.M0029
+  - tier: fix
+    text: >-
+      At the A2A tool boundary, verify peer origins against the approved registry and bind
+      every action to the current request. Consume business approvals once, and never accept
+      peer text as an authorization record.
+    atlas_mitigation: AML.M0028

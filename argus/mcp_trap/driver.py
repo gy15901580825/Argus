@@ -271,6 +271,7 @@ def scenario_finding(probe: Probe, rounds: list[RoundOutcome], conversations: in
             "conversations_sent": conversations,
         },
         remediation=remediation.for_probe(probe),
+        remediation_actions=remediation.actions_for_probe(probe),
     )
     d = asdict(finding)
     d["id"] = str(finding.id)

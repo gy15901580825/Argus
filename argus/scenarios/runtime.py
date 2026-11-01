@@ -14,6 +14,9 @@ from argus.scenarios.credentials import ConnRef, CredentialProvider
 from argus.scenarios.models import BudgetSpec, CleanupResult, ConnCheck, Evidence, ObjectRecord, ObjectSpec, ObserveSpec, object_marker
 
 
+# Engine-written fix-it text, never run data.
+_ENGINE_TEXT_KEYS = frozenset({"remediation", "remediation_actions"})
+
 class BudgetExceeded(RuntimeError):
     pass
 
@@ -118,9 +121,12 @@ class RunContext:
         if operation not in self.allowed_ops:
             raise NotReady(f"operation is not allowed: {operation}")
 
-    def redact(self, value: Any) -> Any:
+    def redact(self, value: Any, *, preserve_engine_text: bool = False) -> Any:
         if isinstance(value, dict):
-            return {k: "[redacted]" if any(w in k.lower() for w in ["token", "secret", "authorization", "body", "content", "email", "recipient"]) else self.redact(v) for k, v in value.items()}
+            return {k: v if preserve_engine_text and k in _ENGINE_TEXT_KEYS else
+                    "[redacted]" if any(w in k.lower() for w in ["token", "secret", "authorization", "body", "content", "email", "recipient"]) else
+                    self.redact(v, preserve_engine_text=preserve_engine_text and k == "finding")
+                    for k, v in value.items()}
         if isinstance(value, (list, tuple)):
             return [self.redact(v) for v in value]
         if isinstance(value, str):

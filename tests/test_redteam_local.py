@@ -659,6 +659,7 @@ async def test_skipped_findings_carry_the_probe_remediation(library):
     assert skipped
     for f in skipped:
         assert f["remediation"] == remediation.for_probe(library[f["probe_id"]]) != ""
+        assert f["remediation_actions"] == remediation.actions_for_probe(library[f["probe_id"]]) != []
 
 
 async def test_findings_stopped_or_not_started_at_the_cap_carry_remediation(library):
@@ -675,3 +676,4 @@ async def test_findings_stopped_or_not_started_at_the_cap_carry_remediation(libr
     assert [e["verdict"] for e in events] == ["pass", "aborted_cost", "aborted_cost"]
     for f in events:
         assert f["remediation"] == remediation.for_probe(library[f["probe_id"]]) != ""
+        assert f["remediation_actions"] == remediation.actions_for_probe(library[f["probe_id"]]) != []

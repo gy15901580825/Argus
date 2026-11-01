@@ -1,0 +1,52 @@
+framework: MITRE ATLAS
+version: '2026.10'
+modified_date: '2026-10-28'
+source_url: https://raw.githubusercontent.com/mitre-atlas/atlas-data/v2026.10/dist/v6/ATLAS-2026.10.yaml
+source_commit: f56c1468731d6428e5bf875263b4643b46d67437
+source_sha256: ac41ee9f99a47084ba5fdfc77ae83a28687e12390240fffeb37df7914ffe142d
+# IDs and names validate built-in labels and name them in reports.
+mitigations:
+  AML.M0000: Limit Public Release of Information
+  AML.M0001: Limit Model Artifact Release
+  AML.M0002: Predictive AI Output Obfuscation
+  AML.M0003: Predictive AI Model Hardening
+  AML.M0004: Limit AI Service Query Volume and Rate
+  AML.M0005: Control Access to AI Models and Data at Rest
+  AML.M0006: Predictive AI Ensembles
+  AML.M0007: Sanitize Training Data
+  AML.M0008: Validate AI Model
+  AML.M0009: Predictive AI Multi-Sensor Fusion
+  AML.M0010: Predictive AI Input Restoration
+  AML.M0011: Restrict Library Loading
+  AML.M0012: Encrypt Sensitive Information
+  AML.M0013: Code Signing
+  AML.M0014: Verify AI Artifacts
+  AML.M0015: Predictive AI Adversarial Input Detection
+  AML.M0016: Vulnerability Scanning
+  AML.M0017: AI Model Distribution Methods
+  AML.M0018: User Training
+  AML.M0019: Control Access to AI Models and Data in Production
+  AML.M0020: Generative AI Guardrails
+  AML.M0021: Generative AI Guidelines
+  AML.M0022: Generative AI Model Alignment
+  AML.M0023: Maintain an AI Bill of Materials
+  AML.M0024: AI Telemetry Logging and Monitoring
+  AML.M0025: Maintain AI Dataset Provenance
+  AML.M0026: Manage AI Agent Service Access
+  AML.M0027: Manage User-Delegated AI Agent Access
+  AML.M0028: Enforce Access Controls for AI Agent Tools
+  AML.M0029: Human In-the-Loop for AI Agent Actions
+  AML.M0030: Restrict AI Agent Tool Invocation on Untrusted Data
+  AML.M0031: Memory Hardening
+  AML.M0032: Segmentation of AI Agent Components
+  AML.M0033: Input and Output Validation for AI Agent Components
+  AML.M0034: Deepfake Detection
+  AML.M0035: AI Red Team
+  AML.M0036: Limit AI Workload Resource Consumption
+  AML.M0037: AI Agent Authority Expansion Controls
+  AML.M0038: AI Agent Scope Drift Detection
+  AML.M0039: AI Honeypots
+  AML.M0040: Adaptive AI Response Degradation
+  AML.M0041: Privacy-Preserving AI Training and Inference
+  AML.M0042: Threat Intelligence Program
+  AML.M0043: AI Agent External Resource Lifecycle Management

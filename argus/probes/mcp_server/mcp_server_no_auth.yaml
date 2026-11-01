@@ -23,3 +23,16 @@ judge:
 remediation: >-
   Require authentication on the MCP endpoint, such as a bearer token or OAuth, and refuse
   initialize without valid credentials.
+remediation_actions:
+  - tier: mitigation
+    text: >-
+      Require bearer-token or OAuth authentication at the MCP reverse proxy, and reject
+      initialize requests without valid credentials before forwarding them to the protocol
+      handler.
+    atlas_mitigation: AML.M0028
+  - tier: fix
+    text: >-
+      Authenticate the caller in the MCP server before initialize or any tool operation,
+      derive identity only from verified credentials, and refuse protocol access when
+      credentials are missing or invalid.
+    atlas_mitigation: AML.M0028
