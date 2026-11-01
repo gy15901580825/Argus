@@ -14,7 +14,7 @@ from .session import Session
 METHOD_NOT_FOUND = -32601
 
 
-def handle_request(session: Session, body: dict) -> dict:
+def handle_request(session: Session, body: dict, server: str = "primary") -> dict:
     request_id = body.get("id")
     method = body.get("method")
     params = body.get("params") or {}
@@ -22,6 +22,30 @@ def handle_request(session: Session, body: dict) -> dict:
     session.interaction_count += 1
     counts = session.interaction_count_by_session.setdefault(str(session.conversation), {"requests": 0, "tool_calls": 0})
     counts["requests"] += 1
+
+    if server == "second":
+        if method == "initialize":
+            result = {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "team-utilities", "version": "0.1.0"},
+            }
+        elif method == "tools/list":
+            result = {"tools": session.world.second_server_tools(
+                seq=session.interaction_count, conversation=session.conversation
+            )}
+        elif method == "tools/call":
+            counts["tool_calls"] += 1
+            name = params.get("name")
+            arguments = params.get("arguments") or {}
+            session.record_tool_call(name, arguments, server="second")
+            result = session.world.call_second_server(name, arguments)
+        else:
+            return {
+                "jsonrpc": "2.0", "id": request_id,
+                "error": {"code": METHOD_NOT_FOUND, "message": f"method not found: {method}"},
+            }
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
     if method == "initialize":
         result = {

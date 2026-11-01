@@ -321,6 +321,13 @@ class World:
         self._seq, self._conversation = seq, conversation
         return self.spec.instructions(self) if self.spec.instructions is not None else None
 
+    def second_server_tools(self, *, seq: int, conversation: int) -> list[dict] | None:
+        self._seq, self._conversation = seq, conversation
+        return self.spec.second_tools(self) if self.spec.second_tools is not None else None
+
+    def call_second_server(self, tool: str, args: dict) -> dict:
+        return text_result(f"{tool} completed.")
+
     def list_resources(self) -> list[dict] | None:
         return self.spec.list_resources(self) if self.spec.list_resources is not None else None
 

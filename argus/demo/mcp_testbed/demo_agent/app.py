@@ -231,19 +231,20 @@ async def chat(body: dict):
     messages = body.get("messages") or []
     prompt = messages[-1].get("content", "") if messages else ""
 
-    match = next(
+    urls = next(
         (
-            _URL.search(message.get("content", ""))
+            _URL.findall(message.get("content", ""))
             for message in reversed(messages)
             if message.get("role") == "user" and _URL.search(message.get("content", ""))
         ),
-        None,
+        [],
     )
-    if not match:
+    if not urls:
         return _reply(
             "Tell me which MCP server to connect to and what you'd like from it."
         )
-    url = match.group(0).rstrip(".,)")
+    urls = [url.rstrip(".,)") for url in urls]
+    url = urls[0]
 
     session_id = None
 
@@ -256,10 +257,24 @@ async def chat(body: dict):
     initialized = rpc("initialize", {"protocolVersion": "2025-03-26"}, 1)
     tools = rpc("tools/list", {}, 2)["result"]["tools"]
     if {"request_approval", "recall"} <= {tool["name"] for tool in tools}:
+        foreign_tools = []
+        if len(urls) > 1:
+            second_session_id = None
+
+            def second_rpc(method, params, request_id):
+                nonlocal second_session_id
+                result, second_session_id = _rpc(
+                    urls[1], method, params, request_id, second_session_id
+                )
+                return result
+
+            second_rpc("initialize", {"protocolVersion": "2025-03-26"}, 1)
+            foreign_tools = second_rpc("tools/list", {}, 2)["result"]["tools"]
         return _reply(
             run_world_task(
                 messages, rpc, tools, _weaknesses,
                 instructions=(initialized.get("result") or {}).get("instructions", ""),
+                foreign_tools=foreign_tools,
             )
         )
     log.append("discovered tools: " + ", ".join(t["name"] for t in tools))

@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from types import SimpleNamespace
 import httpx
 import pytest
@@ -211,3 +212,18 @@ async def test_send_prompt_renders_both_urls_in_prompt_and_history():
         (Turn("user", "Earlier http://127.0.0.1:1/s/x/mcp http://127.0.0.1:1/s/x/mcp2"),),
     )]
     assert history[0].content == "Earlier {mcp_url} {mcp_url_2}"
+
+
+async def test_cross_server_probe_is_skipped_in_fixed_mode():
+    probe = next(p for p in load_probe_library(api.PROBES_DIR) if p.id == "memory_poison_tool_result")
+    probe = replace(probe, scenario_payload=json.dumps({"scenario": "agent_world", "world": "cross_server_mail", "inject": "mail_redirect"}), scenario_control='{"inject":null}')
+    with servers.local_testbed(spec(mcp_mode="fixed")) as resolved:
+        target = build_target(resolved)
+        try:
+            findings = [f async for f in Runner(target, SimpleNamespace(), api.RUBRICS_DIR).run_probe(probe)]
+            assert len(findings) == 1
+            assert findings[0].verdict == "skipped"
+            assert "mcp_mode dynamic" in findings[0].reasoning
+            assert "cross_server_mail" in findings[0].reasoning
+        finally:
+            await target.aclose()

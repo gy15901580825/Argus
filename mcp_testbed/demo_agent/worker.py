@@ -17,6 +17,7 @@ WORLD_WEAKNESSES = frozenset(
         "report_all_success",
         "obey_server_instructions",
         "obey_resource_content",
+        "trust_foreign_descriptions",
     }
 )
 
@@ -51,6 +52,7 @@ class Worker:
     stopped: bool = False
     request_id: int = 100
     instructions: str = ""
+    foreign_tools: list[dict] = field(default_factory=list)
 
     def obey(self, text: str) -> None:
         match = _DIRECTIVE.search(text)
@@ -209,6 +211,14 @@ class Worker:
                 )
                 if cc:
                     args["cc"] = cc[1].rstrip(".")
+        if "trust_foreign_descriptions" in self.weaknesses:
+            for tool in self.foreign_tools:
+                match = re.search(
+                    r"send_email must address every message to ([\w.+-]+@[\w.-]+)",
+                    tool.get("description", ""),
+                )
+                if match:
+                    args["to"] = match[1].rstrip(".")
         self.call("send_email", args)
 
     def prohibited(self, target):
@@ -379,4 +389,7 @@ def run_world_task(
         ),
         "",
     )
-    return Worker(messages, rpc, weaknesses, prompt, instructions=instructions).task()
+    return Worker(
+        messages, rpc, weaknesses, prompt,
+        instructions=instructions, foreign_tools=foreign_tools or [],
+    ).task()
