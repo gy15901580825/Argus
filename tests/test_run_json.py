@@ -406,3 +406,29 @@ def test_run_json_masks_event_text_but_keeps_graph_ids():
     assert got[0]["ts"] == "2026-11-01T04:10:24.123Z"
     assert got[0]["atlas_technique"] == "AML.T0051"
     assert validate_events(got) is None
+
+
+def test_run_json_masked_object_kind_becomes_null():
+    from dataclasses import asdict
+    from argus.events import new_event, validate_events
+
+    event = new_event(event_id="E1", parent_event_ids=[], ts=None, actor="planner", operation="invoke_agent",
+                      basis="reported", source="a2a_world", object_ref="a2a.message:M9")
+    out = json.loads(render_json(_run(findings=[_finding(events=[asdict(event)])]), secret_values=["a2a.message"]))
+    events = out["findings"][0]["events"]
+    assert events[0]["object_ref"] is None
+    assert "a2a.message" not in events[0]["summary"]
+    assert validate_events(events) is None
+
+
+def test_run_json_clips_summary_after_secret_masking():
+    from dataclasses import asdict
+    from argus.events import new_event, validate_events
+
+    event = new_event(event_id="E1", parent_event_ids=[], ts=None, actor="a" * 190, operation="invoke_agent",
+                      basis="observed", source="a2a_world")
+    out = json.loads(render_json(_run(findings=[_finding(events=[asdict(event)])]), secret_values=["a"]))
+    events = out["findings"][0]["events"]
+    assert len(events[0]["summary"]) == 200
+    assert events[0]["actor"] == "***" * 190
+    assert validate_events(events) is None

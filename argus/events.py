@@ -15,6 +15,7 @@ _TS = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z")
 _OBJECT_REF = re.compile(r"(?:" + "|".join(re.escape(kind) for kind in OBJECT_KINDS) + r"):\S+")
 _ATLAS = re.compile(r"AML\.T\d{4}(?:\.\d{3})?")
 logger = logging.getLogger(__name__)
+EVENT_STRUCTURE_FIELDS = ("event_id", "parent_event_ids", "ts", "operation", "basis", "source", "atlas_technique", "seq")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -120,3 +121,13 @@ def checked(events: list[Event]) -> list[Event]:
         logger.warning("dropping %d events: %s", len(events), problem)
         return []
     return events
+
+
+def normalize_redacted_event(event: Mapping) -> dict:
+    clean = dict(event)
+    object_ref = clean.get("object_ref")
+    if object_ref is not None and (not isinstance(object_ref, str) or _OBJECT_REF.fullmatch(object_ref) is None):
+        clean["object_ref"] = None
+    if isinstance(clean.get("summary"), str):
+        clean["summary"] = clean["summary"][:200]
+    return clean

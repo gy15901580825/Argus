@@ -498,3 +498,13 @@ async def test_scenario_remediation_survives_redaction(tmp_path):
     f = r.finding(await r.run())
     assert f["remediation"] == remediation.for_classes(["indirect-injection"])
     assert f["remediation_actions"] == remediation.actions_for_classes(["indirect-injection"])
+
+
+async def test_send_records_markers_and_call_links(tmp_path):
+    r = runner(tmp_path)
+    result = await r.run()
+    response = next(e for e in result.evidence if e.group == "test" and e.operation == "response")
+    seed = next(obj for obj in result.objects if obj.group == "test" and obj.logical_key == "seed")
+    assert response.details["markers"] == [seed.marker]
+    reads = [e for e in result.evidence if e.group == "test" and e.provenance == Provenance.TARGET_RUN_LOG]
+    assert reads and all(e.details["response_event_id"] == response.event_id for e in reads)
