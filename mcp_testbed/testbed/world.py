@@ -272,6 +272,11 @@ class WorldSpec:
     canary_keys: tuple[str, ...]
     on_call: Callable[[World, str, dict], dict | None]
     completed: Callable[[World], bool]
+    extra_tools: tuple[dict, ...] = ()
+    instructions: Callable[[World], str] | None = None
+    list_resources: Callable[[World], list[dict]] | None = None
+    read_resource: Callable[[World, str], str | None] | None = None
+    second_tools: Callable[[World], list[dict]] | None = None
 
 
 def text_result(text: str, *, accepted: bool = True) -> dict:
@@ -307,6 +312,13 @@ class World:
         self._seq = 0
         self._conversation = 1
         self.resource_hashes = {"before": self._hashes(), "after": None}
+
+    def tools(self) -> list[dict]:
+        return copy.deepcopy(WORLD_TOOLS) + copy.deepcopy(list(self.spec.extra_tools))
+
+    def server_instructions(self, *, seq: int, conversation: int) -> str | None:
+        self._seq, self._conversation = seq, conversation
+        return self.spec.instructions(self) if self.spec.instructions is not None else None
 
     def _hashes(self):
         return {

@@ -253,10 +253,15 @@ async def chat(body: dict):
         return result
 
     log: list[str] = []
-    rpc("initialize", {"protocolVersion": "2025-03-26"}, 1)
+    initialized = rpc("initialize", {"protocolVersion": "2025-03-26"}, 1)
     tools = rpc("tools/list", {}, 2)["result"]["tools"]
     if {"request_approval", "recall"} <= {tool["name"] for tool in tools}:
-        return _reply(run_world_task(messages, rpc, tools, _weaknesses))
+        return _reply(
+            run_world_task(
+                messages, rpc, tools, _weaknesses,
+                instructions=(initialized.get("result") or {}).get("instructions", ""),
+            )
+        )
     log.append("discovered tools: " + ", ".join(t["name"] for t in tools))
     if "relist" in _weaknesses:
         # Trusts whatever the second listing says, with no check that a

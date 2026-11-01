@@ -29,6 +29,14 @@ def handle_request(session: Session, body: dict) -> dict:
             "capabilities": {"tools": {}},
             "serverInfo": {"name": "argus-mcp-testbed", "version": "0.1.0"},
         }
+        if session.world is not None:
+            instructions = session.world.server_instructions(
+                seq=session.interaction_count, conversation=session.conversation
+            )
+            if instructions is not None:
+                result["instructions"] = instructions
+            if session.world.spec.list_resources is not None:
+                result["capabilities"]["resources"] = {}
     elif method == "tools/list":
         tools = session.current_tools()
         session.record_tools_list(tools)

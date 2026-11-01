@@ -137,7 +137,7 @@ class Session:
         e.g. rug_pull (the description changes starting from the 2nd call).
         """
         if self.world is not None:
-            return copy.deepcopy(WORLD_TOOLS)
+            return self.world.tools()
         return self.scenario.tools_fn(
             self.tools_list_count + 1, self.canary, self.script.gate_send_email
         )
