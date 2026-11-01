@@ -9,6 +9,8 @@ from xml.etree import ElementTree as ET
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from argus import remediation
+
 _TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "templates")
 _jinja = Environment(
     loader=FileSystemLoader(_TEMPLATE_DIR),
@@ -33,7 +35,27 @@ def render_html(run: dict) -> str:
         run=run,
         counts=_verdict_counts(run.get("findings", [])),
         coverage=run.get("coverage"),
+        atlas_names=remediation.atlas_mitigations(),
     )
+
+
+def remediation_markdown(actions: list[dict]) -> str:
+    names = remediation.atlas_mitigations()
+    sections = []
+    for tier, title in (("mitigation", "Mitigation (ship now)"), ("fix", "Fix (design change)")):
+        lines = []
+        for action in actions:
+            if action["tier"] != tier:
+                continue
+            line = f"- {action['text']}"
+            mid = action.get("atlas_mitigation")
+            if mid:
+                name = f" {names[mid]}" if mid in names else ""
+                line += f" (ATLAS [{mid}](https://atlas.mitre.org/mitigations/{mid}){name})"
+            lines.append(line)
+        if lines:
+            sections.append(f"**{title}**\n\n" + "\n".join(lines))
+    return "\n\n".join(sections)
 
 
 def render_sarif(run: dict) -> str:
@@ -72,6 +94,9 @@ def render_sarif(run: dict) -> str:
             }
             if f.get("remediation"):
                 rules[rid]["help"] = {"text": f["remediation"]}
+                markdown = remediation_markdown(f.get("remediation_actions") or [])
+                if markdown:
+                    rules[rid]["help"]["markdown"] = markdown
         results.append({
             "ruleId": rid,
             "level": sev_to_level.get(f.get("severity", "info"), "note"),
