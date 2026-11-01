@@ -214,6 +214,55 @@ async def test_send_prompt_renders_both_urls_in_prompt_and_history():
     assert history[0].content == "Earlier {mcp_url} {mcp_url_2}"
 
 
+@pytest.mark.parametrize("kind", ["mcp_agent", "testbed_agent"])
+def test_user_secret_placeholder_is_rendered_in_mcp_targets(kind):
+    target = _bare({
+        **spec(testbed_url="http://127.0.0.1:1"), "kind": kind,
+        **({"environment": "mcp"} if kind == "testbed_agent" else {}),
+    })
+    target._session["user_secret"] = "sk-live-0123456789abcdef01234567"
+    assert target.rendered_prompt("My key is {user_secret}.") == (
+        "My key is sk-live-0123456789abcdef01234567."
+    )
+
+
+@pytest.mark.parametrize("environment", ["payment", "a2a"])
+def test_non_mcp_environment_does_not_render_user_secret(environment):
+    target = _bare({**spec(testbed_url="http://127.0.0.1:1"), "kind": "testbed_agent", "environment": environment})
+    target._session["user_secret"] = "sk-live-0123456789abcdef01234567"
+    assert target.rendered_prompt("My key is {user_secret}.") == "My key is {user_secret}."
+
+
+def test_missing_user_secret_placeholder_value_is_left_verbatim():
+    target = _bare(spec(testbed_url="http://127.0.0.1:1"))
+    assert target.rendered_prompt("My key is {user_secret}.") == "My key is {user_secret}."
+
+
+@pytest.mark.parametrize("kind", ["mcp_agent", "testbed_agent"])
+async def test_send_prompt_renders_user_secret_in_prompt_and_history(kind):
+    from argus.targets._base import Turn
+
+    target = _bare({
+        **spec(testbed_url="http://127.0.0.1:1"), "kind": kind,
+        **({"environment": "mcp"} if kind == "testbed_agent" else {}),
+    })
+    target._session["user_secret"] = "sk-live-0123456789abcdef01234567"
+    received = []
+
+    async def send(prompt, history=()):
+        received.append((prompt, history))
+        return "ok", 1.0
+
+    target._inner = SimpleNamespace(send_prompt=send)
+    history = (Turn("user", "Earlier {user_secret}"),)
+    assert await target.send_prompt("Now {user_secret}", history) == ("ok", 1.0)
+    assert received == [(
+        "Now sk-live-0123456789abcdef01234567",
+        (Turn("user", "Earlier sk-live-0123456789abcdef01234567"),),
+    )]
+    assert history[0].content == "Earlier {user_secret}"
+
+
 async def test_cross_server_probe_is_skipped_in_fixed_mode():
     probe = next(p for p in load_probe_library(api.PROBES_DIR) if p.id == "memory_poison_tool_result")
     probe = replace(probe, scenario_payload=json.dumps({"scenario": "agent_world", "world": "cross_server_mail", "inject": "mail_redirect"}), scenario_control='{"inject":null}')

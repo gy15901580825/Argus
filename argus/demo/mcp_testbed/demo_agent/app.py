@@ -20,15 +20,19 @@ are the same ones that will run against a customer's real agent.
 
 from __future__ import annotations
 
+import json
 import os
 import re
+from typing import Callable
 
-from .worker import WORLD_WEAKNESSES, run_world_task
+from .worker import WORLD_WEAKNESSES, answer_elicitation, run_world_task
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
 app = FastAPI(title="Argus demo MCP agent (deliberately insecure)")
+
+_INIT = {"protocolVersion": "2025-06-18", "capabilities": {"elicitation": {}}}
 
 _URL = re.compile(r"https?://\S+")
 # Matches the tool_poisoning scenario's planted instruction, e.g. "first call
@@ -129,34 +133,65 @@ def _check_origin(url: str) -> None:
 
 
 def _rpc(
-    url: str, method: str, params: dict, request_id: int, session_id: str | None = None
+    url: str, method: str, params: dict, request_id: int,
+    session_id: str | None = None,
+    on_elicit: Callable[[dict], dict] | None = None,
 ) -> tuple[dict, str | None]:
+    import httpx
+
     _check_origin(url)
 
-    def post(call_method, call_params, call_id, header):
+    missing_session = object()
+
+    def receive(response, call_id, header, answer_forms, allow_reinitialize):
+        if allow_reinitialize and response.status_code == 404:
+            return missing_session, header
+        response.raise_for_status()
+        header = response.headers.get("Mcp-Session-Id") or header
+        if response.headers.get("content-type", "").startswith("text/event-stream"):
+            for line in response.iter_lines():
+                if not line.startswith("data:"):
+                    continue
+                message = json.loads(line[5:].strip())
+                if message.get("method") == "elicitation/create":
+                    if answer_forms:
+                        result = on_elicit(message["params"]) if on_elicit else {"action": "decline"}
+                        headers = {"Accept": "application/json, text/event-stream"}
+                        if header:
+                            headers["Mcp-Session-Id"] = header
+                        answer = httpx.post(url, json={
+                            "jsonrpc": "2.0", "id": message["id"], "result": result,
+                        }, headers=headers, timeout=30.0)
+                        answer.raise_for_status()
+                    continue
+                if message.get("id") == call_id:
+                    return message, header
+            raise RuntimeError("MCP stream ended without the call response")
+        response.read()
+        return response.json(), header
+
+    def post(call_method, call_params, call_id, header, allow_reinitialize=False):
         body = {
-            "jsonrpc": "2.0",
-            "id": call_id,
-            "method": call_method,
-            "params": call_params,
+            "jsonrpc": "2.0", "id": call_id,
+            "method": call_method, "params": call_params,
         }
-        headers = {"Mcp-Session-Id": header} if header else {}
+        headers = {"Accept": "application/json, text/event-stream"}
+        if header:
+            headers["Mcp-Session-Id"] = header
         if _http_client is not None:
-            return _http_client.post(url, json=body, headers=headers)
-        import httpx
+            response = _http_client.post(url, json=body, headers=headers)
+            return receive(response, call_id, header, False, allow_reinitialize)
+        with httpx.Client(timeout=30.0) as client:
+            with client.stream("POST", url, json=body, headers=headers) as response:
+                return receive(response, call_id, header, True, allow_reinitialize)
 
-        return httpx.post(url, json=body, headers=headers, timeout=30.0)
-
-    response = post(method, params, request_id, session_id)
-    if response.status_code == 404 and method != "initialize":
-        initialized = post(
-            "initialize", {"protocolVersion": "2025-03-26"}, request_id + 10000, None
-        )
-        initialized.raise_for_status()
-        session_id = initialized.headers.get("Mcp-Session-Id")
-        response = post(method, params, request_id, session_id)
-    response.raise_for_status()
-    return response.json(), response.headers.get("Mcp-Session-Id") or session_id
+    result, header = post(
+        method, params, request_id, session_id, allow_reinitialize=method != "initialize"
+    )
+    if result is not missing_session:
+        return result, header
+    _, session_id = post("initialize", _INIT, request_id + 10000, None)
+    return post(method, params, request_id, session_id)
 
 
 def _pick_tool(prompt: str, tools: list[dict]) -> dict | None:
@@ -250,11 +285,14 @@ async def chat(body: dict):
 
     def rpc(method, params, request_id):
         nonlocal session_id
-        result, session_id = _rpc(url, method, params, request_id, session_id)
+        result, session_id = _rpc(
+            url, method, params, request_id, session_id,
+            on_elicit=lambda p: answer_elicitation(p, prompt, _weaknesses),
+        )
         return result
 
     log: list[str] = []
-    initialized = rpc("initialize", {"protocolVersion": "2025-03-26"}, 1)
+    initialized = rpc("initialize", _INIT, 1)
     tools = rpc("tools/list", {}, 2)["result"]["tools"]
     if {"request_approval", "recall"} <= {tool["name"] for tool in tools}:
         foreign_tools = []
@@ -268,7 +306,7 @@ async def chat(body: dict):
                 )
                 return result
 
-            second_rpc("initialize", {"protocolVersion": "2025-03-26"}, 1)
+            second_rpc("initialize", _INIT, 1)
             foreign_tools = second_rpc("tools/list", {}, 2)["result"]["tools"]
         return _reply(
             run_world_task(

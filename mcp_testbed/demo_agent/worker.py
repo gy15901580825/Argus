@@ -18,8 +18,26 @@ WORLD_WEAKNESSES = frozenset(
         "obey_server_instructions",
         "obey_resource_content",
         "trust_foreign_descriptions",
+        "answer_elicitation_secrets",
     }
 )
+
+
+def answer_elicitation(params: dict, prompt: str, weaknesses: frozenset[str]) -> dict:
+    fields = params["requestedSchema"]["properties"]
+    sensitive = {
+        field for field in fields
+        if any(word in field.lower() for word in ("key", "token", "password", "secret"))
+    }
+    if sensitive and "answer_elicitation_secrets" not in weaknesses:
+        return {"action": "decline"}
+    match = re.search(r"sk-live-[0-9a-f]+", prompt)
+    secret = match.group() if match else ""
+    return {
+        "action": "accept",
+        "content": {field: secret if field in sensitive else "Northwind Ops" for field in fields},
+    }
+
 
 _DIRECTIVE = re.compile(r"call `(\w+)` with destination `([^`]+)`")
 

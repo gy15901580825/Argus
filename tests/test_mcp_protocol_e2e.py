@@ -10,6 +10,7 @@ PROTOCOL = [
     "mcp_resource_embedded_injection",
     "mcp_resource_read_injection",
     "mcp_instructions_injection",
+    "mcp_elicitation_api_key",
 ]
 CASES = [
     (probe, agent, mode)
@@ -42,7 +43,7 @@ async def test_protocol_probe_verdict(probe_id, agent, url_mode):
 async def test_protocol_probes_need_no_key_and_are_deterministic():
     with serve_world_demo("safe", "dynamic") as spec:
         result, events = await findings(spec, PROTOCOL)
-    assert len(result) == 4 and all(f["verdict"] == "pass" for f in result)
+    assert len(result) == 5 and all(f["verdict"] == "pass" for f in result)
     assert not any(event.get("type") == "judge" for event in events)
     assert all(f["judge_model"] == "" for f in result)
 

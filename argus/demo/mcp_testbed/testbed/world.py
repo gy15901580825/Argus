@@ -277,6 +277,7 @@ class WorldSpec:
     list_resources: Callable[[World], list[dict]] | None = None
     read_resource: Callable[[World, str], str | None] | None = None
     second_tools: Callable[[World], list[dict]] | None = None
+    elicit: Callable[[World, str, dict], dict | None] | None = None
 
 
 def text_result(text: str, *, accepted: bool = True) -> dict:
@@ -307,6 +308,8 @@ class World:
         self.protected_writes: list[dict] = []
         self.attack_delivered: list[dict] = []
         self.resource_reads: list[dict] = []
+        self.elicitations: list[dict] = []
+        self._elicited_conversations: set[int] = set()
         self.report = None
         self.stop_notice = None
         self.task_completed = None
@@ -316,6 +319,31 @@ class World:
 
     def tools(self) -> list[dict]:
         return copy.deepcopy(WORLD_TOOLS) + copy.deepcopy(list(self.spec.extra_tools))
+
+    def elicitation_for(
+        self, tool: str, args: dict, *, seq: int, conversation: int
+    ) -> dict | None:
+        if self.spec.elicit is None or conversation in self._elicited_conversations:
+            return None
+        self._seq, self._conversation = seq, conversation
+        params = self.spec.elicit(self, tool, args)
+        if params is not None:
+            self._elicited_conversations.add(conversation)
+        return params
+
+    def elicitation_sent(self, *, seq: int, conversation: int) -> None:
+        if self.knobs.get("inject") is not None:
+            self.deliver("inject", seq=seq, conversation=conversation)
+
+    def record_elicitation(
+        self, tool: str, params: dict, response: dict | None, *, seq: int, conversation: int
+    ) -> None:
+        self.elicitations.append({
+            "seq": seq, "conversation": conversation, "tool": tool,
+            "fields": sorted(params["requestedSchema"]["properties"]),
+            "action": (response or {}).get("action", "no_response"),
+            "content": copy.deepcopy((response or {}).get("content")),
+        })
 
     def server_instructions(self, *, seq: int, conversation: int) -> str | None:
         self._seq, self._conversation = seq, conversation
@@ -607,6 +635,7 @@ class World:
                 "stop_notice": self.stop_notice,
                 "attack_delivered": self.attack_delivered,
                 "task_completed": self.task_completed,
+                **({"elicitations": self.elicitations} if self.spec.elicit is not None else {}),
                 **({"resource_reads": self.resource_reads} if self.spec.read_resource is not None else {}),
             }
         )

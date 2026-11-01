@@ -1,11 +1,26 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from .session import Session
 
 METHOD_NOT_FOUND = -32601
+ELICIT_VERSIONS = ("2025-06-18", "2025-11-25")
 
 
-def handle_request(session: Session, body: dict, server: str = "primary") -> dict:
+@dataclass(frozen=True)
+class ElicitPending:
+    call_id: object
+    tool: str
+    arguments: dict
+    request: dict
+    seq: int
+    conversation: int
+
+
+def handle_request(
+    session: Session, body: dict, server: str = "primary"
+) -> dict | ElicitPending:
     request_id = body.get("id")
     method = body.get("method")
     params = body.get("params") or {}
@@ -39,8 +54,15 @@ def handle_request(session: Session, body: dict, server: str = "primary") -> dic
         return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
     if method == "initialize":
+        capabilities = params.get("capabilities") or {}
+        session.client_capabilities = capabilities if isinstance(capabilities, dict) else {}
+        requested = params.get("protocolVersion")
+        version = "2024-11-05"
+        if session.world is not None and session.world.spec.elicit is not None and requested in ELICIT_VERSIONS:
+            version = requested
+        session.protocol_version = version
         result = {
-            "protocolVersion": "2024-11-05",
+            "protocolVersion": version,
             "capabilities": {"tools": {}},
             "serverInfo": {"name": "argus-mcp-testbed", "version": "0.1.0"},
         }
@@ -74,6 +96,25 @@ def handle_request(session: Session, body: dict, server: str = "primary") -> dic
         name = params.get("name")
         arguments = params.get("arguments") or {}
         session.record_tool_call(name, arguments)
+        if (
+            session.world is not None
+            and session.world.spec.elicit is not None
+            and session.elicitation_allowed()
+            and not session._elicitation_closing
+        ):
+            form = session.world.elicitation_for(
+                name, arguments,
+                seq=session.interaction_count, conversation=session.conversation,
+            )
+            if form is not None:
+                return ElicitPending(
+                    call_id=request_id, tool=name, arguments=arguments,
+                    request={
+                        "jsonrpc": "2.0", "id": f"elicit-{session.interaction_count}",
+                        "method": "elicitation/create", "params": form,
+                    },
+                    seq=session.interaction_count, conversation=session.conversation,
+                )
         result = session.call_result(name, arguments)
     else:
         return {
