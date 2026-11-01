@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Callable
 from uuid import UUID, uuid4
 
+from argus import remediation
 from argus.runner import Finding
 from argus.scenarios.credentials import CredentialUnavailable
 from argus.scenarios.models import Evidence, IntegrationScenario, ObjectRecord, Provenance, ScenarioResult, now, object_marker
@@ -45,7 +46,8 @@ class ScenarioRunner:
     async def event(self, kind: str, **data):
         if self.emit:
             await self.emit(self.ctx.redact({"type": kind, "run_id": self.ctx.run_id,
-                                            "organization_id": self.ctx.organization_id, "control_name": self.ctx.control_name, **data}))
+                                            "organization_id": self.ctx.organization_id, "control_name": self.ctx.control_name, **data},
+                                           preserve_engine_text=kind == "finding"))
 
     async def advance(self, phase: str):
         self.phase = phase
@@ -359,5 +361,7 @@ class ScenarioRunner:
                           target_response="[target response redacted]", target_latency_ms=0, probed_at=now(),
                           verdict=result.verdict, severity=self.scenario.severity, confidence=1.0 if result.touch == "confirmed" else 0.0,
                           reasoning=result.reason, judge_model="deterministic_scenario", escalated_model=None,
-                          evidence={"scenario": result.model_dump(mode="json")})
-        return self.ctx.redact(json.loads(json.dumps(asdict(finding), default=str)))
+                          evidence={"scenario": result.model_dump(mode="json")},
+                          remediation=remediation.for_classes(self.scenario.attack_class),
+                          remediation_actions=remediation.actions_for_classes(self.scenario.attack_class))
+        return self.ctx.redact(json.loads(json.dumps(asdict(finding), default=str)), preserve_engine_text=True)

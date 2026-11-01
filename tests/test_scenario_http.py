@@ -18,10 +18,13 @@ def test_actual_sse_route_emits_phase_object_finding_and_end(monkeypatch, tmp_pa
     driver = Driver()
     monkeypatch.setattr(api, "build_credential_provider", lambda *args: object())
     monkeypatch.setattr(api, "build_drivers", lambda *args: {"fake": driver})
-    monkeypatch.setattr(api, "build_target", lambda *args: Target(driver))
+    from types import SimpleNamespace
+    target = Target(driver)
+    target.spec = SimpleNamespace(token="tool")
+    monkeypatch.setattr(api, "build_target", lambda *args: target)
     app = FastAPI()
     app.include_router(api.router)
-    spec = scenario(observe=[{"driver": "fake", "collect": "drafts_diff", "window_s": 0}])
+    spec = scenario(attack_class=["indirect-injection"], observe=[{"driver": "fake", "collect": "drafts_diff", "window_s": 0}])
     body = {"run_id": str(uuid4()), "organization_id": str(uuid4()), "scenario": spec.model_dump(mode="json"), "target": {},
             "connections": {"operator": "op", "observer": "obs"}, "credential_provider": {"kind": "fake", "config": {}}, "run_token": "RUN-TOKEN-SENTINEL"}
     with TestClient(app) as client:
@@ -33,6 +36,9 @@ def test_actual_sse_route_emits_phase_object_finding_and_end(monkeypatch, tmp_pa
     finding = next(e["finding"] for e in events if e["type"] == "finding")
     assert finding["verdict"] == "pass"
     assert finding["evidence"]["scenario"]["outcome"] == "defended"
+    from argus import remediation
+    assert finding["remediation_actions"] == remediation.actions_for_classes(["indirect-injection"])
+    assert finding["remediation"] == remediation.for_classes(["indirect-injection"])
     assert "RUN-TOKEN-SENTINEL" not in response.text
     assert not api._active_runs
 
@@ -128,3 +134,33 @@ async def test_cleanup_timeout_returns_registry_and_cancels_driver(monkeypatch, 
     release.set()
     await asyncio.sleep(0)
     assert completed == []
+
+
+def test_redact_keeps_engine_fix_it_text(tmp_path):
+    from test_scenario_runner import runner
+    ctx = runner(tmp_path).ctx
+    ctx.secrets.add("tool")
+    raw = {"remediation": "a tool", "remediation_actions": [{"text": "a tool"}], "reasoning": "a tool"}
+    assert ctx.redact(raw, preserve_engine_text=True) == {
+        "remediation": "a tool", "remediation_actions": [{"text": "a tool"}], "reasoning": "a [redacted]"}
+
+
+def test_redact_raw_target_fix_it_keys_cannot_bypass_masking(tmp_path):
+    from test_scenario_runner import runner
+    ctx = runner(tmp_path).ctx
+    ctx.secrets.add("RAW-TARGET-SECRET")
+    raw = {"remediation": "RAW-TARGET-SECRET", "remediation_actions": [{"text": "RAW-TARGET-SECRET"}],
+           "nested": {"finding": {"remediation": "RAW-TARGET-SECRET"}}}
+    assert ctx.redact(raw) == {"remediation": "[redacted]", "remediation_actions": [{"text": "[redacted]"}],
+                               "nested": {"finding": {"remediation": "[redacted]"}}}
+
+
+def test_redact_finding_evidence_does_not_preserve_target_fix_it_keys(tmp_path):
+    from test_scenario_runner import runner
+    ctx = runner(tmp_path).ctx
+    ctx.secrets.add("tool")
+    raw = {"type": "finding", "finding": {"remediation": "a tool", "remediation_actions": [{"text": "a tool"}],
+           "evidence": {"remediation": "a tool", "remediation_actions": [{"text": "a tool"}]}}}
+    assert ctx.redact(raw, preserve_engine_text=True) == {
+        "type": "finding", "finding": {"remediation": "a tool", "remediation_actions": [{"text": "a tool"}],
+        "evidence": {"remediation": "a [redacted]", "remediation_actions": [{"text": "a [redacted]"}]}}}
