@@ -15,7 +15,7 @@ from argus.cli.__main__ import main
 from argus.targets._base import Target
 
 RUN_JSON_KEYS = ["schema_version", "id", "status", "started_at", "finished_at",
-                 "argus_version", "target_spec", "coverage", "findings"]
+                 "argus_version", "target_spec", "coverage", "summary", "findings"]
 FINDING_KEYS = ["id", "probe_id", "attack_prompt", "target_response", "target_latency_ms", "probed_at",
                 "verdict", "severity", "confidence", "reasoning", "judge_model", "escalated_model",
                 "atlas_id", "owasp_id", "owasp_agentic", "nist_id", "eu_ai_act_id", "created_at", "evidence", "remediation"]
@@ -55,6 +55,8 @@ def test_verdict_and_severity_values():
     assert coverage._TESTED_VERDICTS == {"pass", "fail", "warn"}
     assert severity.SEVERITY_ORDER == ("info", "low", "medium", "high", "critical")
     assert probe.VALID_SEVERITIES == set(severity.SEVERITY_ORDER)
+    assert set(coverage.SUMMARY_VERDICTS) == verdicts | {runner.VERDICT_WARN}
+    assert coverage.SUMMARY_SEVERITIES == severity.SEVERITY_ORDER
 
 
 def test_entry_point_group_names():

@@ -5,6 +5,9 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+from argus.api import PROBES_DIR
+from argus.coverage import build_coverage, build_summary
+from argus.probe import load_probe_library
 from argus.server import app
 
 
@@ -59,3 +62,10 @@ def test_redteam_run_sse_ends_with_coverage_event(monkeypatch):
             last_payload = json.loads(data_lines[-1][len("data: "):])
             assert last_payload["type"] == "coverage"
             assert "standards" in last_payload["coverage"]
+            assert list(last_payload) == ["type", "coverage", "summary"]
+            assert last_payload["coverage"] == build_coverage(load_probe_library(PROBES_DIR), [fake_finding])
+            assert last_payload["summary"] == build_summary([fake_finding])
+            assert last_payload["summary"]["total"] == 1
+            assert last_payload["summary"]["evaluated"] == 1
+            assert last_payload["summary"]["by_verdict"]["pass"] == 1
+            assert [c for c in chunks if c][-2:] == ["event: end", "data: {}"]

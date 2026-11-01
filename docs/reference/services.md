@@ -51,4 +51,28 @@ The server refuses to start, with exit code 1, when `ARGUS_SERVER_HOST` is not a
 | GET  | `/redteam/coverage` | Standards coverage |
 | WS   | `/agent/connect` | Client-agent WebSocket hub (requires the `x-agent-id` header, plus `x-agent-secret` when `AGENT_CONNECT_SECRET` is set; a second connection with a live agent id is refused) |
 
+### `POST /redteam/run` stream
+
+The response is a Server-Sent Events stream: one `data:` line per finding, then one `data:` line with the coverage event, then `event: end` with `data: {}`. If the run fails, the stream ends with `event: error` instead, and no coverage event is sent.
+
+The coverage event has three keys:
+
+```json
+{"type": "coverage", "coverage": {...}, "summary": {...}}
+```
+
+`coverage` is the per-standard coverage table (the same object `GET /redteam/coverage` returns, with run results filled in). `summary` counts this run's findings:
+
+```json
+{
+  "total": 0,
+  "evaluated": 0,
+  "evaluated_verdicts": ["fail", "pass", "warn"],
+  "by_verdict": {"fail": 0, "pass": 0, "warn": 0, "skipped": 0, "blocked_by_target": 0, "aborted_cost": 0, "error": 0},
+  "failed_by_severity": {"info": 0, "low": 0, "medium": 0, "high": 0, "critical": 0}
+}
+```
+
+`total` counts findings. `evaluated` counts findings whose verdict is in `evaluated_verdicts`: the probe reached the target and came back with a verdict. This is the same rule coverage uses for `tested`. `blocked_by_target`, `skipped`, `aborted_cost` and `error` findings are not evaluated. `by_verdict` counts every finding and always lists all seven verdicts. `failed_by_severity` counts only `fail` findings and always lists all five severities. A verdict or severity outside these lists gets its own key. The summary has no score and no percentage. If you compute a rate, divide by `evaluated`, not `total`. `summary.total` counts findings, while `coverage.totals.probes_run` counts distinct probes that were evaluated, so the two numbers can differ.
+
 The `/api/v1/redteam` API the CLI uses in server mode (runs, reports, diffs, stored history) is not part of this repo. It was served by `api_service`, which lives at tag `v0.3-full`.
