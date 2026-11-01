@@ -257,6 +257,8 @@ class Finding:
     evidence: dict | None = None
     # How to fix it, from the probe's attack_class (argus/remediation.py). Empty when unknown.
     remediation: str = ""
+    # Tiered fix-it steps (argus/remediation.py actions_for_probe). Empty when unknown.
+    remediation_actions: list[dict] = field(default_factory=list)
 
 
 def skipped_finding(probe, reasoning: str) -> Finding:

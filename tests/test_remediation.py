@@ -121,10 +121,12 @@ def test_mcp_scan_and_mcp_trap_findings_carry_remediation():
     scan_probe = next(p for p in load_probe_library(PROBES_DIR) if p.id == "mcp_scan_command_execution")
     f = scan_finding(scan_probe, verdict="pass", severity="info", reasoning="r", evidence={})
     assert f["remediation"] == remediation.for_probe(scan_probe) == scan_probe.remediation.strip() != ""
+    assert f["remediation_actions"] == remediation.actions_for_probe(scan_probe) != []
 
     trap_probe = load_trap_probes(["rug_pull"])[0]
     t = scenario_finding(trap_probe, [RoundOutcome(1, "failed", "sent", "p", "r", {"interaction_count": 1})], 1)
     assert t["remediation"] == remediation.for_probe(trap_probe) != ""
+    assert t["remediation_actions"] == remediation.actions_for_probe(trap_probe) != []
 
 
 def test_scan_skill_findings_carry_an_empty_remediation():
@@ -133,6 +135,9 @@ def test_scan_skill_findings_carry_an_empty_remediation():
 
     assert _normalise({"probe_id": "skill_exfiltration"}, "t")["remediation"] == ""
     assert _normalise({"probe_id": "x", "remediation": "keep"}, "t")["remediation"] == "keep"
+    assert _normalise({"probe_id": "skill_exfiltration"}, "t")["remediation_actions"] == []
+    actions = [{"tier": "fix", "text": "Keep this.", "atlas_mitigation": None}]
+    assert _normalise({"probe_id": "x", "remediation_actions": actions}, "t")["remediation_actions"] == actions
 
 
 def test_deep_mode_wrapper_keeps_the_probe_remediation():
@@ -147,3 +152,18 @@ def test_deep_mode_wrapper_keeps_the_probe_remediation():
     assert wrapped
     assert all(remediation.for_probe(w) == remediation.for_probe(base) == base.remediation.strip() for w in wrapped)
     assert all(remediation.actions_for_probe(w) == remediation.actions_for_probe(base) for w in wrapped)
+
+
+def test_finding_dict_carries_remediation_actions():
+    from argus.api import finding_dict
+    from argus.runner import skipped_finding
+    p = next(p for p in load_probe_library(PROBES_DIR) if p.id == "mcp_poison_description_exfil")
+    d = finding_dict(skipped_finding(p, "r"), p)
+    assert d["remediation_actions"] == remediation.actions_for_probe(p)
+    assert {a["tier"] for a in d["remediation_actions"]} == {"mitigation", "fix"}
+
+
+def test_run_json_keeps_remediation_actions_unmasked():
+    acts = [{"tier": "mitigation", "text": "Pin each MCP tool description.", "atlas_mitigation": "AML.M0014"}]
+    out = json.loads(run_json.render_json(_run(remediation_actions=acts), secret_values=["MCP"]))
+    assert out["findings"][0]["remediation_actions"] == acts

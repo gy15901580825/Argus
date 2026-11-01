@@ -51,7 +51,8 @@ def finding(probe: Probe, *, verdict: str, severity: str, reasoning: str, eviden
                 owasp_agentic=list(getattr(probe.mappings, "owasp_agentic", ())),
                 nist_id=list(probe.mappings.nist_ai_rmf),
                 eu_ai_act_id=list(probe.mappings.eu_ai_act), evidence=evidence,
-                remediation=remediation.for_probe(probe))
+                remediation=remediation.for_probe(probe),
+                remediation_actions=remediation.actions_for_probe(probe))
     d = asdict(f)
     d["id"] = str(f.id)
     d["probed_at"] = f.probed_at.isoformat()

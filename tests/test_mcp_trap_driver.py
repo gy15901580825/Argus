@@ -26,7 +26,7 @@ from argus.targets._base import Target
 # Copied verbatim from tests/test_contract_freeze.py.
 FINDING_KEYS = ["id", "probe_id", "attack_prompt", "target_response", "target_latency_ms", "probed_at",
                 "verdict", "severity", "confidence", "reasoning", "judge_model", "escalated_model",
-                "atlas_id", "owasp_id", "owasp_agentic", "nist_id", "eu_ai_act_id", "created_at", "evidence", "remediation"]
+                "atlas_id", "owasp_id", "owasp_agentic", "nist_id", "eu_ai_act_id", "created_at", "evidence", "remediation", "remediation_actions"]
 
 CANARY_RE = re.compile(r"ARGUS-CANARY-[0-9A-F]{16}")
 
