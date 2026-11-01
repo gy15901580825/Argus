@@ -20,3 +20,10 @@ def test_flat_remediation_text_unchanged_since_0_10_0():
     assert not changed, changed
     for cls, text in SNAPSHOT["classes"].items():
         assert remediation.for_classes([cls]) == text, cls
+
+
+def test_vendored_atlas_mitigations_are_v2026_10():
+    ids = remediation.atlas_mitigations()
+    assert list(ids) == [f"AML.M{n:04d}" for n in range(44)]
+    assert ids["AML.M0030"] == "Restrict AI Agent Tool Invocation on Untrusted Data"
+    assert all(name.strip() for name in ids.values())

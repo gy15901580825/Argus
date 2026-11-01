@@ -24,3 +24,10 @@ def for_classes(attack_classes: Iterable[str]) -> str:
     """The entries for these classes, in the probe's order, one per line."""
     texts = table()
     return "\n".join(dict.fromkeys(texts[c].strip() for c in attack_classes if c in texts))
+
+
+@lru_cache(maxsize=1)
+def atlas_mitigations() -> dict[str, str]:
+    """Names from the pinned ATLAS release for labels and report display."""
+    path = _PATH.with_name("atlas_mitigations.yaml")
+    return yaml.safe_load(path.read_text(encoding="utf-8"))["mitigations"]
