@@ -15,6 +15,7 @@ from uuid import UUID, uuid4
 import httpx
 
 from argus.placeholders import needs_rendering, render_generator_name, target_model_name
+from argus.a2a.events import events_from_trials
 from argus.cost_meter import CostExceededError
 from argus.events import Event
 from argus.phases import PhaseRun, clean_failure, judge_trial
@@ -869,6 +870,9 @@ class Runner:
             severity=probe.severity if summary.verdict in ("fail", "warn") else "info",
             confidence=1.0,
             reasoning=reasoning.strip(),
+            events=events_from_trials([(r.trial, r.attack.evidence) for r in results
+                                       if r.attack is not None and r.attack.evidence is not None])
+            if getattr(probe, "scenario_kind", None) == "a2a_world" else None,
             evidence={
                 "trial_summary": summary.as_dict(),
                 "trials": [r.as_dict() for r in results],
