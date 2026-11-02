@@ -201,3 +201,40 @@ def test_rotation_wins_probe_creation_compare_and_swap(service):
         svc.create_probe("tenant/principal", run["run_id"], payload="neutral", markers={}, capability_hash=importlib.import_module("testbed.service").digest(run["public_token"]))
     assert caught.value.status == 410
     assert len(svc.store.get(run["run_id"], svc.clock()).probes) == 1
+
+
+def test_public_auth_rechecks_canonical_hash_after_metadata_lookup(service):
+    svc, _ = service
+    run, probe = setup_run(service)
+    original_get = svc.store.get
+    interleaved = [False]
+
+    def interleave(*args, **kwargs):
+        if not interleaved[0]:
+            interleaved[0] = True
+            svc.rotate("tenant/principal", run["run_id"], scope="public")
+        return original_get(*args, **kwargs)
+
+    svc.store.get = interleave
+    with pytest.raises(Exception) as caught:
+        svc.public(run["public_token"], probe["probe_id"])
+    assert caught.value.status == 410
+
+
+def test_public_admission_rechecks_revocation_in_same_cas(service):
+    svc, _ = service
+    run, probe = setup_run(service)
+    original_update = svc.store.update
+    rotated = [False]
+
+    def interleave(candidate, version):
+        if not rotated[0]:
+            rotated[0] = True
+            svc.rotate("tenant/principal", run["run_id"], scope="public")
+        return original_update(candidate, version)
+
+    svc.store.update = interleave
+    with pytest.raises(Exception) as caught:
+        svc.begin(run["run_id"], probe["probe_id"], capability_hash=importlib.import_module("testbed.service").digest(run["public_token"]))
+    assert caught.value.status == 410
+    assert svc.store.get(run["run_id"], svc.clock()).probes[probe["probe_id"]].pending == 0

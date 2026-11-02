@@ -203,7 +203,7 @@ async def public(request):
     is_sink = "tail" in request.match_info
     if not is_sink and request.method not in {"GET", "HEAD"} or is_sink and request.method not in {"GET", "HEAD", "POST"}:
         raise Rejected(405, "method_not_allowed")
-    admitted = await asyncio.to_thread(svc.begin, run.run_id, pid)
+    admitted = await asyncio.to_thread(svc.begin, run.run_id, pid, capability_hash=digest(token))
     tail = request.match_info.get("tail", "")
     route = "/sink/" + tail if tail in {"kyc", "oauth/grant"} else "/sink/other" if is_sink else "/scenario"
     raw = bytearray()

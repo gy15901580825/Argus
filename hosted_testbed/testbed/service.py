@@ -189,12 +189,18 @@ class HostedService:
                 current = self.store.get(run.run_id, self.clock())
                 if current is None:
                     raise Rejected(410, "token_expired")
+                if current.deleted or current.expires_at <= self.clock() or not hmac.compare_digest(hashed, current.public_hash):
+                    raise Rejected(410, "token_expired")
                 self._probe(current, pid)
                 return current
         raise Rejected(404, "not_found")
 
-    def begin(self, rid, pid):
+    def begin(self, rid, pid, *, capability_hash=None):
         def begin(run):
+            if capability_hash is not None and not hmac.compare_digest(capability_hash, run.public_hash):
+                if capability_hash in run.retired_public:
+                    raise Rejected(410, "token_expired")
+                raise Rejected(404, "not_found")
             probe = self._probe(run, pid)
             if probe.sealed or probe.sealing:
                 return False
