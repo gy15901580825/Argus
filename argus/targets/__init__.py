@@ -87,5 +87,9 @@ def build_target(spec: dict[str, Any]) -> Target:
     if builder is None:
         raise ValueError(f"unknown target kind: {kind!r}")
     SpecClass, TargetClass = builder
+    if kind == "custom_http" and "transport" in spec:
+        from argus.targets.custom_http import LEGACY_TRANSPORT_FIELDS
+        if set(spec) & LEGACY_TRANSPORT_FIELDS:
+            raise ValueError("transport and legacy transport fields conflict")
     spec_obj = SpecClass(**spec)
     return TargetClass(spec_obj)

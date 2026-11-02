@@ -21,6 +21,7 @@ from argus.probe import load_probe_library
 from argus.runner import NO_JUDGE_KEY, TargetUnreachableError, skipped_finding
 from argus.targets import build_target
 from argus.targets.browser_use import local_browser_mode
+from argus_transport import local_transport_mode
 
 
 class LocalRunError(Exception):
@@ -188,7 +189,7 @@ async def run_local(
             # browser_use targets serve their trap page from this process, and the per-run
             # cap holds during the run (issue #15). Both are entered per step, so neither
             # stays set in the caller across our yield, even if the caller stops iterating.
-            with local_browser_mode(), api._COST_METER.run_scope(
+            with local_browser_mode(), local_transport_mode(), api._COST_METER.run_scope(
                 "local", deep=mode == "deep", per_run_cap_usd=per_run_cap_usd, spent_usd=spent, resume=started,
             ):
                 started = True
