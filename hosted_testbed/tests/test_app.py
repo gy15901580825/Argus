@@ -29,7 +29,7 @@ async def client(unused_tcp_port):
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     verifier = auth_module.OwnerVerifier(TENANT, AUDIENCE, key_resolver=lambda token: key.public_key())
     service = HostedService(MemoryStore())
-    runner = web.AppRunner(app_module.create_app(service, verifier, public_origin="https://synthetic.invalid"))
+    runner = app_module.SafeAppRunner(app_module.create_app(service, verifier, public_origin="https://synthetic.invalid"))
     await runner.setup()
     await web.TCPSite(runner, "127.0.0.1", unused_tcp_port).start()
     async with ClientSession() as session:
@@ -245,3 +245,70 @@ async def test_exhausted_ip_rate_does_not_scan_run_storage(client):
     svc.store.list_auth = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("quota rejected requests must not scan storage"))
     async with session.get(url + f'/r/{run["public_token"]}/p/{probe["probe_id"]}/scenario') as response:
         assert response.status == 429
+
+
+@pytest.mark.asyncio
+async def test_malformed_http_parser_never_echoes_or_logs_raw_input(client, caplog):
+    import asyncio
+    _, url, _, _ = client
+    from urllib.parse import urlsplit
+    endpoint = urlsplit(url)
+    reader, writer = await asyncio.open_connection("127.0.0.1", endpoint.port)
+    marker = b"SYNTHETIC_PRIVATE_HEADER"
+    writer.write(b"GET / HTTP/1.1\r\nHost: localhost\r\n" + marker + b"\r\n\r\n")
+    await writer.drain()
+    response = await asyncio.wait_for(reader.read(), timeout=2)
+    writer.close()
+    await writer.wait_closed()
+    reflected = marker in response
+    logged = marker.decode() in caplog.text
+    assert (reflected, logged) == (False, False)
+
+
+@pytest.mark.asyncio
+async def test_bound_ip_rejection_marks_unknown_once_without_repeated_storage_reads(client):
+    session, url, _, svc = client
+    run, probe, headers = await new_probe(client)
+    endpoint = url + f'/r/{run["public_token"]}/p/{probe["probe_id"]}/scenario'
+    async with session.get(endpoint) as response:
+        assert response.status == 200
+    for _ in range(59):
+        svc.rate("ip", "127.0.0.1", 300, 60)
+    original_get = svc.store.get
+    reads = [0]
+
+    def counted(*args, **kwargs):
+        reads[0] += 1
+        return original_get(*args, **kwargs)
+
+    svc.store.get = counted
+    svc.store.list_auth = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("denied IP must not scan storage"))
+    for _ in range(3):
+        async with session.get(endpoint) as response:
+            assert response.status == 429
+    assert reads[0] == 1
+    async with session.post(url + f'/v1/runs/{run["run_id"]}/probes/{probe["probe_id"]}/seal', json={"reason": "vendor_terminal"}, headers=headers) as response:
+        assert not (await response.json())["complete"]
+
+
+def test_binding_cache_is_bounded_expires_and_refreshes_renewed_lease():
+    from testbed.models import Probe, Run
+    app_module, auth_module = modules()
+    clock = [1000.0]
+    svc = HostedService(MemoryStore(), clock=lambda: clock[0])
+    app = app_module.create_app(svc, auth_module.OwnerVerifier(TENANT, AUDIENCE), public_origin="https://synthetic.invalid")
+    run = Run("r1", "owner", 1000, 9000, "public", "evidence")
+    for index in range(1001):
+        pid = f"p{index}"
+        run.probes[pid] = Probe(pid, "epoch", 2000, "neutral", {})
+        app_module._remember_binding(app, "tokenhash", pid, run)
+    assert len(app[app_module.BINDINGS]) == 1000
+    assert ("tokenhash", "p0") not in app[app_module.BINDINGS]
+    run.probes["p1000"].expires_at = 3000
+    app_module._remember_binding(app, "tokenhash", "p1000", run)
+    clock[0] = 2001
+    app_module._prune_bindings(app)
+    assert list(app[app_module.BINDINGS]) == [("tokenhash", "p1000")]
+    clock[0] = 3001
+    app_module._prune_bindings(app)
+    assert not app[app_module.BINDINGS]

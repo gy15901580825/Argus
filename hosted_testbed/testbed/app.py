@@ -1,4 +1,5 @@
 import argparse
+from collections import OrderedDict
 import asyncio
 import html
 import ipaddress
@@ -14,6 +15,7 @@ from aiohttp import web
 from .auth import OwnerVerifier
 from .memory import MemoryStore
 from .service import HostedService, Rejected, digest
+from .server import SafeAppRunner, serve
 
 
 SERVICE = web.AppKey("service", HostedService)
@@ -21,6 +23,7 @@ VERIFIER = web.AppKey("verifier", OwnerVerifier)
 ORIGIN = web.AppKey("origin", str)
 PROXIES = web.AppKey("trusted_proxies", tuple)
 CLEANUP = web.AppKey("cleanup_task", asyncio.Task)
+BINDINGS = web.AppKey("public_bindings", OrderedDict)
 
 
 def _bearer(request):
@@ -186,14 +189,51 @@ async def evidence(request):
     return web.json_response(result, headers={"Cache-Control": "no-store"})
 
 
+def _prune_bindings(app):
+    bindings = app[BINDINGS]
+    now = app[SERVICE].clock()
+    expired = [key for key, value in bindings.items() if value["expires_at"] <= now]
+    for key in expired:
+        del bindings[key]
+
+
+def _remember_binding(app, token_hash, pid, run):
+    _prune_bindings(app)
+    bindings = app[BINDINGS]
+    key = (token_hash, pid)
+    if key not in bindings:
+        bindings[key] = {"rid": run.run_id, "expires_at": run.probes[pid].expires_at, "drop_once": False}
+    bindings[key]["expires_at"] = run.probes[pid].expires_at
+    bindings.move_to_end(key)
+    while len(bindings) > 1000:
+        bindings.popitem(last=False)
+
+
+async def _drop_bound(app, token_hash, pid):
+    _prune_bindings(app)
+    binding = app[BINDINGS].get((token_hash, pid))
+    if binding is not None and not binding["drop_once"]:
+        binding["drop_once"] = True
+        try:
+            await asyncio.to_thread(app[SERVICE].dropped, binding["rid"], pid)
+        except Rejected:
+            pass
+
+
 async def public(request):
     svc = request.app[SERVICE]
     pid = request.match_info["pid"]
     token = request.match_info["token"]
     if len(token) > 128:
         raise Rejected(404, "not_found")
-    await asyncio.to_thread(svc.rate, "ip", _client_ip(request), 300, 60)
+    try:
+        await asyncio.to_thread(svc.rate, "ip", _client_ip(request), 300, 60)
+    except Rejected as error:
+        if error.status == 429:
+            await _drop_bound(request.app, digest(token), pid)
+        raise
     run = await asyncio.to_thread(svc.public, token, pid)
+    _remember_binding(request.app, digest(token), pid, run)
     try:
         await asyncio.to_thread(svc.rate, "public", digest(token), 60, 20)
     except Rejected as error:
@@ -269,6 +309,7 @@ def create_app(service, verifier, *, public_origin, trusted_proxy_cidrs=()):
     app = web.Application(middlewares=[errors], client_max_size=65536)
     app[SERVICE], app[VERIFIER], app[ORIGIN] = service, verifier, public_origin.rstrip("/")
     app[PROXIES] = tuple(ipaddress.ip_network(value) for value in trusted_proxy_cidrs)
+    app[BINDINGS] = OrderedDict()
     app.cleanup_ctx.append(_lifecycle)
     app.router.add_post("/v1/runs", create_run)
     app.router.add_post("/v1/runs/{rid}/probes", create_probe)
@@ -310,7 +351,10 @@ def main():
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8080)
     args = parser.parse_args()
-    web.run_app(application_from_environment(), host=args.host, port=args.port, access_log=None)
+    try:
+        asyncio.run(serve(application_from_environment(), args.host, args.port))
+    except web.GracefulExit:
+        pass
 
 
 if __name__ == "__main__":

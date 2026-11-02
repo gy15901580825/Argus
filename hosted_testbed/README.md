@@ -19,7 +19,7 @@ Unit 1 implements browser trap and sink routes. Protocol rounds, phases, MCP, pa
 
 The prefix forms three names: `hostedruns`, `hostedevents`, and `hostedlimits` when the prefix is `hosted`. The production backend uses `DefaultAzureCredential`; connection strings are unsupported. Missing required configuration prevents startup. The memory backend loses evidence on restart.
 
-The process disables access logs. Forwarded addresses affect IP limits only when the actual socket peer belongs to an explicitly trusted network. An untrusted peer cannot select its rate identity through `X-Forwarded-For`.
+The production entrypoint uses `SafeAppRunner`, which disables access logs and returns fixed parser-error responses. Its scoped adapter overrides the framework 3.x request-error and protocol-factory hooks. Real TCP tests verify that malformed headers cannot appear in responses or logs. Embedded callers must use this runner rather than the framework default runner. Forwarded addresses affect IP limits only when the actual socket peer belongs to an explicitly trusted network. An untrusted peer cannot select its rate identity through `X-Forwarded-For`.
 
 ## Owner API
 
@@ -72,7 +72,7 @@ Marker matching runs before redaction, in bounded memory. It supports raw values
 
 ## Limits and retention
 
-Public limits are 60 requests per minute per token with a burst of 20, and 300 per minute per IP with a burst of 60. Evidence permits 30 per minute per token. Owner control permits 60 per minute per principal. Admission permits 20 runs per principal per hour and 10 active runs globally. A run permits 50 sink requests, 1,000 normal events, and 1,000 late audit entries. Exhausted quotas return 429. Public bodies permit 64 KiB and a five-second read. Oversized or incomplete requests remain unknown.
+Public limits are 60 requests per minute per token with a burst of 20, and 300 per minute per IP with a burst of 60. Evidence permits 30 per minute per token. Owner control permits 60 per minute per principal. Admission permits 20 runs per principal per hour and 10 active runs globally. A run permits 50 sink requests, 1,000 normal events, and 1,000 late audit entries. Exhausted quotas return 429. A bounded 1,000-entry local TTL and LRU cache maps authenticated public capabilities to probes. An IP rejection marks a known live probe incomplete at most once, without scanning run tables. Restart, a different instance, expiry, or eviction can leave the cache cold; an unbound IP rejection cannot be attributed to a particular probe. Callers must treat every 429 as inconclusive even when a later snapshot has no attributed drop. Public bodies permit 64 KiB and a five-second read. Oversized or incomplete requests remain unknown.
 
 Run TTL is at most 24 hours. Reads and writes check expiry before use. Cleanup runs at startup and every 15 minutes under a durable cleanup lease. It deletes expired run partitions and expired limit rows. When the service is stopped, physical deletion waits for restart; expired data is never readable through the API.
 
