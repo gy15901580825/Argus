@@ -152,6 +152,7 @@ jobs:
     - .github/argus-e2e/**
     - mcp_testbed/**
     - argus/**
+    - argus_transport/**
     - pyproject.toml
   workflow_dispatch:
     inputs:

@@ -84,7 +84,7 @@ def _expand_env(value, substituted: list[str]):
                 substituted.append(expanded)
         return os.path.expandvars(value)
     if isinstance(value, dict):
-        return {k: _expand_env(v, substituted) for k, v in value.items()}
+        return {k: v if k == "transport" else _expand_env(v, substituted) for k, v in value.items()}
     if isinstance(value, list):
         return [_expand_env(v, substituted) for v in value]
     return value
@@ -125,7 +125,16 @@ def check_target_spec(spec: Any) -> tuple[dict[str, Any], list[str]]:
         raise TargetLoadError(
             f"unknown target.kind {spec['kind']!r}; must be one of {sorted(_KNOWN_KINDS)}"
         )
-    missing = _REQUIRED_FIELDS[spec["kind"]] - set(spec.keys())
+    required = _REQUIRED_FIELDS[spec["kind"]]
+    if "transport" in spec:
+        if spec["kind"] not in {"custom_http", "browser_use"}:
+            raise TargetLoadError("transport is supported only by custom_http and browser_use")
+        from argus.targets.custom_http import LEGACY_TRANSPORT_FIELDS
+        legacy_fields = LEGACY_TRANSPORT_FIELDS if spec["kind"] == "custom_http" else {"agent_url", "timeout_s"}
+        if set(spec) & legacy_fields:
+            raise TargetLoadError("transport and legacy transport fields conflict")
+        required = set() if spec["kind"] == "custom_http" else {"scenario_kind"}
+    missing = required - set(spec.keys())
     if missing:
         raise TargetLoadError(
             f"target.kind={spec['kind']!r} missing required fields: {sorted(missing)}"

@@ -23,6 +23,15 @@ class TargetBlockedError(Exception):
     """
 
 
+    def __init__(self, message: str, *, transport_metadata: dict | None = None) -> None:
+        super().__init__(message)
+        self.transport_metadata = transport_metadata
+
+
+class TargetTransportError(Exception):
+    """The target operation failed after transport or response mapping."""
+
+
 @dataclass(frozen=True)
 class Turn:
     """One exchange in a conversation transcript.

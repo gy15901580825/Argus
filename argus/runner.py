@@ -198,16 +198,31 @@ def _never_reached(blocked_reasoning: str) -> str:
     return f"{cause} and never reached the testbed, so the probe did not run; this is not a defended result"
 
 
+def _transport_failure_evidence(exc: Exception) -> dict | None:
+    from argus.targets._base import TargetBlockedError
+
+    metadata = getattr(exc, "transport_metadata", None)
+    if (isinstance(exc, TargetBlockedError) and isinstance(metadata, dict)
+            and metadata.get("origin") == "mapped_body_rule"
+            and metadata.get("outcome") == "blocked"
+            and isinstance(metadata.get("matched_rule_id"), str)
+            and metadata["matched_rule_id"]):
+        return {"transport": dict(metadata), "_mapped_body_refusal": True}
+    return None
+
+
 def _send_failure(exc: Exception) -> tuple[str, str] | None:
     """(verdict, reasoning) for a send_prompt failure that costs one probe, or None to re-raise.
 
     A target outage or a misconfigured spec must never abort the run (losing every
     finding so far) nor read as a defended result.
     """
-    from argus.targets._base import TargetBlockedError, TargetDeliveryError
+    from argus.targets._base import TargetBlockedError, TargetDeliveryError, TargetTransportError
 
     if isinstance(exc, TargetBlockedError):
         return VERDICT_BLOCKED_BY_TARGET, f"{exc}; counted as blocked"
+    if isinstance(exc, TargetTransportError):
+        return VERDICT_ERROR, f"target transport failed: {_short(exc)}"
     grpc_reason = _grpc_reason(exc)
     if grpc_reason is not None:
         return VERDICT_ERROR, grpc_reason
@@ -504,7 +519,11 @@ class Runner:
         async for f in inner:
             # Show the prompt as it went on the wire, not the probe's template.
             f = replace(f, attack_prompt=self._shown(f.attack_prompt))
-            if f.evidence is None and not self._evidence_failed:
+            mapped_refusal = bool((f.evidence or {}).get("_mapped_body_refusal"))
+            if mapped_refusal:
+                f = replace(f, evidence={k: v for k, v in f.evidence.items()
+                                         if k != "_mapped_body_refusal"})
+            if (f.evidence is None or mapped_refusal) and not self._evidence_failed:
                 # Duck-typed targets are everywhere in the test suite; only call
                 # a collector that is genuinely an async method, so a bare mock
                 # target keeps working.
@@ -523,7 +542,7 @@ class Runner:
                         )
                     else:
                         if observed:
-                            f = replace(f, evidence=observed)
+                            f = replace(f, evidence={**observed, **(f.evidence or {})})
             # A 4xx or refusal before the agent touched the testbed means the attack was never
             # staged in front of it (unreachable testbed, wrong origin), not that it was defended.
             # Same gate as _assertion_finding: only evidence-judged probes that need the testbed.
@@ -532,10 +551,15 @@ class Runner:
                 and probe.assertions
                 and probe.requires_interaction
                 and not (f.evidence or {}).get("interaction_count")
+                and not mapped_refusal
             ):
                 f = replace(
                     f, verdict=VERDICT_ERROR, reasoning=_never_reached(f.reasoning)
                 )
+            if mapped_refusal and not (f.evidence or {}).get("interaction_count"):
+                metadata = {**f.evidence["transport"], "exposure": "not_exercised"}
+                f = replace(f, evidence={**f.evidence, "transport": metadata},
+                            reasoning="target API refused the request; scenario was not exercised")
             yield f
         self._check_breaker()
 
@@ -917,7 +941,7 @@ class Runner:
                     severity="info",
                     confidence=1.0,
                     reasoning=reasoning,
-                    evidence=None,
+                    evidence=_transport_failure_evidence(e),
                 )
                 # Later turns of a conversation mean nothing without this one.
                 if conversation:
@@ -1101,7 +1125,7 @@ class Runner:
                         severity="info",
                         confidence=1.0,
                         reasoning=reasoning,
-                        evidence=None,
+                        evidence=_transport_failure_evidence(e),
                     )
                     return
                 self._note_send(None)

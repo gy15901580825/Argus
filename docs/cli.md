@@ -548,3 +548,11 @@ Remote testbeds require `TESTBED_CONTROL_TOKEN` on the service and `"control_tok
 Use `argus-probe init --kind a2a_agent` to create a sandboxed target, then run its nine probes with `argus-probe run --local`. No judge key is needed for these assertion-backed probes. Declare only capabilities your integration exposes; see [the target cookbook](onboarding/target-spec-cookbook.md#a2a_agent).
 
 `testbed_url: "local"` starts two listeners: a private controller on a free loopback port and the agent-visible peer service. `ARGUS_TESTBED_PORT` pins only the peer listener. The CLI prints both addresses. Remote deployments expose the peer service through HTTPS and reach control through a private channel forwarded to this host's loopback. Control tokens are mandatory; unset control tokens fail closed. Use one testbed instance per concurrent run and stop old traffic before handing static endpoints to the next phase.
+
+### Declarative HTTP validation
+
+Use a `transport` object in a `custom_http` target to configure request fields, secret references, answer paths, outcome rules, and deadlines. See [the transport specification](transport-spec.md) for a complete JSON example.
+
+`argus-probe validate-target --target target.json --offline` sends no requests and does not resolve secrets. Add `--sample-response sample.json` to check a local response. `--execute` sends a benign request and reports status, selected rules, mapping failures, and request counts. `--endpoint-override` directs that execution to a controlled fake endpoint. Execute mode can incur model costs and use target tools.
+
+New transport files default to offline validation. Existing target files keep their single-prompt validation behavior. Synchronous execution sends exactly one request without retries. Diagnostics omit secret values and returned answer text.

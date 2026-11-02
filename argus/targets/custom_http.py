@@ -1,171 +1,287 @@
-"""Custom HTTP adapter — Jinja2 template + JSONPath response extraction.
+"""Custom HTTP target with a shared transport and a legacy input boundary."""
 
-Customer agents commonly expose their own HTTP shape rather than OpenAI-compat.
-This adapter renders a JSON body template (with `{{prompt}}` and `{{api_key}}`
-substitutions; `prompt|tojson` escapes any embedded quotes; `{{conversation_id}}`
-is a per-conversation id for agents that keep state server-side), POSTs (or other
-method) to the configured URL, and extracts the response via a JSONPath query.
-"""
 from __future__ import annotations
 
-import json
-import time
 import uuid
+import warnings
 from dataclasses import dataclass
-from typing import ClassVar, Optional
+from typing import ClassVar
 
 import httpx
-from jsonpath_ng import parse as jsonpath_parse
 
-from argus.targets._base import Target, Turn
+from argus_transport import (
+    LegacyPreparedRequest,
+    LegacyResponseSelector,
+    TransportContext,
+    TransportEngine,
+    TransportOutcome,
+    TransportSpec,
+    execution_policy,
+)
+from argus.targets._base import Target, TargetBlockedError, TargetTransportError, Turn
 from argus.targets._template import compile_template, render
+
+LEGACY_TRANSPORT_FIELDS = frozenset(
+    {
+        "request_url",
+        "request_method",
+        "request_headers",
+        "api_key",
+        "request_body_template",
+        "response_jsonpath",
+        "response_latency_jsonpath",
+        "session_id_jsonpath",
+        "run_id_jsonpath",
+        "run_log_jsonpath",
+        "timeout_s",
+    }
+)
 
 
 def _dry_run_ctx() -> dict:
-    """A fresh context for the construction-time check of each template."""
     return {"prompt": "", "api_key": "", "history": [], "conversation_id": ""}
 
 
-def _as_text(value) -> str:
-    # null / [] / {} mean "no reply"; str() would hand the judge "None" or "[]" to pass.
-    if value is None or value == [] or value == {}:
-        return ""
-    if isinstance(value, str):
-        return value
-    return json.dumps(value, ensure_ascii=False)
+def _uses_context(value, name):
+    if isinstance(value, dict):
+        return value.get("context") == name or any(
+            _uses_context(v, name) for v in value.values()
+        )
+    if isinstance(value, (tuple, list)):
+        return any(_uses_context(v, name) for v in value)
+    return False
 
 
 @dataclass(frozen=True)
 class CustomHTTPSpec:
     kind: str = "custom_http"
-    request_url: str = ""
-    request_method: str = "POST"
-    request_headers: tuple[tuple[str, str], ...] = ()
-    api_key: Optional[str] = None
-    request_body_template: str = ""
-    response_jsonpath: str = ""
-    response_latency_jsonpath: Optional[str] = None
-    session_id_jsonpath: Optional[str] = None
-    run_id_jsonpath: Optional[str] = None
-    run_log_jsonpath: Optional[str] = None
-    timeout_s: float = 120.0
+    transport: TransportSpec | dict | None = None
+    request_url: str | None = None
+    request_method: str | None = None
+    request_headers: tuple[tuple[str, str], ...] | dict | None = None
+    api_key: str | None = None
+    request_body_template: str | None = None
+    response_jsonpath: str | None = None
+    response_latency_jsonpath: str | None = None
+    session_id_jsonpath: str | None = None
+    run_id_jsonpath: str | None = None
+    run_log_jsonpath: str | None = None
+    timeout_s: float | None = None
 
     def __post_init__(self) -> None:
-        # Coerce dict OR list-of-2-element-lists → tuple-of-tuples
-        # (model_dump() emits list-of-lists for tuple fields).
-        hdrs = self.request_headers
-        if isinstance(hdrs, dict):
-            object.__setattr__(self, "request_headers", tuple(hdrs.items()))
-        elif isinstance(hdrs, list):
-            object.__setattr__(self, "request_headers", tuple(tuple(h) for h in hdrs))
-        # Validate kind first.
         if self.kind != "custom_http":
             raise ValueError(f"kind must be 'custom_http', got {self.kind!r}")
-        if not self.request_url:
-            raise ValueError("request_url is required")
-        if not self.request_body_template:
-            raise ValueError("request_body_template is required")
-        if not self.response_jsonpath:
-            raise ValueError("response_jsonpath is required")
+        if self.transport is not None:
+            if any(
+                getattr(self, field) is not None for field in LEGACY_TRANSPORT_FIELDS
+            ):
+                raise ValueError("transport and legacy transport fields conflict")
+            transport = self.transport
+            if isinstance(transport, dict):
+                transport = TransportSpec.from_dict(transport)
+            if not isinstance(transport, TransportSpec):
+                raise ValueError("transport must be a transport specification")
+            if _uses_context(transport.request.body, "scenario_url"):
+                raise ValueError("scenario_url context requires a browser target")
+            object.__setattr__(self, "transport", transport)
+            return
+        for field in ("request_url", "request_body_template", "response_jsonpath"):
+            if not getattr(self, field):
+                raise ValueError(f"{field} is required")
+        object.__setattr__(self, "request_method", self.request_method or "POST")
+        object.__setattr__(
+            self, "timeout_s", 120.0 if self.timeout_s is None else self.timeout_s
+        )
+        headers = self.request_headers or ()
+        object.__setattr__(
+            self,
+            "request_headers",
+            (
+                tuple(headers.items())
+                if isinstance(headers, dict)
+                else tuple(tuple(header) for header in headers)
+            ),
+        )
 
 
 class CustomHTTPTarget(Target):
-    supports_history: ClassVar[bool] = True
-
-    # Plan 4 names + Plan 2 legacy aliases ("http-chat" / "tool-using" / "rag").
-    compatible_classes: ClassVar[frozenset[str]] = frozenset({
-        "llm_chat", "agent_with_tools", "agent_with_rag",
-        "http-chat", "tool-using", "rag",
-    })
+    compatible_classes: ClassVar[frozenset[str]] = frozenset(
+        {
+            "llm_chat",
+            "agent_with_tools",
+            "agent_with_rag",
+            "http-chat",
+            "tool-using",
+            "rag",
+        }
+    )
 
     def __init__(self, spec: CustomHTTPSpec) -> None:
         self.spec = spec
-        self._body_tpl = compile_template(
-            spec.request_body_template, "request_body_template", _dry_run_ctx()
-        )
-        self._header_tpls = [
-            (k, f"request_headers[{k}]", compile_template(v, f"request_headers[{k}]", _dry_run_ctx()))
-            for k, v in spec.request_headers
-        ]
-        self._jsonpath = jsonpath_parse(spec.response_jsonpath)
-        self._latency_jsonpath = (
-            jsonpath_parse(spec.response_latency_jsonpath) if spec.response_latency_jsonpath else None
-        )
-        self._conversation_id: str | None = None
+        self._conversation_id = None
+        self._session_id = None
         self._last_run_log = None
-        self._log_paths = {name: jsonpath_parse(path) for name, path in {
-            "session_id": spec.session_id_jsonpath, "run_id": spec.run_id_jsonpath,
-            "events": spec.run_log_jsonpath,
-        }.items() if path}
+        self._last_transport_evidence = {}
+        self.supports_history = (
+            spec.transport is None or spec.transport.session.mode != "none"
+        )
+        if spec.transport is None:
+            warnings.warn(
+                "custom_http legacy fields are deprecated; migrate to transport before the next major release",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            self._body_tpl = compile_template(
+                spec.request_body_template, "request_body_template", _dry_run_ctx()
+            )
+            self._header_tpls = [
+                (
+                    key,
+                    f"request_headers[{key}]",
+                    compile_template(value, f"request_headers[{key}]", _dry_run_ctx()),
+                )
+                for key, value in spec.request_headers
+            ]
+            self._legacy_mapping = LegacyResponseSelector(
+                text_path=spec.response_jsonpath,
+                latency_path=spec.response_latency_jsonpath,
+                metadata_paths={
+                    name: path
+                    for name, path in {
+                        "session_id": spec.session_id_jsonpath,
+                        "run_id": spec.run_id_jsonpath,
+                        "run_log": spec.run_log_jsonpath,
+                    }.items()
+                    if path
+                },
+            )
+            from jsonpath_ng import parse
+
+            for path in (
+                spec.response_jsonpath,
+                spec.response_latency_jsonpath,
+                spec.session_id_jsonpath,
+                spec.run_id_jsonpath,
+                spec.run_log_jsonpath,
+            ):
+                if path:
+                    parse(path)
 
     async def send_prompt(
         self, prompt: str, history: tuple[Turn, ...] = ()
     ) -> tuple[str, float]:
         self._last_run_log = None
-        # `history` is offered to the template as a list of {role, content} dicts.
-        # Templates written before conversation support simply never reference it
-        # and render exactly as they did before.
-        # Empty history starts a conversation; later turns reuse its id.
+        self._last_transport_evidence = {}
         if not history or self._conversation_id is None:
             self._conversation_id = uuid.uuid4().hex
-        ctx = {
+            self._session_id = None
+        if self.spec.transport is None:
+            return await self._send_legacy(prompt, history)
+        spec = self.spec.transport
+        context = TransportContext(
+            prompt=prompt,
+            history=tuple({"role": t.role, "content": t.content} for t in history),
+            conversation_id=self._conversation_id,
+            session_id=self._session_id,
+        )
+        result = await TransportEngine(spec, policy=execution_policy(spec)).run(context)
+        metadata = result.metadata
+        if result.outcome == TransportOutcome.SUCCEEDED:
+            if spec.session.mode == "server_returned":
+                session_id = metadata.get("session_id")
+                if not session_id:
+                    raise TargetTransportError(
+                        "mapping_error: missing server session ID"
+                    )
+                self._session_id = str(session_id)
+            try:
+                self._set_run_log(result.as_dict()["metadata"])
+            except (ValueError, TypeError):
+                self._last_transport_evidence = {
+                    "transport": {
+                        "outcome": "target_error",
+                        "http_status": result.http_status,
+                        "matched_rule_id": result.matched_rule_id,
+                        "reason_code": "mapping_error",
+                    }
+                }
+                raise TargetTransportError("target_error: mapping_error") from None
+            return result.response_text, result.latency_ms
+        transport = {
+            "outcome": result.outcome.value,
+            "http_status": result.http_status,
+            "matched_rule_id": result.matched_rule_id,
+            "reason_code": result.reason_code.value,
+        }
+        if result.outcome == TransportOutcome.BLOCKED and result.matched_rule_id:
+            transport["origin"] = "mapped_body_rule"
+        self._last_transport_evidence = {"transport": transport}
+        if result.outcome == TransportOutcome.BLOCKED:
+            raise TargetBlockedError(
+                "target API refused the request", transport_metadata=transport
+            )
+        if result.outcome == TransportOutcome.TIMED_OUT:
+            raise TimeoutError("timeout: target operation exceeded its budget")
+        raise TargetTransportError(f"target_error: {result.reason_code.value}")
+
+    async def _send_legacy(self, prompt, history):
+        context = {
             "prompt": prompt,
             "api_key": self.spec.api_key or "",
             "history": [{"role": t.role, "content": t.content} for t in history],
             "conversation_id": self._conversation_id,
         }
-        body = render(self._body_tpl, "request_body_template", ctx)
-
-        # Render headers (api_key substitution allowed in header values too).
-        headers = {}
-        for k, field, tpl in self._header_tpls:
-            headers[k] = render(tpl, field, ctx)
-
-        # Set Content-Type to application/json if not already specified.
-        ct = headers.get("Content-Type", "application/json")
-        is_json = ct.startswith("application/json") or ct == ""
-        if is_json:
+        body = render(self._body_tpl, "request_body_template", context)
+        headers = {
+            key: render(template, field, context)
+            for key, field, template in self._header_tpls
+        }
+        content_type = headers.get("Content-Type", "application/json")
+        if content_type.startswith("application/json") or content_type == "":
             headers["Content-Type"] = "application/json"
+        request = LegacyPreparedRequest(
+            self.spec.request_method,
+            self.spec.request_url,
+            headers,
+            body,
+            self.spec.timeout_s,
+        )
+        result = await TransportEngine.run_legacy(
+            request,
+            self._legacy_mapping,
+            secrets=(self.spec.api_key,) if self.spec.api_key else (),
+        )
+        self._set_run_log(result.metadata)
+        return result.response_text, result.latency_ms
 
-        start = time.monotonic()
-        async with httpx.AsyncClient(timeout=self.spec.timeout_s) as client:
-            resp = await client.request(
-                method=self.spec.request_method,
-                url=self.spec.request_url,
-                headers=headers,
-                content=body,
-            )
-            resp.raise_for_status()
-            data = resp.json() if is_json else {"_raw": resp.text}
-        wall_latency_ms = (time.monotonic() - start) * 1000.0
-
-        if self._log_paths:
-            from argus.scenarios.models import TargetRunLog
-            fields = {}
-            for name, path in self._log_paths.items():
-                matches = path.find(data)
-                if matches:
-                    fields[name] = matches[0].value
-            events = fields.get("events", [])
-            if isinstance(events, dict):
-                fields["is_dry_run"] = bool(events.get("is_dry_run", False))
-                fields["events"] = events.get("events", events.get("tools", []))
-            self._last_run_log = TargetRunLog.model_validate(fields)
-
-        matches = self._jsonpath.find(data)
-        text = _as_text(matches[0].value) if matches else ""
-
-        latency_ms = wall_latency_ms
-        if self._latency_jsonpath is not None:
-            latency_matches = self._latency_jsonpath.find(data)
-            if latency_matches and isinstance(latency_matches[0].value, (int, float)):
-                latency_ms = float(latency_matches[0].value)
-
-        return text, latency_ms
+    def _set_run_log(self, metadata):
+        self._last_run_log = run_log_from_metadata(metadata)
 
     async def begin_probe(self, probe) -> None:
         self._last_run_log = None
         self._conversation_id = None
+        self._session_id = None
+        self._last_transport_evidence = {}
+
+    async def collect_evidence(self):
+        return dict(self._last_transport_evidence)
 
     def last_run_log(self):
         return self._last_run_log
+
+
+def run_log_from_metadata(metadata):
+    if not any(name in metadata for name in ("session_id", "run_id", "run_log")):
+        return
+    from argus.scenarios.models import TargetRunLog
+
+    fields = {
+        name: metadata[name] for name in ("session_id", "run_id") if name in metadata
+    }
+    events = metadata.get("run_log", [])
+    if isinstance(events, dict):
+        fields["is_dry_run"] = bool(events.get("is_dry_run", False))
+        fields["events"] = events.get("events", events.get("tools", []))
+    else:
+        fields["events"] = events
+    return TargetRunLog.model_validate(fields)
