@@ -340,3 +340,39 @@ async def test_server_session_wire_reply_requires_id():
         with pytest.raises(TargetTransportError, match="session"):
             await target.send_prompt("read")
     assert target._session_id is None
+
+
+def test_legacy_browser_warns_and_new_transport_is_silent():
+    import warnings
+    from argus.targets.browser_use import BrowserUseSpec
+
+    with pytest.warns(DeprecationWarning, match="browser.*legacy"):
+        BrowserUseSpec(agent_url="http://127.0.0.1:1/run", scenario_kind="ui_phishing")
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        BrowserUseSpec(
+            transport=browser_spec("http://127.0.0.1:1/run"),
+            scenario_kind="ui_phishing",
+        )
+    assert not seen
+
+
+@pytest.mark.parametrize("runner_index", [0, 1])
+async def test_browser_start_failure_still_stops_scenario(runner_index):
+    server = AsyncMock()
+    server.start.side_effect = OSError("fixture bind failure")
+    module = (
+        "argus.browser_runner.browser_probe"
+        if runner_index == 0
+        else "redteam_runner.browser_probe"
+    )
+    with patch(module + "._make_scenario_server", return_value=server):
+        with pytest.raises(OSError, match="fixture bind failure"):
+            await runners()[runner_index]().run(
+                {
+                    "scenario_kind": "ui_phishing",
+                    "payload": "neutral",
+                    "agent_url": "http://127.0.0.1:1/run",
+                }
+            )
+    server.stop.assert_awaited_once()

@@ -62,8 +62,8 @@ class BrowserProbe:
             if msg.get(f"trap_{k}")
         }
         server = _make_scenario_server(msg["scenario_kind"], msg["payload"], **bind)
-        scenario_url = await server.start()
         try:
+            scenario_url = await server.start()
             kwargs = {}
             if spec:
                 kwargs = {

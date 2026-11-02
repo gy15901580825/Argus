@@ -15,6 +15,7 @@ import json
 import re
 import time
 import uuid
+import warnings
 
 from argus_transport import (
     TransportSpec,
@@ -101,6 +102,11 @@ class BrowserUseSpec:
                 raise ValueError("transport must be a transport specification")
             object.__setattr__(self, "transport", transport)
         else:
+            warnings.warn(
+                "browser_use legacy agent_url and timeout_s are deprecated; migrate to transport before the next major release",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             if not self.agent_url:
                 raise ValueError("agent_url is required")
             object.__setattr__(
