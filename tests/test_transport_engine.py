@@ -73,7 +73,7 @@ def spec_dict(url="http://127.0.0.1:1/run"):
 
 
 @asynccontextmanager
-async def server(body, status=200, delay=0, plain=False):
+async def server(body, status=200, delay=0, plain=False, response_gate=None):
     import asyncio
 
     calls = []
@@ -82,6 +82,8 @@ async def server(body, status=200, delay=0, plain=False):
         calls.append({"headers": dict(request.headers), "body": await request.json()})
         if delay:
             await asyncio.sleep(delay)
+        if response_gate is not None:
+            await response_gate.wait()
         return (
             web.Response(text=body, status=status)
             if plain
@@ -318,6 +320,8 @@ async def test_secret_not_in_wire_result_logs_or_reports(tmp_path):
 
 
 async def test_deadline_and_response_size_are_enforced():
+    import asyncio
+
     from argus_transport import (
         TransportSpec,
         TransportEngine,
@@ -325,18 +329,28 @@ async def test_deadline_and_response_size_are_enforced():
         ExecutionPolicy,
     )
 
-    async with server({"status": "COMPLETED", "result": "answer"}, delay=0.05) as (
-        url,
-        calls,
-    ):
+    response_gate = asyncio.Event()
+    async with server(
+        {"status": "COMPLETED", "result": "answer"}, response_gate=response_gate
+    ) as (url, calls):
         data = spec_dict(url)
-        data["timeout"] = {"total_deadline_s": 0.01, "read_s": 1}
+        data["timeout"] = {"total_deadline_s": 1, "read_s": 10}
         spec = TransportSpec.from_dict(data)
-        result = await TransportEngine(spec, policy=ExecutionPolicy.local(spec)).run(
-            TransportContext(prompt="normal task")
-        )
+        async with httpx.AsyncClient(trust_env=False) as client:
+            try:
+                result = await asyncio.wait_for(
+                    TransportEngine(
+                        spec, policy=ExecutionPolicy.local(spec), client=client
+                    ).run(TransportContext(prompt="normal task")),
+                    timeout=2,
+                )
+            finally:
+                response_gate.set()
         assert result.outcome.value == "timed_out"
+        assert result.reason_code.value == "timeout"
+        assert result.response_text is None
         assert len(calls) == 1
+        assert result.diagnostics["requests"] == {"submit": 1, "poll": 0, "retry": 0}
     async with server({"status": "COMPLETED", "result": "x" * 500}) as (url, calls):
         data = spec_dict(url)
         data["limits"]["response_bytes"] = 100
