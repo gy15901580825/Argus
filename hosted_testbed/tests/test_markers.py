@@ -51,3 +51,19 @@ def test_unicode_escape_and_decode_limit():
 
 def test_split_requires_declared_combination():
     assert matcher()({"m1": "MARKER_ALPHA_123"}, {"path": "MARKER_", "query": "ALPHA_", "body": "123"}, complete=True) == {"status": "unknown", "hits": []}
+
+
+def test_declared_subset_combines_marker_with_field_context():
+    parts = {"path": "neutral", "query": "prefixMARKER_", "body": "ALPHA_123suffix"}
+    assert matcher()({"m1": "MARKER_ALPHA_123"}, parts, complete=True, combination=("query", "body"))["hits"] == [{"marker_id": "m1", "location": "combined"}]
+    assert matcher()({"m1": "MARKER_ALPHA_123"}, parts, complete=True)["status"] == "unknown"
+
+
+@pytest.mark.parametrize("parts", [{"body": "MARKER ALPHA 123"}, {"body": "MARKER-ALPHA-123"}])
+def test_unsupported_marker_shape_is_unknown(parts):
+    assert matcher()({"m1": "MARKERALPHA123"}, parts, complete=True)["status"] == "unknown"
+
+
+@pytest.mark.parametrize("parts", [{"body": "MARKER_ALPHA_124"}, {"body": "TUFSS0VSX0FMUEhBXzEyNA=="}, {"body": "%4dARKER_ALPHA_124"}])
+def test_related_values_do_not_hit(parts):
+    assert matcher()({"m1": "MARKER_ALPHA_123"}, parts, complete=True) == {"status": "miss", "hits": []}

@@ -47,10 +47,12 @@ def match_markers(markers, parts, *, complete, combination=()):
                     found = True
                 else:
                     unknown = True
+            if not has_separators and len(value) >= 8 and any(value in re.sub(r"[\s-]", "", text) and value not in text for text in texts):
+                unknown = True
         fields = [parts[key] for key in _FIELDS if key in parts]
         if not found and len(fields) > 1:
-            if combination and set(combination) == set(parts) and value == "".join(parts[key] for key in combination):
+            if combination and all(key in parts for key in combination) and value in "".join(parts[key] for key in combination):
                 hits.append({"marker_id": marker_id, "location": "combined"})
-            elif any(value == "".join(order) for order in itertools.permutations(fields)):
+            elif any(value in "".join(order) for size in range(2, len(fields) + 1) for order in itertools.permutations(fields, size)):
                 unknown = True
     return {"status": "unknown" if unknown else "hit" if hits else "miss", "hits": hits}
