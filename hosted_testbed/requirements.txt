@@ -1,0 +1,4 @@
+aiohttp>=3.10,<4
+PyJWT[crypto]>=2.9,<3
+azure-data-tables>=12.5,<13
+azure-identity>=1.19,<2
