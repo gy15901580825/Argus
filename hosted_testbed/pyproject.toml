@@ -1,0 +1,11 @@
+[project]
+name = "argus-hosted-testbed"
+version = "0.1.0"
+description = "Controlled hosted trap pages and redacted evidence"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

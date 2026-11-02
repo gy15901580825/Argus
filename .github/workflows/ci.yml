@@ -175,6 +175,32 @@ jobs:
       - name: Run test suite
         run: python -m pytest tests/ -q
 
+  hosted_testbed:
+    name: hosted_testbed tests and image
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: hosted_testbed
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: hosted_testbed/requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run test suite
+        run: python -m pytest tests/ -q
+
+      - name: Build non-root service image
+        run: docker build -t hosted-trap:ci .
+
   client_agent:
     name: client_agent — tests
     runs-on: ubuntu-latest
