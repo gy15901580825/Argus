@@ -888,6 +888,61 @@ class TransportResult(FrozenModel):
     metadata: ResponseMetadata = field(default_factory=dict)
     diagnostics: dict = field(default_factory=dict)
 
+    @classmethod
+    def from_dict(cls, data):
+        object_fields(
+            data, set(cls.__dataclass_fields__), set(cls.__dataclass_fields__)
+        )
+        outcome = TransportOutcome(data["outcome"])
+        reason = SafeReasonCode(data["reason_code"])
+        latency = data["latency_ms"]
+        if (
+            isinstance(latency, bool)
+            or not isinstance(latency, (int, float))
+            or not math.isfinite(latency)
+            or latency < 0
+        ):
+            raise ValueError("Invalid transport latency")
+        status = data["http_status"]
+        if status is not None and (type(status) is not int or not 100 <= status <= 599):
+            raise ValueError("Invalid transport HTTP status")
+        rule = data["matched_rule_id"]
+        if rule is not None and (not isinstance(rule, str) or not rule):
+            raise ValueError("Invalid transport rule identifier")
+        answer = data["response_text"]
+        if outcome == TransportOutcome.SUCCEEDED:
+            if (
+                not isinstance(answer, str)
+                or not answer.strip()
+                or reason != SafeReasonCode.OK
+            ):
+                raise ValueError("Invalid successful transport reply")
+        elif answer is not None:
+            raise ValueError("Non-success transport reply contains an answer")
+        if not isinstance(data["metadata"], dict) or not isinstance(
+            data["diagnostics"], dict
+        ):
+            raise ValueError("Invalid transport metadata")
+        if set(data["metadata"]) - {"session_id", "run_id", "run_log", "latency_ms"}:
+            raise ValueError("Unknown transport metadata")
+        if (
+            outcome == TransportOutcome.BLOCKED
+            and reason != SafeReasonCode.TARGET_REFUSAL
+        ):
+            raise ValueError("Invalid blocked transport reason")
+        if outcome == TransportOutcome.TIMED_OUT and reason != SafeReasonCode.TIMEOUT:
+            raise ValueError("Invalid timeout transport reason")
+        return cls(
+            outcome,
+            answer,
+            latency,
+            status,
+            rule,
+            reason,
+            data["metadata"],
+            data["diagnostics"],
+        )
+
     def as_dict(self):
         import json
 

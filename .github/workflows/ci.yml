@@ -178,9 +178,6 @@ jobs:
   client_agent:
     name: client_agent — tests
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: client_agent
     steps:
       - uses: actions/checkout@v4
 
@@ -194,10 +191,15 @@ jobs:
         # The tests need no browser binaries, so this skips `playwright install`.
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt -r requirements-dev.txt
+          pip install -r client_agent/requirements.txt -r client_agent/requirements-dev.txt
 
-      - name: Run test suite
-        run: python -m pytest tests/ -q
+      - name: Build shipped client image
+        run: docker build --file "$PWD/client_agent/Dockerfile" --tag argus-transport-client-verify:ci .
+
+      - name: Run test suite and image import proof
+        env:
+          ARGUS_CLIENT_IMAGE: argus-transport-client-verify:ci
+        run: python -m pytest client_agent/tests/ -q
 
   probe-library:
     name: probe library — schema validation

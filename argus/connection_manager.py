@@ -25,6 +25,10 @@ class ClientAgentDisconnectedError(NoClientAgentError):
     """The client_agent's socket closed before it replied to a redteam probe."""
 
 
+class ClientTransportVersionError(NoClientAgentError):
+    """The connected client does not support the requested transport version."""
+
+
 class ConnectionManager:
     """Manages WebSocket connections for agents"""
     
@@ -36,6 +40,7 @@ class ConnectionManager:
         # Ids whose handshake is in progress; reserved before accept() so two
         # concurrent connects with one id cannot both register.
         self._reserved: set = set()
+        self._transport_versions: Dict[str, frozenset[int]] = {}
         # command_id -> agent_id for redteam probes, so a disconnect can fail them.
         self._command_agents: Dict[str, str] = {}
         logger.info(f"ConnectionManager initialized, instance id: {id(self)}")
@@ -51,12 +56,27 @@ class ConnectionManager:
         try:
             await websocket.accept()
             self.active_connections[agent_id] = websocket
+            self._transport_versions.pop(agent_id, None)
         finally:
             self._reserved.discard(agent_id)
         logger.info(f"Agent connected: {agent_id}, ConnectionManager id: {id(self)}, total connections: {len(self.active_connections)}")
         
         await self._post_status(agent_id, "active")
         return True
+
+    def set_transport_versions(self, agent_id: str, connection: Any, versions: Any) -> bool:
+        """Record capabilities only for the socket that owns this agent id."""
+        if self.active_connections.get(agent_id) is not connection:
+            return False
+        if not isinstance(versions, list) or any(type(v) is not int or v < 1 for v in versions):
+            raise ValueError("Transport versions must be positive integers")
+        self._transport_versions[agent_id] = frozenset(versions)
+        return True
+
+    def transport_versions(self, agent_id: str, connection: Any) -> frozenset[int]:
+        if self.active_connections.get(agent_id) is not connection:
+            return frozenset()
+        return self._transport_versions.get(agent_id, frozenset())
 
     async def _post_status(self, agent_id: str, status: str) -> None:
         """Tell the API server about an agent's status, when one is configured."""
@@ -86,6 +106,7 @@ class ConnectionManager:
             return
         if agent_id in self.active_connections:
             del self.active_connections[agent_id]
+            self._transport_versions.pop(agent_id, None)
             logger.info(f"Agent disconnected: {agent_id}, total connections: {len(self.active_connections)}")
             
             await self._post_status(agent_id, "offline")
@@ -180,6 +201,8 @@ class RedteamBridge:
         if not agent_id:
             raise NoClientAgentError("No client_agent connected for redteam bridge")
         connection = self._mgr.active_connections[agent_id]
+        if "transport" in msg and 1 not in self._mgr.transport_versions(agent_id, connection):
+            raise ClientTransportVersionError("Connected client_agent does not support transport version 1; upgrade the client")
         command_id = str(uuid.uuid4())
         envelope = {
             "jsonrpc": "2.0",

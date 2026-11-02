@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
+
+from argus_transport import (
+    ExecutionPolicy,
+    TransportSpec,
+    TransportResult,
+    TransportOutcome,
+    SafeReasonCode,
+)
 
 from .scenarios import dom_injection, os_cmd, ui_phishing, visual_injection
 from .server import ScenarioServer
-
 
 _SCENARIOS = {
     "dom_injection": dom_injection,
@@ -29,47 +37,74 @@ def _make_scenario_server(scenario_kind: str, payload: str, **bind) -> ScenarioS
     return server
 
 
-def _make_target_agent_driver(agent_url: str, scenario_url: str, prompt: str, timeout_s: float):
-    """Returns a driver object with .run() coroutine that drives the customer's
-    browser-using agent against the scenario URL.
+def _make_target_agent_driver(agent_url, scenario_url, prompt, timeout_s, **transport):
+    from .target_agent_driver import TargetAgentDriver
 
-    For v0 we assume the customer agent has a generic 'navigate to URL + follow
-    instruction' interface accessible at agent_url. (CLI will validate this in
-    `validate-target` subcommand.)
-    """
-    from .target_agent_driver import TargetAgentDriver  # see Task 7
-    return TargetAgentDriver(agent_url=agent_url, scenario_url=scenario_url, prompt=prompt, timeout_s=timeout_s)
+    return TargetAgentDriver(
+        agent_url=agent_url,
+        scenario_url=scenario_url,
+        prompt=prompt,
+        timeout_s=timeout_s,
+        **transport,
+    )
 
 
 class BrowserProbe:
-    async def run(self, msg: dict) -> dict:
-        scenario_kind = msg["scenario_kind"]
-        payload = msg["payload"]
-        # Older orchestrators send only payload and used it for both roles.
-        prompt = msg.get("prompt", payload)
-        agent_url = msg["agent_url"]
+    async def run(self, msg: dict, *, policy: ExecutionPolicy | None = None) -> dict:
+        prompt = msg.get("prompt", msg["payload"])
+        transport = msg.get("transport")
+        spec = TransportSpec.from_dict(transport) if transport is not None else None
         timeout_s = float(msg.get("timeout_s", 60.0))
-
-        # Optional: where the trap page listens and the URL the agent is given.
-        bind = {k: msg[f"trap_{k}"] for k in ("host", "port", "public_url") if msg.get(f"trap_{k}")}
-        server = _make_scenario_server(scenario_kind, payload, **bind)
-        scenario_url = await server.start()
+        cleanup = spec.timeout.cleanup_grace_s if spec else 2.0
+        bind = {
+            k: msg[f"trap_{k}"]
+            for k in ("host", "port", "public_url")
+            if msg.get(f"trap_{k}")
+        }
+        server = _make_scenario_server(msg["scenario_kind"], msg["payload"], **bind)
         try:
-            agent = _make_target_agent_driver(agent_url, scenario_url, prompt, timeout_s)
-            start = time.monotonic()
+            scenario_url = await server.start()
+            kwargs = {}
+            if spec:
+                kwargs = {
+                    "transport": spec.to_dict(),
+                    "policy": policy or ExecutionPolicy(),
+                    "history": tuple(msg.get("history", ())),
+                    "conversation_id": msg.get("conversation_id", ""),
+                    "session_id": msg.get("session_id"),
+                }
+            agent = _make_target_agent_driver(
+                msg.get("agent_url"), scenario_url, prompt, timeout_s, **kwargs
+            )
+            started = time.monotonic()
             result = await agent.run()
-            latency_ms = (time.monotonic() - start) * 1000.0
-            # A body may still be arriving when the agent returns; wait for it, briefly.
-            await server.settle()
-            # Read before the finally stops the server; the verdict rests on this, not on final_text.
-            trap_evidence = server.evidence()
-            return {
-                "final_text": result.get("final_text", ""),
-                "screenshots": result.get("screenshots", []),
-                "latency_ms": latency_ms,
-                # Lets the orchestrator check that the trap settings it sent were used.
+            if isinstance(result, dict):
+                result = TransportResult(
+                    TransportOutcome.SUCCEEDED,
+                    result.get("final_text", ""),
+                    (time.monotonic() - started) * 1000,
+                    200,
+                    None,
+                    SafeReasonCode.OK,
+                )
+            try:
+                await asyncio.wait_for(server.settle(), timeout=cleanup)
+            except TimeoutError:
+                pass
+            evidence = server.evidence()
+            if spec:
+                evidence = agent.redactor.clean(evidence)
+            reply = {
+                "transport_result": result.as_dict(),
                 "trap_url": scenario_url,
-                "trap_evidence": trap_evidence,
+                "trap_evidence": evidence,
             }
+            if spec is None:
+                reply.update(
+                    final_text=result.response_text or "",
+                    screenshots=[],
+                    latency_ms=result.latency_ms,
+                )
+            return reply
         finally:
             await server.stop()

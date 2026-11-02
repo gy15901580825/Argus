@@ -157,7 +157,14 @@ async def websocket_endpoint(websocket: WebSocket):
             if data.get("jsonrpc") == "2.0":
                 if "method" in data:
                     # It's a request from Agent (e.g. heartbeat or log)
-                    logger.info(f"Received request from agent {agent_id}: {data}")
+                    logger.info("Received agent RPC method=%s id=%s", data["method"], data.get("id"))
+                    if data["method"] == "agent_capabilities":
+                        params = data.get("params")
+                        try:
+                            versions = params.get("transport_versions") if isinstance(params, dict) else None
+                            connection_manager.set_transport_versions(agent_id, websocket, versions)
+                        except ValueError:
+                            logger.warning("Invalid transport capabilities from agent %s", agent_id)
                     if data["method"] == "ping":
                         await websocket.send_json({"jsonrpc": "2.0", "result": "pong", "id": data.get("id")})
                 elif "result" in data or "error" in data:
@@ -166,7 +173,7 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         await connection_manager.disconnect(agent_id, connection=websocket)
     except Exception as e:
-        logger.error(f"Error in websocket connection: {e}")
+        logger.error("Error in websocket connection: %s", type(e).__name__)
         await connection_manager.disconnect(agent_id, connection=websocket)
 
 def main() -> None:

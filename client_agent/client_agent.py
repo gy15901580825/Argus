@@ -4,6 +4,14 @@ import logging
 import argparse
 import sys
 import os
+from pathlib import Path
+
+# Both repository module startup and direct script startup use the shared package.
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from argus_transport import ExecutionPolicy
+from argus_transport.models import origin
 import httpx
 import websockets
 from typing import Optional
@@ -15,15 +23,23 @@ logger = logging.getLogger("ClientAgent")
 
 
 def _loggable(response: dict) -> dict:
-    """The reply without trap request bodies, which can hold credentials an agent autofilled."""
+    """Summarize a reply without logging target text, request bodies, or secrets."""
+    summary = {"id": response.get("id")}
     result = response.get("result")
-    if not isinstance(result, dict) or not isinstance(result.get("trap_evidence"), dict):
-        return response
-    ev = result["trap_evidence"]
-    reqs = ev.get("trap_requests")
-    counts = {"page_loads": ev.get("page_loads"),
-              "trap_requests": len(reqs) if isinstance(reqs, list) else None}
-    return dict(response, result=dict(result, trap_evidence=counts))
+    if isinstance(result, dict):
+        transport = result.get("transport_result")
+        if isinstance(transport, dict):
+            summary["outcome"] = transport.get("outcome")
+        evidence = result.get("trap_evidence")
+        if isinstance(evidence, dict):
+            requests = evidence.get("trap_requests")
+            summary["trap_evidence"] = {
+                "page_loads": evidence.get("page_loads"),
+                "trap_requests": len(requests) if isinstance(requests, list) else None,
+            }
+    if "error" in response:
+        summary["error"] = response["error"].get("code")
+    return summary
 
 
 # --- OAuth Client Logic ---
@@ -102,10 +118,10 @@ class OAuthClient:
                 return token_data
                 
             except httpx.HTTPStatusError as e:
-                logger.error(f"HTTP error requesting token: {e.response.status_code} - {e.response.text}")
+                logger.error("HTTP error requesting token: %s", e.response.status_code)
                 raise Exception(f"Failed to obtain access token: {e.response.status_code}")
             except Exception as e:
-                logger.error(f"Error requesting token: {e}")
+                logger.error("Error requesting token: %s", type(e).__name__)
                 raise
     
     def get_seconds_until_expiry(self) -> Optional[float]:
@@ -126,7 +142,8 @@ class ClientAgent:
                  username: Optional[str] = None,
                  password: Optional[str] = None,
                  api_token: Optional[str] = None,
-                 agent_secret: Optional[str] = None):
+                 agent_secret: Optional[str] = None,
+                 transport_policy: Optional[ExecutionPolicy] = None):
         """
         Initialize Client Agent with either username/password or API token.
         
@@ -150,6 +167,7 @@ class ClientAgent:
         self.agent_id: Optional[str] = None
         self.agent_secret = agent_secret
         self.running = False
+        self.transport_policy = transport_policy if transport_policy is not None else ExecutionPolicy()
         
         # OAuth client (preferred) - authenticates via API Service proxy
         self.oauth_client: Optional[OAuthClient] = None
@@ -181,9 +199,9 @@ class ClientAgent:
             try:
                 jwt_token = await self.oauth_client.get_access_token()
                 headers["Authorization"] = f"Bearer {jwt_token}"
-                logger.info(f"Using OAuth JWT token for registration (token starts with: {jwt_token[:20]}...)")
+                logger.info("Using OAuth authentication for registration")
             except Exception as e:
-                logger.error(f"Failed to get OAuth token: {e}")
+                logger.error("Failed to get OAuth token: %s", type(e).__name__)
                 if not self.api_token:
                     raise
                 logger.warning("Falling back to API token")
@@ -218,19 +236,10 @@ class ClientAgent:
                 self.agent_id = data.get("agent_id")
                 logger.info(f"Registered successfully. Agent ID: {self.agent_id}")
             except httpx.HTTPStatusError as e:
-                error_detail = "Unknown error"
-                try:
-                    error_response = e.response.json()
-                    error_detail = error_response.get("detail", e.response.text)
-                except:
-                    error_detail = e.response.text
-                
                 logger.error(f"Registration failed with {e.response.status_code}")
-                logger.error(f"Error detail: {error_detail}")
-                logger.error(f"Response headers: {dict(e.response.headers)}")
-                raise Exception(f"Registration failed ({e.response.status_code}): {error_detail}")
+                raise Exception(f"Registration failed ({e.response.status_code})")
             except Exception as e:
-                logger.error(f"Registration failed: {e}")
+                logger.error("Registration failed: %s", type(e).__name__)
                 raise
 
     def connect_headers(self) -> dict:
@@ -257,6 +266,10 @@ class ClientAgent:
                     ping_timeout=None,
                 ) as websocket:
                     logger.info("Connected to Orchestrator")
+                    await websocket.send(json.dumps({
+                        "jsonrpc": "2.0", "method": "agent_capabilities",
+                        "params": {"transport_versions": [1]},
+                    }))
 
                     async def _keepalive():
                         """Send a JSON-RPC ping every 30 s to keep the connection
@@ -281,39 +294,32 @@ class ClientAgent:
                         async for message in websocket:
                             try:
                                 data = json.loads(message)
-                                logger.info("=" * 80)
-                                logger.info("📥 RECEIVED REQUEST FROM ORCHESTRATOR")
-                                logger.info(f"Full message: {json.dumps(data, indent=2)}")
-                                logger.info("=" * 80)
-
-                                # Handle JSON-RPC Request
+                                if not isinstance(data, dict):
+                                    logger.warning("Ignoring non-object RPC message")
+                                    continue
                                 if "method" in data:
                                     method = data["method"]
                                     params = data.get("params", {})
                                     msg_id = data.get("id")
-
-                                    logger.info(f"🔧 Processing method: {method}")
-                                    logger.info(f"📦 Parameters: {json.dumps(params, indent=2)}")
-
-                                    if method == "redteam_browser_probe":
-                                        from redteam_runner.browser_probe import BrowserProbe
-                                        result = await BrowserProbe().run(params)
-                                    elif method == "ping":
-                                        result = "pong"
-                                    else:
-                                        logger.warning(f"⚠️  Unknown method: {method}")
-                                        result = {"error": f"Unknown method: {method}"}
-
-                                    # Send Response
-                                    response = {
-                                        "jsonrpc": "2.0",
-                                        "result": result,
-                                        "id": msg_id
-                                    }
-                                    logger.info("=" * 80)
-                                    logger.info("📤 SENDING RESPONSE TO ORCHESTRATOR")
-                                    logger.info(f"Full response: {json.dumps(_loggable(response), indent=2)}")
-                                    logger.info("=" * 80)
+                                    logger.info("Processing RPC method=%s id=%s", method, msg_id)
+                                    try:
+                                        if method == "redteam_browser_probe":
+                                            if __package__:
+                                                from .redteam_runner.browser_probe import BrowserProbe
+                                            else:
+                                                from redteam_runner.browser_probe import BrowserProbe
+                                            result = await BrowserProbe().run(params, policy=self.transport_policy)
+                                        elif method == "ping":
+                                            result = "pong"
+                                        else:
+                                            result = {"error": "Unknown RPC method"}
+                                        response = {"jsonrpc": "2.0", "result": result, "id": msg_id}
+                                    except Exception:
+                                        logger.error("Browser probe execution failed id=%s", msg_id)
+                                        response = {"jsonrpc": "2.0", "error": {
+                                            "code": -32603, "message": "browser probe execution failed",
+                                        }, "id": msg_id}
+                                    logger.info("RPC reply: %s", json.dumps(_loggable(response)))
                                     await websocket.send(json.dumps(response))
 
                                 elif "result" in data:
@@ -323,12 +329,12 @@ class ClientAgent:
                             except json.JSONDecodeError:
                                 logger.error("Failed to decode JSON message")
                             except Exception as e:
-                                logger.error(f"Error processing message: {e}")
+                                logger.error("Error processing RPC message: %s", type(e).__name__)
                     finally:
                         keepalive_task.cancel()
 
             except Exception as e:
-                logger.error(f"Connection lost or failed: {e}")
+                logger.error("Connection lost or failed: %s", type(e).__name__)
                 logger.info("Reconnecting in 5 seconds...")
                 await asyncio.sleep(5)
 
@@ -364,7 +370,7 @@ class ClientAgent:
                 await asyncio.sleep(refresh_interval)
                 
             except Exception as e:
-                logger.error(f"Token refresh failed: {e}")
+                logger.error("Token refresh failed: %s", type(e).__name__)
                 # Retry after 30 seconds on error
                 await asyncio.sleep(30)
     
@@ -412,6 +418,13 @@ def build_agent(argv: Optional[list] = None) -> "ClientAgent":
                         help="API Token for authentication (with --api-service-url). "
                              "Prefer env AGENT_API_TOKEN: argv is visible in ps.")
 
+    parser.add_argument("--transport-secret-root", action="append", type=Path, default=[],
+                        help="Allow transport secret files only below this directory; repeatable")
+    parser.add_argument("--transport-env-name", action="append", default=[],
+                        help="Allow this environment variable as a transport secret; repeatable")
+    parser.add_argument("--transport-origin", action="append", default=[],
+                        help="Allow this exact HTTP origin to resolve to private addresses; repeatable")
+
     args = parser.parse_args(argv)
 
     has_credentials = args.username and args.password
@@ -430,6 +443,11 @@ def build_agent(argv: Optional[list] = None) -> "ClientAgent":
         password=args.password,
         api_token=args.api_token,
         agent_secret=args.agent_secret,
+        transport_policy=ExecutionPolicy(
+            allowed_origins=frozenset(origin(value) for value in args.transport_origin),
+            allowed_secret_roots=tuple(args.transport_secret_root),
+            allowed_env_names=frozenset(args.transport_env_name),
+        ),
     )
 
 

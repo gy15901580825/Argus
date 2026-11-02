@@ -17,9 +17,9 @@ Connect straight to the orchestrator. `--agent-name` is used as the agent id, an
 Whoever can reach `/agent/connect` can act as an agent and receive probe payloads. Set the same `AGENT_CONNECT_SECRET` on the orchestrator and the client agent so only agents that know it are accepted. The orchestrator listens on `127.0.0.1` by default. For a client agent on another machine, start it with `ARGUS_SERVER_HOST=0.0.0.0`, `AGENT_CONNECT_SECRET` and `ARGUS_SERVER_TOKEN` (a different value, for callers of `/redteam/*`); off loopback it refuses to start without both. On loopback, a missing secret only logs a warning. See [services.md](../docs/reference/services.md#orchestrator-python--m-argusserver-port-8080).
 
 ```bash
-pip install -r requirements.txt && playwright install chromium
+pip install -r client_agent/requirements.txt && playwright install chromium
 export AGENT_CONNECT_SECRET=<shared secret>      # same value as on the orchestrator
-python client_agent.py --orchestrator-url ws://<orchestrator-host>:8080 --agent-name my-browser-agent
+python -m client_agent.client_agent --orchestrator-url ws://<orchestrator-host>:8080 --agent-name my-browser-agent
 ```
 
 ```bash
@@ -36,7 +36,7 @@ If your server registers agents first, also pass `--api-service-url` and credent
 ```bash
 export AGENT_PASSWORD=<password>                     # or: export AGENT_API_TOKEN=<token>
 export AGENT_CONNECT_SECRET=<shared secret>          # same value as on the orchestrator
-python client_agent.py --orchestrator-url wss://<orchestrator-host> \
+python -m client_agent.client_agent --orchestrator-url wss://<orchestrator-host> \
     --api-service-url https://<your-server> --agent-name my-browser-agent \
     --username <username>
 ```
@@ -52,3 +52,38 @@ docker run -e ORCHESTRATOR_URL=wss://<orchestrator-host> \
            -e AGENT_CONNECT_SECRET=<shared secret> \
            <your-gh-user>/client_agent:latest
 ```
+
+## Declarative browser transport
+
+Run the module from the repository root. Direct script startup also resolves the
+repository's shared `argus_transport` package. Build the client image from that same
+root, so the image contains both the service and the shared package:
+
+```bash
+docker build --network host --file "$PWD/client_agent/Dockerfile" --tag client-agent:local .
+```
+
+Clients advertise `transport_versions: [1]` on each WebSocket connection. The
+orchestrator rejects declarative browser requests before sending a probe when
+the connected client lacks version 1. Legacy `agent_url` targets retain their
+existing request format and timeout.
+
+Remote transport requests cannot authorize their own secret references or private
+network destinations. At startup, the operator must explicitly allow each secret
+directory, environment variable name, and private HTTP origin. The defaults deny
+file and environment secrets and private addresses. These options are repeatable:
+
+```bash
+python -m client_agent.client_agent --orchestrator-url ws://127.0.0.1:8080     --transport-secret-root /run/agent-secrets     --transport-env-name TARGET_CREDENTIAL     --transport-origin http://127.0.0.1:18100
+```
+
+A secret root allows bounded regular files below that directory; mount only the
+needed files read-only. An origin authorizes the exact scheme, host, and port.
+Docker operators can append the same options after the image name. Keep
+orchestrator authentication separate from target transport credentials.
+
+Successful, refused, failed, and timed-out target requests return a normal RPC
+result containing `transport_result`, `trap_evidence`, and `trap_url`. Logs retain
+only the RPC method, id, outcome, and trap counts. They omit prompts, target
+answers, metadata, and sink bodies. Unexpected execution exceptions produce a
+matching RPC error with a fixed message.

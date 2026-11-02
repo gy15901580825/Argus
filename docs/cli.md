@@ -556,3 +556,12 @@ Use a `transport` object in a `custom_http` target to configure request fields, 
 `argus-probe validate-target --target target.json --offline` sends no requests and does not resolve secrets. Add `--sample-response sample.json` to check a local response. `--execute` sends a benign request and reports status, selected rules, mapping failures, and request counts. `--endpoint-override` directs that execution to a controlled fake endpoint. Execute mode can incur model costs and use target tools.
 
 New transport files default to offline validation. Existing target files keep their single-prompt validation behavior. Synchronous execution sends exactly one request without retries. Diagnostics omit secret values and returned answer text.
+
+
+### Browser transport validation
+
+A `browser_use` target can use the same declarative `transport` object. Bind `scenario_url` to the request's page field and `prompt` to its instruction field. New transport fields cannot be combined with legacy `agent_url` or `timeout_s`.
+
+`validate-target --target browser.json --offline` uses a placeholder page URL without starting a server or resolving secret references. For a benign execution, use `--execute --with-scenario` to serve a neutral page, or `--execute --scenario-url http://127.0.0.1:8080/neutral` to provide one. These options cannot be combined. A browser execution requires one of them.
+
+The operation uses its configured total deadline plus a bounded cleanup grace period. Remote browser execution requires a connected client that advertises transport version 1 and authorizes the configured origins and secret references. See [the transport specification](transport-spec.md#browser-agents).
