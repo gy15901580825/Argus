@@ -3,6 +3,7 @@ import asyncio
 import html
 import ipaddress
 import json
+import logging
 import os
 import re
 import time
@@ -124,12 +125,7 @@ async def create_probe(request):
     capability = data.get("public_token")
     if not isinstance(capability, str) or not capability or len(capability) > 128:
         raise Rejected(400, "public_token_required")
-    supplied_hash = digest(capability)
-    if supplied_hash in run.retired_public:
-        raise Rejected(410, "token_expired")
-    if supplied_hash != run.public_hash:
-        raise Rejected(404, "not_found")
-    result = await asyncio.to_thread(request.app[SERVICE].create_probe, owner, request.match_info["rid"], payload=data.get("payload", "Synthetic page"), markers=markers, lease_seconds=data.get("ttl_seconds", 10800), combination=script.get("combine_fields", []))
+    result = await asyncio.to_thread(request.app[SERVICE].create_probe, owner, request.match_info["rid"], payload=data.get("payload", "Synthetic page"), markers=markers, lease_seconds=data.get("ttl_seconds", 10800), combination=script.get("combine_fields", []), capability_hash=digest(capability))
     prefix = f'{request.app[ORIGIN]}/r/{capability}/p/{result["probe_id"]}'
     result.update({"scenario_url": prefix + "/scenario", "sink_url": prefix + "/sink/kyc", "mcp_url": None, "a2a_url": None, "merchant_url": None})
     return web.json_response(result, status=201)
@@ -184,8 +180,9 @@ async def evidence(request):
         limit = int(request.query.get("limit", "100"))
     except ValueError:
         raise Rejected(400, "invalid_limit") from None
-    result = await asyncio.to_thread(svc.evidence, token, request.match_info["rid"], request.query.get("probe_id", ""), cursor=request.query.get("cursor"), late_cursor=request.query.get("late_cursor"), limit=limit)
+    await asyncio.to_thread(svc.authorize_evidence, token, request.match_info["rid"])
     await asyncio.to_thread(svc.rate, "evidence", digest(token), 30, 30)
+    result = await asyncio.to_thread(svc.evidence, token, request.match_info["rid"], request.query.get("probe_id", ""), cursor=request.query.get("cursor"), late_cursor=request.query.get("late_cursor"), limit=limit)
     return web.json_response(result, headers={"Cache-Control": "no-store"})
 
 
@@ -195,10 +192,18 @@ async def public(request):
     token = request.match_info["token"]
     if len(token) > 128:
         raise Rejected(404, "not_found")
+    try:
+        await asyncio.to_thread(svc.rate, "ip", _client_ip(request), 300, 60)
+    except Rejected:
+        try:
+            identified = await asyncio.to_thread(svc.public, token, pid)
+            await asyncio.to_thread(svc.dropped, identified.run_id, pid)
+        except Rejected:
+            pass
+        raise
     run = await asyncio.to_thread(svc.public, token, pid)
     try:
         await asyncio.to_thread(svc.rate, "public", digest(token), 60, 20)
-        await asyncio.to_thread(svc.rate, "ip", _client_ip(request), 300, 60)
     except Rejected as error:
         if error.status == 429:
             await asyncio.to_thread(svc.dropped, run.run_id, pid)
@@ -222,7 +227,12 @@ async def public(request):
                 raw.extend(chunk)
     except (TimeoutError, ConnectionError):
         complete, status = False, 408
-    parts = {"path": tail[:65536], "query": request.query_string[:65536], "body": raw.decode("utf-8", errors="replace")}
+    try:
+        body = raw.decode("utf-8")
+    except UnicodeError:
+        body = raw.decode("utf-8", errors="replace")
+        complete = False
+    parts = {"path": tail[:65536], "query": request.query_string[:65536], "body": body}
     if len(tail) > 65536 or len(request.query_string) > 65536:
         complete = False
     prefetch = any("prefetch" in request.headers.get(name, "").lower() for name in ("Purpose", "Sec-Purpose", "X-Moz"))
@@ -237,16 +247,20 @@ async def public(request):
     return web.Response(text="<!doctype html><html><head><title>Synthetic page</title></head><body><main>" + payload + "</main></body></html>", content_type="text/html", headers={"Cache-Control": "no-store", "Content-Security-Policy": "default-src 'none'; style-src 'none'; frame-ancestors 'none'"})
 
 
+async def _cleanup_forever(service, *, interval=900):
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            await asyncio.to_thread(service.cleanup)
+        except Exception:
+            logging.getLogger(__name__).warning("Cleanup failed; the next scheduled attempt will retry")
+
+
 async def _lifecycle(app):
     svc = app[SERVICE]
     await asyncio.to_thread(svc.cleanup)
 
-    async def repeat():
-        while True:
-            await asyncio.sleep(900)
-            await asyncio.to_thread(svc.cleanup)
-
-    task = asyncio.create_task(repeat())
+    task = asyncio.create_task(_cleanup_forever(svc))
     app[CLEANUP] = task
     yield
     task.cancel()

@@ -1,4 +1,5 @@
 from copy import deepcopy
+from dataclasses import replace
 from threading import RLock
 
 from .models import Run
@@ -23,6 +24,17 @@ class MemoryStore:
             if value is not None and (include_expired or value.expires_at > now):
                 return deepcopy(value)
             return None
+
+    def get_auth(self, run_id, now, *, include_expired=False):
+        with self.lock:
+            run = self.runs.get(run_id)
+            if run is None or not include_expired and run.expires_at <= now:
+                return None
+            return deepcopy(replace(run, probes={}))
+
+    def list_auth(self, now, *, include_expired=False):
+        with self.lock:
+            return [deepcopy(replace(run, probes={})) for run in self.runs.values() if include_expired or run.expires_at > now]
 
     def update(self, run, expected_version):
         with self.lock:

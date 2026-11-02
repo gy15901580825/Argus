@@ -95,7 +95,7 @@ class HostedService:
             return {"run_id": rid, "expires_at": winner.expires_at, "replayed": True}
         return {"run_id": rid, "expires_at": run.expires_at, "public_token": public, "evidence_token": evidence}
 
-    def create_probe(self, owner, rid, *, payload, markers, lease_seconds=10800, combination=()):
+    def create_probe(self, owner, rid, *, payload, markers, lease_seconds=10800, combination=(), capability_hash=None):
         self._owner(owner, rid)
         if not isinstance(payload, str) or len(payload.encode()) > 16384:
             raise Rejected(400, "invalid_payload")
@@ -109,6 +109,11 @@ class HostedService:
         now = self.clock()
 
         def add(run):
+            if capability_hash is not None:
+                if capability_hash in run.retired_public:
+                    raise Rejected(410, "token_expired")
+                if capability_hash != run.public_hash:
+                    raise Rejected(404, "not_found")
             if len(run.probes) >= 100:
                 raise Rejected(429, "probe_limit")
             probe = Probe(pid, epoch, min(run.expires_at, now + lease_seconds), payload, markers, combination=list(combination))
@@ -177,12 +182,15 @@ class HostedService:
 
     def public(self, token, pid):
         hashed = digest(token)
-        for run in self.store.list_runs(self.clock(), include_expired=True):
+        for run in self.store.list_auth(self.clock(), include_expired=True):
             if hmac.compare_digest(hashed, run.public_hash) or hashed in run.retired_public:
                 if run.deleted or run.expires_at <= self.clock() or hashed != run.public_hash:
                     raise Rejected(410, "token_expired")
-                self._probe(run, pid)
-                return run
+                current = self.store.get(run.run_id, self.clock())
+                if current is None:
+                    raise Rejected(410, "token_expired")
+                self._probe(current, pid)
+                return current
         raise Rejected(404, "not_found")
 
     def begin(self, rid, pid):
@@ -277,6 +285,15 @@ class HostedService:
                 "sealed": probe.sealed, "seal_revision": probe.seal_revision, "expires_at": probe.expires_at,
                 "summary": {"interaction_count": len(probe.events), "page_loads": probe.page_loads, "prefetch_count": probe.prefetch_count, "delivery_state": delivery, "complete": complete, "dropped_events": probe.dropped_events},
                 "events": [self._event(event) for event in probe.events], "protocol_snapshot": None}
+
+    def authorize_evidence(self, token, rid):
+        run = self.store.get_auth(rid, self.clock(), include_expired=True)
+        hashed = digest(token)
+        if run is None or hashed != run.evidence_hash and hashed not in run.retired_evidence:
+            raise Rejected(404, "not_found")
+        if run.deleted or run.expires_at <= self.clock() or hashed != run.evidence_hash:
+            raise Rejected(410, "token_expired")
+        return run
 
     def evidence(self, token, rid, pid, *, cursor=None, limit=100, late_cursor=None):
         run = self.store.get(rid, self.clock(), include_expired=True)

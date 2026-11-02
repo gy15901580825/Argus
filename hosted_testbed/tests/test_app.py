@@ -172,3 +172,65 @@ async def test_probe_url_requires_matching_owner_supplied_public_capability(clie
         assert response.status == 200
     async with session.post(endpoint, json={"kind": "browser", "public_token": run["public_token"], "synthetic_markers": []}, headers=headers) as response:
         assert response.status == 410
+
+
+@pytest.mark.asyncio
+async def test_invalid_utf8_is_unknown_but_retains_known_ascii_hit(client):
+    session, url, _, _ = client
+    run, probe, headers = await new_probe(client)
+    async with session.post(url + f'/r/{run["public_token"]}/p/{probe["probe_id"]}/sink/kyc', data=b"MARKER_ALPHA_123\xff") as response:
+        assert response.status == 204
+    async with session.post(url + f'/v1/runs/{run["run_id"]}/probes/{probe["probe_id"]}/seal', json={"reason": "vendor_terminal"}, headers=headers) as response:
+        assert not (await response.json())["complete"]
+    async with session.get(url + f'/v1/runs/{run["run_id"]}/evidence', params={"probe_id": probe["probe_id"]}, headers={"Authorization": "Bearer " + run["evidence_token"]}) as response:
+        data = await response.json()
+        assert data["events"][-1]["marker_status"] == "unknown"
+        assert data["events"][-1]["canary_hits"] == [{"marker_id": "m1", "location": "body"}]
+
+
+@pytest.mark.asyncio
+async def test_periodic_cleanup_retries_after_transient_storage_failure(monkeypatch):
+    import asyncio
+    app_module, _ = modules()
+    calls = [0]
+    reached = asyncio.Event()
+    event_loop = asyncio.get_running_loop()
+
+    class CleanupService:
+        def cleanup(self):
+            calls[0] += 1
+            if calls[0] == 1:
+                raise RuntimeError("synthetic storage failure")
+            event_loop.call_soon_threadsafe(reached.set)
+
+    cleanup_loop = getattr(app_module, "_cleanup_forever", None)
+    assert cleanup_loop is not None
+    task = asyncio.create_task(cleanup_loop(CleanupService(), interval=0.01))
+    try:
+        await asyncio.wait_for(reached.wait(), timeout=1)
+        assert calls[0] >= 2
+        assert not task.done()
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+
+@pytest.mark.asyncio
+async def test_evidence_rate_precedes_full_snapshot_load_and_invalid_token_has_no_quota(client):
+    session, url, _, svc = client
+    run, probe, _ = await new_probe(client)
+    endpoint = url + f'/v1/runs/{run["run_id"]}/evidence?probe_id={probe["probe_id"]}'
+    count_before = len(svc.store.limits)
+    async with session.get(endpoint, headers={"Authorization": "Bearer invalid-capability"}) as response:
+        assert response.status == 404
+    assert len(svc.store.limits) == count_before
+    for _ in range(30):
+        svc.rate("evidence", importlib.import_module("testbed.service").digest(run["evidence_token"]), 30, 30)
+    original_get = svc.store.get
+    svc.store.get = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("full snapshot loaded after quota exhausted"))
+    try:
+        async with session.get(endpoint, headers={"Authorization": "Bearer " + run["evidence_token"]}) as response:
+            assert response.status == 429
+    finally:
+        svc.store.get = original_get

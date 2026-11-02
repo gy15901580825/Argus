@@ -182,3 +182,22 @@ def test_concurrent_idempotency_replay_uses_winner_metadata(service):
     assert result["expires_at"] == 1090
     assert result["replayed"] is True
     assert "public_token" not in result
+
+
+def test_rotation_wins_probe_creation_compare_and_swap(service):
+    svc, _ = service
+    run, _ = setup_run(service)
+    original_update = svc.store.update
+    rotated = [False]
+
+    def interleave(candidate, version):
+        if not rotated[0]:
+            rotated[0] = True
+            svc.rotate("tenant/principal", run["run_id"], scope="public")
+        return original_update(candidate, version)
+
+    svc.store.update = interleave
+    with pytest.raises(Exception) as caught:
+        svc.create_probe("tenant/principal", run["run_id"], payload="neutral", markers={}, capability_hash=importlib.import_module("testbed.service").digest(run["public_token"]))
+    assert caught.value.status == 410
+    assert len(svc.store.get(run["run_id"], svc.clock()).probes) == 1
