@@ -1,0 +1,18 @@
+# This client image uses the repository root as its build context.
+# Keep unrelated repository files, credentials, and test data out of that context.
+**
+!client_agent/
+!client_agent/client_agent.py
+!client_agent/requirements.txt
+!client_agent/entrypoint.sh
+!client_agent/redteam_runner/
+!client_agent/redteam_runner/**
+!argus_transport/
+!argus_transport/**
+**/__pycache__
+**/*.py[cod]
+**/.env
+**/.env.*
+**/.pytest_cache
+**/tests
+**/tests/**

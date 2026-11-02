@@ -1,12 +1,6 @@
-"""Pytest fixtures for client_agent.
+"""Client tests import the service and its repository-level shared transport.
 
-Self-contained: this file makes the service runnable as a standalone repo with
-no parent-monorepo dependency. It puts the service dir on sys.path and scrubs
-env vars that would otherwise trigger live network/auth.
-
-The client agent is a run-side script (not a FastAPI server). Its top-level
-modules are `client_agent` (main entrypoint — same name as the service dir)
-and the `redteam_runner` package.
+The image test separately checks imports outside the repository working directory.
 """
 from __future__ import annotations
 
@@ -22,6 +16,7 @@ import pytest
 _SERVICE_DIR = Path(__file__).resolve().parents[1]
 if str(_SERVICE_DIR) in sys.path:
     sys.path.remove(str(_SERVICE_DIR))
+sys.path.insert(0, str(_SERVICE_DIR.parent))
 sys.path.insert(0, str(_SERVICE_DIR))
 
 
@@ -35,7 +30,6 @@ def _isolate_env(monkeypatch):
         "API_SERVICE_URL": "http://api.invalid",
         "ORCHESTRATOR_URL": "ws://orchestrator.invalid",
         "ORCHESTRATOR_SECRET": "test-secret",
-        "AZURE_OPENAI_API_KEY": "test",
         "AZURE_OPENAI_ENDPOINT": "https://azure.invalid",
     }
     for k, v in safe_defaults.items():

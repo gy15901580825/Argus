@@ -85,3 +85,25 @@ Redirects are disabled. Header names cannot override HTTP framing, authenticatio
 Old `request_url`, Jinja request template, header, JSONPath, and timeout fields remain accepted through a deprecated input boundary. They use the shared request engine. Their per-request timeout and response extraction behavior are preserved. Do not put old fields and `transport` in the same target object.
 
 An unchanged old file retains its baseline identity. An offline legacy check prints its current identity and warns that migration changes identity. Simple templates can also produce a candidate new identity. Complex templates require manual migration. A new-format target needs a newly collected baseline; comparisons across target identities remain rejected. Baseline collection is a separate target operation and needs the operator's approval.
+
+
+## Browser agents
+
+A `browser_use` target accepts the same `transport` object. Replace the legacy `agent_url` and `timeout_s` fields when migrating. Bind the current page with `{"context": "scenario_url"}` and the user's instruction with `{"context": "prompt"}`. For an endpoint that calls the instruction `goal`, use this request body:
+
+```json
+{"json": {"url": {"context": "scenario_url"}, "goal": {"context": "prompt"}}}
+```
+
+Each probe starts its actual scenario page before rendering the request. Success, mapped refusal, target error, and timeout return a typed transport result together with the page URL and recorded page and sink requests. Cleanup has a bounded grace period. Configured authentication values are masked before the client sends this evidence. A successful answer without the interaction required by a probe remains an error.
+
+`timeout.total_deadline_s` controls the whole operation. The bridge allows the configured `cleanup_grace_s` and delivery overhead after that deadline. A legacy browser target keeps its 60-second default request timeout.
+
+A remote client must advertise `transport_versions: [1]` on the same connection that executes the probe. Older clients are rejected before dispatch. Remote operators authorize exact endpoint origins, environment names, and file roots in the client configuration; absent authorization denies secret access. See [client setup](../client_agent/README.md).
+
+Offline browser validation renders a placeholder scenario URL and starts no server. For execution, provide `--with-scenario` to serve a neutral page, or `--scenario-url` to supply an existing neutral page. These options require `--execute`. Validation never runs a phishing scenario or a complete probe suite.
+
+```sh
+argus-probe validate-target --target browser.json --offline
+argus-probe validate-target --target browser.json --execute --with-scenario
+```

@@ -377,6 +377,45 @@ def test_reply_log_counts_trap_requests_and_never_prints_their_bodies(caplog):
         agent.running = True
         asyncio.run(agent.connect_orchestrator())
     # The orchestrator still gets the whole record; only the log is trimmed.
-    assert sent[0]["result"]["trap_evidence"] == evidence
+    assert next(reply for reply in sent if reply.get("id") == 7)["result"]["trap_evidence"] == evidence
     assert "BODY-SECRET" not in caplog.text and "QUERY-SECRET" not in caplog.text
     assert '"trap_requests": 1' in caplog.text
+
+
+def test_client_image_imports_same_shared_transport():
+    """The shipped image imports and parses the same transport schema outside its cwd."""
+    import hashlib
+    import json
+    import os
+    import subprocess
+    from pathlib import Path
+    from argus_transport import TransportSpec
+
+    image = os.getenv("ARGUS_CLIENT_IMAGE", "argus-transport-client-verify:b")
+    from argus_transport.browser import legacy_browser_spec
+    raw = legacy_browser_spec("https://fixture.example/agent").to_dict()
+    expected = TransportSpec.from_dict(raw).to_dict()
+    repository = Path(__file__).resolve().parents[2]
+    source_files = [
+        "argus_transport/models.py", "argus_transport/engine.py",
+        "argus_transport/security.py", "argus_transport/browser.py",
+        "client_agent/redteam_runner/browser_probe.py",
+        "client_agent/redteam_runner/target_agent_driver.py",
+    ]
+    source_hashes = {name: hashlib.sha256((repository / name).read_bytes()).hexdigest()
+                     for name in source_files}
+    script = """import hashlib,json,sys
+from pathlib import Path
+from argus_transport import TransportSpec
+from client_agent.redteam_runner.browser_probe import BrowserProbe
+request = json.load(sys.stdin)
+print(json.dumps({"spec": TransportSpec.from_dict(request["spec"]).to_dict(),
+                  "source_hashes": {name: hashlib.sha256((Path('/app') / name).read_bytes()).hexdigest()
+                                    for name in request["source_files"]}}, sort_keys=True))
+"""
+    parsed = subprocess.run(["docker", "run", "--rm", "-i", "--entrypoint", "python", "--workdir", "/tmp", image, "-c", script],
+                            input=json.dumps({"spec": raw, "source_files": source_files}), text=True, capture_output=True, check=True, timeout=60)
+    assert json.loads(parsed.stdout) == {"spec": expected, "source_hashes": source_hashes}
+    help_result = subprocess.run(["docker", "run", "--rm", "--entrypoint", "python", "--workdir", "/tmp", image,
+                                  "-m", "client_agent.client_agent", "--help"], text=True, capture_output=True, check=True, timeout=60)
+    assert "--transport-secret-root" in help_result.stdout

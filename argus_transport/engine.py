@@ -230,14 +230,15 @@ class LegacyResult:
 
 
 class TransportEngine:
-    def __init__(self, spec, *, policy=None, client=None):
+    def __init__(self, spec, *, policy=None, client=None, redactor=None):
         self.spec = spec
         self.policy = policy or ExecutionPolicy()
         self.client = client
+        self.redactor = redactor or Redactor()
 
     async def run(self, context):
         start = time.monotonic()
-        redactor = Redactor()
+        redactor = self.redactor
         if not isinstance(self.spec.delivery, SyncSpec):
             return self.failure(SafeReasonCode.UNSUPPORTED_DELIVERY, start)
         try:

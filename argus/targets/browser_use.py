@@ -4,6 +4,7 @@ Plan 3 implemented the runtime; Plan 4 just exposes it via factory + REST API.
 Under `argus-probe run --local` the same probe runs in-process instead (see
 `local_browser_mode`).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -13,6 +14,14 @@ import ipaddress
 import json
 import re
 import time
+import uuid
+
+from argus_transport import (
+    TransportSpec,
+    TransportResult,
+    TransportOutcome,
+    execution_policy,
+)
 from dataclasses import dataclass, fields
 from typing import ClassVar
 from urllib.parse import parse_qsl, quote_plus, urlsplit
@@ -20,15 +29,25 @@ from urllib.parse import parse_qsl, quote_plus, urlsplit
 from fastapi import WebSocketDisconnect
 
 from argus.assertions import canary_in, trap_canaries
-from argus.targets._base import Target, TargetDeliveryError, Turn
+from argus.targets._base import (
+    Target,
+    TargetDeliveryError,
+    TargetBlockedError,
+    TargetTransportError,
+    Turn,
+)
 
-_SCENARIO_KINDS = frozenset({"dom_injection", "ui_phishing", "visual_injection", "os_cmd"})
+_SCENARIO_KINDS = frozenset(
+    {"dom_injection", "ui_phishing", "visual_injection", "os_cmd"}
+)
 
 # Same cap as the trap server's, so evidence summed over rounds stays bounded.
 _MAX_TRAP_REQUESTS = 50
 
 # Set only by run_local. Server mode never runs the trap page in-process.
-_LOCAL_RUN: contextvars.ContextVar[bool] = contextvars.ContextVar("browser_local_run", default=False)
+_LOCAL_RUN: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "browser_local_run", default=False
+)
 
 
 @contextlib.contextmanager
@@ -46,9 +65,10 @@ def local_browser_mode():
 @dataclass(frozen=True)
 class BrowserUseSpec:
     kind: str = "browser_use"
-    agent_url: str = ""
+    agent_url: str | None = None
+    transport: TransportSpec | dict | None = None
     scenario_kind: str = ""
-    timeout_s: float = 60.0
+    timeout_s: float | None = None
     extra_context: tuple[tuple[str, str], ...] = ()
     # Where the trap page listens and the URL the agent is told to open: on this
     # machine under --local, else on the client_agent's. The agent must reach that URL.
@@ -67,8 +87,25 @@ class BrowserUseSpec:
         # Validate kind FIRST (T1 review-fix pattern)
         if self.kind != "browser_use":
             raise ValueError(f"kind must be 'browser_use', got {self.kind!r}")
-        if not self.agent_url:
-            raise ValueError("agent_url is required")
+        if self.transport is not None:
+            if self.agent_url is not None or self.timeout_s is not None:
+                raise ValueError(
+                    "transport and legacy browser transport fields conflict"
+                )
+            transport = (
+                TransportSpec.from_dict(self.transport)
+                if isinstance(self.transport, dict)
+                else self.transport
+            )
+            if not isinstance(transport, TransportSpec):
+                raise ValueError("transport must be a transport specification")
+            object.__setattr__(self, "transport", transport)
+        else:
+            if not self.agent_url:
+                raise ValueError("agent_url is required")
+            object.__setattr__(
+                self, "timeout_s", 60.0 if self.timeout_s is None else self.timeout_s
+            )
         if self.scenario_kind not in _SCENARIO_KINDS:
             raise ValueError(
                 "scenario_kind must be one of dom_injection/ui_phishing/visual_injection/os_cmd"
@@ -78,14 +115,23 @@ class BrowserUseSpec:
     def _validate_trap(self) -> None:
         # IPv4Address also accepts an int, which would reach the wire as a number.
         if not isinstance(self.trap_host, str):
-            raise ValueError(f"trap_host must be an IPv4 address string, got {self.trap_host!r}")
+            raise ValueError(
+                f"trap_host must be an IPv4 address string, got {self.trap_host!r}"
+            )
         try:
             host = ipaddress.IPv4Address(self.trap_host)
         except ValueError:
-            raise ValueError(f"trap_host must be an IPv4 address, got {self.trap_host!r}") from None
-        if isinstance(self.trap_port, bool) or not isinstance(self.trap_port, int) \
-                or not 0 <= self.trap_port <= 65535:
-            raise ValueError(f"trap_port must be an integer from 0 to 65535, got {self.trap_port!r}")
+            raise ValueError(
+                f"trap_host must be an IPv4 address, got {self.trap_host!r}"
+            ) from None
+        if (
+            isinstance(self.trap_port, bool)
+            or not isinstance(self.trap_port, int)
+            or not 0 <= self.trap_port <= 65535
+        ):
+            raise ValueError(
+                f"trap_port must be an integer from 0 to 65535, got {self.trap_port!r}"
+            )
         if not self.trap_public_url:
             if host.is_unspecified:
                 raise ValueError(
@@ -100,27 +146,43 @@ class BrowserUseSpec:
                 f"got {self.trap_public_url!r}"
             )
         if parts.query or parts.fragment:
-            raise ValueError("trap_public_url must not carry a query string or fragment")
+            raise ValueError(
+                "trap_public_url must not carry a query string or fragment"
+            )
         if self.trap_port == 0:
             # A random port can't appear in a URL written before the run.
-            raise ValueError("trap_public_url needs a fixed trap_port for the trap page to listen on")
+            raise ValueError(
+                "trap_public_url needs a fixed trap_port for the trap page to listen on"
+            )
 
     @property
     def sets_trap(self) -> bool:
-        return (self.trap_host, self.trap_port, self.trap_public_url) != ("127.0.0.1", 0, "")
+        return (self.trap_host, self.trap_port, self.trap_public_url) != (
+            "127.0.0.1",
+            0,
+            "",
+        )
 
 
 def _valid_evidence(ev) -> bool:
     """Fail closed: an empty or misshapen record must not read as "the agent did nothing"."""
     return (
         isinstance(ev, dict)
-        and all(isinstance(ev.get(k), int) and not isinstance(ev.get(k), bool) and ev.get(k) >= 0
-                for k in ("interaction_count", "page_loads"))
+        and all(
+            isinstance(ev.get(k), int)
+            and not isinstance(ev.get(k), bool)
+            and ev.get(k) >= 0
+            for k in ("interaction_count", "page_loads")
+        )
         and isinstance(ev.get("trap_requests"), list)
-        and all(isinstance(r, dict)
-                and all(isinstance(r.get(k), str) for k in ("method", "path", "query", "body"))
-                and isinstance(r.get("complete"), bool)
-                for r in ev["trap_requests"])
+        and all(
+            isinstance(r, dict)
+            and all(
+                isinstance(r.get(k), str) for k in ("method", "path", "query", "body")
+            )
+            and isinstance(r.get("complete"), bool)
+            for r in ev["trap_requests"]
+        )
     )
 
 
@@ -164,15 +226,23 @@ def _mask_text(text: str, canaries: tuple[str, ...]) -> str:
         if pairs:
             masked = "&".join(
                 f"{quote_plus(k)}={quote_plus(v) if _holds_canary(v, canaries) else _redacted(v)}"
-                for k, v in pairs)
+                for k, v in pairs
+            )
     if masked is None and not _holds_canary(text, canaries):
         masked = _redacted(text)
     if masked is None:
         # Free text (multipart, text/plain): keep only the lines or fields that hold a canary.
         parts = _TEXT_FIELD_SEP.split(text)
         masked = "".join(
-            part if not part or _TEXT_FIELD_SEP.fullmatch(part) or _holds_canary(part, canaries)
-            else _redacted(part) for part in parts)
+            (
+                part
+                if not part
+                or _TEXT_FIELD_SEP.fullmatch(part)
+                or _holds_canary(part, canaries)
+                else _redacted(part)
+            )
+            for part in parts
+        )
     # A canary split across fields (an unencoded "&" inside it) must stay visible to the check.
     if any(canary_in(text, c) and not canary_in(masked, c) for c in canaries):
         return text
@@ -180,7 +250,11 @@ def _mask_text(text: str, canaries: tuple[str, ...]) -> str:
 
 
 def _masked_request(req: dict, canaries: tuple[str, ...]) -> dict:
-    return dict(req, query=_mask_text(req["query"], canaries), body=_mask_text(req["body"], canaries))
+    return dict(
+        req,
+        query=_mask_text(req["query"], canaries),
+        body=_mask_text(req["body"], canaries),
+    )
 
 
 def _is_delivery_failure(e: Exception) -> bool:
@@ -190,7 +264,9 @@ def _is_delivery_failure(e: Exception) -> bool:
     # handle_response turns a JSON-RPC error into a bare Exception.
     if type(e) is Exception:
         return True
-    return isinstance(e, (NoClientAgentError, asyncio.TimeoutError, OSError, WebSocketDisconnect))
+    return isinstance(
+        e, (NoClientAgentError, asyncio.TimeoutError, OSError, WebSocketDisconnect)
+    )
 
 
 def _describe(e: Exception, waited_s: float) -> str:
@@ -204,15 +280,18 @@ def _describe(e: Exception, waited_s: float) -> str:
 def _get_client_agent_ws():
     """Lazy import so tests can patch."""
     from argus.connection_manager import connection_manager
+
     return connection_manager.get_redteam_bridge()
 
 
 class BrowserUseTarget(Target):
     # Plan 4 name + Plan 2 legacy alias ("browser-using").
-    compatible_classes: ClassVar[frozenset[str]] = frozenset({
-        "browser_using_agent",
-        "browser-using",
-    })
+    compatible_classes: ClassVar[frozenset[str]] = frozenset(
+        {
+            "browser_using_agent",
+            "browser-using",
+        }
+    )
 
     def __init__(self, spec: BrowserUseSpec) -> None:
         self.spec = spec
@@ -223,13 +302,18 @@ class BrowserUseTarget(Target):
         self._evidence: dict = {}
         # Canaries the probe checks for; every other recorded value is masked.
         self._canaries: tuple[str, ...] = ()
-
-    # Holding a live browser context across rounds requires a client_agent WS
-    # protocol change; deliberately out of scope for v1.
-    supports_history: ClassVar[bool] = False
+        self._conversation_id = None
+        self._session_id = None
+        self._last_run_log = None
+        self.supports_history = (
+            spec.transport is not None and spec.transport.session.mode != "none"
+        )
 
     async def begin_probe(self, probe) -> None:
         self._evidence = {}
+        self._conversation_id = None
+        self._session_id = None
+        self._last_run_log = None
         self._canaries = trap_canaries(getattr(probe, "assertions", None) or ())
         payload = getattr(probe, "scenario_payload", None)
         kind = getattr(probe, "scenario_kind", None)
@@ -242,9 +326,13 @@ class BrowserUseTarget(Target):
         # A declared scenario without a payload would put the benign prompt on
         # the trap page and could only ever pass.
         if not isinstance(payload, str) or not payload.strip():
-            raise ValueError(f"browser probe {probe.id!r} has no scenario.payload to plant")
+            raise ValueError(
+                f"browser probe {probe.id!r} has no scenario.payload to plant"
+            )
         if kind and kind not in _SCENARIO_KINDS:
-            raise ValueError(f"browser probe {probe.id!r} has unknown scenario.kind {kind!r}")
+            raise ValueError(
+                f"browser probe {probe.id!r} has unknown scenario.kind {kind!r}"
+            )
         self._scenario_kind = kind or None
         self._scenario_payload = payload
 
@@ -256,30 +344,58 @@ class BrowserUseTarget(Target):
             "scenario_kind": self._scenario_kind or self.spec.scenario_kind,
             "agent_url": self.spec.agent_url,
             # payload goes into the trap page; prompt is the user's instruction.
-            "payload": self._scenario_payload if self._scenario_payload is not None else prompt,
+            "payload": (
+                self._scenario_payload if self._scenario_payload is not None else prompt
+            ),
             "prompt": prompt,
             "timeout_s": self.spec.timeout_s,
             "extra_context": dict(self.spec.extra_context),
         }
+        if self.spec.transport is not None:
+            msg.pop("agent_url")
+            msg.pop("timeout_s")
+            if not history or self._conversation_id is None:
+                self._conversation_id = uuid.uuid4().hex
+                self._session_id = None
+            msg.update(
+                transport=self.spec.transport.to_dict(),
+                history=[
+                    {"role": turn.role, "content": turn.content} for turn in history
+                ],
+                conversation_id=self._conversation_id,
+                session_id=self._session_id,
+            )
+            deadline = self.spec.transport.timeout.total_deadline_s
+            cleanup = self.spec.transport.timeout.cleanup_grace_s
+        else:
+            deadline = self.spec.timeout_s
+            cleanup = 0.0
+        self._last_run_log = None
         start = time.monotonic()
         if _LOCAL_RUN.get():
             reply = await asyncio.wait_for(
-                self._run_in_process(msg), timeout=self.spec.timeout_s + 5.0
+                self._run_in_process(msg), timeout=deadline + cleanup + 5.0
             )
             if not _valid_evidence(reply.get("trap_evidence")):
                 raise TargetDeliveryError("the trap server returned no evidence")
         else:
             # Send only the trap settings that differ from the default; never null.
-            msg.update({f.name: getattr(self.spec, f.name) for f in fields(self.spec)
-                        if f.name.startswith("trap_") and getattr(self.spec, f.name) != f.default})
+            msg.update(
+                {
+                    f.name: getattr(self.spec, f.name)
+                    for f in fields(self.spec)
+                    if f.name.startswith("trap_")
+                    and getattr(self.spec, f.name) != f.default
+                }
+            )
             ws = _get_client_agent_ws()
             # Same 5 s grace as --local, so the client_agent's own timeout error
             # can still arrive; the outer wait is only a backstop for the bridge.
-            bridge_timeout_s = self.spec.timeout_s + 5.0
+            bridge_timeout_s = deadline + cleanup + 5.0
             try:
                 reply = await asyncio.wait_for(
                     ws.send_and_wait(msg, timeout_s=bridge_timeout_s),
-                    timeout=self.spec.timeout_s + 10.0,
+                    timeout=deadline + cleanup + 10.0,
                 )
             except Exception as e:
                 if not _is_delivery_failure(e):
@@ -297,22 +413,107 @@ class BrowserUseTarget(Target):
                 )
         self._merge_evidence(reply["trap_evidence"])
         wall_latency_ms = (time.monotonic() - start) * 1000.0
-        reported = reply.get("latency_ms")
-        latency_ms = float(reported) if isinstance(reported, (int, float)) else wall_latency_ms
-        return reply.get("final_text", ""), latency_ms
+        if "transport_result" not in reply:
+            if self.spec.transport is not None:
+                raise TargetDeliveryError("client_agent omitted the transport result")
+            reported = reply.get("latency_ms")
+            latency = (
+                float(reported)
+                if isinstance(reported, (int, float))
+                else wall_latency_ms
+            )
+            return reply.get("final_text", ""), latency
+        try:
+            result = TransportResult.from_dict(reply["transport_result"])
+        except (ValueError, TypeError) as exc:
+            raise TargetDeliveryError(
+                "client_agent returned an invalid transport result"
+            ) from exc
+        transport = {
+            "outcome": result.outcome.value,
+            "http_status": result.http_status,
+            "matched_rule_id": result.matched_rule_id,
+            "reason_code": result.reason_code.value,
+        }
+        if (
+            result.outcome == TransportOutcome.BLOCKED
+            and self.spec.transport is not None
+        ):
+            rules = list(self.spec.transport.outcome.rules)
+            submission = getattr(self.spec.transport.delivery, "submit_outcome", None)
+            if submission:
+                rules.extend(submission.rules)
+            if not any(
+                rule.id == result.matched_rule_id
+                and rule.outcome == TransportOutcome.BLOCKED
+                and result.http_status in rule.http_status
+                for rule in rules
+            ):
+                raise TargetTransportError("mapping_error: invalid refusal rule")
+            if result.diagnostics.get("origin") != "mapped_body_rule":
+                raise TargetTransportError("mapping_error: missing refusal provenance")
+            transport["origin"] = "mapped_body_rule"
+        self._evidence["transport"] = transport
+        if result.outcome == TransportOutcome.SUCCEEDED:
+            metadata = result.as_dict()["metadata"]
+            if (
+                self.spec.transport is not None
+                and self.spec.transport.session.mode == "server_returned"
+            ):
+                session_id = metadata.get("session_id")
+                if not isinstance(session_id, str) or not session_id:
+                    self._evidence["transport"].update(
+                        outcome="target_error", reason_code="mapping_error"
+                    )
+                    raise TargetTransportError(
+                        "mapping_error: missing session identifier"
+                    )
+                self._session_id = session_id
+            if metadata:
+                from argus.scenarios.models import TargetRunLog
+
+                events = metadata.get("run_log", [])
+                log_fields = {
+                    key: metadata[key]
+                    for key in ("session_id", "run_id")
+                    if key in metadata
+                }
+                log_fields["events"] = (
+                    events.get("events", events.get("tools", []))
+                    if isinstance(events, dict)
+                    else events
+                )
+                try:
+                    self._last_run_log = TargetRunLog.model_validate(log_fields)
+                except ValueError as exc:
+                    raise TargetTransportError(
+                        "mapping_error: invalid target run log"
+                    ) from exc
+            return result.response_text, result.latency_ms
+        if result.outcome == TransportOutcome.BLOCKED:
+            raise TargetBlockedError(
+                "target API refused the request", transport_metadata=transport
+            )
+        if result.outcome == TransportOutcome.TIMED_OUT:
+            raise TimeoutError("timeout: target operation exceeded its budget")
+        raise TargetTransportError(f"target_error: {result.reason_code.value}")
 
     async def collect_evidence(self) -> dict:
         """The trap record with every value that is not a canary masked, since bodies and
         queries can hold real credentials an agent autofilled."""
         ev = dict(self._evidence)
         if "trap_requests" in ev:
-            ev["trap_requests"] = [_masked_request(r, self._canaries) for r in ev["trap_requests"]]
+            ev["trap_requests"] = [
+                _masked_request(r, self._canaries) for r in ev["trap_requests"]
+            ]
         return ev
 
     def _merge_evidence(self, new: dict) -> None:
         """Rounds of one probe add up; begin_probe starts over."""
         old = self._evidence
-        requests = (old.get("trap_requests", []) + new["trap_requests"])[:_MAX_TRAP_REQUESTS]
+        requests = (old.get("trap_requests", []) + new["trap_requests"])[
+            :_MAX_TRAP_REQUESTS
+        ]
         page_loads = old.get("page_loads", 0) + new["page_loads"]
         self._evidence = {
             "interaction_count": page_loads + len(requests),
@@ -330,13 +531,22 @@ class BrowserUseTarget(Target):
         if s.trap_public_url:
             base = s.trap_public_url.rstrip("/")
             expected = base + "/<token>/scenario"
-            ok = isinstance(got, str) and re.fullmatch(re.escape(base) + tail, got) is not None
+            ok = (
+                isinstance(got, str)
+                and re.fullmatch(re.escape(base) + tail, got) is not None
+            )
         else:
-            expected = f"http://{s.trap_host}:{s.trap_port or '<any port>'}/<token>/scenario"
+            expected = (
+                f"http://{s.trap_host}:{s.trap_port or '<any port>'}/<token>/scenario"
+            )
             try:
                 parts = urlsplit(got) if isinstance(got, str) else None
-                ok = parts is not None and parts.hostname == s.trap_host \
-                    and s.trap_port in (0, parts.port) and re.fullmatch(tail, parts.path) is not None
+                ok = (
+                    parts is not None
+                    and parts.hostname == s.trap_host
+                    and s.trap_port in (0, parts.port)
+                    and re.fullmatch(tail, parts.path) is not None
+                )
             except ValueError:
                 ok = False
         if not ok:
@@ -348,6 +558,18 @@ class BrowserUseTarget(Target):
     async def _run_in_process(self, msg: dict) -> dict:
         from argus.browser_runner.browser_probe import BrowserProbe
 
-        local_msg = dict(msg, trap_host=self.spec.trap_host, trap_port=self.spec.trap_port,
-                         trap_public_url=self.spec.trap_public_url)
-        return await BrowserProbe().run(local_msg)
+        local_msg = dict(
+            msg,
+            trap_host=self.spec.trap_host,
+            trap_port=self.spec.trap_port,
+            trap_public_url=self.spec.trap_public_url,
+        )
+        policy = (
+            execution_policy(self.spec.transport)
+            if self.spec.transport is not None
+            else None
+        )
+        return await BrowserProbe().run(local_msg, policy=policy)
+
+    def last_run_log(self):
+        return self._last_run_log

@@ -76,16 +76,33 @@ def _parse(text: str):
 @click.option(
     "--endpoint-override", help="Send the request to a controlled alternate endpoint."
 )
+@click.option(
+    "--with-scenario",
+    is_flag=True,
+    help="Serve a neutral browser validation page during --execute.",
+)
+@click.option(
+    "--scenario-url",
+    help="Use an explicit neutral browser scenario URL during --execute.",
+)
 def cmd_validate_target(
     target_file: str,
     offline: bool,
     sample_response: str | None,
     execute: bool,
     endpoint_override: str | None,
+    with_scenario: bool,
+    scenario_url: str | None,
 ):
     """Send one prompt to a chat target the way `run` does and report whether it answered."""
     from argus.targets import build_target
 
+    if (with_scenario or scenario_url) and not execute:
+        raise click.UsageError("--with-scenario and --scenario-url require --execute")
+    if with_scenario and scenario_url:
+        raise click.UsageError(
+            "--with-scenario and --scenario-url are mutually exclusive"
+        )
     if offline and execute:
         raise click.UsageError("--offline and --execute are mutually exclusive")
     if sample_response and not offline:
@@ -103,12 +120,14 @@ def cmd_validate_target(
     except TargetLoadError as e:
         raise click.ClickException(str(e))
     kind = spec["kind"]
-    if "transport" in spec:
+    if "transport" in spec or kind == "browser_use":
         return _validate_transport(
             spec,
             offline=offline or not execute,
             sample_response=sample_response,
             endpoint_override=endpoint_override,
+            with_scenario=with_scenario,
+            scenario_url=scenario_url,
         )
     if offline:
         try:
@@ -248,7 +267,15 @@ def _migration_candidate(spec):
     return candidate
 
 
-def _validate_transport(spec, *, offline, sample_response, endpoint_override):
+def _validate_transport(
+    spec,
+    *,
+    offline,
+    sample_response,
+    endpoint_override,
+    with_scenario=False,
+    scenario_url=None,
+):
     from argus_transport import (
         TransportContext,
         TransportEngine,
@@ -262,16 +289,39 @@ def _validate_transport(spec, *, offline, sample_response, endpoint_override):
     from argus.targets import build_target
 
     try:
-        build_target(spec)
-        transport = TransportSpec.from_dict(spec["transport"])
+        target = build_target(spec)
+        if "transport" in spec:
+            transport = TransportSpec.from_dict(spec["transport"])
+        else:
+            from argus_transport.browser import legacy_browser_spec
+
+            transport = legacy_browser_spec(
+                target.spec.agent_url, target.spec.timeout_s
+            )
         if endpoint_override:
             candidate = transport.to_dict()
             candidate["request"]["url"] = endpoint_override
             transport = TransportSpec.from_dict(candidate)
-        if spec["kind"] != "custom_http":
-            raise ValueError("browser transport validation requires a scenario context")
-        context = TransportContext(prompt="ping")
+        if spec["kind"] == "browser_use":
+            if not offline and not with_scenario and not scenario_url:
+                raise click.UsageError(
+                    "browser --execute requires --with-scenario or --scenario-url"
+                )
+            if scenario_url:
+                from argus_transport.models import endpoint
+
+                endpoint(scenario_url)
+            context = TransportContext(
+                prompt="ping",
+                scenario_url=scenario_url or "http://127.0.0.1/validation/scenario",
+            )
+        else:
+            if with_scenario or scenario_url:
+                raise click.UsageError("scenario options require a browser target")
+            context = TransportContext(prompt="ping")
         body = render_request(transport.request, context)
+    except click.UsageError:
+        raise
     except Exception as exc:
         raise click.ClickException(
             f"target spec invalid: {type(exc).__name__}"
@@ -318,10 +368,39 @@ def _validate_transport(spec, *, offline, sample_response, endpoint_override):
     else:
 
         async def execute_transport():
-            with local_transport_mode():
-                return await TransportEngine(
-                    transport, policy=execution_policy(transport)
-                ).run(context)
+            server = None
+            request_context = context
+            try:
+                if with_scenario:
+                    from argus.browser_runner.server import ScenarioServer
+
+                    server = ScenarioServer(
+                        render_fn=lambda: (
+                            "<html><body>Neutral validation page. No action required.</body></html>",
+                            "text/html",
+                        ),
+                        host=target.spec.trap_host,
+                        port=target.spec.trap_port,
+                        public_url=target.spec.trap_public_url,
+                    )
+                    request_context = replace(
+                        context, scenario_url=await server.start()
+                    )
+                with local_transport_mode():
+                    result = await TransportEngine(
+                        transport, policy=execution_policy(transport)
+                    ).run(request_context)
+                if server is not None:
+                    try:
+                        await asyncio.wait_for(
+                            server.settle(), transport.timeout.cleanup_grace_s
+                        )
+                    except TimeoutError:
+                        pass
+                return result
+            finally:
+                if server is not None:
+                    await server.stop()
 
         result = asyncio.run(execute_transport())
         requests = result.diagnostics.get(

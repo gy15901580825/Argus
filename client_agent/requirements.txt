@@ -10,3 +10,6 @@ playwright==1.51.0
 # to resolve ephemeral port (no public API in aiohttp 3.x). Pin <4 so a major
 # bump doesn't silently break ScenarioServer.start().
 aiohttp>=3.9,<4
+
+# Shared declarative transport JSON response selectors.
+jsonpath-ng>=1.7,<2
