@@ -106,5 +106,14 @@ class BrowserProbe:
                     latency_ms=result.latency_ms,
                 )
             return reply
+        except asyncio.CancelledError as exc:
+            if spec and hasattr(exc, "transport_diagnostics"):
+                try:
+                    await asyncio.wait_for(server.settle(), timeout=cleanup)
+                except TimeoutError:
+                    pass
+                exc.trap_evidence = agent.redactor.clean(server.evidence())
+                exc.trap_url = scenario_url
+            raise
         finally:
             await server.stop()

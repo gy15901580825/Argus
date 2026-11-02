@@ -301,6 +301,16 @@ def _validate_transport(
         if endpoint_override:
             candidate = transport.to_dict()
             candidate["request"]["url"] = endpoint_override
+            if candidate["delivery"]["kind"] == "poll":
+                from urllib.parse import urlsplit, urlunsplit
+
+                replacement = urlsplit(endpoint_override)
+                poll_url = urlsplit(candidate["delivery"]["request"]["url"])
+                candidate["delivery"]["request"]["url"] = urlunsplit(
+                    poll_url._replace(
+                        scheme=replacement.scheme, netloc=replacement.netloc
+                    )
+                )
             transport = TransportSpec.from_dict(candidate)
         if spec["kind"] == "browser_use":
             if not offline and not with_scenario and not scenario_url:

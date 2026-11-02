@@ -107,3 +107,40 @@ Offline browser validation renders a placeholder scenario URL and starts no serv
 argus-probe validate-target --target browser.json --offline
 argus-probe validate-target --target browser.json --execute --with-scenario
 ```
+
+## Poll asynchronous jobs
+
+Use `delivery.kind: "poll"` when submission returns a job ID. The following `delivery` object replaces the synchronous delivery object in the example above. Its GET origin must match the submission origin. Keep the top-level response selectors and outcome rules for terminal GET replies.
+
+```json
+{
+  "kind": "poll",
+  "run_id": {"path": "$.run_id"},
+  "request": {
+    "method": "GET",
+    "url": "https://agent.example.invalid/runs/{run_id}",
+    "body": {"none": true}
+  },
+  "pending": {"path": "$.status", "one_of": ["PENDING", "RUNNING"]},
+  "interval_s": 2,
+  "max_polls": 100,
+  "submit_http_status": [200, 202],
+  "submit_outcome": {
+    "kind": "rules",
+    "unmatched": "accepted",
+    "rules": [
+      {"id": "submit_refusal", "priority": 100, "http_status": [200, 202], "when": {"path": "$.error.code", "equals": "POLICY_REFUSAL"}, "outcome": "blocked"},
+      {"id": "submit_failed", "priority": 50, "http_status": [200, 202], "when": {"path": "$.status", "equals": "FAILED"}, "outcome": "target_error"},
+      {"id": "submit_completed", "priority": 10, "http_status": [200, 202], "when": {"path": "$.status", "equals": "COMPLETED"}, "outcome": "succeeded"}
+    ]
+  }
+}
+```
+
+Submission happens once. A mapped refusal or failure stops before ID extraction. An explicit submission success rule returns a valid answer directly, including on HTTP 202. Otherwise an accepted submission needs one nonempty string or integer ID. The engine encodes that ID as one path segment and sends an immediate GET. It checks explicit terminal rules before the pending predicate and waits only for configured pending states. Unknown states, HTTP failures, and the exact poll limit produce errors. Requests are never retried or resubmitted.
+
+The same resolved authentication is used for every request. Each request rechecks its endpoint address and uses only the remaining total deadline. The deadline includes submission, sleeps, and all response reads. Poll replies that omit their ID retain the submission ID; a new probe resets it.
+
+`validate-target --execute` reports one submission and the actual GET count, at most `max_polls` and never more than 100. Offline validation makes no requests. An endpoint override changes the origin for both submission and polling while retaining the configured poll path.
+
+Cancellation closes the local HTTP client and browser trap. The propagated cancellation carries safe `transport_diagnostics` with `job_detached` and the captured ID; browser cancellation also seals trap evidence. Argus sends no remote cancellation request. The hosted job can continue after local cancellation. SSE delivery remains unsupported.

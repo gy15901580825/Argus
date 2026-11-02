@@ -565,3 +565,9 @@ A `browser_use` target can use the same declarative `transport` object. Bind `sc
 `validate-target --target browser.json --offline` uses a placeholder page URL without starting a server or resolving secret references. For a benign execution, use `--execute --with-scenario` to serve a neutral page, or `--execute --scenario-url http://127.0.0.1:8080/neutral` to provide one. These options cannot be combined. A browser execution requires one of them.
 
 The operation uses its configured total deadline plus a bounded cleanup grace period. Remote browser execution requires a connected client that advertises transport version 1 and authorizes the configured origins and secret references. See [the transport specification](transport-spec.md#browser-agents).
+
+### Asynchronous transport validation
+
+A transport with `delivery.kind: "poll"` submits once, then polls a fixed same-origin GET path with an encoded job ID. `validate-target --execute` prints the exact `requests.submit`, `requests.poll`, and `requests.retry` counts. `--offline` remains request-free; `--endpoint-override` changes both request origins and keeps the poll path.
+
+Submission refusal and failure stop before polling. Configured pending states wait until an explicit terminal reply, the poll limit, or the total deadline. The deadline covers submission, waits, and response reads together. No POST or GET is retried. Local cancellation closes resources and records a detached hosted job; it does not stop that remote job. SSE is not supported. See [poll configuration](transport-spec.md#poll-asynchronous-jobs).
