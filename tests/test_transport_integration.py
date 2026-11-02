@@ -223,6 +223,29 @@ async def test_offline_and_execute_request_counts(tmp_path, hosted_agent):
     assert "answer" not in executed.output
 
 
+async def test_execute_missing_secret_reports_zero_requests(tmp_path, hosted_agent):
+    config = transport(hosted_agent["url"])
+    config["auth"] = {
+        "kind": "headers",
+        "headers": [
+            {
+                "name": "X-Api-Key",
+                "secret": {"source": "file", "path": str(tmp_path / "missing")},
+            }
+        ],
+    }
+    target_file = tmp_path / "target.json"
+    target_file.write_text(json.dumps({"kind": "custom_http", "transport": config}))
+    result = await asyncio.to_thread(
+        CliRunner().invoke,
+        main,
+        ["validate-target", "--target", str(target_file), "--execute"],
+    )
+    assert result.exit_code != 0
+    assert "requests.submit=0 requests.poll=0 requests.retry=0" in result.output
+    assert hosted_agent["requests"] == []
+
+
 def test_validate_missing_path_safe_diagnostic(tmp_path):
     target_file = tmp_path / "target.json"
     target_file.write_text(

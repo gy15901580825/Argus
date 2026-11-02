@@ -105,6 +105,8 @@ class CustomHTTPSpec:
 
 
 class CustomHTTPTarget(Target):
+    supports_history: ClassVar[bool] = True
+
     compatible_classes: ClassVar[frozenset[str]] = frozenset(
         {
             "llm_chat",
