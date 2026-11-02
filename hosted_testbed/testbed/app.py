@@ -192,15 +192,7 @@ async def public(request):
     token = request.match_info["token"]
     if len(token) > 128:
         raise Rejected(404, "not_found")
-    try:
-        await asyncio.to_thread(svc.rate, "ip", _client_ip(request), 300, 60)
-    except Rejected:
-        try:
-            identified = await asyncio.to_thread(svc.public, token, pid)
-            await asyncio.to_thread(svc.dropped, identified.run_id, pid)
-        except Rejected:
-            pass
-        raise
+    await asyncio.to_thread(svc.rate, "ip", _client_ip(request), 300, 60)
     run = await asyncio.to_thread(svc.public, token, pid)
     try:
         await asyncio.to_thread(svc.rate, "public", digest(token), 60, 20)

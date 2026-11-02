@@ -234,3 +234,14 @@ async def test_evidence_rate_precedes_full_snapshot_load_and_invalid_token_has_n
             assert response.status == 429
     finally:
         svc.store.get = original_get
+
+
+@pytest.mark.asyncio
+async def test_exhausted_ip_rate_does_not_scan_run_storage(client):
+    session, url, _, svc = client
+    run, probe, _ = await new_probe(client)
+    for _ in range(60):
+        svc.rate("ip", "127.0.0.1", 300, 60)
+    svc.store.list_auth = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("quota rejected requests must not scan storage"))
+    async with session.get(url + f'/r/{run["public_token"]}/p/{probe["probe_id"]}/scenario') as response:
+        assert response.status == 429
