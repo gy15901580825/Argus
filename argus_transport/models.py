@@ -6,8 +6,56 @@ import math
 import re
 from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
-from typing import Any, Literal
+from typing import Any, Literal, NotRequired, TypeAlias, TypedDict
 from urllib.parse import urlsplit
+
+ContextKey: TypeAlias = Literal[
+    "prompt", "scenario_url", "history", "conversation_id", "session_id", "run_id"
+]
+MetadataKey: TypeAlias = Literal["session_id", "run_id", "run_log", "latency_ms"]
+JsonValue: TypeAlias = (
+    str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
+)
+
+
+class LiteralValue(TypedDict):
+    literal: JsonValue
+
+
+class ContextValue(TypedDict):
+    context: ContextKey
+    missing: NotRequired[Literal["error", "omit"]]
+
+
+class ObjectValue(TypedDict):
+    object: dict[str, "ValueExpr"]
+
+
+class ArrayValue(TypedDict):
+    array: list["ValueExpr"]
+
+
+ValueExpr: TypeAlias = LiteralValue | ContextValue | ObjectValue | ArrayValue
+
+
+class JsonBody(TypedDict):
+    json: dict[str, ValueExpr]
+
+
+class TextBody(TypedDict):
+    text: ValueExpr
+
+
+class NoBody(TypedDict):
+    none: Literal[True]
+
+
+class ResponseMetadata(TypedDict, total=False):
+    session_id: str
+    run_id: str | int
+    run_log: JsonValue
+    latency_ms: float
+
 
 _CONTEXT_KEYS = {
     "prompt",
@@ -255,7 +303,7 @@ class RequestSpec(FrozenModel):
     method: str
     url: str
     headers: dict[str, str]
-    body: dict
+    body: JsonBody | TextBody | NoBody
 
     @classmethod
     def from_dict(cls, data, poll=False):
@@ -381,7 +429,7 @@ class MetadataSelector(FrozenModel):
 class ResponseSpec(FrozenModel):
     format: str
     text: TextSelector
-    metadata: dict[str, MetadataSelector] = field(default_factory=dict)
+    metadata: dict[MetadataKey, MetadataSelector] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data):
@@ -837,7 +885,7 @@ class TransportResult(FrozenModel):
     http_status: int | None
     matched_rule_id: str | None
     reason_code: SafeReasonCode
-    metadata: dict = field(default_factory=dict)
+    metadata: ResponseMetadata = field(default_factory=dict)
     diagnostics: dict = field(default_factory=dict)
 
     def as_dict(self):
