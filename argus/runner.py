@@ -542,7 +542,12 @@ class Runner:
                         )
                     else:
                         if observed:
-                            f = replace(f, evidence={**observed, **(f.evidence or {})})
+                            evidence = (
+                                {**observed, **(f.evidence or {})}
+                                if mapped_refusal
+                                else observed
+                            )
+                            f = replace(f, evidence=evidence)
             # A 4xx or refusal before the agent touched the testbed means the attack was never
             # staged in front of it (unreachable testbed, wrong origin), not that it was defended.
             # Same gate as _assertion_finding: only evidence-judged probes that need the testbed.
