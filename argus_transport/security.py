@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import contextvars
 import ipaddress
+import logging
 import os
 import socket
 import stat
@@ -146,3 +147,35 @@ def resolve_secret(ref: SecretRef, policy: ExecutionPolicy):
     if not value or "\r" in value or "\n" in value:
         raise ValueError("Secret is invalid for HTTP authentication")
     return value
+
+
+_LOG_REDACTOR = contextvars.ContextVar("transport_log_redactor", default=None)
+
+
+class _TransportLogFilter(logging.Filter):
+    def filter(self, record):
+        redactor = _LOG_REDACTOR.get()
+        if redactor is not None:
+            record.msg = redactor.clean(record.getMessage())
+            record.args = ()
+        return True
+
+
+for _logger_name in (
+    "httpx",
+    "httpcore.connection",
+    "httpcore.http11",
+    "httpcore.http2",
+    "httpcore.proxy",
+    "httpcore.socks",
+):
+    logging.getLogger(_logger_name).addFilter(_TransportLogFilter())
+
+
+@contextmanager
+def redacted_transport_logs(redactor):
+    token = _LOG_REDACTOR.set(redactor)
+    try:
+        yield
+    finally:
+        _LOG_REDACTOR.reset(token)

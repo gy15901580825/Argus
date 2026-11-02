@@ -6,13 +6,14 @@ import json
 import time
 from dataclasses import dataclass, field, replace
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 import httpx
 from jsonpath_ng import parse
 
 from .models import (
     RequestSpec,
+    PollSpec,
     SafeReasonCode,
     SyncSpec,
     TransportContext,
@@ -20,7 +21,7 @@ from .models import (
     TransportResult,
     TransportSpec,
 )
-from .security import ExecutionPolicy, Redactor, resolve_secret
+from .security import ExecutionPolicy, Redactor, resolve_secret, redacted_transport_logs
 
 _MISSING = object()
 _OMIT = object()
@@ -237,9 +238,13 @@ class TransportEngine:
         self.redactor = redactor or Redactor()
 
     async def run(self, context):
+        with redacted_transport_logs(self.redactor):
+            return await self._run(context)
+
+    async def _run(self, context):
         start = time.monotonic()
         redactor = self.redactor
-        if not isinstance(self.spec.delivery, SyncSpec):
+        if not isinstance(self.spec.delivery, (SyncSpec, PollSpec)):
             return self.failure(SafeReasonCode.UNSUPPORTED_DELIVERY, start)
         try:
             content = render_request(self.spec.request, context)
@@ -269,54 +274,26 @@ class TransportEngine:
         }
         try:
             async with asyncio.timeout(self.spec.timeout.total_deadline_s):
-                ip = await self.policy.endpoint_ip(self.spec.request.url)
-                remaining = self.spec.timeout.total_deadline_s - (
-                    time.monotonic() - start
-                )
-                if remaining <= 0:
-                    raise TimeoutError
-                timeout = httpx.Timeout(
-                    connect=min(
-                        self.spec.timeout.connect_s, self.spec.timeout.total_deadline_s
-                    ),
-                    read=min(
-                        self.spec.timeout.read_s, self.spec.timeout.total_deadline_s
-                    ),
-                    write=min(
-                        self.spec.timeout.write_s, self.spec.timeout.total_deadline_s
-                    ),
-                    pool=min(
-                        self.spec.timeout.pool_s, self.spec.timeout.total_deadline_s
-                    ),
-                )
                 if self.client is None:
                     async with httpx.AsyncClient(
-                        timeout=timeout, follow_redirects=False, trust_env=False
+                        follow_redirects=False, trust_env=False
                     ) as client:
-                        result = await self._request(
+                        return await self._operate(
                             client,
-                            ip,
                             request_headers,
                             content,
-                            timeout,
                             start,
                             redactor,
                             diagnostics,
-                            pin=True,
                         )
-                else:
-                    result = await self._request(
-                        self.client,
-                        ip,
-                        request_headers,
-                        content,
-                        timeout,
-                        start,
-                        redactor,
-                        diagnostics,
-                        pin=True,
-                    )
-                return result
+                return await self._operate(
+                    self.client, request_headers, content, start, redactor, diagnostics
+                )
+        except asyncio.CancelledError as exc:
+            if isinstance(self.spec.delivery, PollSpec) and diagnostics.get("run_id"):
+                diagnostics["job_detached"] = True
+            exc.transport_diagnostics = redactor.clean(diagnostics)
+            raise
         except (TimeoutError, httpx.TimeoutException):
             return self.failure(
                 SafeReasonCode.TIMEOUT, start, diagnostics=redactor.clean(diagnostics)
@@ -334,45 +311,178 @@ class TransportEngine:
                 diagnostics=redactor.clean(diagnostics),
             )
 
-    async def _request(
+    async def _operate(self, client, headers, content, start, redactor, diagnostics):
+        submitted = await self._exchange(
+            client,
+            self.spec.request,
+            headers,
+            content,
+            start,
+            redactor,
+            diagnostics,
+            phase="submit",
+        )
+        if isinstance(submitted, TransportResult):
+            return submitted
+        status, body = submitted
+        if isinstance(self.spec.delivery, SyncSpec):
+            return self._evaluate(status, body, start, redactor, diagnostics)
+        delivery = self.spec.delivery
+        try:
+            _, _, reason, matched = outcome_match(delivery.submit_outcome, status, body)
+            if matched or reason == SafeReasonCode.HTTP_ERROR:
+                return self._evaluate(
+                    status,
+                    body,
+                    start,
+                    redactor,
+                    diagnostics,
+                    spec=replace(self.spec, outcome=delivery.submit_outcome),
+                )
+            if status not in delivery.submit_http_status:
+                return self.failure(
+                    SafeReasonCode.HTTP_ERROR,
+                    start,
+                    status=status,
+                    diagnostics=redactor.clean(diagnostics),
+                )
+            if delivery.submit_outcome.unmatched != "accepted":
+                return self.failure(
+                    SafeReasonCode.UNKNOWN_STATUS,
+                    start,
+                    status=status,
+                    diagnostics=redactor.clean(diagnostics),
+                )
+            job_id = select(body, delivery.run_id["path"])
+            if type(job_id) not in {str, int} or not str(job_id):
+                raise ValueError("Missing or invalid run ID")
+            job_id = str(job_id)
+            diagnostics["run_id"] = redactor.clean(job_id)
+            encoded = quote(job_id, safe="")
+            if encoded in {".", ".."}:
+                encoded = encoded.replace(".", "%2E")
+            poll_request = replace(
+                delivery.request,
+                url=delivery.request.url.replace("{run_id}", encoded),
+            )
+            auth_names = {header.name.lower() for header in self.spec.auth.headers}
+            if self.spec.auth.kind == "bearer":
+                auth_names.add("authorization")
+            auth_headers = {
+                key: value
+                for key, value in headers.items()
+                if key.lower() in auth_names
+            }
+            poll_headers = {
+                **poll_request.headers,
+                **auth_headers,
+                "Accept-Encoding": "identity",
+            }
+            for index in range(delivery.max_polls):
+                polled = await self._exchange(
+                    client,
+                    poll_request,
+                    poll_headers,
+                    None,
+                    start,
+                    redactor,
+                    diagnostics,
+                    phase="poll",
+                )
+                if isinstance(polled, TransportResult):
+                    return polled
+                status, body = polled
+                _, _, reason, matched = outcome_match(self.spec.outcome, status, body)
+                pending = (
+                    not matched
+                    and reason != SafeReasonCode.HTTP_ERROR
+                    and matches_predicate(body, delivery.pending)
+                )
+                if not pending:
+                    result = self._evaluate(status, body, start, redactor, diagnostics)
+                    metadata = {"run_id": redactor.clean(job_id), **result.metadata}
+                    if metadata.get("run_id") is None:
+                        metadata["run_id"] = redactor.clean(job_id)
+                    return replace(result, metadata=metadata)
+                if index + 1 == delivery.max_polls:
+                    return self.failure(
+                        SafeReasonCode.POLL_LIMIT,
+                        start,
+                        status=status,
+                        diagnostics=redactor.clean(diagnostics),
+                    )
+                await asyncio.sleep(delivery.interval_s)
+        except (ValueError, TypeError, OverflowError, RecursionError):
+            return self.failure(
+                SafeReasonCode.MAPPING_ERROR,
+                start,
+                status=status,
+                diagnostics=redactor.clean(diagnostics),
+            )
+
+    def _evaluate(self, status, body, start, redactor, diagnostics, *, spec=None):
+        result = evaluate_response(
+            spec or self.spec,
+            status,
+            body,
+            latency_ms=(time.monotonic() - start) * 1000,
+            redactor=redactor,
+        )
+        return replace(
+            result,
+            diagnostics=redactor.clean({**diagnostics, **result.diagnostics}),
+        )
+
+    async def _exchange(
         self,
         client,
-        ip,
+        request,
         headers,
         content,
-        timeout,
         start,
         redactor,
         diagnostics,
         *,
-        pin,
+        phase,
     ):
-        url = httpx.URL(self.spec.request.url)
-        extensions = {}
-        if pin:
-            parts = urlsplit(str(url))
-            host = parts.hostname
-            headers = {**headers, "Host": parts.netloc}
-            extensions = {"sni_hostname": host}
-            url = url.copy_with(host=ip)
-        diagnostics["requests"]["submit"] = 1
+        try:
+            ip = await self.policy.endpoint_ip(request.url)
+        except (ValueError, OSError):
+            return self.failure(
+                SafeReasonCode.ENDPOINT_ERROR,
+                start,
+                diagnostics=redactor.clean(diagnostics),
+            )
+        remaining = self.spec.timeout.total_deadline_s - (time.monotonic() - start)
+        if remaining <= 0:
+            raise TimeoutError
+        budget = self.spec.timeout
+        timeout = httpx.Timeout(
+            connect=min(budget.connect_s, remaining),
+            read=min(budget.read_s, remaining),
+            write=min(budget.write_s, remaining),
+            pool=min(budget.pool_s, remaining),
+        )
+        url = httpx.URL(request.url)
+        parts = urlsplit(str(url))
+        headers = {**headers, "Host": parts.netloc}
+        url = url.copy_with(host=ip)
+        diagnostics["requests"][phase] += 1
         async with client.stream(
-            self.spec.request.method,
+            request.method,
             url,
             headers=headers,
             content=content,
             timeout=timeout,
             follow_redirects=False,
-            extensions=extensions,
+            extensions={"sni_hostname": parts.hostname},
         ) as response:
-            if not 200 <= response.status_code < 300 and response.status_code not in {
-                400,
-                403,
-            }:
+            status = response.status_code
+            if not 200 <= status < 300 and status not in {400, 403}:
                 return self.failure(
                     SafeReasonCode.HTTP_ERROR,
                     start,
-                    status=response.status_code,
+                    status=status,
                     diagnostics=redactor.clean(diagnostics),
                 )
             if response.headers.get(
@@ -381,7 +491,7 @@ class TransportEngine:
                 return self.failure(
                     SafeReasonCode.PARSE_ERROR,
                     start,
-                    status=response.status_code,
+                    status=status,
                     diagnostics=redactor.clean(diagnostics),
                 )
             body = bytearray()
@@ -391,7 +501,7 @@ class TransportEngine:
                     return self.failure(
                         SafeReasonCode.RESPONSE_LIMIT,
                         start,
-                        status=response.status_code,
+                        status=status,
                         diagnostics=redactor.clean(diagnostics),
                     )
             try:
@@ -401,20 +511,10 @@ class TransportEngine:
                 return self.failure(
                     SafeReasonCode.PARSE_ERROR,
                     start,
-                    status=response.status_code,
+                    status=status,
                     diagnostics=redactor.clean(diagnostics),
                 )
-            result = evaluate_response(
-                self.spec,
-                response.status_code,
-                parsed,
-                latency_ms=(time.monotonic() - start) * 1000,
-                redactor=redactor,
-            )
-            return replace(
-                result,
-                diagnostics=redactor.clean({**diagnostics, **result.diagnostics}),
-            )
+            return status, parsed
 
     @staticmethod
     def failure(reason, start, *, status=None, diagnostics=None):
@@ -430,7 +530,11 @@ class TransportEngine:
             status,
             None,
             reason,
-            {},
+            (
+                {"run_id": diagnostics["run_id"]}
+                if diagnostics and diagnostics.get("run_id")
+                else {}
+            ),
             diagnostics or {"requests": {"submit": 0, "poll": 0, "retry": 0}},
         )
 
