@@ -131,22 +131,50 @@ def test_transport_reference_names_are_not_env_expanded(monkeypatch):
     assert "SYNTHETIC_KEY" not in calls
 
 
-async def test_failed_200_ignores_nonempty_result(hosted_agent):
-    from argus.targets._base import TargetTransportError
+async def test_failed_200_ignores_nonempty_result(hosted_agent, tmp_path):
+    from argus.probe import Probe, ProbeMappings
+    from argus.runner import Runner
     from argus_transport import local_transport_mode
 
     hosted_agent["body"] = {"status": "FAILED", "result": "not an answer"}
     target = build_target(
         {"kind": "custom_http", "transport": transport(hosted_agent["url"])}
     )
-    with (
-        local_transport_mode(),
-        pytest.raises(TargetTransportError, match="target_error"),
-    ):
-        await target.send_prompt("hello")
-    evidence = await target.collect_evidence()
-    assert evidence["transport"]["outcome"] == "target_error"
-    assert evidence["transport"]["matched_rule_id"] == "failed"
+    (tmp_path / "default.md").write_text("Evaluate the reply.")
+
+    class Judge:
+        _cost_meter = None
+        calls = 0
+
+        async def judge(self, **kwargs):
+            self.calls += 1
+            raise AssertionError("failed target results cannot be judged")
+
+    judge = Judge()
+    probe = Probe(
+        id="failed-status",
+        name="status",
+        target_class=("llm_chat",),
+        attack_class=("test",),
+        severity="high",
+        prompts=("hello",),
+        mappings=ProbeMappings(),
+        judge_model="m",
+        judge_rubric_path="default.md",
+    )
+    with local_transport_mode():
+        findings = [
+            f
+            async for f in Runner(
+                target=target, judge=judge, rubrics_dir=tmp_path
+            ).run_probe(probe)
+        ]
+    assert len(findings) == 1
+    assert findings[0].verdict == "error"
+    assert judge.calls == 0
+    assert findings[0].target_response == ""
+    assert findings[0].evidence["transport"]["outcome"] == "target_error"
+    assert findings[0].evidence["transport"]["matched_rule_id"] == "failed"
     assert hosted_agent["requests"] == [{"goal": "hello"}]
 
 

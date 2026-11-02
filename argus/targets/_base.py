@@ -57,10 +57,10 @@ class Target(ABC):
     Concurrency contract: send_prompt is called sequentially within a run — no
     shared mutable state between calls is required.
 
-    Conversation state is *client-replayed*: the runner owns the transcript and
-    passes it on every call, rather than relying on the target to mint and honour
-    a session id. `history` is everything said before `prompt`; an empty tuple
-    reproduces single-shot behaviour exactly.
+    The runner owns the transcript and passes prior turns as `history`.
+    Adapters can replay that history or explicitly continue a target-issued
+    session. An empty history starts a fresh conversation. Each adapter declares
+    whether it supports either form of continuation.
     """
 
     # Each adapter declares which probe target_classes it serves.
