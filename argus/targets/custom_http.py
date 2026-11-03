@@ -21,6 +21,7 @@ from argus_transport import (
     parse_transport_spec,
     execution_policy,
 )
+from argus_transport.spec_v2 import iter_requests
 from argus.targets._base import Target, TargetBlockedError, TargetTransportError, Turn
 from argus.targets._template import compile_template, render
 
@@ -55,6 +56,39 @@ def _uses_context(value, name):
     return False
 
 
+def _v2_expression_uses_context(expression, name):
+    if "context" in expression:
+        return expression["context"] == name
+    if "base64" in expression:
+        return _v2_expression_uses_context(expression["base64"], name)
+    if "object" in expression:
+        children = expression["object"].values()
+    elif "array" in expression:
+        children = expression["array"]
+    elif "concat" in expression:
+        children = expression["concat"]
+    else:
+        return False
+    return any(_v2_expression_uses_context(child, name) for child in children)
+
+
+def _v2_uses_context(spec, name):
+    for declarations in (spec.let.run, spec.let.attempt):
+        if any(
+            _v2_expression_uses_context(expr, name) for expr in declarations.values()
+        ):
+            return True
+    for _, request in iter_requests(spec):
+        expressions = list(request.query.values())
+        if "json" in request.body:
+            expressions.extend(request.body["json"].values())
+        elif "text" in request.body:
+            expressions.append(request.body["text"])
+        if any(_v2_expression_uses_context(expr, name) for expr in expressions):
+            return True
+    return False
+
+
 @dataclass(frozen=True)
 class CustomHTTPSpec:
     kind: str = "custom_http"
@@ -84,7 +118,12 @@ class CustomHTTPSpec:
                 transport = parse_transport_spec(transport)
             if not isinstance(transport, (TransportSpec, TransportSpecV2)):
                 raise ValueError("transport must be a transport specification")
-            if _uses_context(transport.request.body, "scenario_url"):
+            uses_browser_context = (
+                _v2_uses_context(transport, "scenario_url")
+                if isinstance(transport, TransportSpecV2)
+                else _uses_context(transport.request.body, "scenario_url")
+            )
+            if uses_browser_context:
                 raise ValueError("scenario_url context requires a browser target")
             object.__setattr__(self, "transport", transport)
             return

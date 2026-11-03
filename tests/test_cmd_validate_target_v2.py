@@ -205,3 +205,39 @@ async def test_v2_execute_rejects_invalid_run_log(tmp_path):
         assert result.exit_code == 1
         assert "outcome.selected: completed -> target_error" in result.output
         assert "transport.mapping_error: target_error" in result.output
+
+
+@pytest.mark.parametrize("offline", [False, True])
+@pytest.mark.parametrize("owner", ["poll_query", "run", "attempt"])
+async def test_v2_cli_rejects_browser_context_before_requests(tmp_path, offline, owner):
+    app = RecordingApp()
+
+    async def accepted(request):
+        return web.json_response({"status": "PENDING", "run_id": "job-1"}, status=202)
+
+    app.route("POST", "/run", accepted)
+    app.route("GET", "/runs/{ref}", completed)
+    async with serve(app) as origin:
+        data = poll_dict(origin + "/run")
+        data["version"] = 2
+        expression = {"context": "scenario_url"}
+        if owner == "poll_query":
+            data["delivery"]["request"]["query"] = {"scenario": expression}
+        else:
+            expression["missing"] = "omit"
+            data["let"] = {owner: {"ref": expression}}
+        result = await invoke(target_file(tmp_path, data), "--offline" if offline else "--execute")
+        assert result.exit_code == 1
+        assert "target spec invalid: ValueError" in result.output
+        assert app.calls == []
+
+
+async def test_v2_cli_accepts_opaque_context_shaped_literal(tmp_path):
+    data = spec_dict()
+    data["version"] = 2
+    data["request"]["body"] = {
+        "json": {"context": {"literal": {"context": "scenario_url"}}}
+    }
+    result = await invoke(target_file(tmp_path, data), "--offline")
+    assert result.exit_code == 0, result.output
+    assert "requests.submit=0 requests.poll=0 requests.retry=0" in result.output

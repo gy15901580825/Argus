@@ -66,6 +66,8 @@ Version 2 lets you describe a SaaS agent's documented HTTP API with one JSON con
 
 Set `transport.version` to the integer `2`. The parser requires an explicit integer version and rejects unknown versions. The string `"2"` and decimal `2.0` are invalid. Version 1 files remain valid without changes. Changing a file from version 1 to version 2 changes its baseline identity. Collect a new baseline before comparing runs.
 
+Custom HTTP version 2 rejects `scenario_url` context expressions at target construction. This includes optional bindings in `let.run`, `let.attempt`, and every submit or poll request body and query. Nested expressions follow the same rule. Literal contents and JSON field names remain ordinary data.
+
 This example binds an automation ID from a nonsecret environment variable and generates a reference for each attempt.
 
 ```json
