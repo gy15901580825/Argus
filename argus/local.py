@@ -199,14 +199,19 @@ async def run_local(
                     break
                 finally:
                     spent = api._COST_METER.spent_in_current_run()
-            emitted.append(finding)
+            if finding.get("type") != "target_cleanup":
+                emitted.append(finding)
             yield finding
     except CostExceededError as e:
         # Raised by cost_meter.record() once the run is underway. Other mid-run
         # exceptions propagate unchanged for the CLI to report.
-        raise LocalRunError(str(e), code="cost") from e
+        error = LocalRunError(str(e), code="cost")
+        error.target_cleanup = getattr(e, "target_cleanup", None)
+        raise error from e
     except TargetUnreachableError as e:
-        raise LocalRunError(str(e), code="unreachable") from e
+        error = LocalRunError(str(e), code="unreachable")
+        error.target_cleanup = getattr(e, "target_cleanup", None)
+        raise error from e
     finally:
         await probes.aclose()
     yield {

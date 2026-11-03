@@ -12,11 +12,11 @@ argus-probe run --local --target target.json --probes all --format json --out ru
 
 Local `custom_http` runs accept [transport version 2](transport-spec.md#use-version-2). The report format remains `argus.run/1`. Changing the transport version changes the target's baseline identity and requires a new baseline. Browser targets and remote clients still support transport version 1.
 
-If a run stops partway, for example when the daily cost cap is crossed, the target stops answering or the judge fails unexpectedly, the CLI still writes `run.json` with the findings gathered so far, sets `status` to `"incomplete"` and exits with a non-zero code. A run that never starts (no judge key, an unknown probe id, a target spec that cannot be built, an estimate above `--per-run-cap`) writes no file. Ctrl-C and SIGTERM write no file either.
+If a run stops partway, for example when the daily cost cap is crossed, the target stops answering or the judge fails unexpectedly, the CLI still writes `run.json` with the findings gathered so far, sets `status` to `"incomplete"` and exits with a non-zero code. A run that never starts (no judge key, an unknown probe id, a target spec that cannot be built, an estimate above `--per-run-cap`) writes no file. SIGINT and SIGTERM first run bounded configured undo requests, then exit without writing a file. Remaining cleanup intents appear on stderr.
 
 ## Fields
 
-The top-level keys always appear in this order. `incomplete_reason`, `notes` and `judge` appear only when they apply:
+The top-level keys always appear in this order. `incomplete_reason`, `notes`, `judge` and `target_cleanup` appear only when they apply:
 
 | Key | Type | Meaning |
 |---|---|---|
@@ -33,6 +33,13 @@ The top-level keys always appear in this order. `incomplete_reason`, `notes` and
 | `findings` | array | One object per probe result. |
 | `notes` | array of strings | Only when there is something to say: the incomplete reasons, and the warning when almost every probe was blocked with one HTTP code. `run` writes it; `mcp-trap` and `scan-mcp` do not. |
 | `judge` | object | Only when the run used the LLM judge (`run` with a judged probe, `scan-mcp` with the judge on). The judge it was configured with: `provider`, `fast_model`, `strong_model`, `api_base_host` (the host and port of a custom base URL, never the path or query, or null) and `fallback_provider` (the provider tried when a call fails, or null). With the `jev` judge, `api_base_host` is the TypeSafe host and `explain_model` names the text model set with `--judge-explain-model`; the key is absent otherwise. Each finding's `judge_model` says which model gave that verdict. |
+| `target_cleanup` | object | Only when the target has configured undo requests. Final run and attempt cleanup summary. See below. |
+
+### Target cleanup
+
+`target_cleanup` contains `complete`, `done`, `open`, and `stop_reason`. `done` counts completed undo intents. `open` lists unfinished intents with their `scope`, `step`, `status`, `method`, redacted `url`, and `http_status`. Statuses include `unbound`, `failed`, and `blocked_by_inner`. `stop_reason` is the transport stop reason or null.
+
+When `complete` is false, the run is incomplete and exits 1 unless a higher priority cost exit applies. The console prints the remaining method, URL, step, and status for manual cleanup. Cleanup events do not count as findings or coverage and are omitted from server SSE data. Attempt cleanup also appears in a finding's `evidence.transport.cleanup` without replacing its primary result.
 
 ### Run summary
 

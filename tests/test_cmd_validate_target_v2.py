@@ -241,3 +241,44 @@ async def test_v2_cli_accepts_opaque_context_shaped_literal(tmp_path):
     result = await invoke(target_file(tmp_path, data), "--offline")
     assert result.exit_code == 0, result.output
     assert "requests.submit=0 requests.poll=0 requests.retry=0" in result.output
+
+
+async def test_endpoint_override_rewrites_lifecycle_and_undo_origins(tmp_path):
+    from test_transport_lifecycle import lifecycle_dict, recording_lifecycle
+    app = recording_lifecycle()
+    async def accepted(request):
+        return web.json_response({'status': 'PENDING', 'run_id': 'job-2'}, status=202)
+    app.route('POST', '/submit', accepted)
+    app.route('GET', '/runs/{ref}', completed)
+    async with serve(app) as origin:
+        data = lifecycle_dict('https://api.vendor-a.example.test')
+        polling = poll_dict('https://api.vendor-a.example.test/run')
+        data['delivery'] = polling['delivery']
+        data['request']['url'] = 'https://api.vendor-a.example.test/submit'
+        data['delivery']['request']['query'] = {'page_size': {'literal': 3}}
+        result = await invoke(target_file(tmp_path, data), '--execute', '--endpoint-override', origin)
+        assert result.exit_code == 0, result.output
+        assert [call[:2] for call in app.calls] == [
+            ('POST', '/v1/sources'), ('POST', '/v1/messages'), ('POST', '/submit'),
+            ('GET', '/runs/job-2?page_size=3'),
+            ('DELETE', '/v1/messages?remoteId=local-ref&sourceId=source-one'),
+            ('DELETE', '/v1/sources/source-one'),
+        ]
+        assert 'requests.submit=1 requests.poll=1 requests.retry=0 requests.setup=2 requests.cleanup=2' in result.output
+
+
+async def test_v2_execute_closes_run_after_failed_submit(tmp_path):
+    from test_transport_lifecycle import lifecycle_dict, recording_lifecycle
+    app = recording_lifecycle()
+    async def failed(request):
+        return web.Response(status=500)
+    app.route('POST', '/submit', failed)
+    async with serve(app) as origin:
+        data = lifecycle_dict(origin)
+        data['request']['url'] = origin + '/submit'
+        result = await invoke(target_file(tmp_path, data), '--execute')
+        assert result.exit_code == 1
+        assert [call[1] for call in app.calls if call[0] == 'DELETE'] == [
+            '/v1/messages?remoteId=local-ref&sourceId=source-one', '/v1/sources/source-one',
+        ]
+        assert 'requests.setup=2 requests.cleanup=2' in result.output

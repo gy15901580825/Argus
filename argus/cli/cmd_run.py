@@ -12,7 +12,8 @@ from click.core import ParameterSource
 from argus.cli import api_client, git_context, run_json
 from argus.cli.baseline_key import baseline_key
 from argus.cli.judge_options import judge_options
-from argus.cli.local_run import run_local_and_render
+from argus.cli.local_run import StopSignalReceived, cleanup_lines, run_local_and_render
+from argus.cli.mcp_sdk import STOP_MESSAGES
 from argus.cli.severity import (
     SEVERITY_ORDER, blocked_warning, findings_at_or_above, hit_cost_cap, incomplete_lines, judge_skip_line,
 )
@@ -257,8 +258,12 @@ def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, se
     try:
         result = run_local_and_render(spec, tokens, per_run_cap, report_format, secret_values, fail_on,
                                       skip_judged=skip_judged)
+    except StopSignalReceived as e:
+        click.echo(f"{STOP_MESSAGES[e.signum]}: the run was stopped before it finished; no report was written.", file=sys.stderr)
+        if e.target_cleanup is not None:
+            _echo_masked(cleanup_lines(e.target_cleanup), spec, secret_values)
+        sys.exit(128 + e.signum)
     except KeyboardInterrupt:
-        # Same contract as mcp-trap and scan-mcp. SIGTERM keeps its default action (exit 143).
         click.echo("Interrupted: the run was stopped before it finished; no report was written.", file=sys.stderr)
         sys.exit(130)
     except Exception as e:  # LocalRunError before the run started; no traceback for the operator
@@ -272,6 +277,8 @@ def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, se
     click.echo(f"Wrote report to {out_file}")
     incomplete = incomplete_lines(result.findings, result.stop_reason)
     _echo_masked(incomplete, spec, secret_values)
+    if result.target_cleanup is not None:
+        _echo_masked(cleanup_lines(result.target_cleanup), spec, secret_values)
     _warn_if_all_blocked(result.findings)
     if skip_note := judge_skip_line(result.findings):
         click.echo(skip_note, file=sys.stderr)  # a note: skipped probes leave the exit code alone

@@ -19,6 +19,27 @@ from argus.cli.severity import (
 )
 
 
+class StopSignalReceived(Exception):
+    def __init__(self, signum: int, target_cleanup: dict | None = None):
+        super().__init__(signum)
+        self.signum = signum
+        self.target_cleanup = target_cleanup
+
+
+class TargetCleanupIncomplete(Exception):
+    pass
+
+
+def cleanup_lines(report: dict) -> list[str]:
+    if report["complete"]:
+        return []
+    opened = report["open"]
+    return [
+        f"Target cleanup incomplete: {len(opened)} item(s) left on the target. Remove them by hand:",
+        *(f"[ ] {item['method']} {item['url']} (step {item['step']}, {item['status']})" for item in opened),
+    ]
+
+
 class LocalRunResult(NamedTuple):
     report: str
     findings: list[dict]
@@ -26,6 +47,7 @@ class LocalRunResult(NamedTuple):
     stopped_by: Exception | None = None
     stop_reason: str | None = None
     exit_code: int = 0
+    target_cleanup: dict | None = None
 
 
 def run_local_and_render(
@@ -90,32 +112,53 @@ def _run_and_render(
     findings: list[dict] = []
     coverage: dict | None = None
     judge: dict | None = None
+    target_cleanup: dict | None = None
 
     async def _consume() -> None:
-        nonlocal coverage, judge
-        async for event in run_local(
-            spec, probe_ids, per_run_cap_usd=per_run_cap, skip_judged=skip_judged
-        ):
-            if event.get("type") == "coverage":
-                coverage = event.get("coverage")
-                continue
-            if event.get("type") == "judge":
-                judge = event
-                click.echo(f"Judge: {judge['judge']}")
-                click.echo(judge["disclosure"])
-                continue
-            if event.get("type") == "warning":
-                click.echo(f"Warning: {event['message']}", err=True)
-                continue
-            findings.append(event)
-            click.echo(
-                f"  {event.get('verdict', '?'):<18} {event.get('severity', '?'):<9} {event.get('probe_id', '?')}"
-            )
+        nonlocal coverage, judge, target_cleanup
+        try:
+            async for event in run_local(
+                spec, probe_ids, per_run_cap_usd=per_run_cap, skip_judged=skip_judged
+            ):
+                if event.get("type") == "target_cleanup":
+                    target_cleanup = event["target_cleanup"]
+                    continue
+                if event.get("type") == "coverage":
+                    coverage = event.get("coverage")
+                    continue
+                if event.get("type") == "judge":
+                    judge = event
+                    click.echo(f"Judge: {judge['judge']}")
+                    click.echo(judge["disclosure"])
+                    continue
+                if event.get("type") == "warning":
+                    click.echo(f"Warning: {event['message']}", err=True)
+                    continue
+                findings.append(event)
+                click.echo(
+                    f"  {event.get('verdict', '?'):<18} {event.get('severity', '?'):<9} {event.get('probe_id', '?')}"
+                )
+        except BaseException as exc:
+            target_cleanup = getattr(exc, "target_cleanup", None) or target_cleanup
+            raise
+
+    async def _with_signals():
+        from argus.cli.mcp_sdk import cancel_on_stop_signals
+
+        task = asyncio.create_task(_consume())
+        with cancel_on_stop_signals(task) as stopped:
+            try:
+                return await task
+            except asyncio.CancelledError:
+                if not stopped:
+                    raise
+                return StopSignalReceived(stopped[0], target_cleanup)
 
     stopped_by: Exception | None = None
     stop_reason: str | None = None
+    stopped = None
     try:
-        asyncio.run(_consume())
+        stopped = asyncio.run(_with_signals())
     except Exception as e:
         # A run that never started (no key, bad spec, over the cap) has nothing to report.
         if isinstance(e, LocalRunError) and not findings:
@@ -134,6 +177,12 @@ def _run_and_render(
 
             coverage = build_coverage(load_probe_library(PROBES_DIR), findings)
 
+    if isinstance(stopped, StopSignalReceived):
+        raise stopped
+    if target_cleanup is not None and not target_cleanup["complete"] and stopped_by is None:
+        stop_reason = f"target cleanup incomplete: {len(target_cleanup['open'])} item(s) left on the target"
+        stopped_by = TargetCleanupIncomplete(stop_reason)
+
     incomplete = [line.strip() for line in incomplete_lines(findings, stop_reason)]
     notes = list(incomplete)
     if warning := blocked_warning(findings):
@@ -151,6 +200,8 @@ def _run_and_render(
         "coverage": coverage,
         "findings": findings,
     }
+    if target_cleanup is not None:
+        run["target_cleanup"] = target_cleanup
     if judge:
         run["judge"] = judge["record"]
     exit_code = run_exit_code(findings, stopped_by, fail_on)
@@ -167,6 +218,7 @@ def _run_and_render(
             stopped_by,
             stop_reason,
             exit_code,
+            target_cleanup,
         )
     # Same scrub as run.json, so no format can leak what another one masks.
     render = {
@@ -180,4 +232,5 @@ def _run_and_render(
         stopped_by,
         stop_reason,
         exit_code,
+        target_cleanup,
     )

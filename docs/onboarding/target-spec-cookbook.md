@@ -55,7 +55,7 @@ Below are copy-paste templates for each supported agent shape, plus the gotchas 
 
 ## custom_http
 
-For declarative local HTTP APIs with generated references, URL bindings, and polling, see [Use version 2](../transport-spec.md#use-version-2).
+For declarative local HTTP APIs with generated references, URL bindings, polling, and lifecycle setup and undo requests, see [Use version 2](../transport-spec.md#use-version-2). Configure GET or DELETE undo requests for resources your run owns. Local runs execute bounded undo requests on completion, SIGINT, and SIGTERM and list unfinished cleanup on stderr. Crashes and SIGKILL cannot execute cleanup.
 
 **Use this for**: production agents that wrap an LLM behind their own HTTP shape — almost every "real" customer-facing agent falls into this category. The agent's request and response don't follow OpenAI's format, but you can describe them with a request template + a response selector.
 
