@@ -148,10 +148,11 @@ def _run_and_render(
         task = asyncio.create_task(_consume())
         with cancel_on_stop_signals(task) as stopped:
             try:
-                return await task
-            except asyncio.CancelledError:
+                await task
+            except BaseException:
                 if not stopped:
                     raise
+            if stopped:
                 return StopSignalReceived(stopped[0], target_cleanup)
 
     stopped_by: Exception | None = None

@@ -10,10 +10,69 @@ import pytest
 from aiohttp import web
 from click.testing import CliRunner
 
+from argus import api
 from argus.cli.__main__ import main
+from argus.runner import skipped_finding
 from test_transport_lifecycle import deletes, lifecycle_dict, recording_lifecycle
 from test_transport_lifecycle_local import local_library
 from transport_v2_fakes import serve_in_thread
+
+
+@pytest.mark.parametrize('signum, code, message', [(signal.SIGINT, 130, 'Interrupted'), (signal.SIGTERM, 143, 'Terminated'), (None, 1, None)])
+def test_close_exception_preserves_local_stop_signal(tmp_path, local_library, monkeypatch, signum, code, message):
+    initial_cleanup = {'complete': False, 'done': 0, 'open': [], 'stop_reason': None}
+    final_cleanup = {
+        'complete': False,
+        'done': 1,
+        'open': [{'method': 'DELETE', 'url': 'http://127.0.0.1:1/resources/remaining', 'step': 'source', 'status': 'failed'}],
+        'stop_reason': None,
+    }
+    class Target:
+        compatible_classes = frozenset({'llm_chat'})
+        closed = 0
+        report = initial_cleanup
+        async def aclose(self):
+            self.closed += 1
+            self.report = final_cleanup
+            raise RuntimeError('close failed')
+        def cleanup_report(self):
+            return self.report
+    target = Target()
+    class Runner:
+        def __init__(self, **kwargs):
+            pass
+        async def run_probe(self, probe):
+            if signum is not None:
+                os.kill(os.getpid(), signum)
+                await asyncio.sleep(10)
+            yield skipped_finding(probe, 'ok')
+    monkeypatch.setattr(api, 'build_target', lambda *args, **kwargs: target)
+    monkeypatch.setattr(api, 'Runner', Runner)
+    escaped = []
+    old = {sig: signal.signal(sig, lambda sig, frame: escaped.append(sig)) for sig in (signal.SIGINT, signal.SIGTERM)}
+    installed = {sig: signal.getsignal(sig) for sig in old}
+    try:
+        target_file = tmp_path / 'target.json'
+        target_file.write_text(json.dumps({'kind': 'custom_http', 'transport': lifecycle_dict('http://127.0.0.1:1')}))
+        out = tmp_path / 'run.json'
+        result = CliRunner().invoke(main, ['run', '--local', '--target', str(target_file), '--probes', local_library.id, '--format', 'json', '--out', str(out)])
+        assert result.exit_code == code, result.output
+        assert target.closed == 1
+        assert escaped == []
+        assert {sig: signal.getsignal(sig) for sig in old} == installed
+        assert 'Target cleanup incomplete: 1 item(s)' in result.stderr
+        assert 'http://127.0.0.1:1/resources/remaining (step source, failed)' in result.stderr
+        if signum is not None:
+            assert f'{message}: the run was stopped before it finished; no report was written.' in result.stderr
+            assert not out.exists()
+        else:
+            record = json.loads(out.read_text())
+            assert record['status'] == 'incomplete'
+            assert record['target_cleanup'] == final_cleanup
+            assert 'RuntimeError: close failed' in record['incomplete_reason']
+    finally:
+        for sig, handler in old.items():
+            signal.signal(sig, handler)
 
 
 @pytest.mark.parametrize('signum, code, message', [(signal.SIGINT, 130, 'Interrupted'), (signal.SIGTERM, 143, 'Terminated')])
