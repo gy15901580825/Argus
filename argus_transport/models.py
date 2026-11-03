@@ -296,6 +296,8 @@ class SafeReasonCode(str, Enum):
     UNSUPPORTED_DELIVERY = "unsupported_delivery"
     NETWORK_ERROR = "network_error"
     POLL_LIMIT = "poll_limit"
+    SETUP_FAILED = "setup_failed"
+    ID_PREFIX_MISMATCH = "id_prefix_mismatch"
 
 
 @dataclass(frozen=True)

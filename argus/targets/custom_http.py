@@ -246,6 +246,8 @@ class CustomHTTPTarget(Target):
                     }
                 }
                 raise TargetTransportError("target_error: mapping_error") from None
+            if self._v2_run is not None and 'cleanup' in result.diagnostics:
+                self._last_transport_evidence = {'transport': {'cleanup': result.diagnostics['cleanup']}}
             return result.response_text, result.latency_ms
         transport = {
             "outcome": result.outcome.value,
@@ -253,6 +255,8 @@ class CustomHTTPTarget(Target):
             "matched_rule_id": result.matched_rule_id,
             "reason_code": result.reason_code.value,
         }
+        if self._v2_run is not None and 'cleanup' in result.diagnostics:
+            transport['cleanup'] = result.diagnostics['cleanup']
         if result.outcome == TransportOutcome.BLOCKED and result.matched_rule_id:
             transport["origin"] = "mapped_body_rule"
         self._last_transport_evidence = {"transport": transport}
@@ -302,6 +306,13 @@ class CustomHTTPTarget(Target):
         self._conversation_id = None
         self._session_id = None
         self._last_transport_evidence = {}
+
+    async def aclose(self) -> None:
+        if self._v2_run is not None:
+            await self._v2_run.close()
+
+    def cleanup_report(self) -> dict | None:
+        return self._v2_run.cleanup_report() if self._v2_run is not None else None
 
     async def collect_evidence(self):
         return dict(self._last_transport_evidence)

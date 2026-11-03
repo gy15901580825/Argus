@@ -26,7 +26,7 @@ class RecordingApp:
 
 @asynccontextmanager
 async def serve(app: RecordingApp) -> AsyncIterator[str]:
-    runner = web.AppRunner(app.app, shutdown_timeout=0.1)
+    runner = web.AppRunner(app.app, shutdown_timeout=0.1, handler_cancellation=True)
     await runner.setup()
     site = web.TCPSite(runner, "127.0.0.1", 0)
     await site.start()
