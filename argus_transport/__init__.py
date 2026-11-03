@@ -6,6 +6,8 @@ from .engine import (
     evaluate_response,
     render_request,
 )
+from .engine_v2 import TransportEngineV2
+from .runtime_v2 import V2Run
 from .models import (
     AuthHeader,
     AuthSpec,
@@ -83,6 +85,8 @@ __all__ = [
     "TimeoutBudget",
     "TransportContext",
     "TransportEngine",
+    "TransportEngineV2",
+    "V2Run",
     "TransportOutcome",
     "TransportResult",
     "TransportSpec",

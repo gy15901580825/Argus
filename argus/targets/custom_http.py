@@ -16,6 +16,9 @@ from argus_transport import (
     TransportEngine,
     TransportOutcome,
     TransportSpec,
+    TransportSpecV2,
+    V2Run,
+    parse_transport_spec,
     execution_policy,
 )
 from argus.targets._base import Target, TargetBlockedError, TargetTransportError, Turn
@@ -55,7 +58,7 @@ def _uses_context(value, name):
 @dataclass(frozen=True)
 class CustomHTTPSpec:
     kind: str = "custom_http"
-    transport: TransportSpec | dict | None = None
+    transport: TransportSpec | TransportSpecV2 | dict | None = None
     request_url: str | None = None
     request_method: str | None = None
     request_headers: tuple[tuple[str, str], ...] | dict | None = None
@@ -78,8 +81,8 @@ class CustomHTTPSpec:
                 raise ValueError("transport and legacy transport fields conflict")
             transport = self.transport
             if isinstance(transport, dict):
-                transport = TransportSpec.from_dict(transport)
-            if not isinstance(transport, TransportSpec):
+                transport = parse_transport_spec(transport)
+            if not isinstance(transport, (TransportSpec, TransportSpecV2)):
                 raise ValueError("transport must be a transport specification")
             if _uses_context(transport.request.body, "scenario_url"):
                 raise ValueError("scenario_url context requires a browser target")
@@ -122,6 +125,7 @@ class CustomHTTPTarget(Target):
         self.spec = spec
         self._conversation_id = None
         self._session_id = None
+        self._v2_run = None
         self._last_run_log = None
         self._last_transport_evidence = {}
         self.supports_history = (
@@ -186,7 +190,12 @@ class CustomHTTPTarget(Target):
             conversation_id=self._conversation_id,
             session_id=self._session_id,
         )
-        result = await TransportEngine(spec, policy=execution_policy(spec)).run(context)
+        if isinstance(spec, TransportSpecV2):
+            if self._v2_run is None:
+                self._v2_run = V2Run(spec, policy=execution_policy(spec))
+            result = await self._v2_run.attempt(context)
+        else:
+            result = await TransportEngine(spec, policy=execution_policy(spec)).run(context)
         metadata = result.metadata
         if result.outcome == TransportOutcome.SUCCEEDED:
             if spec.session.mode == "server_returned":
