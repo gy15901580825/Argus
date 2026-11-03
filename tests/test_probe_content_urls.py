@@ -9,7 +9,7 @@ _RAW_URL = re.compile(r"https://raw\.githubusercontent\.com/gy15901580825/Argus/
 
 
 def _raw_paths(text: str) -> list[str]:
-    return [m.rstrip(".,;:") for m in _RAW_URL.findall(text)]
+    return list(dict.fromkeys(m.rstrip(".,;:") for m in _RAW_URL.findall(text)))
 
 
 def test_ambient_persuasion_url_fetch_points_at_repo_hosted_content():
