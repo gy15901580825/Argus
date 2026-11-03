@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import logging
 import re
@@ -518,12 +519,14 @@ class Runner:
         # refetch would attach evidence its error verdict was never based on.
         async for f in inner:
             # Show the prompt as it went on the wire, not the probe's template.
-            f = replace(f, attack_prompt=self._shown(f.attack_prompt))
+            if not (getattr(probe, "indirect", ()) and getattr(self._target, "material_channel", False)):
+                f = replace(f, attack_prompt=self._shown(f.attack_prompt))
             mapped_refusal = bool((f.evidence or {}).get("_mapped_body_refusal"))
             if mapped_refusal:
                 f = replace(f, evidence={k: v for k, v in f.evidence.items()
                                          if k != "_mapped_body_refusal"})
-            if (f.evidence is None or mapped_refusal) and not self._evidence_failed:
+            indirect_only = set(f.evidence or {}) == {"indirect"}
+            if (f.evidence is None or mapped_refusal or indirect_only) and not self._evidence_failed:
                 # Duck-typed targets are everywhere in the test suite; only call
                 # a collector that is genuinely an async method, so a bare mock
                 # target keeps working.
@@ -544,7 +547,7 @@ class Runner:
                         if observed:
                             evidence = (
                                 {**observed, **(f.evidence or {})}
-                                if mapped_refusal
+                                if mapped_refusal or indirect_only
                                 else observed
                             )
                             f = replace(f, evidence=evidence)
@@ -705,7 +708,9 @@ class Runner:
             )
         verdict = await self._judge.judge(
             probe_name=probe.name,
-            attack_prompt=self._shown(clean.attack_prompt),
+            attack_prompt=(clean.attack_prompt if (getattr(probe, "indirect", ())
+                                                  and getattr(self._target, "material_channel", False))
+                           else self._shown(clean.attack_prompt)),
             target_response=clean.target_response,
             rubric_text=rubric_text,
             severity=probe.severity,
@@ -922,14 +927,25 @@ class Runner:
         """
         from argus.targets._base import Turn
 
+        indirect = getattr(probe, "indirect", ())
+        use_material = bool(indirect) and getattr(self._target, "material_channel", False)
         conversation = getattr(probe, "conversation", False)
         transcript: list[Turn] = []
         for idx, prompt in enumerate(probe.prompts):
+            indirect_evidence = {"indirect": {
+                "task": indirect[idx].task,
+                "material_sha256": hashlib.sha256(indirect[idx].material.encode("utf-8")).hexdigest(),
+            }} if use_material else {}
             probed_at = datetime.now(timezone.utc)
             try:
-                response_text, latency_ms = await self._target.send_prompt(
-                    prompt, history=tuple(transcript)
-                )
+                if use_material:
+                    response_text, latency_ms = await self._target.send_prompt(
+                        indirect[idx].task, history=tuple(transcript), material=indirect[idx].material
+                    )
+                else:
+                    response_text, latency_ms = await self._target.send_prompt(
+                        prompt, history=tuple(transcript)
+                    )
             except Exception as e:
                 failure = _send_failure(e)
                 if failure is None:
@@ -946,7 +962,7 @@ class Runner:
                     severity="info",
                     confidence=1.0,
                     reasoning=reasoning,
-                    evidence=_transport_failure_evidence(e),
+                    evidence={**(_transport_failure_evidence(e) or {}), **indirect_evidence} or None,
                 )
                 # Later turns of a conversation mean nothing without this one.
                 if conversation:
@@ -965,7 +981,7 @@ class Runner:
                     severity="info",
                     confidence=1.0,
                     reasoning=_no_text_reason(self._target),
-                    evidence=None,
+                    evidence=indirect_evidence or None,
                 )
                 if conversation:
                     return
@@ -992,6 +1008,8 @@ class Runner:
                 f = await self._assertion_finding(
                     probe, prompt, response_text, latency_ms, probed_at
                 )
+                if indirect_evidence:
+                    f = replace(f, evidence={**(f.evidence or {}), **indirect_evidence})
                 if f.verdict == VERDICT_PASS and _is_hybrid(probe):
                     try:
                         f = await self._hybrid_finding(probe, rubric_text, f)
@@ -1014,7 +1032,7 @@ class Runner:
             try:
                 verdict = await self._judge.judge(
                     probe_name=probe.name,
-                    attack_prompt=self._shown(prompt),
+                    attack_prompt=prompt if use_material else self._shown(prompt),
                     target_response=response_text,
                     rubric_text=rubric_text,
                     severity=probe.severity,
@@ -1034,7 +1052,7 @@ class Runner:
                     severity="info",
                     confidence=1.0,
                     reasoning=f"judge reply could not be used: {str(e)[:200]}",
-                    evidence=None,
+                    evidence=indirect_evidence or None,
                 )
                 continue
             yield Finding(
@@ -1055,6 +1073,7 @@ class Runner:
                 owasp_agentic=list(getattr(probe.mappings, "owasp_agentic", ())),
                 nist_id=list(probe.mappings.nist_ai_rmf),
                 eu_ai_act_id=list(probe.mappings.eu_ai_act),
+                evidence=indirect_evidence or None,
             )
 
     async def _run_iterative(

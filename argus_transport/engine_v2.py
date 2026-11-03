@@ -66,6 +66,8 @@ def bind_v2(
         return time.time_ns() // 1_000_000
     if "concat" in value:
         items = [bind_v2(part, context, scope, env) for part in value["concat"]]
+        if any(item is _OMIT for item in items):
+            return _OMIT
         if any(type(item) not in {str, int} for item in items):
             raise ValueError("Concat requires strings or integers")
         result = "".join(str(item) for item in items)
@@ -74,6 +76,8 @@ def bind_v2(
         return result
     if "base64" in value:
         item = bind_v2(value["base64"], context, scope, env)
+        if item is _OMIT:
+            return _OMIT
         if not isinstance(item, str):
             raise ValueError("Base64 requires a string")
         return base64.b64encode(item.encode("utf-8")).decode("ascii")
@@ -133,6 +137,7 @@ def render_body_v2(
     context: TransportContext,
     scope: Mapping[str, str | int],
     env: Mapping[str, str],
+    *, boundary: str | None = None,
 ) -> bytes | None:
     if "none" in request.body:
         return None
@@ -143,6 +148,31 @@ def render_body_v2(
             if (item := bind_v2(expr, context, scope, env)) is not _OMIT
         }
         return json.dumps(data, ensure_ascii=False, allow_nan=False).encode("utf-8")
+    if "multipart" in request.body:
+        if request.method not in {"POST", "PUT"}:
+            raise ValueError("Multipart method must be POST or PUT")
+        boundary = boundary or uuid.uuid4().hex
+        parts = []
+        for name, part in request.body["multipart"].items():
+            if re.fullmatch(r"[a-z][a-z0-9_]{0,31}", name) is None:
+                raise ValueError("Invalid multipart part name")
+            if part["content_type"] not in {"text/plain", "text/markdown", "application/json", "text/csv"}:
+                raise ValueError("Invalid multipart media type")
+            filename = bind_v2(part["filename"], context, scope, env)
+            content = bind_v2(part["content"], context, scope, env)
+            if filename is _OMIT or content is _OMIT:
+                continue
+            if not isinstance(filename, str) or not filename or any(char in filename for char in '\r\n\0"'):
+                raise ValueError("Invalid multipart filename")
+            if not isinstance(content, str):
+                raise ValueError("Multipart content must be a string")
+            encoded = content.encode("utf-8")
+            if len(encoded) > 1048576:
+                raise ValueError("Multipart content exceeds byte limit")
+            disposition = f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'
+            parts.append(disposition.encode("utf-8") +
+                         f'Content-Type: {part["content_type"]}\r\n\r\n'.encode("ascii") + encoded + b"\r\n")
+        return b"".join(parts) + f"--{boundary}--\r\n".encode("ascii")
     data = bind_v2(request.body["text"], context, scope, env)
     if not isinstance(data, str):
         raise ValueError("Text body must be a string")
@@ -304,11 +334,19 @@ class TransportEngineV2:
         return headers
 
     def _bind_request(self, request, context, scope):
+        boundary = None
+        if "multipart" in request.body:
+            if any(name.lower() == "content-type" for name in request.headers):
+                raise ValueError("Content-Type conflicts with multipart body")
+            boundary = uuid.uuid4().hex
+            request = replace(request, headers={**request.headers,
+                              "Content-Type": "multipart/form-data; boundary=" + boundary})
         bound = replace(request, url=render_url(request, context, scope, self.runtime.env))
-        return bound, render_body_v2(bound, context, scope, self.runtime.env)
+        return bound, render_body_v2(bound, context, scope, self.runtime.env, boundary=boundary)
 
     def _bind_undo(self, intent, context, scope):
         intent._bindings = MappingProxyType(dict(scope))
+        intent._context = context
         try:
             request, content = self._bind_request(intent.spec.request, context, scope)
             headers = self._headers(request)
@@ -353,13 +391,34 @@ class TransportEngineV2:
                 self.runtime.ledger._check_request()
                 intent = None
                 if step.undo is not None:
-                    intent = UndoIntent(scope_name, step.id, step.undo,
-                                        _request_needs(step.undo.request), frozenset(step.capture))
+                    needs = _request_needs(step.undo.request)
+                    if step.undo.confirm is not None:
+                        needs |= _request_needs(step.undo.confirm.request)
+                    intent = UndoIntent(scope_name, step.id, step.undo, needs, frozenset(step.capture))
                     self._bind_undo(intent, context, scope)
                     stack.register(intent)
                 self.runtime.ledger.charge('setup')
                 response = await self._exchange(client, request, headers, content, start,
                                                 self.redactor, diagnostics, phase='setup', admitted=True)
+                if isinstance(response, ExchangeResponse) and 200 <= response.status < 300 and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+                    from .runtime_v2 import _ResourceRecord
+                    names = []
+                    for selector in step.capture.values():
+                        if selector.expect_prefix is not None:
+                            try:
+                                name = capture_value(replace(selector, last_segment=False), response.body,
+                                                     context, scope, self.runtime.env)
+                            except (ValueError, TypeError, AttributeError, OverflowError, RecursionError):
+                                continue
+                            if name not in names:
+                                names.append(name)
+                    if not names:
+                        names.append(f"step '{step.id}' {request.method} {request.url}")
+                    records = [_ResourceRecord(name, scope_name, step.id, intent,
+                                              len(self.runtime.attempt_undos) - 1 if scope_name == 'attempt' else None)
+                               for name in names]
+                    self.runtime._resources.extend(records)
+                    stack._resources.extend(records)
                 if isinstance(response, TransportResult):
                     reason = response.reason_code
                 elif response.status in step.expect.http_status and (
@@ -403,11 +462,34 @@ class TransportEngineV2:
                 if isinstance(response, TransportResult):
                     intent.http_status = response.http_status
                     intent.status = 'failed'
+                    return
+                intent.http_status = response.status
+                if response.status in intent.spec.expect.http_status:
+                    intent.status = 'done' if intent.spec.expect.when is None or matches_predicate(
+                        response.body, intent.spec.expect.when) else 'failed'
+                    return
+                intent.status = 'failed'
+                confirm = intent.spec.confirm
+                if confirm is None:
+                    return
+                self.runtime.ledger._check_stopped()
+                if confirm.request.method != 'GET' or 'multipart' in confirm.request.body:
+                    return
+                try:
+                    request, content = self._bind_request(confirm.request, intent._context, intent._bindings)
+                    headers = self._headers(request)
+                except (ValueError, TypeError, AttributeError, OverflowError, RecursionError):
+                    intent.status = 'unconfirmed'
+                    return
+                if not self.runtime.ledger.reserve_optional_cleanup():
+                    intent.status = 'unconfirmed'
+                    return
+                confirmed = await self._exchange(client, request, headers, content, start, self.redactor,
+                                                 diagnostics, phase='cleanup')
+                if isinstance(confirmed, TransportResult):
+                    intent.status = 'failed'
                 else:
-                    intent.http_status = response.status
-                    intent.status = 'done' if response.status in intent.spec.expect.http_status and (
-                        intent.spec.expect.when is None or matches_predicate(response.body, intent.spec.expect.when)
-                    ) else 'failed'
+                    intent.status = 'done' if confirmed.status in confirm.gone_status else 'unconfirmed'
             except (TimeoutError, httpx.HTTPError, ValueError, OSError):
                 intent.status = 'failed'
         with redacted_transport_logs(self.redactor):
@@ -422,7 +504,7 @@ class TransportEngineV2:
         start = time.monotonic()
         if not isinstance(self.spec.delivery, (SyncSpec, PollSpecV2)):
             return self.failure(SafeReasonCode.UNSUPPORTED_DELIVERY, start)
-        stack = UndoStack(self.runtime.ledger)
+        stack = UndoStack(self.runtime.ledger, self.redactor)
         self.runtime.attempt_undos.append(stack)
         diagnostics = {
             'request_method': self.spec.request.method,
@@ -475,7 +557,7 @@ class TransportEngineV2:
                 interrupted = exc
                 raise
             finally:
-                if any(step.undo for step in self.spec.lifecycle.attempt):
+                if stack._resources or any(step.undo for step in self.spec.lifecycle.attempt):
                     diagnostics['cleanup'] = stack.report()
                 if interrupted is not None:
                     interrupted.transport_diagnostics = self.redactor.clean(diagnostics)
@@ -817,17 +899,19 @@ class TransportEngineV2:
                     )
             try:
                 raw = body.decode("utf-8")
-                if http_error:
-                    return self.failure(SafeReasonCode.HTTP_ERROR, start, status=status,
-                                        diagnostics=redactor.clean(diagnostics))
+            except UnicodeError:
+                return self.failure(SafeReasonCode.HTTP_ERROR if http_error else SafeReasonCode.PARSE_ERROR,
+                                    start, status=status, diagnostics=redactor.clean(diagnostics))
+            if http_error:
+                return self.failure(SafeReasonCode.HTTP_ERROR, start, status=status,
+                                    diagnostics=redactor.clean(diagnostics))
+            try:
                 parsed = (None if not raw and phase in {"provision", "setup", "cleanup"} else json.loads(raw)) if self.spec.response.format == "json" else raw
-            except (UnicodeError, ValueError, RecursionError):
-                return self.failure(
-                    SafeReasonCode.HTTP_ERROR if http_error else SafeReasonCode.PARSE_ERROR,
-                    start,
-                    status=status,
-                    diagnostics=redactor.clean(diagnostics),
-                )
+            except (ValueError, RecursionError):
+                if phase == "cleanup":
+                    return exchange
+                return self.failure(SafeReasonCode.PARSE_ERROR, start, status=status,
+                                    diagnostics=redactor.clean(diagnostics))
             return replace(exchange, body=parsed)
 
     @staticmethod

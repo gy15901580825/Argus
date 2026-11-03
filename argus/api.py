@@ -259,13 +259,14 @@ async def _run_probes(
 
         if req.mode == "deep":
             personas, strategies = default_personas(), default_strategies()
-            to_run = [
-                dp
-                for base in selected
-                for dp in build_deep_probes(
-                    base, personas, strategies, deep_pairs=req.deep_pairs
-                )
-            ]
+            to_run = []
+            for base in selected:
+                if getattr(target, "material_channel", False) and base.indirect:
+                    to_run.append(base)
+                else:
+                    to_run.extend(build_deep_probes(
+                        base, personas, strategies, deep_pairs=req.deep_pairs
+                    ))
         else:
             to_run = selected
 

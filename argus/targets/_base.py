@@ -74,11 +74,13 @@ class Target(ABC):
     # the runner skips history-requiring probes rather than silently dropping
     # the transcript and reporting a defended verdict that was never tested.
     supports_history: ClassVar[bool] = False
+    material_channel: ClassVar[bool] = False
 
     @abstractmethod
     async def send_prompt(
-        self, prompt: str, history: tuple[Turn, ...] = ()
+        self, prompt: str, history: tuple[Turn, ...] = (), *, material: str | None = None
     ) -> tuple[str, float]:
+        """Send a task with optional third-party material on supported targets."""
         ...
 
     async def begin_probe(self, probe) -> None:

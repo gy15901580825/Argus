@@ -20,6 +20,7 @@ from .models import (
     SyncSpec,
     TimeoutBudget,
     TransportSpec,
+    TransportContext,
     _CONTEXT_KEYS,
     choice,
     endpoint,
@@ -37,7 +38,7 @@ from .models import (
 NAME_RE = re.compile(r"[a-z][a-z0-9_]{0,31}\Z")
 ENV_NAME_RE = re.compile(r"[A-Z_][A-Z0-9_]{0,63}\Z")
 SECRET_WORDS = ("key", "token", "secret", "password", "auth", "header", "cookie")
-CONTEXT_KEYS_V2 = frozenset(_CONTEXT_KEYS)
+CONTEXT_KEYS_V2 = frozenset(_CONTEXT_KEYS) | {"material"}
 V2_FIELD_NAMES = frozenset(
     {"let", "run", "attempt", "var", "concat", "generate", "base64", "env", "query",
      "lifecycle", "id", "if_present", "expect", "http_status", "when", "capture",
@@ -61,6 +62,11 @@ _EXPR_KINDS = {
     "base64",
     "env",
 }
+
+
+@dataclass(frozen=True)
+class TransportContextV2(TransportContext):
+    material: str | None = None
 
 
 def _name(value):
@@ -87,7 +93,9 @@ def value_expr_v2(value: dict, depth: int = 0, *, visible: frozenset[str]) -> di
             raise ValueError("Binding requires one variant")
         choice(value["missing"], {"error", "omit"})
     item = value[kind]
-    if kind in {"literal", "context"}:
+    if kind == "context":
+        choice(item, CONTEXT_KEYS_V2)
+    elif kind == "literal":
         value_expr(value, depth)
     elif kind == "var":
         _name(item)
@@ -1086,3 +1094,25 @@ def with_origin(data: dict, override: str) -> dict:
         target["url"] = url
     TransportSpecV2.from_dict(result)
     return result
+
+
+def material_binding(spec: TransportSpecV2) -> Literal["none", "optional", "required"]:
+    def references(expression):
+        if expression.get("context") == "material":
+            yield expression.get("missing") != "omit"
+        elif "base64" in expression:
+            yield from references(expression["base64"])
+        elif "object" in expression:
+            for child in expression["object"].values():
+                yield from references(child)
+        elif "array" in expression or "concat" in expression:
+            for child in expression.get("array", expression.get("concat", ())):
+                yield from references(child)
+
+    binding: Literal["none", "optional", "required"] = "none"
+    for item in _iter_expressions(spec):
+        for required in references(item.expression):
+            if required and item.guard != "material":
+                return "required"
+            binding = "optional"
+    return binding

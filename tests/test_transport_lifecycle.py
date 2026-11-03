@@ -258,7 +258,7 @@ async def test_undo_404_counts_as_done():
         run = runtime(lifecycle_dict(origin))
         await run.attempt(TransportContext(prompt='normal'))
         await run.close()
-        assert run.cleanup_report() == {'complete': True, 'done': 2, 'open': [], 'stop_reason': None}
+        assert run.cleanup_report() == {'complete': True, 'done': 2, 'open': [], 'stop_reason': None, 'leftover': []}
         await run.close()
         assert len(deletes(app)) == 2
 

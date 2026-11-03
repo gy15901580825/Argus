@@ -112,6 +112,12 @@ class ProbeMappings:
 
 
 @dataclass(frozen=True)
+class IndirectItem:
+    task: str
+    material: str
+
+
+@dataclass(frozen=True)
 class Probe:
     id: str
     name: str
@@ -155,6 +161,7 @@ class Probe:
     remediation: str = ""
     remediation_actions: tuple[dict, ...] = ()
 
+    indirect: tuple[IndirectItem, ...] = ()
     sessions: tuple[tuple[str, ...], ...] = ()
     scenario_control: str = ""
     trials: int = 1
@@ -212,6 +219,15 @@ def load_probe(path: Path) -> Probe:
             scenario_kind = raw["scenario"].get("kind")
             scenario_payload = raw["scenario"].get("payload", "")
         has_sessions = "sessions" in raw
+        indirect = raw.get("indirect", [])
+        if "indirect" in raw:
+            if has_sessions or raw.get("conversation"):
+                raise ValueError(f"indirect cannot be combined with sessions or conversation in {path}")
+            if (not isinstance(indirect, list) or len(indirect) != len(raw.get("prompts", []))
+                    or any(not isinstance(item, dict) or set(item) != {"task", "material"}
+                           or any(not isinstance(item[name], str) or not item[name].strip()
+                                  for name in ("task", "material")) for item in indirect)):
+                raise ValueError(f"indirect must match prompts and contain nonempty task and material in {path}")
         if ("prompts" in raw) == has_sessions:
             raise ValueError(
                 f"exactly one of prompts and sessions is required in {path}"
@@ -314,6 +330,7 @@ def load_probe(path: Path) -> Probe:
                 f"paired probes require assertions, decision_point and no judge_when_assertions_pass in {path}"
             )
         return Probe(
+            indirect=tuple(IndirectItem(**item) for item in indirect),
             requires_capabilities=tuple(capabilities),
             sessions=tuple(tuple(group) for group in sessions),
             scenario_control=scenario_control,
