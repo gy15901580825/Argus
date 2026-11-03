@@ -546,3 +546,28 @@ def test_server_mode_aborted_cost_exits_4(tmp_path, monkeypatch):
     assert result.exit_code == 4, result.output
     assert out.exists()
     assert "1 probe(s) stopped at the cost cap; run incomplete" in result.output
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        {"kind": "python", "entry": "agent.py:call"},
+        {
+            "kind": "payment_agent",
+            "testbed_url": "http://127.0.0.1:1",
+            "sandbox": True,
+            "inner": {"kind": "python", "entry": "agent.py:call"},
+        },
+    ],
+    ids=["top-level", "nested"],
+)
+def test_python_kind_without_local_is_usage_error(tmp_path, spec):
+    with patch("argus.cli.api_client.post_run") as mock_post:
+        result = CliRunner().invoke(main, [
+            "run", "--target", json.dumps(spec), "--probes", "all",
+            "--out", str(tmp_path / "r.html"),
+            "--token", "t", "--api-url", "https://dev.example.com",
+        ])
+    assert result.exit_code == 2
+    assert "a python target runs a local function; it needs --local" in result.output
+    mock_post.assert_not_called()

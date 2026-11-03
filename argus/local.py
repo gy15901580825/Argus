@@ -76,7 +76,7 @@ def _prepare(target, probe_ids, *, mode, per_run_cap_usd, env, skip_judged) -> _
     if not isinstance(target, dict):
         raise LocalRunError("target must be a JSON object", code="input")
     try:
-        target_obj = build_target(target)
+        target_obj = build_target(target, trusted_code=True)
     except (ValueError, TypeError) as e:
         # TypeError: SpecClass(**spec) rejects unexpected or missing fields.
         raise LocalRunError(str(e), code="input") from e
@@ -182,7 +182,7 @@ async def run_local(
     for finding in skipped:
         emitted.append(finding)
         yield finding
-    probes = api._run_probes(req, anthropic_api_key)
+    probes = api._run_probes(req, anthropic_api_key, trusted_code=True)
     spent, started = 0.0, False
     try:
         while True:

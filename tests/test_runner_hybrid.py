@@ -261,7 +261,7 @@ async def test_local_refuses_without_a_key_when_a_hybrid_probe_is_selected(libra
 async def test_local_skip_judged_skips_the_hybrid_probe_and_runs_the_deterministic_one(library):
     seen = {}
 
-    async def _spy(req, anthropic_api_key):
+    async def _spy(req, anthropic_api_key, **_):
         seen["probe_ids"] = list(req.probe_ids)
         return
         yield  # pragma: no cover

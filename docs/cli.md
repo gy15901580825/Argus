@@ -196,6 +196,7 @@ argus-probe judge-check --judge-provider litellm --judge-model gemini/gemini-2.5
 | `mcp_agent` | Agents that connect to MCP tool servers, run against a hostile MCP testbed |
 | `testbed_agent` | Generic form of `mcp_agent` / `payment_agent`; `environment` picks the testbed |
 | `http_upload` | File-upload-and-render sinks (upload then inline-render an active payload) |
+| `python` | An agent written as a Python function in your repo. Runs only with `run --local` or in CI; a server refuses it |
 
 Full configuration reference: [target spec cookbook](https://github.com/gy15901580825/Argus/blob/main/docs/onboarding/target-spec-cookbook.md).
 
@@ -258,7 +259,7 @@ Use [`argus-probe-action`](https://github.com/marketplace/actions/argus-agent-re
     fail-on: critical
 ```
 
-The job needs `permissions: security-events: write` for the SARIF upload. `argus-probe init --workflow` writes a complete workflow file with that set. Its `probes` are two judged chat probes for `openai_compat`, `anthropic_native`, `custom_http` and `web_chat`, and `all` for every other kind, because the chat probes do not apply to those targets. It also sets `argus-version` to the version that wrote it, because the action otherwise installs its own default version, which may not know `testbed_url: "local"` or select the probes that fit the target. With `all`, an `mcp_agent` target needs no judge key because the MCP probes are decided from the testbed's record. A `payment_agent` target needs `ANTHROPIC_API_KEY` for the `pay_wallet_key_exfil*` probes; without the key the run stops with exit 1, unless you add `skip-judged: "true"` to run only the deterministic probes. The selected Action revision pins its default `argus-probe` release. Set the `argus-version` input to override that pin.
+The job needs `permissions: security-events: write` for the SARIF upload. `argus-probe init --workflow` writes a complete workflow file with that set. Its `probes` are two judged chat probes for `openai_compat`, `anthropic_native`, `custom_http`, `web_chat` and `python`, and `all` for every other kind, because the chat probes do not apply to those targets. It also sets `argus-version` to the version that wrote it, because the action otherwise installs its own default version, which may not know `testbed_url: "local"` or select the probes that fit the target. With `all`, an `mcp_agent` target needs no judge key because the MCP probes are decided from the testbed's record. A `payment_agent` target needs `ANTHROPIC_API_KEY` for the `pay_wallet_key_exfil*` probes; without the key the run stops with exit 1, unless you add `skip-judged: "true"` to run only the deterministic probes. The selected Action revision pins its default `argus-probe` release. Set the `argus-version` input to override that pin.
 
 `--fail-on <severity>` exits 3 when a failing finding is at or above that level; the SARIF is written first. `--compare-to <base branch>` makes `--fail-on` count only failures that are new relative to the latest run on that branch. It is server mode only, because it needs run history, so the action does not offer it; see the target-spec cookbook for a server-mode workflow.
 

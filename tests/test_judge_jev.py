@@ -606,7 +606,7 @@ def _target_file(tmp_path):
 def test_run_with_jev_records_the_judge_and_prints_where_data_goes(tmp_path, monkeypatch):
     monkeypatch.setenv("TYPESAFE_API_KEY", KEY)
 
-    async def one(req, key):
+    async def one(req, key, **_):
         yield {"probe_id": "owasp_01_prompt_injection_basic", "verdict": "pass", "severity": "info",
                "judge_model": "jev-1.14.0"}
 
@@ -685,7 +685,7 @@ def test_disclosure_names_the_jev_decider_when_it_is_on(monkeypatch):
 async def test_run_local_disclosure_includes_the_decider(monkeypatch):
     from argus.local import run_local
 
-    async def one(req, key):
+    async def one(req, key, **_):
         yield {"probe_id": "owasp_01_prompt_injection_basic", "verdict": "pass", "severity": "info"}
 
     env = {"ANTHROPIC_API_KEY": "x", "REDTEAM_LLM_FALLBACK": "off"}

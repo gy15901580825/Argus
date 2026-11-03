@@ -9,6 +9,7 @@ server that mounts it must authenticate callers itself.
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import os
 import re
@@ -233,9 +234,17 @@ def _judged_exchanges(req: RunRequest, probe_ids: list[str]) -> int:
     )
 
 
-async def _run_probes(req: RunRequest, anthropic_api_key: str) -> AsyncIterator[dict]:
+async def _run_probes(
+    req: RunRequest, anthropic_api_key: str, *, trusted_code: bool = False
+) -> AsyncIterator[dict]:
     # build_target() validates the dict and selects the right adapter — C1 fix.
-    target = await asyncio.to_thread(build_target, req.target)
+    # Only the local run path passes trusted_code; the server path never builds a python target.
+    if trusted_code:
+        target = await asyncio.to_thread(
+            functools.partial(build_target, req.target, trusted_code=True)
+        )
+    else:
+        target = await asyncio.to_thread(build_target, req.target)
     # Released however the run ends: normally, on a raise, or when the consumer
     # closes this generator early (run_local's probes.aclose()). Plugin targets
     # need not subclass Target, so aclose is optional like the runner's hooks.

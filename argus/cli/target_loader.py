@@ -30,6 +30,7 @@ _KNOWN_KINDS = frozenset(
         "vllm_server",
         "web_chat",
         "a2a_server",
+        "python",
     }
 )
 
@@ -48,6 +49,7 @@ _REQUIRED_FIELDS = {
     "a2a_server": {"url"},
     "vllm_server": {"url"},
     "web_chat": {"url", "input_selector", "response_selector"},
+    "python": {"entry"},
 }
 
 # Adapters that act on the world rather than only exchanging text. For these
@@ -98,6 +100,7 @@ def load_target_spec(target_arg: str) -> dict[str, Any]:
 def load_target_spec_with_secrets(target_arg: str) -> tuple[dict[str, Any], list[str]]:
     """Like load_target_spec, plus every non-empty value substituted for a $VAR reference."""
     text: str
+    base_dir = None
     if target_arg.lstrip().startswith("{"):
         text = target_arg
     else:
@@ -107,16 +110,21 @@ def load_target_spec_with_secrets(target_arg: str) -> tuple[dict[str, Any], list
                 f"target arg is neither a JSON object nor a readable file: {target_arg!r}"
             )
         text = path.read_text()
+        base_dir = path.resolve().parent
 
     try:
         spec = json.loads(text)
     except json.JSONDecodeError as e:
         raise TargetLoadError(f"target JSON malformed: {e}") from e
-    return check_target_spec(spec)
+    return check_target_spec(spec, base_dir=base_dir)
 
 
-def check_target_spec(spec: Any) -> tuple[dict[str, Any], list[str]]:
-    """Validate a parsed spec and expand its $VAR references, as load_target_spec_with_secrets does."""
+def check_target_spec(
+    spec: Any, *, base_dir: Path | None = None
+) -> tuple[dict[str, Any], list[str]]:
+    """Validate a parsed spec and expand its $VAR references, as load_target_spec_with_secrets does.
+
+    base_dir is the spec file's directory: a python target's relative file entry is resolved against it."""
     if not isinstance(spec, dict):
         raise TargetLoadError("target must be a JSON object")
     if "kind" not in spec:
@@ -148,4 +156,18 @@ def check_target_spec(spec: Any) -> tuple[dict[str, Any], list[str]]:
         )
     substituted: list[str] = []
     spec = _expand_env(spec, substituted)
+    if spec["kind"] == "python" and base_dir is not None:
+        spec = _anchor_python_entry(spec, base_dir)
     return spec, list(dict.fromkeys(substituted))
+
+
+def _anchor_python_entry(spec: dict[str, Any], base_dir: Path) -> dict[str, Any]:
+    from argus.targets.python_target import is_path_entry, split_entry
+
+    try:
+        target, func = split_entry(spec["entry"])
+    except (ValueError, AttributeError):
+        return spec  # the target builder reports a malformed entry
+    if not is_path_entry(target) or Path(target).is_absolute():
+        return spec
+    return {**spec, "entry": f"{base_dir / target}:{func}"}

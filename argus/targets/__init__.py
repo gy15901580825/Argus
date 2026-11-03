@@ -19,6 +19,7 @@ from argus.targets.mcp_agent import MCPAgentSpec, MCPAgentTarget
 from argus.targets.mcp_server import MCPServerSpec, MCPServerTarget
 from argus.targets.openai_compat import OpenAICompatSpec, OpenAICompatTarget
 from argus.targets.payment_agent import PaymentAgentSpec, PaymentAgentTarget
+from argus.targets.python_target import PythonSpec, PythonTarget
 from argus.targets.testbed_agent import GenericTestbedAgentTarget, TestbedAgentSpec
 from argus.targets.vllm_server import VLLMServerSpec, VLLMServerTarget
 from argus.targets.web_chat import WebChatSpec, WebChatTarget
@@ -35,6 +36,7 @@ _BUILDERS = {
     "mcp_server": (MCPServerSpec, MCPServerTarget),
     "openai_compat": (OpenAICompatSpec, OpenAICompatTarget),
     "payment_agent": (PaymentAgentSpec, PaymentAgentTarget),
+    "python": (PythonSpec, PythonTarget),
     "testbed_agent": (TestbedAgentSpec, GenericTestbedAgentTarget),
     "vllm_server": (VLLMServerSpec, VLLMServerTarget),
     "web_chat": (WebChatSpec, WebChatTarget),
@@ -81,8 +83,23 @@ def _plugin_builders() -> dict[str, tuple[type, type]]:
     return builders
 
 
-def build_target(spec: dict[str, Any]) -> Target:
+def _has_nested_python(spec: dict[str, Any]) -> bool:
+    inner = spec.get("inner")
+    return isinstance(inner, dict) and (
+        inner.get("kind") == "python" or _has_nested_python(inner)
+    )
+
+
+def build_target(spec: dict[str, Any], *, trusted_code: bool = False) -> Target:
     kind = spec.get("kind")
+    # A python target runs the caller's code: only the local run path may build one,
+    # and an adapter that nests another target never passes trusted_code down.
+    if _has_nested_python(spec):
+        raise ValueError("a python target cannot be nested in inner")
+    if kind == "python" and not trusted_code:
+        raise ValueError(
+            "python targets run only on the local machine: use argus-probe run --local"
+        )
     builder = _BUILDERS.get(kind) or _plugin_builders().get(kind)
     if builder is None:
         raise ValueError(f"unknown target kind: {kind!r}")

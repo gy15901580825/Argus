@@ -51,7 +51,7 @@ async def test_run_local_passes_the_key_to_run_probes(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-abc")
     seen = {}
 
-    async def _spy(req, anthropic_api_key):
+    async def _spy(req, anthropic_api_key, **_):
         seen["key"] = anthropic_api_key
         seen["probe_ids"] = req.probe_ids
         seen["cap"] = req.per_run_cap_usd
@@ -169,7 +169,7 @@ async def test_run_local_uses_explicit_env_over_os_environ(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     seen = {}
 
-    async def _spy(req, anthropic_api_key):
+    async def _spy(req, anthropic_api_key, **_):
         seen["key"] = anthropic_api_key
         yield FAKE_FINDING
 
@@ -325,7 +325,7 @@ def library(monkeypatch):
 
 
 def _spy_run(seen: dict, *, then=None):
-    async def _spy(req, anthropic_api_key):
+    async def _spy(req, anthropic_api_key, **_):
         seen["probe_ids"] = list(req.probe_ids)
         yield FAKE_FINDING
         if then is not None:
@@ -459,7 +459,7 @@ async def test_all_with_no_compatible_probe_is_refused(library, monkeypatch):
     class _Odd:
         compatible_classes = frozenset({"no_such_class"})
 
-    monkeypatch.setattr("argus.local.build_target", lambda spec: _Odd())
+    monkeypatch.setattr("argus.local.build_target", lambda spec, **_: _Odd())
     with pytest.raises(LocalRunError) as exc:
         await _collect(run_local(TARGET, [], env=KEY))
     assert exc.value.code == "input"
@@ -493,7 +493,7 @@ async def test_spend_under_the_per_run_cap_lets_the_run_finish(library):
 
 async def test_run_spend_carries_across_steps(library):
     # Three steps of $0.03 each: the third takes the run to $0.09, past a $0.08 cap.
-    async def _three(req, key):
+    async def _three(req, key, **_):
         for _ in range(3):
             _spend(6_000)()
             yield FAKE_FINDING
@@ -504,7 +504,7 @@ async def test_run_spend_carries_across_steps(library):
 
 
 async def test_a_caller_that_stops_early_leaves_no_run_scope_open(library):
-    async def _two(req, key):
+    async def _two(req, key, **_):
         yield FAKE_FINDING
         yield FAKE_FINDING
 
@@ -615,7 +615,7 @@ async def test_a_deep_run_that_drains_the_deep_slice_still_reports_later_threads
     monkeypatch.setattr(api, "_COST_METER", meter)
     monkeypatch.setattr(meter, "check_or_abort_pre_run", lambda **kw: 0.0)
 
-    async def _deep(req, key):
+    async def _deep(req, key, **_):
         try:
             meter.record("claude-haiku-4-5-20251001", 0, 130_000)  # $0.65, past the slice
         except CostExceededError:
@@ -639,7 +639,7 @@ async def test_a_deep_run_is_refused_at_its_first_step_when_the_deep_slice_is_sp
     meter._spent_today_deep = meter.deep_daily_cap_usd + 0.01
     started = []
 
-    async def _deep(req, key):
+    async def _deep(req, key, **_):
         started.append(1)
         yield {**FAKE_FINDING, "probe_id": "t1", "verdict": "pass"}
 
