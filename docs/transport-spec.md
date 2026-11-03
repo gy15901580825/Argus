@@ -131,7 +131,7 @@ Variable names match `[a-z][a-z0-9_]{0,31}` and cannot contain `key`, `token`, `
 
 URL placeholders bind declared variables in path segments. Each segment accepts one placeholder, including forms such as `{automation_id}:invoke`. Values are percent-encoded as individual segments. Placeholders in the origin or URL query are invalid. Use `request.query` for scalar query bindings. The engine URL-encodes those values and omits optional missing entries. A `query` object cannot accompany a URL that already contains `?`. Credential-like query names are rejected.
 
-`DELETE` defaults to no body. An explicit JSON or text body is also accepted for `DELETE`. The synchronous and single-ID polling behavior described on this page is available in version 2. SSE remains unsupported. Lifecycle setup and undo operations are supported. Request retries, multiple captured delivery IDs, configurable stop triggers, provisioning, and multipart bodies are not implemented in this version. HTTP 429 fails the current attempt; it does not stop later probes.
+`DELETE` defaults to no body. An explicit JSON or text body is also accepted for `DELETE`. Version 2 supports synchronous delivery, multiple captured polling IDs, configurable stop triggers, and lifecycle setup and undo operations. SSE, request retries, provisioning, and multipart bodies remain unsupported. HTTP 429 stops the entire version 2 run by default, including cleanup requests.
 
 ```sh
 argus-probe validate-target --target target-v2.json --offline
@@ -186,6 +186,28 @@ Argus records each undo intent before sending the corresponding setup request. I
 `budget.max_requests` limits all setup, submission, and poll requests across the entire run. Omit it for no business request limit. When the next request exceeds the limit, Argus stops the run with `request_budget`; undo requests can still use their separate reserve. `budget.cleanup_reserve` defaults to 100. Each undo intent reserves one request before its setup request can be sent. If no reserve remains, the run stops with `cleanup_reserve` before creating that resource.
 
 Run setup has its own `timeout.total_deadline_s`. Each attempt then receives a fresh business deadline. Each attempt undo and run close has a separate `timeout.cleanup_s`, default 60 seconds and maximum 300 seconds. Cleanup time does not consume the business deadline. Cleanup failures preserve the primary finding and appear in `evidence.transport.cleanup`. The final [run.json cleanup summary](run-json.md#target-cleanup) lists any remaining objects and makes the run incomplete.
+
+### Polling with multiple IDs
+
+Version 2 accepts `delivery.ids` with one to four named selectors. Each selector has a `path`, and each name must appear exactly once in the poll URL path. `delivery.run_id` remains shorthand for `ids: {"run_id": {"path": "$.run_id"}}`. Use either `ids` or `run_id`. Each ID is encoded as one path segment. A missing ID fails only the current attempt with `missing_id` and sends no poll request. If a poll reply includes the same selector path with a changed value, the attempt fails with `poll_identity_changed`. An omitted path retains its prior value. `metadata.run_id` is present only when an ID is named `run_id`.
+
+Lifecycle captures and delivery ID selectors can also use `expect_prefix` and `last_segment`. `expect_prefix` is a value expression that must resolve to a nonempty string matching the beginning of the captured resource name. With `last_segment: true`, Argus extracts the final slash-separated segment. It must contain 1 to 256 characters from `[A-Za-z0-9._~-]`. For example, `{"path": "$.name", "expect_prefix": {"literal": "runs/"}, "last_segment": true}` extracts `job-one` from `runs/job-one`. A prefix mismatch or invalid segment fails the capture. Delivery capture errors affect only the current attempt.
+
+Replace `interval_s` with `wait: {"from": "Retry-After", "default_s": 2, "max_s": 30}` to honor the target's requested delay before polling. `Retry-After` accepts seconds or an HTTP date. Missing or invalid values use `default_s`. A delay above `max_s` fails the attempt with `poll_wait_limit` without another poll. If the remaining total deadline cannot cover the delay, the attempt times out without sleeping. HTTP 429 is never retried, even when status stopping is disabled.
+
+`delivery.location` defaults to `"ignore"`. Set it to `"verify"` to check every HTTP 202 response's `Location`. Relative values resolve against the URL of that request. The result must match the rendered poll URL's scheme, origin, and exact path, and cannot contain a query, fragment, or user information. A missing Location fails only the attempt with `location_missing`. An unsafe Location stops the run with `unsafe_location`. Submit responses receive a structural header check before body handling. Exact path verification follows ID extraction once all IDs are available. Poll responses can use the already rendered poll URL for full verification before body handling. Malformed bodies or missing IDs cannot hide a structurally unsafe header, and unavailable IDs never imply a path mismatch. `"follow"` is rejected at validation.
+
+### Stop triggers
+
+Version 2 defaults to `budget.stop_on.http_status: [429]`, `alert_names: []`, and `credential_echo: true`, even when `budget` is absent. A matching status stops the run with `stop_on_status`. A configured alert header's presence stops it with `alert`, regardless of casing. Credential echo detection stops it with `credential_echo` when the raw response body contains an exact resolved credential value. Detection checks only the bounded `limits.response_bytes` prefix. A complete match within that prefix trips before a response-size error or another body read, including across chunks. Values crossing or beyond the cap retain the size error and do not cause extra reads.
+
+Disable status stopping with `http_status: []` and credential echo stopping with `credential_echo: false`. Leave `alert_names` empty to disable alert triggers. To disable all three configurable triggers, use:
+
+```json
+{"budget": {"stop_on": {"http_status": [], "alert_names": [], "credential_echo": false}}}
+```
+
+Location verification remains active when selected. A stop trigger takes priority over request and cleanup budgets. After it trips, Argus sends no further request, including undo requests. Remaining intents become `skipped_stopped`. The local CLI writes an incomplete report with findings already produced, even if there are none, and exits 1. Probes that did not reach a finding receive no invented verdict. The console prints `Target stopped the run: <reason>. No further request was sent, cleanup included.` and any remaining DELETE or GET URLs for manual cleanup. Resolved credential values in these URLs are redacted. Version 1 behavior is unchanged.
 
 ### Graceful cancellation
 
@@ -276,4 +298,4 @@ The same resolved authentication is used for every request. Each request recheck
 
 `validate-target --execute` reports one submission and the actual GET count, at most `max_polls` and never more than 100. Offline validation makes no requests. An endpoint override changes the origin for both submission and polling while retaining the configured poll path.
 
-Cancellation closes the local HTTP client and browser trap. The propagated cancellation carries safe `transport_diagnostics` with `job_detached` and the captured ID; browser cancellation also seals trap evidence. Version 1 sends no remote cancellation request. Version 2 runs configured GET or DELETE undo requests during graceful cancellation. A hosted job can continue unless those requests stop it. SSE delivery remains unsupported.
+Cancellation closes the local HTTP client and browser trap. The propagated cancellation carries safe `transport_diagnostics` with `job_detached` and the captured ID; browser cancellation also seals trap evidence. Version 1 sends no remote cancellation request. Version 2 runs configured GET or DELETE undo requests during graceful cancellation unless a stop trigger already suppressed all requests. A hosted job can continue unless those requests stop it. SSE delivery remains unsupported.

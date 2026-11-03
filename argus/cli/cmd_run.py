@@ -254,6 +254,8 @@ def _write_report(out_file: str, report: str, encoding: str | None = None, echo=
 
 def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, secret_values=(),
                  skip_judged=False) -> None:
+    from argus_transport.runtime_v2 import TargetRunStopped
+
     click.echo(f"Running {('all probes that fit this target' if not tokens else f'{len(tokens)} probe(s)')} locally ...")
     try:
         result = run_local_and_render(spec, tokens, per_run_cap, report_format, secret_values, fail_on,
@@ -275,6 +277,10 @@ def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, se
         sys.exit(2 if code == "usage" else 1)
     _write_report(out_file, result.report)
     click.echo(f"Wrote report to {out_file}")
+    if isinstance(result.stopped_by, TargetRunStopped):
+        _echo_masked([
+            f"Target stopped the run: {result.stopped_by}. No further request was sent, cleanup included."
+        ], spec, secret_values)
     incomplete = incomplete_lines(result.findings, result.stop_reason)
     _echo_masked(incomplete, spec, secret_values)
     if result.target_cleanup is not None:

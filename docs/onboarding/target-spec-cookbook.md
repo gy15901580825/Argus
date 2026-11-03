@@ -57,6 +57,8 @@ Below are copy-paste templates for each supported agent shape, plus the gotchas 
 
 For declarative local HTTP APIs with generated references, URL bindings, polling, and lifecycle setup and undo requests, see [Use version 2](../transport-spec.md#use-version-2). Configure GET or DELETE undo requests for resources your run owns. Local runs execute bounded undo requests on completion, SIGINT, and SIGTERM and list unfinished cleanup on stderr. Crashes and SIGKILL cannot execute cleanup.
 
+Version 2 polling supports one to four `delivery.ids`, optional prefix checks and final resource-name segments, `Retry-After` delays, and same-origin exact-path Location verification. See [polling with multiple IDs](../transport-spec.md#polling-with-multiple-ids). HTTP 429 and credential echoes stop a version 2 run by default, including when `budget` is omitted. Configured alert headers can also stop it. A stop trigger suppresses all subsequent requests, including undo, writes an incomplete report even with zero findings, preserves earlier findings, and exits 1. The console lists remaining cleanup URLs with credential values redacted. Set `budget.stop_on.http_status: []` or `credential_echo: false` to disable those triggers. The [stop trigger reference](../transport-spec.md#stop-triggers) gives the complete opt-out configuration. These defaults do not change version 1.
+
 **Use this for**: production agents that wrap an LLM behind their own HTTP shape — almost every "real" customer-facing agent falls into this category. The agent's request and response don't follow OpenAI's format, but you can describe them with a request template + a response selector.
 
 ```json

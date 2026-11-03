@@ -37,7 +37,9 @@ The top-level keys always appear in this order. `incomplete_reason`, `notes`, `j
 
 ### Target cleanup
 
-`target_cleanup` contains `complete`, `done`, `open`, and `stop_reason`. `done` counts completed undo intents. `open` lists unfinished intents with their `scope`, `step`, `status`, `method`, redacted `url`, and `http_status`. Statuses include `unbound`, `failed`, and `blocked_by_inner`. `stop_reason` is the transport stop reason or null.
+`target_cleanup` contains `complete`, `done`, `open`, and `stop_reason`. `done` counts completed undo intents. `open` lists unfinished intents with their `scope`, `step`, `status`, `method`, redacted `url`, and `http_status`. Statuses include `unbound`, `failed`, `blocked_by_inner`, and `skipped_stopped`. `stop_reason` is the transport stop reason or null. Reasons include `request_budget`, `cleanup_reserve`, `stop_on_status`, `alert`, `credential_echo`, and `unsafe_location`.
+
+A version 2 stop trigger produces an incomplete report and exit 1 even when the first request stops and `findings` is empty. `incomplete_reason` includes `target stopped the run: <reason>`. Earlier findings remain intact. Probes that never reached a finding receive no verdict. The default HTTP 429 and credential echo triggers apply even when `budget` is absent. See [stop triggers](transport-spec.md#stop-triggers) for opt-outs. No request follows a stop trigger, including cleanup. The final cleanup summary lists remaining intents as `skipped_stopped`, with credential values redacted in resolved URLs.
 
 When `complete` is false, the run is incomplete and exits 1 unless a higher priority cost exit applies. The console prints the remaining method, URL, step, and status for manual cleanup. Cleanup events do not count as findings or coverage and are omitted from server SSE data. Attempt cleanup also appears in a finding's `evidence.transport.cleanup` without replacing its primary result.
 

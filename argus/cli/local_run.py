@@ -107,6 +107,7 @@ def _run_and_render(
     skip_judged: bool,
 ) -> LocalRunResult:
     from argus.local import LocalRunError, run_local
+    from argus_transport.runtime_v2 import TargetRunStopped
 
     started_at = datetime.now(timezone.utc)
     findings: list[dict] = []
@@ -165,9 +166,10 @@ def _run_and_render(
         if isinstance(e, LocalRunError) and not findings:
             raise
         stopped_by = e
-        # LocalRunError text is written for the operator; anything else needs its class name.
         if isinstance(e, LocalRunError):
             stop_reason = str(e)
+        elif isinstance(e, TargetRunStopped):
+            stop_reason = f"target stopped the run: {e}"
         else:
             stop_reason = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
         if coverage is None:
