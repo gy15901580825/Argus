@@ -663,3 +663,183 @@ async def test_poll_cancellation_preserves_detached_diagnostics():
         assert diagnostics["job_detached"] is True
         assert diagnostics["run_id"] == "job-1"
         assert diagnostics["requests"] == {"submit": 1, "poll": 1, "retry": 0}
+
+
+class TrackingMapping(dict):
+    def __init__(self, values):
+        super().__init__(values)
+        self.get_calls = []
+
+    def get(self, name, default=None):
+        self.get_calls.append(name)
+        return super().get(name, default)
+
+
+def env_binding_spec(url, placement, expression):
+    if placement == "poll":
+        data = poll_dict(url)
+        data["version"] = 2
+        data["delivery"]["request"]["query"] = {"ref": expression}
+    else:
+        data = v2_dict(url)
+        if placement == "run":
+            data["let"] = {"run": {"ref": expression}}
+            expression = {"var": "ref", "missing": "omit"}
+        data["request"]["body"] = {"json": {"ref": expression}}
+    return data
+
+
+@pytest.mark.parametrize("placement", ["body", "run", "poll"])
+@pytest.mark.parametrize("present", [False, True])
+@pytest.mark.parametrize("missing", ["error", "omit"])
+async def test_denied_environment_binding_never_reads_or_sends(
+    placement, present, missing
+):
+    app = RecordingApp()
+    app.route("POST", "/run", completed)
+    async with serve(app) as origin:
+        data = env_binding_spec(
+            origin + "/run", placement, {"env": "SOURCE_REF", "missing": missing}
+        )
+        spec = TransportSpecV2.from_dict(data)
+        environ = TrackingMapping({"SOURCE_REF": "synthetic-value"} if present else {})
+        policy = ExecutionPolicy(
+            allowed_origins=frozenset({origin}), allowed_env_names=frozenset()
+        )
+        run = V2Run(spec, policy=policy, environ=environ)
+        for _ in range(2):
+            result = await run.attempt(TransportContext(prompt="normal task"))
+            assert environ.get_calls == []
+            assert result.reason_code.value == "binding_error"
+            assert result.diagnostics["requests"] == {"submit": 0, "poll": 0, "retry": 0}
+            assert app.calls == []
+
+
+async def test_environment_policy_checks_all_names_before_any_read():
+    app = RecordingApp()
+    app.route("POST", "/run", completed)
+    async with serve(app) as origin:
+        data = v2_dict(origin + "/run")
+        data["request"]["body"] = {
+            "json": {
+                "permitted": {"env": "PERMITTED_REF"},
+                "denied": {"env": "DENIED_REF", "missing": "omit"},
+            }
+        }
+        environ = TrackingMapping({"PERMITTED_REF": "synthetic-value"})
+        spec = TransportSpecV2.from_dict(data)
+        policy = ExecutionPolicy(
+            allowed_origins=frozenset({origin}),
+            allowed_env_names=frozenset({"PERMITTED_REF"}),
+        )
+        result = await V2Run(spec, policy=policy, environ=environ).attempt(
+            TransportContext(prompt="normal task")
+        )
+        assert environ.get_calls == []
+        assert result.reason_code.value == "binding_error"
+        assert app.calls == []
+
+
+@pytest.mark.parametrize("placement", ["body", "run", "poll"])
+@pytest.mark.parametrize("allowed", [None, frozenset({"SOURCE_REF"})])
+async def test_permitted_environment_binding_snapshots_once(placement, allowed):
+    app = RecordingApp()
+
+    async def submitted(request):
+        return web.json_response({"run_id": "job-1", "status": "PENDING"}, status=202)
+
+    app.route("POST", "/run", submitted if placement == "poll" else completed)
+    app.route("GET", "/runs/{tail:.*}", completed)
+    async with serve(app) as origin:
+        data = env_binding_spec(origin + "/run", placement, {"env": "SOURCE_REF"})
+        spec = TransportSpecV2.from_dict(data)
+        environ = TrackingMapping({"SOURCE_REF": "synthetic-value"})
+        policy = ExecutionPolicy(
+            allowed_origins=frozenset({origin}), allowed_env_names=allowed
+        )
+        run = V2Run(spec, policy=policy, environ=environ)
+        for _ in range(2):
+            result = await run.attempt(TransportContext(prompt="normal task"))
+            assert result.reason_code.value == "ok"
+            environ["SOURCE_REF"] = "changed-value"
+        assert environ.get_calls == ["SOURCE_REF"]
+        if placement == "poll":
+            assert [call[1] for call in app.calls] == [
+                "/run",
+                "/runs/job-1?ref=synthetic-value",
+            ] * 2
+        else:
+            assert bodies(app) == [{"ref": "synthetic-value"}] * 2
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        {"ref": {"env": "ABSENT_REF"}},
+        {"ref": {"env": "ABSENT_REF", "missing": "error"}},
+        {
+            "optional": {"env": "ABSENT_REF", "missing": "omit"},
+            "required": {"env": "ABSENT_REF"},
+        },
+        {
+            "required": {"env": "ABSENT_REF"},
+            "optional": {"env": "ABSENT_REF", "missing": "omit"},
+        },
+    ],
+)
+async def test_required_poll_environment_fails_before_submit(query):
+    app = RecordingApp()
+
+    async def submitted(request):
+        return web.json_response({"run_id": "job-1", "status": "PENDING"}, status=202)
+
+    app.route("POST", "/run", submitted)
+    app.route("GET", "/runs/{tail:.*}", completed)
+    async with serve(app) as origin:
+        data = poll_dict(origin + "/run")
+        data["version"] = 2
+        data["delivery"]["request"]["query"] = query
+        environ = TrackingMapping({})
+        run = runtime(data, environ=environ)
+        for _ in range(2):
+            result = await run.attempt(TransportContext(prompt="normal task"))
+            assert result.reason_code.value == "binding_error"
+            assert result.diagnostics["requests"] == {"submit": 0, "poll": 0, "retry": 0}
+            assert app.calls == []
+            environ["ABSENT_REF"] = "appeared-later"
+        assert environ.get_calls == ["ABSENT_REF"]
+
+
+async def test_optional_poll_environment_remains_omitted():
+    app = RecordingApp()
+
+    async def submitted(request):
+        return web.json_response({"run_id": "job-1", "status": "PENDING"}, status=202)
+
+    app.route("POST", "/run", submitted)
+    app.route("GET", "/runs/{tail:.*}", completed)
+    async with serve(app) as origin:
+        data = env_binding_spec(
+            origin + "/run", "poll", {"env": "ABSENT_REF", "missing": "omit"}
+        )
+        result = await runtime(data, environ={}).attempt(
+            TransportContext(prompt="normal task")
+        )
+        assert result.reason_code.value == "ok"
+        assert [call[1] for call in app.calls] == ["/run", "/runs/job-1"]
+
+
+async def test_required_attempt_environment_fails_even_when_variable_unused():
+    app = RecordingApp()
+    app.route("POST", "/run", completed)
+    async with serve(app) as origin:
+        data = v2_dict(origin + "/run")
+        data["let"] = {
+            "run": {"optional": {"env": "ABSENT_REF", "missing": "omit"}},
+            "attempt": {"required": {"env": "ABSENT_REF"}},
+        }
+        result = await runtime(data, environ={}).attempt(
+            TransportContext(prompt="normal task")
+        )
+        assert result.reason_code.value == "binding_error"
+        assert app.calls == []

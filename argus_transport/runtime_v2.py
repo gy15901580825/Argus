@@ -34,11 +34,14 @@ class V2Run:
         self._start_failed = False
 
     def _start(self, context: TransportContext):
-        names = set()
+        requirements: dict[str, bool] = {}
 
         def collect(expression):
             if "env" in expression:
-                names.add(expression["env"])
+                name = expression["env"]
+                requirements[name] = (
+                    requirements.get(name, False) or expression.get("missing") != "omit"
+                )
             elif "base64" in expression:
                 collect(expression["base64"])
             elif "object" in expression:
@@ -59,10 +62,16 @@ class V2Run:
                     collect(expression)
             elif "text" in request.body:
                 collect(request.body["text"])
+        allowed = self.policy.allowed_env_names
+        if allowed is not None and any(name not in allowed for name in requirements):
+            raise ValueError("Environment reference denied")
         snapshot = {}
-        for name in names:
+        for name, required in requirements.items():
             item = self._environ.get(name)
-            if item is not None:
+            if item is None:
+                if required:
+                    raise ValueError("Environment value missing")
+            else:
                 if not isinstance(item, str) or len(item.encode("utf-8")) > 1024:
                     raise ValueError("Environment value exceeds byte limit")
                 snapshot[name] = item
