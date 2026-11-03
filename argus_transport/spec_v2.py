@@ -44,6 +44,9 @@ V2_FIELD_NAMES = frozenset(
      "undo", "budget", "max_requests", "cleanup_reserve", "cleanup_s",
      "last_segment", "expect_prefix", "ids", "wait", "from", "default_s", "max_s", "location",
      "stop_on", "alert_names", "credential_echo"}
+    | {"provision", "find", "create", "manual", "title", "steps", "items", "where",
+       "take", "given", "hint", "multipart", "filename", "content_type", "content",
+       "confirm", "gone_status"}
 )
 _QUERY_RESERVED = {"key", "auth", "authorization"}
 _QUERY_FRAGMENTS = ("token", "api_key", "apikey", "password", "secret", "credential")
@@ -170,7 +173,7 @@ class RequestSpecV2(FrozenModel):
         body = data.get(
             "body", {"none": True} if method in {"GET", "HEAD", "DELETE"} else None
         )
-        object_fields(body, {"json", "text", "none"})
+        object_fields(body, {"json", "text", "none", "multipart"})
         if len(body) != 1:
             raise ValueError("Body requires one variant")
         if "none" in body:
@@ -182,6 +185,20 @@ class RequestSpecV2(FrozenModel):
             for name, expr in body["json"].items():
                 text(name)
                 value_expr_v2(expr, visible=visible)
+        elif "multipart" in body:
+            parts = body["multipart"]
+            if method not in {"POST", "PUT"}:
+                raise ValueError("Multipart method must be POST or PUT")
+            if not isinstance(parts, dict) or not 1 <= len(parts) <= 4:
+                raise ValueError("Multipart requires one to four parts")
+            for name, part in parts.items():
+                if not isinstance(name, str) or not NAME_RE.fullmatch(name):
+                    raise ValueError("Invalid multipart part name")
+                object_fields(part, {"filename", "content_type", "content"},
+                              {"filename", "content_type", "content"})
+                choice(part["content_type"], {"text/plain", "text/markdown", "application/json", "text/csv"})
+                value_expr_v2(part["filename"], visible=visible)
+                value_expr_v2(part["content"], visible=visible)
         else:
             value_expr_v2(body["text"], visible=visible)
         if method in {"GET", "HEAD"} and body != {"none": True}:
@@ -190,6 +207,8 @@ class RequestSpecV2(FrozenModel):
         content_type = next(
             (v for k, v in public.items() if k.lower() == "content-type"), None
         )
+        if content_type is not None and "multipart" in body:
+            raise ValueError("Content-Type conflicts with multipart body")
         if (
             content_type
             and "json" in body
@@ -240,14 +259,27 @@ class ExpectSpec(FrozenModel):
 
 @dataclass(frozen=True)
 class CaptureSpec(FrozenModel):
-    path: str
+    path: str | None = None
     last_segment: bool = False
     expect_prefix: dict | None = None
+    items: str | None = None
+    where: dict | None = None
+    take: str | None = None
 
     @classmethod
     def from_dict(cls, data, *, visible):
-        object_fields(data, {"path", "last_segment", "expect_prefix"}, {"path"})
-        path(data["path"])
+        object_fields(data, {"path", "items", "where", "take", "last_segment", "expect_prefix"})
+        if "path" in data:
+            if set(data) & {"items", "where", "take"}:
+                raise ValueError("Capture requires one selector variant")
+            path(data["path"])
+            where = None
+        else:
+            if not {"items", "where", "take"} <= set(data):
+                raise ValueError("Capture requires items, where and take")
+            path(data["items"])
+            path(data["take"])
+            where = _where_predicate(data["where"], visible=visible)
         last_segment = data.get("last_segment", False)
         if type(last_segment) is not bool:
             raise ValueError("Capture last_segment must be boolean")
@@ -255,17 +287,57 @@ class CaptureSpec(FrozenModel):
             value_expr_v2(data["expect_prefix"], visible=visible)
             if "expect_prefix" in data else None
         )
-        return cls(data["path"], last_segment, prefix)
+        return cls(data.get("path"), last_segment, prefix, data.get("items"), where, data.get("take"))
+
+
+def _where_references(value, location=()):
+    for operator in ("all", "any"):
+        if operator in value:
+            for index, child in enumerate(value[operator]):
+                yield from _where_references(child, location + (operator, index))
+            return
+    if "not" in value:
+        yield from _where_references(value["not"], location + ('not',))
+        return
+    values = [value["equals"]] if "equals" in value else value.get("one_of", [])
+    for index, item in enumerate(values):
+        if isinstance(item, dict) and (
+            set(item) in ({"env"}, {"env", "missing"}, {"var"})
+        ):
+            yield location + (('equals',) if 'equals' in value else ('one_of', index)), item
+
+
+def _where_predicate(value, *, visible):
+    result = predicate(value)
+    for _, reference in _where_references(result):
+        value_expr_v2(reference, visible=visible)
+    return result
+
+
+@dataclass(frozen=True)
+class ConfirmationSpec(FrozenModel):
+    request: RequestSpecV2
+    gone_status: tuple[int, ...]
+
+    @classmethod
+    def from_dict(cls, data, *, visible):
+        object_fields(data, {"request", "gone_status"}, {"request", "gone_status"})
+        object_fields(data["request"], {"method", "url", "headers", "body", "query"}, {"url"})
+        if data["request"].get("method", "POST") != "GET":
+            raise ValueError("Confirmation method must be GET")
+        statuses = ExpectSpec.from_dict({"http_status": data["gone_status"]}).http_status
+        return cls(RequestSpecV2.from_dict(data["request"], visible=visible), statuses)
 
 
 @dataclass(frozen=True)
 class UndoSpec(FrozenModel):
     request: RequestSpecV2
     expect: ExpectSpec
+    confirm: ConfirmationSpec | None = None
 
     @classmethod
     def from_dict(cls, data, *, visible):
-        object_fields(data, {"request", "expect"}, {"request", "expect"})
+        object_fields(data, {"request", "expect", "confirm"}, {"request", "expect"})
         object_fields(data["request"], {"method", "url", "headers", "body", "query"}, {"url"})
         method = data["request"].get("method", "POST")
         if not isinstance(method, str) or method not in {"DELETE", "GET"}:
@@ -273,6 +345,7 @@ class UndoSpec(FrozenModel):
         return cls(
             RequestSpecV2.from_dict(data["request"], visible=visible),
             ExpectSpec.from_dict(data["expect"]),
+            ConfirmationSpec.from_dict(data["confirm"], visible=visible) if "confirm" in data else None,
         )
 
 
@@ -287,9 +360,33 @@ class StepSpec(FrozenModel):
 
 
 @dataclass(frozen=True)
+class FindStepSpec(FrozenModel):
+    id: str
+    request: RequestSpecV2
+    expect: ExpectSpec
+    capture: dict[str, CaptureSpec]
+    given: dict[str, dict] = field(default_factory=dict)
+    hint: str | None = None
+
+
+@dataclass(frozen=True)
+class ManualSpec(FrozenModel):
+    title: str
+    steps: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ProvisionSpec(FrozenModel):
+    find: tuple[FindStepSpec, ...]
+    create: tuple[StepSpec, ...] = ()
+    manual: ManualSpec | None = None
+
+
+@dataclass(frozen=True)
 class LifecycleSpec(FrozenModel):
     run: tuple[StepSpec, ...] = ()
     attempt: tuple[StepSpec, ...] = ()
+    provision: ProvisionSpec | None = None
 
 
 @dataclass(frozen=True)
@@ -395,6 +492,58 @@ def _parse_steps(values, visible, declared):
     return tuple(parsed)
 
 
+def _parse_provision(data, visible, declared):
+    object_fields(data, {"find", "create", "manual"}, {"find"})
+    values = data["find"]
+    if not isinstance(values, list) or not values:
+        raise ValueError("Provision requires at least one find step")
+    found = []
+    for step in values:
+        if isinstance(step, dict) and "mcp" in step:
+            raise ValueError("MCP provision steps are not supported yet")
+        object_fields(step, {"id", "request", "expect", "capture", "given", "hint"},
+                      {"id", "request", "expect", "capture"})
+        _declare(step["id"], declared)
+        before = frozenset(visible)
+        request = RequestSpecV2.from_dict(step["request"], visible=before)
+        if request.method != "GET":
+            raise ValueError("Find method must be GET")
+        captures = step["capture"]
+        if not isinstance(captures, dict) or not 1 <= len(captures) <= 128:
+            raise ValueError("Find requires captures")
+        capture = {}
+        for name, selector in captures.items():
+            _declare(name, declared)
+            capture[name] = CaptureSpec.from_dict(selector, visible=before)
+        given = step.get("given", {})
+        if not isinstance(given, dict) or ("given" in step and set(given) != set(capture)):
+            raise ValueError("Given names must equal capture names")
+        parsed_given = {name: value_expr_v2(expr, visible=before) for name, expr in given.items()}
+        hint = text(step["hint"]) if "hint" in step else None
+        found.append(FindStepSpec(step["id"], request, ExpectSpec.from_dict(step["expect"]),
+                                  capture, parsed_given, hint))
+        visible.update(capture)
+    creates = data.get("create", [])
+    if not isinstance(creates, list):
+        raise ValueError("Invalid provision create steps")
+    for step in creates:
+        if isinstance(step, dict) and "mcp" in step:
+            raise ValueError("MCP provision steps are not supported yet")
+        if isinstance(step, dict) and ("undo" in step or "if_present" in step):
+            raise ValueError("Provision create cannot have undo or a guard")
+    created = _parse_steps(creates, visible, declared)
+    if any(step.request.method not in {"POST", "PUT"} for step in created):
+        raise ValueError("Provision create method must be POST or PUT")
+    manual = None
+    if "manual" in data:
+        item = data["manual"]
+        object_fields(item, {"title", "steps"}, {"title", "steps"})
+        if not isinstance(item["steps"], list):
+            raise ValueError("Invalid manual steps")
+        manual = ManualSpec(text(item["title"]), tuple(text(value) for value in item["steps"]))
+    return ProvisionSpec(tuple(found), created, manual)
+
+
 @dataclass(frozen=True)
 class WaitSpec(FrozenModel):
     header: str
@@ -452,8 +601,9 @@ class TransportSpecV2(FrozenModel):
         declared = set()
         scopes = {}
         lifecycle_data = data.get("lifecycle", {})
-        object_fields(lifecycle_data, {"run", "attempt"})
+        object_fields(lifecycle_data, {"run", "attempt", "provision"})
         steps = {}
+        provision = None
         for scope in ("run", "attempt"):
             values = declarations.get(scope, {})
             if not isinstance(values, dict) or len(values) > 128:
@@ -464,6 +614,8 @@ class TransportSpecV2(FrozenModel):
                 parsed[name] = value_expr_v2(expr, visible=frozenset(visible))
                 visible.add(name)
             scopes[scope] = parsed
+            if scope == "run" and "provision" in lifecycle_data:
+                provision = _parse_provision(lifecycle_data["provision"], visible, declared)
             steps[scope] = _parse_steps(lifecycle_data.get(scope, []), visible, declared)
         request = RequestSpecV2.from_dict(data["request"], visible=frozenset(visible))
         auth = AuthSpec.from_dict(data["auth"])
@@ -549,6 +701,8 @@ class TransportSpecV2(FrozenModel):
                 if sugar:
                     object_fields(selector, {'path'}, {'path'})
                 CaptureSpec.from_dict(selector, visible=frozenset(visible))
+                if 'path' not in selector:
+                    raise ValueError('Delivery IDs require path selectors')
                 parsed_ids[name] = copy.deepcopy(selector)
             poll_request = RequestSpecV2.from_dict(
                 delivery_data['request'], visible=frozenset(visible | set(ids))
@@ -600,7 +754,7 @@ class TransportSpecV2(FrozenModel):
             SessionSpec.from_dict(data["session"]),
             limits,
             LetSpec(**scopes),
-            LifecycleSpec(**steps),
+            LifecycleSpec(**steps, provision=provision),
             BudgetSpec.from_dict(data.get("budget", {})),
         )
         for _, item in iter_requests(result):
@@ -630,11 +784,19 @@ class TransportSpecV2(FrozenModel):
         result["request"] = _request_dict(self.request)
         if self.timeout.cleanup_s == 60:
             result["timeout"].pop("cleanup_s", None)
-        if self.lifecycle.run or self.lifecycle.attempt:
+        if self.lifecycle.run or self.lifecycle.attempt or self.lifecycle.provision:
             result["lifecycle"] = {
                 scope: [_step_dict(step) for step in getattr(self.lifecycle, scope)]
                 for scope in ("run", "attempt") if getattr(self.lifecycle, scope)
             }
+            if self.lifecycle.provision is not None:
+                provision = self.lifecycle.provision
+                value = {"find": [_find_dict(step) for step in provision.find]}
+                if provision.create:
+                    value["create"] = [_step_dict(step) for step in provision.create]
+                if provision.manual is not None:
+                    value["manual"] = {"title": provision.manual.title, "steps": list(provision.manual.steps)}
+                result["lifecycle"]["provision"] = value
         if self.budget != BudgetSpec():
             result["budget"] = {
                 name: value for name, value in asdict(self.budget).items() if name != 'stop_on'
@@ -734,16 +896,36 @@ def _iter_owners(spec):
     for scope in ("run", "attempt"):
         for name, expression in getattr(spec.let, scope).items():
             yield _ExpressionOwner("let", ("let", scope, name), expression)
+        if scope == 'run' and spec.lifecycle.provision is not None:
+            for group in ('find', 'create'):
+                for index, step in enumerate(getattr(spec.lifecycle.provision, group)):
+                    location = ('lifecycle', 'provision', group, index)
+                    yield _RequestOwner('provision', location + ('request',), step.request)
+                    yield from _capture_owners(step.capture, location, 'provision')
+                    if isinstance(step, FindStepSpec):
+                        for name, expression in step.given.items():
+                            yield _ExpressionOwner('provision', location + ('given', name), expression)
         for index, step in enumerate(getattr(spec.lifecycle, scope)):
             location = ("lifecycle", scope, index)
             yield _RequestOwner("setup", location + ("request",), step.request, step.if_present)
-            for name, capture in step.capture.items():
-                if capture.expect_prefix is not None:
-                    yield _ExpressionOwner("capture", location + ("capture", name, "expect_prefix"),
-                                           capture.expect_prefix, step.if_present)
+            yield from _capture_owners(step.capture, location, 'capture', step.if_present)
             if step.undo:
                 yield _RequestOwner("cleanup", location + ("undo", "request"),
                                     step.undo.request, step.if_present)
+                if step.undo.confirm is not None:
+                    yield _RequestOwner('cleanup', location + ('undo', 'confirm', 'request'),
+                                        step.undo.confirm.request, step.if_present)
+
+
+def _capture_owners(captures, location, owner, guard=None):
+    for name, capture in captures.items():
+        if capture.expect_prefix is not None:
+            yield _ExpressionOwner(owner, location + ('capture', name, 'expect_prefix'),
+                                   capture.expect_prefix, guard)
+        if capture.where is not None:
+            for expression_path, expression in _where_references(capture.where):
+                yield _ExpressionOwner(owner, location + ('capture', name, 'where') + expression_path,
+                                       expression, guard)
 
 
 def iter_requests(spec: TransportSpecV2) -> Iterator[tuple[str, RequestSpecV2]]:
@@ -765,6 +947,11 @@ def _iter_expressions(spec):
                 yield _ExpressionOwner(item.owner, item.path + ("body", "json", name), expression, item.guard)
         elif "text" in body:
             yield _ExpressionOwner(item.owner, item.path + ("body", "text"), body["text"], item.guard)
+        elif "multipart" in body:
+            for name, part in body['multipart'].items():
+                for field_name in ('filename', 'content'):
+                    yield _ExpressionOwner(item.owner, item.path + ('body', 'multipart', name, field_name),
+                                           part[field_name], item.guard)
 
 
 def _expect_dict(expect):
@@ -782,7 +969,8 @@ def _step_dict(step):
     if step.capture:
         captures = {}
         for name, capture in step.capture.items():
-            selector = {"path": capture.path}
+            selector = ({"path": capture.path} if capture.path is not None else
+                        {"items": capture.items, "where": json.loads(json.dumps(capture.where)), "take": capture.take})
             if capture.last_segment:
                 selector["last_segment"] = True
             if capture.expect_prefix is not None:
@@ -792,6 +980,75 @@ def _step_dict(step):
     if step.undo:
         result["undo"] = {"request": _request_dict(step.undo.request),
                           "expect": _expect_dict(step.undo.expect)}
+        if step.undo.confirm is not None:
+            result['undo']['confirm'] = {'request': _request_dict(step.undo.confirm.request),
+                                         'gone_status': list(step.undo.confirm.gone_status)}
+    return result
+
+
+def _find_dict(step):
+    result = _step_dict(StepSpec(step.id, None, step.request, step.expect, step.capture, None))
+    if step.given:
+        result['given'] = json.loads(json.dumps(step.given))
+    if step.hint is not None:
+        result['hint'] = step.hint
+    return result
+
+
+def provision_checklist(spec: TransportSpecV2, *, step_id: str | None, hint: str | None) -> list[str]:
+    result = []
+    if step_id is not None:
+        result.append(f"NOT PROVISIONED: find step '{step_id}' matched no item (0 business requests sent)")
+        if hint is not None:
+            result.append(f'Hint: {hint}')
+    provision = spec.lifecycle.provision
+    if provision is None:
+        return result
+    if provision.manual is not None:
+        result.append(provision.manual.title)
+        result.extend(f'[ ] {step}' for step in provision.manual.steps)
+    result.append('Derived from the config:')
+
+    def equalities(value):
+        if 'equals' in value:
+            yield value['path'], value['equals']
+        for operator in ('all', 'any'):
+            for child in value.get(operator, []):
+                yield from equalities(child)
+        if 'not' in value:
+            yield from equalities(value['not'])
+
+    for step in provision.find:
+        env_names = [expr['env'] for expr in step.given.values() if 'env' in expr]
+        suffix = f" (skipped when ${env_names[0]} is set)" if env_names else ''
+        for capture in step.capture.values():
+            if capture.where is None:
+                continue
+            for item_path, literal in equalities(capture.where):
+                if isinstance(literal, dict) and set(literal) in ({'env'}, {'env', 'missing'}, {'var'}):
+                    display = '$' + literal.get('env', literal.get('var'))
+                else:
+                    display = literal if isinstance(literal, str) else json.dumps(literal)
+                result.append(f'[ ] Exactly one item in {capture.items} has {item_path} = {display}{suffix}')
+    bindings = {}
+
+    def collect(expr, location):
+        if expr.get('context') in {'prompt', 'material'}:
+            bindings.setdefault(expr['context'], '.'.join(location))
+        for name, child in expr.get('object', {}).items():
+            collect(child, (*location, name))
+        for child in expr.get('array', expr.get('concat', [])):
+            collect(child, location)
+        if 'base64' in expr:
+            collect(expr['base64'], location)
+
+    for name, expr in spec.request.body.get('json', {}).items():
+        collect(expr, (name,))
+    if 'prompt' in bindings:
+        line = f"[ ] Argus sends the prompt to {bindings['prompt']}"
+        if 'material' in bindings:
+            line += f" and the material to {bindings['material']}"
+        result.append(line + '.')
     return result
 
 

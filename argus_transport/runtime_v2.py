@@ -161,6 +161,7 @@ class V2Run:
         self._environ = os.environ if environ is None else environ
         self._started = False
         self._start_failed = False
+        self._provision_context: TransportContext | None = None
         self._startup_error: BaseException | None = None
         self._stop_error: TargetRunStopped | None = None
         self._closed = False
@@ -170,6 +171,7 @@ class V2Run:
         self._has_undo = any(step.undo for step in (*spec.lifecycle.run, *spec.lifecycle.attempt))
 
     def _start(self, context: TransportContext):
+        self._provision_context = context
         requirements: dict[str, bool] = {}
 
         def collect(expression, required_owner):

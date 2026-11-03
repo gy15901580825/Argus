@@ -160,16 +160,67 @@ class _CapturePrefixError(ValueError):
     pass
 
 
+class _CaptureNotFound(ValueError):
+    pass
+
+
+class _CaptureAmbiguous(ValueError):
+    def __init__(self, count):
+        super().__init__('Ambiguous captured item')
+        self.count = count
+
+
 class _SecretBindingError(ValueError):
     pass
 
 
-def capture_value(selector, body, context, scope, env):
-    raw = select(body, selector.path)
+def _resolved_where(value, context, scope, env):
+    result = json.loads(json.dumps(value))
+    for operator in ('all', 'any', 'not'):
+        if operator in value:
+            children = [value[operator]] if operator == 'not' else value[operator]
+            resolved = [_resolved_where(child, context, scope, env) for child in children]
+            if any(child is _OMIT for child in resolved):
+                return _OMIT
+            result[operator] = resolved[0] if operator == 'not' else resolved
+            return result
+    operator = 'equals' if 'equals' in value else 'one_of' if 'one_of' in value else None
+    if operator is not None:
+        values = [result[operator]] if operator == 'equals' else result[operator]
+        resolved = []
+        for item in values:
+            if isinstance(item, dict) and set(item) in ({'env'}, {'env', 'missing'}, {'var'}):
+                expression = {**item, 'missing': 'omit'} if 'var' in item else item
+                item = bind_v2(expression, context, scope, env)
+            if item is _OMIT:
+                return _OMIT
+            resolved.append(item)
+        result[operator] = resolved[0] if operator == 'equals' else resolved
+    return result
+
+
+def capture_value(selector, body, context, scope, env, *, given=False):
+    if given:
+        raw = body
+    elif selector.items is not None:
+        items = select(body, selector.items)
+        if not isinstance(items, list):
+            raise ValueError('Capture items must be an array')
+        where = _resolved_where(selector.where, context, scope, env)
+        matched = [] if where is _OMIT else [item for item in items if matches_predicate(item, where)]
+        if not matched:
+            raise _CaptureNotFound('No captured item')
+        if len(matched) != 1:
+            raise _CaptureAmbiguous(len(matched))
+        raw = select(matched[0], selector.take)
+    else:
+        raw = select(body, selector.path)
+    if raw is _MISSING:
+        raise _CaptureNotFound('No captured item')
     if selector.last_segment or selector.expect_prefix is not None:
         if not isinstance(raw, str) or not raw:
             raise _CapturePrefixError('Invalid captured identifier')
-        if selector.expect_prefix is not None:
+        if selector.expect_prefix is not None and not (given and selector.last_segment):
             try:
                 prefix = bind_v2(selector.expect_prefix, context, scope, env)
             except (ValueError, TypeError, AttributeError, OverflowError, RecursionError):
@@ -177,7 +228,7 @@ def capture_value(selector, body, context, scope, env):
             if not isinstance(prefix, str) or not prefix or not raw.startswith(prefix):
                 raise _CapturePrefixError('Invalid capture prefix')
         if selector.last_segment:
-            value = raw.rsplit('/', 1)[-1]
+            value = raw if given else raw.rsplit('/', 1)[-1]
             if re.fullmatch(r'[A-Za-z0-9._~-]{1,256}', value) is None:
                 raise _CapturePrefixError('Invalid captured identifier')
             return value
@@ -273,10 +324,17 @@ class TransportEngineV2:
     async def startup(self, context):
         start = time.monotonic()
         scope = dict(self.runtime.run_vars)
-        diagnostics = {'requests': {'setup': 0, 'cleanup': 0}}
+        diagnostics = {'requests': {'provision': 0, 'setup': 0, 'cleanup': 0}}
         with redacted_transport_logs(self.redactor):
             async with asyncio.timeout(self.spec.timeout.total_deadline_s):
                 async with self._client() as client:
+                    if self.spec.lifecycle.provision is not None:
+                        from .provision_v2 import run_provision
+                        async def exchange(request, bindings):
+                            request, content = self._bind_request(request, context, bindings)
+                            return await self._exchange(client, request, self._headers(request), content,
+                                                        start, self.redactor, diagnostics, phase='provision')
+                        scope.update(await run_provision(self.runtime, exchange))
                     await self._steps(self.spec.lifecycle.run, 'run', self.runtime.run_undos,
                                       client, context, scope, start, diagnostics)
         self.runtime.run_vars = MappingProxyType(scope)
@@ -722,7 +780,7 @@ class TransportEngineV2:
                 )
                 if location_error is not None:
                     return location_error
-            http_error = phase not in {'setup', 'cleanup'} and not 200 <= status < 300 and status not in {400, 403}
+            http_error = phase not in {'provision', 'setup', 'cleanup'} and not 200 <= status < 300 and status not in {400, 403}
             if http_error and not (stop.credential_echo and redactor.values):
                 return self.failure(
                     SafeReasonCode.HTTP_ERROR,
@@ -762,7 +820,7 @@ class TransportEngineV2:
                 if http_error:
                     return self.failure(SafeReasonCode.HTTP_ERROR, start, status=status,
                                         diagnostics=redactor.clean(diagnostics))
-                parsed = (None if not raw and phase in {"setup", "cleanup"} else json.loads(raw)) if self.spec.response.format == "json" else raw
+                parsed = (None if not raw and phase in {"provision", "setup", "cleanup"} else json.loads(raw)) if self.spec.response.format == "json" else raw
             except (UnicodeError, ValueError, RecursionError):
                 return self.failure(
                     SafeReasonCode.HTTP_ERROR if http_error else SafeReasonCode.PARSE_ERROR,
