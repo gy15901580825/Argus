@@ -4,6 +4,7 @@ import asyncio
 import base64
 import copy
 import json
+import math
 import re
 import time
 import uuid
@@ -11,12 +12,13 @@ from dataclasses import dataclass, replace
 from contextlib import asynccontextmanager
 from types import MappingProxyType
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Mapping
-from urllib.parse import quote, urlencode, urlsplit, urlunsplit
+from urllib.parse import quote, urlencode, urljoin, urlsplit, urlunsplit
 
 import httpx
 
-from .engine import _OMIT, evaluate_response, matches_predicate, outcome_match, select
+from .engine import _MISSING, _OMIT, evaluate_response, matches_predicate, outcome_match, select
 from .models import (
     SafeReasonCode,
     SyncSpec,
@@ -25,7 +27,7 @@ from .models import (
     TransportResult,
 )
 from .security import redacted_transport_logs, resolve_secret
-from .spec_v2 import PollSpecV2, RequestSpecV2, TransportSpecV2
+from .spec_v2 import CaptureSpec, PollSpecV2, RequestSpecV2, TransportSpecV2
 
 if TYPE_CHECKING:
     from .runtime_v2 import V2Run
@@ -451,7 +453,9 @@ class TransportEngineV2:
         delivery = self.spec.delivery
         try:
             _, _, reason, matched = outcome_match(delivery.submit_outcome, status, body)
-            if matched or reason == SafeReasonCode.HTTP_ERROR:
+            terminal_submit = matched or reason == SafeReasonCode.HTTP_ERROR
+            verify_submit = status == 202 and delivery.location == 'verify'
+            if terminal_submit and not verify_submit:
                 return self._evaluate(
                     status,
                     body,
@@ -460,42 +464,54 @@ class TransportEngineV2:
                     diagnostics,
                     spec=replace(self.spec, outcome=delivery.submit_outcome),
                 )
-            if status not in delivery.submit_http_status:
+            if not terminal_submit and status not in delivery.submit_http_status:
                 return self.failure(
                     SafeReasonCode.HTTP_ERROR,
                     start,
                     status=status,
                     diagnostics=redactor.clean(diagnostics),
                 )
-            if delivery.submit_outcome.unmatched != "accepted":
+            if not terminal_submit and delivery.submit_outcome.unmatched != "accepted":
                 return self.failure(
                     SafeReasonCode.UNKNOWN_STATUS,
                     start,
                     status=status,
                     diagnostics=redactor.clean(diagnostics),
                 )
-            job_id = select(body, delivery.ids["run_id"]["path"])
-            if type(job_id) not in {str, int} or not str(job_id):
-                raise ValueError("Missing or invalid run ID")
-            job_id = str(job_id)
-            diagnostics["run_id"] = redactor.clean(job_id)
+            raw_ids = {name: select(body, selector['path']) for name, selector in delivery.ids.items()}
+            try:
+                ids = {name: capture_value(CaptureSpec(selector['path'], selector.get('last_segment', False),
+                                                      selector.get('expect_prefix')), body, context, scope,
+                                           self.runtime.env)
+                       for name, selector in delivery.ids.items()}
+            except _CapturePrefixError:
+                return self.failure(SafeReasonCode.ID_PREFIX_MISMATCH, start, status=status,
+                                    diagnostics=redactor.clean(diagnostics))
+            except ValueError:
+                return self.failure(SafeReasonCode.MISSING_ID, start, status=status,
+                                    diagnostics=redactor.clean(diagnostics))
+            if 'run_id' in ids:
+                diagnostics['run_id'] = redactor.clean(str(ids['run_id']))
             try:
                 poll_request = replace(
                     delivery.request,
-                    url=render_url(
-                        delivery.request,
-                        context,
-                        {**scope, "run_id": job_id},
-                        self.runtime.env,
-                    ),
+                    url=render_url(delivery.request, context, {**scope, **ids}, self.runtime.env),
                 )
             except (ValueError, TypeError, AttributeError):
-                return self.failure(
-                    SafeReasonCode.BINDING_ERROR,
-                    start,
-                    status=status,
-                    diagnostics=redactor.clean(diagnostics),
-                )
+                return self.failure(SafeReasonCode.BINDING_ERROR, start, status=status,
+                                    diagnostics=redactor.clean(diagnostics))
+            location_error = self._verify_location(submitted, request.url, poll_request.url, start, diagnostics)
+            if location_error is not None:
+                return location_error
+            if terminal_submit:
+                result = self._evaluate(status, body, start, redactor, diagnostics,
+                                        spec=replace(self.spec, outcome=delivery.submit_outcome))
+                metadata = dict(result.metadata)
+                if 'run_id' in ids:
+                    metadata['run_id'] = redactor.clean(str(ids['run_id']))
+                else:
+                    metadata.pop('run_id', None)
+                return replace(result, metadata=metadata)
             auth_names = {header.name.lower() for header in self.spec.auth.headers}
             if self.spec.auth.kind == "bearer":
                 auth_names.add("authorization")
@@ -509,7 +525,19 @@ class TransportEngineV2:
                 **auth_headers,
                 "Accept-Encoding": "identity",
             }
+            response = submitted
             for index in range(delivery.max_polls):
+                if delivery.wait is not None:
+                    delay = self._poll_wait(response.headers)
+                    if delay > delivery.wait.max_s:
+                        return self.failure(SafeReasonCode.POLL_WAIT_LIMIT, start, status=response.status,
+                                            diagnostics=redactor.clean(diagnostics))
+                else:
+                    delay = delivery.interval_s if index else 0
+                if delay >= self.spec.timeout.total_deadline_s - (time.monotonic() - start):
+                    raise TimeoutError
+                if delay > 0:
+                    await asyncio.sleep(delay)
                 polled = await self._exchange(
                     client,
                     poll_request,
@@ -523,6 +551,26 @@ class TransportEngineV2:
                 if isinstance(polled, TransportResult):
                     return polled
                 status, body = polled.status, polled.body
+                location_error = self._verify_location(polled, poll_request.url, poll_request.url, start, diagnostics)
+                if location_error is not None:
+                    return location_error
+                for name, selector in delivery.ids.items():
+                    raw = select(body, selector['path'])
+                    if raw is _MISSING:
+                        continue
+                    try:
+                        capture_value(CaptureSpec(selector['path'], selector.get('last_segment', False),
+                                                  selector.get('expect_prefix')), body, context, scope,
+                                      self.runtime.env)
+                    except _CapturePrefixError:
+                        return self.failure(SafeReasonCode.ID_PREFIX_MISMATCH, start, status=status,
+                                            diagnostics=redactor.clean(diagnostics))
+                    except ValueError:
+                        return self.failure(SafeReasonCode.POLL_IDENTITY_CHANGED, start, status=status,
+                                            diagnostics=redactor.clean(diagnostics))
+                    if type(raw) is not type(raw_ids[name]) or raw != raw_ids[name]:
+                        return self.failure(SafeReasonCode.POLL_IDENTITY_CHANGED, start, status=status,
+                                            diagnostics=redactor.clean(diagnostics))
                 _, _, reason, matched = outcome_match(self.spec.outcome, status, body)
                 pending = (
                     not matched
@@ -531,9 +579,11 @@ class TransportEngineV2:
                 )
                 if not pending:
                     result = self._evaluate(status, body, start, redactor, diagnostics)
-                    metadata = {"run_id": redactor.clean(job_id), **result.metadata}
-                    if metadata.get("run_id") is None:
-                        metadata["run_id"] = redactor.clean(job_id)
+                    metadata = dict(result.metadata)
+                    if 'run_id' in ids:
+                        metadata['run_id'] = redactor.clean(str(ids['run_id']))
+                    else:
+                        metadata.pop('run_id', None)
                     return replace(result, metadata=metadata)
                 if index + 1 == delivery.max_polls:
                     return self.failure(
@@ -542,7 +592,7 @@ class TransportEngineV2:
                         status=status,
                         diagnostics=redactor.clean(diagnostics),
                     )
-                await asyncio.sleep(delivery.interval_s)
+                response = polled
         except (ValueError, TypeError, OverflowError, RecursionError):
             return self.failure(
                 SafeReasonCode.MAPPING_ERROR,
@@ -550,6 +600,44 @@ class TransportEngineV2:
                 status=status,
                 diagnostics=redactor.clean(diagnostics),
             )
+
+    def _poll_wait(self, headers):
+        wait = self.spec.delivery.wait
+        value = headers.get('retry-after')
+        if value is None:
+            return wait.default_s
+        try:
+            delay = float(value)
+        except ValueError:
+            try:
+                date = parsedate_to_datetime(value)
+                if date.tzinfo is None:
+                    date = date.replace(tzinfo=timezone.utc)
+                delay = max(0, date.timestamp() - time.time())
+            except (ValueError, TypeError, OverflowError):
+                return wait.default_s
+        return delay if math.isfinite(delay) and delay >= 0 else wait.default_s
+
+    def _verify_location(self, response, request_url, poll_url, start, diagnostics):
+        from .runtime_v2 import TargetRunStopped
+        if self.spec.delivery.location != 'verify' or response.status != 202:
+            return None
+        location = response.headers.get('location')
+        if location is None:
+            return self.failure(SafeReasonCode.LOCATION_MISSING, start, status=response.status,
+                                diagnostics=self.redactor.clean(diagnostics))
+        try:
+            actual = urlsplit(urljoin(request_url, location))
+            expected = urlsplit(poll_url)
+            safe = (actual.scheme, actual.netloc, actual.path) == (expected.scheme, expected.netloc, expected.path)
+            safe = safe and not (actual.query or actual.fragment or '@' in actual.netloc
+                                     or '?' in location or '#' in location)
+        except ValueError:
+            safe = False
+        if not safe:
+            self.runtime.ledger.trip('unsafe_location')
+            raise TargetRunStopped('unsafe_location')
+        return None
 
     def _evaluate(self, status, body, start, redactor, diagnostics, *, spec=None):
         result = evaluate_response(
@@ -577,6 +665,7 @@ class TransportEngineV2:
         phase,
         admitted=False,
     ):
+        self.runtime.ledger._check_stopped()
         if phase == "cleanup" and (request.method not in {"GET", "DELETE"} or "multipart" in request.body):
             return self.failure(SafeReasonCode.SETUP_FAILED, start, diagnostics=redactor.clean(diagnostics))
         try:
@@ -653,7 +742,9 @@ class TransportEngineV2:
                     status=status,
                     diagnostics=redactor.clean(diagnostics),
                 )
-            return ExchangeResponse(status, parsed, {})
+            response_headers = {name: response.headers[name] for name in ('location', 'retry-after')
+                                if name in response.headers}
+            return ExchangeResponse(status, parsed, response_headers)
 
     @staticmethod
     def failure(reason, start, *, status=None, diagnostics=None):

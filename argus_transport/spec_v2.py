@@ -3,15 +3,14 @@ from __future__ import annotations
 import copy
 import json
 import re
-from dataclasses import asdict, dataclass
-from typing import Iterator
+from dataclasses import asdict, dataclass, field
+from typing import Iterator, Literal
 from urllib.parse import urlsplit, urlunsplit
 
 from .models import (
     AuthSpec,
     FrozenModel,
     OutcomeSpec,
-    PollSpec,
     RequestSpec,
     ResourceLimits,
     ResponseSpec,
@@ -32,6 +31,7 @@ from .models import (
     predicate,
     text,
     value_expr,
+    _rule_dict,
 )
 
 NAME_RE = re.compile(r"[a-z][a-z0-9_]{0,31}\Z")
@@ -42,7 +42,7 @@ V2_FIELD_NAMES = frozenset(
     {"let", "run", "attempt", "var", "concat", "generate", "base64", "env", "query",
      "lifecycle", "id", "if_present", "expect", "http_status", "when", "capture",
      "undo", "budget", "max_requests", "cleanup_reserve", "cleanup_s",
-     "last_segment", "expect_prefix"}
+     "last_segment", "expect_prefix", "ids", "wait", "from", "default_s", "max_s", "location"}
 )
 _QUERY_RESERVED = {"key", "auth", "authorization"}
 _QUERY_FRAGMENTS = ("token", "api_key", "apikey", "password", "secret", "credential")
@@ -366,15 +366,33 @@ def _parse_steps(values, visible, declared):
 
 
 @dataclass(frozen=True)
+class WaitSpec(FrozenModel):
+    header: str
+    default_s: float
+    max_s: float
+
+    @classmethod
+    def from_dict(cls, data):
+        object_fields(data, {'from', 'default_s', 'max_s'}, {'from', 'default_s', 'max_s'})
+        header = choice(data['from'], {'Retry-After'})
+        default = positive(data['default_s'])
+        maximum = positive(data['max_s'])
+        return cls(header, default, maximum)
+
+
+@dataclass(frozen=True)
 class PollSpecV2(FrozenModel):
     kind: str
     ids: dict[str, dict]
     request: RequestSpecV2
     pending: dict
-    interval_s: float
+    interval_s: float | None
     max_polls: int
     submit_http_status: tuple[int, ...]
     submit_outcome: SubmissionOutcomeSpec
+    wait: WaitSpec | None = None
+    location: Literal['ignore', 'verify'] = 'ignore'
+    _run_id_sugar: bool = field(default=False, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -430,6 +448,9 @@ class TransportSpecV2(FrozenModel):
             {
                 "kind",
                 "run_id",
+                "ids",
+                "wait",
+                "location",
                 "request",
                 "pending",
                 "interval_s",
@@ -467,6 +488,9 @@ class TransportSpecV2(FrozenModel):
             fields = {
                 "kind",
                 "run_id",
+                "ids",
+                "wait",
+                "location",
                 "request",
                 "pending",
                 "interval_s",
@@ -474,18 +498,37 @@ class TransportSpecV2(FrozenModel):
                 "submit_http_status",
                 "submit_outcome",
             }
-            object_fields(delivery_data, fields, fields)
-            object_fields(delivery_data["run_id"], {"path"}, {"path"})
-            path(delivery_data["run_id"]["path"])
+            object_fields(delivery_data, fields, fields - {'run_id', 'ids', 'interval_s', 'wait', 'location'})
+            if ('ids' in delivery_data) == ('run_id' in delivery_data):
+                raise ValueError('Poll requires either ids or run_id')
+            if ('wait' in delivery_data) == ('interval_s' in delivery_data):
+                raise ValueError('Poll requires either wait or interval_s')
+            location = choice(delivery_data.get('location', 'ignore'), {'ignore', 'verify', 'follow'})
+            if location == 'follow':
+                raise ValueError('location follow is not supported yet')
+            sugar = 'run_id' in delivery_data
+            ids = {'run_id': delivery_data['run_id']} if sugar else delivery_data['ids']
+            if not isinstance(ids, dict) or not 1 <= len(ids) <= 4:
+                raise ValueError('Poll requires one to four IDs')
+            parsed_ids = {}
+            for name, selector in ids.items():
+                if name != 'run_id':
+                    _name(name)
+                if name in visible:
+                    raise ValueError('Duplicate transport variable')
+                if sugar:
+                    object_fields(selector, {'path'}, {'path'})
+                CaptureSpec.from_dict(selector, visible=frozenset(visible))
+                parsed_ids[name] = copy.deepcopy(selector)
             poll_request = RequestSpecV2.from_dict(
-                delivery_data["request"], visible=frozenset(visible | {"run_id"})
+                delivery_data['request'], visible=frozenset(visible | set(ids))
             )
             if poll_request.method != "GET" or origin(poll_request.url) != origin(
                 request.url
             ):
                 raise ValueError("Poll origin or method mismatch")
-            if poll_request.placeholders.count("run_id") != 1:
-                raise ValueError("Poll URL requires one run ID")
+            if any(poll_request.placeholders.count(name) != 1 for name in ids):
+                raise ValueError('Poll URL requires each ID exactly once')
             if auth_names & {k.lower() for k in poll_request.headers}:
                 raise ValueError("Poll auth and public headers conflict")
             max_polls = delivery_data["max_polls"]
@@ -501,13 +544,16 @@ class TransportSpecV2(FrozenModel):
                 raise ValueError("Invalid submit HTTP status")
             delivery = PollSpecV2(
                 kind,
-                {"run_id": copy.deepcopy(delivery_data["run_id"])},
+                parsed_ids,
                 poll_request,
                 predicate(delivery_data["pending"]),
-                positive(delivery_data["interval_s"]),
+                positive(delivery_data['interval_s']) if 'interval_s' in delivery_data else None,
                 max_polls,
                 tuple(statuses),
-                SubmissionOutcomeSpec.from_dict(delivery_data["submit_outcome"]),
+                SubmissionOutcomeSpec.from_dict(delivery_data['submit_outcome']),
+                WaitSpec.from_dict(delivery_data['wait']) if 'wait' in delivery_data else None,
+                location,
+                sugar,
             )
         limits = ResourceLimits.from_dict(data["limits"])
         outcome = OutcomeSpec.from_dict(data["outcome"])
@@ -537,16 +583,7 @@ class TransportSpecV2(FrozenModel):
     def to_dict(self) -> dict:
         delivery = self.delivery
         if isinstance(delivery, PollSpecV2):
-            delivery = PollSpec(
-                delivery.kind,
-                delivery.ids["run_id"],
-                _v1_request(delivery.request),
-                delivery.pending,
-                delivery.interval_s,
-                delivery.max_polls,
-                delivery.submit_http_status,
-                delivery.submit_outcome,
-            )
+            delivery = SyncSpec()
         envelope = TransportSpec(
             1,
             _v1_request(self.request),
@@ -574,7 +611,30 @@ class TransportSpecV2(FrozenModel):
                 if value != getattr(BudgetSpec(), name)
             }
         if isinstance(self.delivery, PollSpecV2):
-            result["delivery"]["request"] = _request_dict(self.delivery.request)
+            poll = self.delivery
+            result['delivery'] = {
+                'kind': poll.kind,
+                'request': _request_dict(poll.request),
+                'pending': json.loads(json.dumps(poll.pending)),
+                'max_polls': poll.max_polls,
+                'submit_http_status': list(poll.submit_http_status),
+                'submit_outcome': {
+                    'kind': poll.submit_outcome.kind,
+                    'unmatched': poll.submit_outcome.unmatched,
+                    'rules': [_rule_dict(rule) for rule in poll.submit_outcome.rules],
+                },
+            }
+            if poll._run_id_sugar:
+                result['delivery']['run_id'] = json.loads(json.dumps(poll.ids['run_id']))
+            else:
+                result['delivery']['ids'] = json.loads(json.dumps(poll.ids))
+            if poll.wait is not None:
+                result['delivery']['wait'] = {'from': poll.wait.header,
+                                            'default_s': poll.wait.default_s, 'max_s': poll.wait.max_s}
+            else:
+                result['delivery']['interval_s'] = poll.interval_s
+            if poll.location != 'ignore':
+                result['delivery']['location'] = poll.location
         if self.let.run or self.let.attempt:
             result["let"] = json.loads(
                 json.dumps({"run": self.let.run, "attempt": self.let.attempt})
@@ -631,7 +691,11 @@ class _ExpressionOwner(FrozenModel):
 def _iter_owners(spec):
     yield _RequestOwner("submit", ("request",), spec.request)
     if isinstance(spec.delivery, PollSpecV2):
-        yield _RequestOwner("poll", ("delivery", "request"), spec.delivery.request)
+        yield _RequestOwner('poll', ('delivery', 'request'), spec.delivery.request)
+        for name, selector in spec.delivery.ids.items():
+            if 'expect_prefix' in selector:
+                yield _ExpressionOwner('delivery_id', ('delivery', 'ids', name, 'expect_prefix'),
+                                       selector['expect_prefix'])
     for scope in ("run", "attempt"):
         for name, expression in getattr(spec.let, scope).items():
             yield _ExpressionOwner("let", ("let", scope, name), expression)

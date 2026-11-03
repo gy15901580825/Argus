@@ -298,6 +298,10 @@ class SafeReasonCode(str, Enum):
     POLL_LIMIT = "poll_limit"
     SETUP_FAILED = "setup_failed"
     ID_PREFIX_MISMATCH = "id_prefix_mismatch"
+    MISSING_ID = "missing_id"
+    POLL_WAIT_LIMIT = "poll_wait_limit"
+    POLL_IDENTITY_CHANGED = "poll_identity_changed"
+    LOCATION_MISSING = "location_missing"
 
 
 @dataclass(frozen=True)

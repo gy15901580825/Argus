@@ -63,8 +63,18 @@ class RequestLedger:
         self.cleanup_reserve = cleanup_reserve
         self.counts = dict.fromkeys(('provision', 'setup', 'submit', 'poll', 'cleanup'), 0)
         self._reserved = 0
+        self.stopped: str | None = None
+
+    def trip(self, reason: str) -> None:
+        if self.stopped is None:
+            self.stopped = reason
+
+    def _check_stopped(self) -> None:
+        if self.stopped is not None:
+            raise TargetRunStopped(self.stopped)
 
     def _check_request(self) -> None:
+        self._check_stopped()
         if self.max_requests is not None and sum(
             count for phase, count in self.counts.items() if phase != 'cleanup'
         ) >= self.max_requests:
@@ -75,11 +85,13 @@ class RequestLedger:
         self.counts[phase] += 1
 
     def reserve_cleanup(self) -> None:
+        self._check_stopped()
         if self._reserved >= self.cleanup_reserve:
             raise TargetRunStopped('cleanup_reserve')
         self._reserved += 1
 
     def spend_cleanup(self) -> None:
+        self._check_stopped()
         if self.counts['cleanup'] >= self._reserved:
             raise TargetRunStopped('cleanup_reserve')
         self.counts['cleanup'] += 1
@@ -97,6 +109,8 @@ class UndoStack:
     async def unwind(self, send: Callable[[UndoIntent], Awaitable[None]], *, timeout_s: float) -> None:
         async def unwind_all():
             for intent in reversed(self.intents):
+                if self.ledger.stopped is not None and intent.status != 'done':
+                    intent.status = 'skipped_stopped'
                 if intent.status == 'pending':
                     await send(intent)
         try:
@@ -197,6 +211,7 @@ class V2Run:
             return await engine.run(context)
         if self._closed:
             raise TargetRunStopped('run_closed')
+        self.ledger._check_stopped()
         if not self._started:
             self._started = True
             try:
