@@ -551,9 +551,6 @@ class TransportEngineV2:
                 if isinstance(polled, TransportResult):
                     return polled
                 status, body = polled.status, polled.body
-                location_error = self._verify_location(polled, poll_request.url, poll_request.url, start, diagnostics)
-                if location_error is not None:
-                    return location_error
                 for name, selector in delivery.ids.items():
                     raw = select(body, selector['path'])
                     if raw is _MISSING:
@@ -628,8 +625,9 @@ class TransportEngineV2:
                                 diagnostics=self.redactor.clean(diagnostics))
         try:
             actual = urlsplit(urljoin(request_url, location))
-            expected = urlsplit(poll_url)
-            safe = (actual.scheme, actual.netloc, actual.path) == (expected.scheme, expected.netloc, expected.path)
+            expected = urlsplit(poll_url or self.spec.delivery.request.url)
+            safe = (actual.scheme, actual.netloc) == (expected.scheme, expected.netloc)
+            safe = safe and (poll_url is None or actual.path == expected.path)
             safe = safe and not (actual.query or actual.fragment or '@' in actual.netloc
                                      or '?' in location or '#' in location)
         except ValueError:
@@ -706,6 +704,15 @@ class TransportEngineV2:
             extensions={"sni_hostname": parts.hostname},
         ) as response:
             status = response.status_code
+            response_headers = {name: response.headers[name] for name in ('location', 'retry-after')
+                                if name in response.headers}
+            exchange = ExchangeResponse(status, None, response_headers)
+            if phase in {'submit', 'poll'} and isinstance(self.spec.delivery, PollSpecV2):
+                location_error = self._verify_location(
+                    exchange, request.url, request.url if phase == 'poll' else None, start, diagnostics,
+                )
+                if location_error is not None:
+                    return location_error
             if phase not in {"setup", "cleanup"} and not 200 <= status < 300 and status not in {400, 403}:
                 return self.failure(
                     SafeReasonCode.HTTP_ERROR,
@@ -742,9 +749,7 @@ class TransportEngineV2:
                     status=status,
                     diagnostics=redactor.clean(diagnostics),
                 )
-            response_headers = {name: response.headers[name] for name in ('location', 'retry-after')
-                                if name in response.headers}
-            return ExchangeResponse(status, parsed, response_headers)
+            return replace(exchange, body=parsed)
 
     @staticmethod
     def failure(reason, start, *, status=None, diagnostics=None):

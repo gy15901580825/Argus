@@ -320,6 +320,162 @@ async def test_unsafe_poll_202_stops_before_later_poll():
         assert [call[0] for call in app.calls] == ['POST', 'GET']
 
 
+def invalid_delivery_response(phase, body_kind, location):
+    app = RecordingApp()
+    headers = {} if location is None else {'Location': location}
+    body = b'{' if body_kind == 'malformed' else b'x' * 257
+    if body_kind == 'encoded':
+        headers['Content-Encoding'] = 'gzip'
+    if body_kind == 'missing_id':
+        body = b'{"status":"PENDING"}'
+
+    async def invalid(request):
+        return web.Response(body=body, status=202, headers=headers)
+
+    async def submitted(request):
+        return web.json_response({'run_id': 'job-1', 'status': 'PENDING'}, status=202,
+                                 headers={'Location': '/runs/job-1'})
+
+    async def created(request):
+        return web.json_response({'ref': 'obj-1'}, status=201)
+
+    async def deleted(request):
+        return web.Response(status=204)
+
+    app.route('POST', '/run', invalid if phase == 'submit' else submitted)
+    app.route('GET', '/runs/{tail:.*}', invalid)
+    app.route('POST', '/objects', created)
+    app.route('DELETE', '/objects/{ref}', deleted)
+    return app
+
+
+def with_attempt_undo(data, origin):
+    data['lifecycle'] = {'attempt': [{
+        'id': 'make_object',
+        'request': {'url': origin + '/objects', 'body': {'json': {}}},
+        'expect': {'http_status': [201]},
+        'capture': {'object_ref': {'path': '$.ref'}},
+        'undo': {'request': {'method': 'DELETE', 'url': origin + '/objects/{object_ref}'},
+                 'expect': {'http_status': [204]}},
+    }]}
+    return data
+
+
+@pytest.mark.parametrize('phase', ['submit', 'poll'])
+@pytest.mark.parametrize('body_kind', ['malformed', 'encoded', 'oversized'])
+@pytest.mark.parametrize('location', ['http://127.0.0.1:1/runs/job-1',
+                                     '/runs/job-1?ref=1', '/runs/job-1#part',
+                                     'http://person@127.0.0.1/runs/job-1'])
+async def test_unsafe_202_location_stops_before_body_failure(phase, body_kind, location):
+    app = invalid_delivery_response(phase, body_kind, location)
+    async with serve(app) as origin:
+        data = with_attempt_undo(poll_spec(origin + '/run'), origin)
+        data['delivery']['location'] = 'verify'
+        data['limits']['response_bytes'] = 256
+        run = runtime(data)
+        with pytest.raises(TargetRunStopped) as caught:
+            await run.attempt(TransportContext(prompt='normal task'))
+        assert caught.value.reason == 'unsafe_location'
+        with pytest.raises(TargetRunStopped) as later:
+            await run.attempt(TransportContext(prompt='next task'))
+        assert later.value.reason == 'unsafe_location'
+        await run.close()
+        expected = [('POST', '/objects'), ('POST', '/run')]
+        if phase == 'poll':
+            expected.append(('GET', '/runs/job-1'))
+        assert [(call[0], call[1]) for call in app.calls] == expected
+        report = run.cleanup_report()
+        assert {item['status'] for item in report['open']} == {'skipped_stopped'}
+        assert report['stop_reason'] == 'unsafe_location'
+
+
+@pytest.mark.parametrize('body_kind', ['malformed', 'encoded', 'oversized'])
+async def test_unsafe_poll_path_stops_before_body_failure(body_kind):
+    app = invalid_delivery_response('poll', body_kind, '/runs/other')
+    async with serve(app) as origin:
+        data = poll_spec(origin + '/run')
+        data['delivery']['location'] = 'verify'
+        data['limits']['response_bytes'] = 256
+        run = runtime(data)
+        with pytest.raises(TargetRunStopped) as caught:
+            await run.attempt(TransportContext(prompt='normal task'))
+        assert caught.value.reason == 'unsafe_location'
+        with pytest.raises(TargetRunStopped):
+            await run.attempt(TransportContext(prompt='next task'))
+        await run.close()
+        assert [(call[0], call[1]) for call in app.calls] == [('POST', '/run'), ('GET', '/runs/job-1')]
+
+
+@pytest.mark.parametrize('phase', ['submit', 'poll'])
+@pytest.mark.parametrize('body_kind', ['malformed', 'encoded', 'oversized'])
+async def test_missing_202_location_precedes_body_failure_without_stopping(phase, body_kind):
+    app = invalid_delivery_response(phase, body_kind, None)
+    async with serve(app) as origin:
+        data = with_attempt_undo(poll_spec(origin + '/run'), origin)
+        data['delivery']['location'] = 'verify'
+        data['limits']['response_bytes'] = 256
+        run = runtime(data)
+        for _ in range(2):
+            result = await run.attempt(TransportContext(prompt='normal task'))
+            assert result.reason_code.value == 'location_missing'
+        await run.close()
+        expected = [('POST', '/objects'), ('POST', '/run')]
+        if phase == 'poll':
+            expected.append(('GET', '/runs/job-1'))
+        expected.append(('DELETE', '/objects/obj-1'))
+        assert [(call[0], call[1]) for call in app.calls] == expected * 2
+
+
+@pytest.mark.parametrize('location', ['http://127.0.0.1:1/runs/job-1',
+                                     '/runs/job-1?ref=1', '/runs/job-1#part',
+                                     'http://person@127.0.0.1/runs/job-1'])
+async def test_unsafe_submit_location_stops_before_missing_id(location):
+    app = invalid_delivery_response('submit', 'missing_id', location)
+    async with serve(app) as origin:
+        data = with_attempt_undo(poll_spec(origin + '/run'), origin)
+        data['delivery']['location'] = 'verify'
+        run = runtime(data)
+        with pytest.raises(TargetRunStopped) as caught:
+            await run.attempt(TransportContext(prompt='normal task'))
+        assert caught.value.reason == 'unsafe_location'
+        with pytest.raises(TargetRunStopped):
+            await run.attempt(TransportContext(prompt='next task'))
+        await run.close()
+        assert [(call[0], call[1]) for call in app.calls] == [('POST', '/objects'), ('POST', '/run')]
+        assert {item['status'] for item in run.cleanup_report()['open']} == {'skipped_stopped'}
+
+
+@pytest.mark.parametrize('phase', ['submit', 'poll'])
+@pytest.mark.parametrize('body_kind,reason', [('malformed', 'parse_error'), ('encoded', 'parse_error'),
+                                             ('oversized', 'response_limit')])
+async def test_safe_202_location_preserves_body_failure(phase, body_kind, reason):
+    app = invalid_delivery_response(phase, body_kind, '/runs/job-1')
+    async with serve(app) as origin:
+        data = poll_spec(origin + '/run')
+        data['delivery']['location'] = 'verify'
+        data['limits']['response_bytes'] = 256
+        run = runtime(data)
+        for _ in range(2):
+            result = await run.attempt(TransportContext(prompt='normal task'))
+            assert result.reason_code.value == reason
+        await run.close()
+        assert [call[0] for call in app.calls] == (['POST'] if phase == 'submit' else ['POST', 'GET']) * 2
+
+
+@pytest.mark.parametrize('body_kind,reason', [('malformed', 'parse_error'), ('missing_id', 'missing_id')])
+async def test_submit_location_path_remains_unverified_without_ids(body_kind, reason):
+    app = invalid_delivery_response('submit', body_kind, '/runs/other')
+    async with serve(app) as origin:
+        data = poll_spec(origin + '/run')
+        data['delivery']['location'] = 'verify'
+        run = runtime(data)
+        for _ in range(2):
+            result = await run.attempt(TransportContext(prompt='normal task'))
+            assert result.reason_code.value == reason
+        await run.close()
+        assert [call[0] for call in app.calls] == ['POST', 'POST']
+
+
 @pytest.mark.parametrize('wait', [None, {}, {'from': 'Other', 'default_s': 1, 'max_s': 2},
                                 {'from': 'Retry-After', 'default_s': True, 'max_s': 2}])
 def test_invalid_wait_configuration_is_rejected(wait):
