@@ -56,11 +56,14 @@ def validate(
 
     async def execute_transport():
         with local_transport_mode():
-            return await V2Run(
-                transport, policy=execution_policy(transport)
-            ).attempt(TransportContext(prompt="ping"))
+            run = V2Run(transport, policy=execution_policy(transport))
+            try:
+                result = await run.attempt(TransportContext(prompt="ping"))
+            finally:
+                await run.close()
+            return result, run.ledger.counts
 
-    result = asyncio.run(execute_transport())
+    result, requests = asyncio.run(execute_transport())
     if result.outcome == TransportOutcome.SUCCEEDED:
         try:
             run_log_from_metadata(result.as_dict()["metadata"])
@@ -71,13 +74,16 @@ def validate(
                 response_text=None,
                 reason_code=SafeReasonCode.MAPPING_ERROR,
             )
-    requests = result.diagnostics.get("requests", {})
     click.echo(f"HTTP.status: {result.http_status}")
     click.echo(f"outcome.selected: {result.matched_rule_id} -> {result.outcome.value}")
     click.echo(
         " ".join(
             f"requests.{name}={requests.get(name, 0)}"
-            for name in ("submit", "poll", "retry")
+            for name in (
+                ("submit", "poll", "retry", "setup", "cleanup")
+                if transport.lifecycle.run or transport.lifecycle.attempt
+                else ("submit", "poll", "retry")
+            )
         )
     )
     if result.outcome not in {TransportOutcome.SUCCEEDED, TransportOutcome.BLOCKED}:

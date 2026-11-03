@@ -21,7 +21,7 @@ from argus_transport import (
     parse_transport_spec,
     execution_policy,
 )
-from argus_transport.spec_v2 import iter_requests
+from argus_transport.spec_v2 import _iter_expressions
 from argus.targets._base import Target, TargetBlockedError, TargetTransportError, Turn
 from argus.targets._template import compile_template, render
 
@@ -73,20 +73,10 @@ def _v2_expression_uses_context(expression, name):
 
 
 def _v2_uses_context(spec, name):
-    for declarations in (spec.let.run, spec.let.attempt):
-        if any(
-            _v2_expression_uses_context(expr, name) for expr in declarations.values()
-        ):
-            return True
-    for _, request in iter_requests(spec):
-        expressions = list(request.query.values())
-        if "json" in request.body:
-            expressions.extend(request.body["json"].values())
-        elif "text" in request.body:
-            expressions.append(request.body["text"])
-        if any(_v2_expression_uses_context(expr, name) for expr in expressions):
-            return True
-    return False
+    return any(
+        _v2_expression_uses_context(item.expression, name)
+        for item in _iter_expressions(spec)
+    )
 
 
 @dataclass(frozen=True)
@@ -235,6 +225,9 @@ class CustomHTTPTarget(Target):
             result = await self._v2_run.attempt(context)
         else:
             result = await TransportEngine(spec, policy=execution_policy(spec)).run(context)
+        cleanup = {}
+        if self._v2_run is not None and "cleanup" in result.diagnostics:
+            cleanup["cleanup"] = result.diagnostics["cleanup"]
         metadata = result.metadata
         if result.outcome == TransportOutcome.SUCCEEDED:
             if spec.session.mode == "server_returned":
@@ -253,15 +246,19 @@ class CustomHTTPTarget(Target):
                         "http_status": result.http_status,
                         "matched_rule_id": result.matched_rule_id,
                         "reason_code": "mapping_error",
+                        **cleanup,
                     }
                 }
                 raise TargetTransportError("target_error: mapping_error") from None
+            if cleanup:
+                self._last_transport_evidence = {"transport": cleanup}
             return result.response_text, result.latency_ms
         transport = {
             "outcome": result.outcome.value,
             "http_status": result.http_status,
             "matched_rule_id": result.matched_rule_id,
             "reason_code": result.reason_code.value,
+            **cleanup,
         }
         if result.outcome == TransportOutcome.BLOCKED and result.matched_rule_id:
             transport["origin"] = "mapped_body_rule"
@@ -312,6 +309,13 @@ class CustomHTTPTarget(Target):
         self._conversation_id = None
         self._session_id = None
         self._last_transport_evidence = {}
+
+    async def aclose(self) -> None:
+        if self._v2_run is not None:
+            await self._v2_run.close()
+
+    def cleanup_report(self) -> dict | None:
+        return self._v2_run.cleanup_report() if self._v2_run is not None else None
 
     async def collect_evidence(self):
         return dict(self._last_transport_evidence)

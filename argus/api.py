@@ -248,6 +248,8 @@ async def _run_probes(
     # Released however the run ends: normally, on a raise, or when the consumer
     # closes this generator early (run_local's probes.aclose()). Plugin targets
     # need not subclass Target, so aclose is optional like the runner's hooks.
+    closed = False
+    close = getattr(target, "aclose", None)
     try:
         judge = Judge(api_key=anthropic_api_key, cost_meter=_COST_METER)
         runner = Runner(target=target, judge=judge, rubrics_dir=RUBRICS_DIR)
@@ -301,10 +303,35 @@ async def _run_probes(
                 cap_hit = e
         if cap_hit is not None:
             raise cap_hit
-    finally:
-        close = getattr(target, "aclose", None)
+        closed = True
         if close is not None:
             await close()
+        report = getattr(target, "cleanup_report", lambda: None)()
+        if report is not None:
+            yield {"type": "target_cleanup", "target_cleanup": report}
+    except BaseException as exc:
+        try:
+            if not closed:
+                closed = True
+                if close is not None:
+                    await close()
+        except BaseException as close_exc:
+            exc = close_exc
+            raise
+        finally:
+            report = getattr(target, "cleanup_report", lambda: None)()
+            if report is not None:
+                set_cleanup = getattr(exc, "set_cleanup", None)
+                if set_cleanup is not None:
+                    set_cleanup(report)
+                else:
+                    exc.target_cleanup = report
+        raise
+    finally:
+        if not closed:
+            closed = True
+            if close is not None:
+                await close()
 
 
 def finding_dict(finding, probe) -> dict:
@@ -415,6 +442,8 @@ async def run(req: RunRequest):
         emitted: list[dict] = []
         try:
             async for finding_dict in _run_probes(req, anthropic_api_key):
+                if finding_dict.get("type") == "target_cleanup":
+                    continue
                 emitted.append(finding_dict)
                 yield f"data: {json.dumps(finding_dict)}\n\n".encode()
             coverage_event = {

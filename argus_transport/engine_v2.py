@@ -8,6 +8,8 @@ import re
 import time
 import uuid
 from dataclasses import dataclass, replace
+from contextlib import asynccontextmanager
+from types import MappingProxyType
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Mapping
 from urllib.parse import quote, urlencode, urlsplit, urlunsplit
@@ -152,6 +154,59 @@ class ExchangeResponse:
     headers: Mapping[str, str]
 
 
+class _CapturePrefixError(ValueError):
+    pass
+
+
+class _SecretBindingError(ValueError):
+    pass
+
+
+def capture_value(selector, body, context, scope, env):
+    raw = select(body, selector.path)
+    if selector.last_segment or selector.expect_prefix is not None:
+        if not isinstance(raw, str) or not raw:
+            raise _CapturePrefixError('Invalid captured identifier')
+        if selector.expect_prefix is not None:
+            try:
+                prefix = bind_v2(selector.expect_prefix, context, scope, env)
+            except (ValueError, TypeError, AttributeError, OverflowError, RecursionError):
+                raise _CapturePrefixError('Invalid capture prefix') from None
+            if not isinstance(prefix, str) or not prefix or not raw.startswith(prefix):
+                raise _CapturePrefixError('Invalid capture prefix')
+        if selector.last_segment:
+            value = raw.rsplit('/', 1)[-1]
+            if re.fullmatch(r'[A-Za-z0-9._~-]{1,256}', value) is None:
+                raise _CapturePrefixError('Invalid captured identifier')
+            return value
+        return raw
+    if type(raw) not in {str, int} or not str(raw):
+        raise ValueError('Missing captured identifier')
+    return raw
+
+
+def _request_needs(request):
+    needs = set(request.placeholders)
+    def collect(expression):
+        if 'var' in expression:
+            needs.add(expression['var'])
+        elif 'base64' in expression:
+            collect(expression['base64'])
+        elif 'object' in expression:
+            for child in expression['object'].values():
+                collect(child)
+        elif 'array' in expression or 'concat' in expression:
+            for child in expression.get('array', expression.get('concat', ())):
+                collect(child)
+    for expression in request.query.values():
+        collect(expression)
+    for expression in request.body.get('json', {}).values():
+        collect(expression)
+    if 'text' in request.body:
+        collect(request.body['text'])
+    return frozenset(needs)
+
+
 class TransportEngineV2:
     def __init__(
         self,
@@ -170,97 +225,201 @@ class TransportEngineV2:
         with redacted_transport_logs(self.redactor):
             return await self._run(context)
 
-    async def _run(self, context):
-        start = time.monotonic()
-        redactor = self.redactor
-        if not isinstance(self.spec.delivery, (SyncSpec, PollSpecV2)):
-            return self.failure(SafeReasonCode.UNSUPPORTED_DELIVERY, start)
+    @asynccontextmanager
+    async def _client(self):
+        if self.client is not None:
+            yield self.client
+        else:
+            async with httpx.AsyncClient(follow_redirects=False, trust_env=False) as client:
+                yield client
+
+    def _headers(self, request):
+        headers = {**request.headers, 'Accept-Encoding': 'identity'}
         try:
-            scope = dict(self.runtime.run_vars)
-            for name, expression in self.spec.let.attempt.items():
-                item = bind_v2(expression, context, scope, self.runtime.env)
-                if item is not _OMIT:
-                    if type(item) not in {str, int}:
-                        raise ValueError("Variable requires a string or integer")
-                    scope[name] = item
-            request = replace(
-                self.spec.request,
-                url=render_url(self.spec.request, context, scope, self.runtime.env),
-            )
-            content = render_body_v2(request, context, scope, self.runtime.env)
-        except (ValueError, TypeError, AttributeError, OverflowError, RecursionError):
-            return self.failure(SafeReasonCode.BINDING_ERROR, start)
-        request_headers = {**self.spec.request.headers, "Accept-Encoding": "identity"}
-        try:
-            if self.spec.auth.kind == "bearer":
+            if self.spec.auth.kind == 'bearer':
                 secret = resolve_secret(self.spec.auth.secret, self.policy)
-                redactor.add(secret)
-                request_headers["Authorization"] = "Bearer " + secret
+                self.redactor.add(secret)
+                headers['Authorization'] = 'Bearer ' + secret
             for header in self.spec.auth.headers:
                 secret = resolve_secret(header.secret, self.policy)
-                redactor.add(secret)
-                request_headers[header.name] = secret
+                self.redactor.add(secret)
+                headers[header.name] = secret
         except (ValueError, OSError, UnicodeError):
-            return self.failure(SafeReasonCode.SECRET_ERROR, start)
-        if "json" in self.spec.request.body and not any(
-            k.lower() == "content-type" for k in request_headers
-        ):
-            request_headers["Content-Type"] = "application/json"
+            raise _SecretBindingError('Secret resolution failed') from None
+        if 'json' in request.body and not any(k.lower() == 'content-type' for k in headers):
+            headers['Content-Type'] = 'application/json'
+        return headers
+
+    def _bind_request(self, request, context, scope):
+        bound = replace(request, url=render_url(request, context, scope, self.runtime.env))
+        return bound, render_body_v2(bound, context, scope, self.runtime.env)
+
+    def _bind_undo(self, intent, context, scope):
+        intent._bindings = MappingProxyType(dict(scope))
+        try:
+            request, content = self._bind_request(intent.spec.request, context, scope)
+            headers = self._headers(request)
+        except (ValueError, TypeError, AttributeError, OverflowError, RecursionError):
+            intent.status = 'unbound'
+            return
+        intent._request = request
+        intent._content = content
+        intent._headers = headers
+        intent.url = self.redactor.clean(request.url)
+        intent.status = 'pending'
+
+    async def startup(self, context):
+        start = time.monotonic()
+        scope = dict(self.runtime.run_vars)
+        diagnostics = {'requests': {'setup': 0, 'cleanup': 0}}
+        with redacted_transport_logs(self.redactor):
+            async with asyncio.timeout(self.spec.timeout.total_deadline_s):
+                async with self._client() as client:
+                    await self._steps(self.spec.lifecycle.run, 'run', self.runtime.run_undos,
+                                      client, context, scope, start, diagnostics)
+        self.runtime.run_vars = MappingProxyType(scope)
+
+    async def _steps(self, steps, scope_name, stack, client, context, scope, start, diagnostics):
+        from .runtime_v2 import TargetRunStopped, UndoIntent
+        for step in steps:
+            if step.if_present is not None:
+                guard = scope.get(step.if_present, getattr(context, step.if_present, None))
+                if guard is None or guard is _OMIT:
+                    continue
+            reason = SafeReasonCode.SETUP_FAILED
+            try:
+                request, content = self._bind_request(step.request, context, scope)
+                headers = self._headers(request)
+                self.runtime.ledger._check_request()
+                intent = None
+                if step.undo is not None:
+                    intent = UndoIntent(scope_name, step.id, step.undo,
+                                        _request_needs(step.undo.request), frozenset(step.capture))
+                    self._bind_undo(intent, context, scope)
+                    stack.register(intent)
+                self.runtime.ledger.charge('setup')
+                response = await self._exchange(client, request, headers, content, start,
+                                                self.redactor, diagnostics, phase='setup', admitted=True)
+                if isinstance(response, TransportResult):
+                    reason = response.reason_code
+                elif response.status in step.expect.http_status and (
+                    step.expect.when is None or matches_predicate(response.body, step.expect.when)
+                ):
+                    selected = {name: capture_value(selector, response.body, context, scope,
+                                                    self.runtime.env)
+                                for name, selector in step.capture.items()}
+                    scope.update(selected)
+                    if intent is not None:
+                        self._bind_undo(intent, context, scope)
+                    continue
+            except _CapturePrefixError:
+                reason = SafeReasonCode.ID_PREFIX_MISMATCH
+            except (ValueError, TypeError, AttributeError, OverflowError, RecursionError):
+                reason = SafeReasonCode.SETUP_FAILED
+            except httpx.TimeoutException:
+                reason = SafeReasonCode.TIMEOUT
+            except httpx.HTTPError:
+                reason = SafeReasonCode.NETWORK_ERROR
+            if scope_name == 'run':
+                stop_reason = 'id_prefix_mismatch' if reason == SafeReasonCode.ID_PREFIX_MISMATCH else 'setup_failed_run'
+                raise TargetRunStopped(stop_reason, f"step '{step.id}'")
+            return self.failure(reason, start, diagnostics=self.redactor.clean(diagnostics))
+        return None
+
+    async def cleanup(self, stack, diagnostics=None):
+        start = time.monotonic()
+        diagnostics = diagnostics if diagnostics is not None else {'requests': {'cleanup': 0}}
+        async def send(intent):
+            if intent.spec.request.method not in {'GET', 'DELETE'} or 'multipart' in intent.spec.request.body:
+                intent.status = 'failed'
+                return
+            if intent._request is None:
+                intent.status = 'unbound'
+                return
+            try:
+                response = await self._exchange(client, intent._request, intent._headers,
+                                                intent._content, start, self.redactor,
+                                                diagnostics, phase='cleanup')
+                if isinstance(response, TransportResult):
+                    intent.http_status = response.http_status
+                    intent.status = 'failed'
+                else:
+                    intent.http_status = response.status
+                    intent.status = 'done' if response.status in intent.spec.expect.http_status and (
+                        intent.spec.expect.when is None or matches_predicate(response.body, intent.spec.expect.when)
+                    ) else 'failed'
+            except (TimeoutError, httpx.HTTPError, ValueError, OSError):
+                intent.status = 'failed'
+        with redacted_transport_logs(self.redactor):
+            async with self._client() as client:
+                try:
+                    await stack.unwind(send, timeout_s=self.spec.timeout.cleanup_s)
+                except TimeoutError:
+                    pass
+
+    async def _run(self, context):
+        from .runtime_v2 import UndoStack
+        start = time.monotonic()
+        if not isinstance(self.spec.delivery, (SyncSpec, PollSpecV2)):
+            return self.failure(SafeReasonCode.UNSUPPORTED_DELIVERY, start)
+        stack = UndoStack(self.runtime.ledger)
+        self.runtime.attempt_undos.append(stack)
         diagnostics = {
-            "request_method": self.spec.request.method,
-            "request_url": request.url,
-            "request_fields": list(self.spec.request.body.get("json", {})),
-            "requests": {"submit": 0, "poll": 0, "retry": 0},
+            'request_method': self.spec.request.method,
+            'request_url': self.spec.request.url,
+            'request_fields': list(self.spec.request.body.get('json', {})),
+            'requests': {'submit': 0, 'poll': 0, 'retry': 0},
         }
+        if self.spec.lifecycle.attempt:
+            diagnostics['requests'].update(setup=0, cleanup=0)
+        result = None
+        interrupted = None
         try:
             async with asyncio.timeout(self.spec.timeout.total_deadline_s):
-                if self.client is None:
-                    async with httpx.AsyncClient(
-                        follow_redirects=False, trust_env=False
-                    ) as client:
-                        return await self._operate(
-                            client,
-                            request_headers,
-                            content,
-                            start,
-                            redactor,
-                            diagnostics,
-                            request,
-                            context,
-                            scope,
-                        )
-                return await self._operate(
-                    self.client,
-                    request_headers,
-                    content,
-                    start,
-                    redactor,
-                    diagnostics,
-                    request,
-                    context,
-                    scope,
-                )
+                scope = dict(self.runtime.run_vars)
+                for name, expression in self.spec.let.attempt.items():
+                    item = bind_v2(expression, context, scope, self.runtime.env)
+                    if item is not _OMIT:
+                        if type(item) not in {str, int}:
+                            raise ValueError('Variable requires a string or integer')
+                        scope[name] = item
+                async with self._client() as client:
+                    result = await self._steps(self.spec.lifecycle.attempt, 'attempt', stack,
+                                               client, context, scope, start, diagnostics)
+                    if result is None:
+                        request, content = self._bind_request(self.spec.request, context, scope)
+                        headers = self._headers(request)
+                        diagnostics['request_url'] = request.url
+                        result = await self._operate(client, headers, content, start, self.redactor,
+                                                     diagnostics, request, context, scope)
         except asyncio.CancelledError as exc:
-            if isinstance(self.spec.delivery, PollSpecV2) and diagnostics.get("run_id"):
-                diagnostics["job_detached"] = True
-            exc.transport_diagnostics = redactor.clean(diagnostics)
+            interrupted = exc
+            if isinstance(self.spec.delivery, PollSpecV2) and diagnostics.get('run_id'):
+                diagnostics['job_detached'] = True
             raise
         except (TimeoutError, httpx.TimeoutException):
-            return self.failure(
-                SafeReasonCode.TIMEOUT, start, diagnostics=redactor.clean(diagnostics)
-            )
-        except (ValueError, OSError):
-            return self.failure(
-                SafeReasonCode.ENDPOINT_ERROR,
-                start,
-                diagnostics=redactor.clean(diagnostics),
-            )
+            result = self.failure(SafeReasonCode.TIMEOUT, start, diagnostics=diagnostics)
+        except _SecretBindingError:
+            result = self.failure(SafeReasonCode.SECRET_ERROR, start, diagnostics=diagnostics)
+        except (ValueError, TypeError, AttributeError, OverflowError, RecursionError):
+            result = self.failure(SafeReasonCode.BINDING_ERROR, start, diagnostics=diagnostics)
+        except OSError:
+            result = self.failure(SafeReasonCode.ENDPOINT_ERROR, start, diagnostics=diagnostics)
         except httpx.HTTPError:
-            return self.failure(
-                SafeReasonCode.NETWORK_ERROR,
-                start,
-                diagnostics=redactor.clean(diagnostics),
-            )
+            result = self.failure(SafeReasonCode.NETWORK_ERROR, start, diagnostics=diagnostics)
+        finally:
+            try:
+                if stack.intents:
+                    await self.cleanup(stack, diagnostics)
+            except asyncio.CancelledError as exc:
+                interrupted = exc
+                raise
+            finally:
+                if any(step.undo for step in self.spec.lifecycle.attempt):
+                    diagnostics['cleanup'] = stack.report()
+                if interrupted is not None:
+                    interrupted.transport_diagnostics = self.redactor.clean(diagnostics)
+        return replace(result, diagnostics=self.redactor.clean({**result.diagnostics, **diagnostics}))
 
     async def _operate(
         self,
@@ -416,7 +575,10 @@ class TransportEngineV2:
         diagnostics,
         *,
         phase,
+        admitted=False,
     ):
+        if phase == "cleanup" and (request.method not in {"GET", "DELETE"} or "multipart" in request.body):
+            return self.failure(SafeReasonCode.SETUP_FAILED, start, diagnostics=redactor.clean(diagnostics))
         try:
             ip = await self.policy.endpoint_ip(request.url)
         except (ValueError, OSError):
@@ -425,7 +587,8 @@ class TransportEngineV2:
                 start,
                 diagnostics=redactor.clean(diagnostics),
             )
-        remaining = self.spec.timeout.total_deadline_s - (time.monotonic() - start)
+        deadline = self.spec.timeout.cleanup_s if phase == "cleanup" else self.spec.timeout.total_deadline_s
+        remaining = deadline - (time.monotonic() - start)
         if remaining <= 0:
             raise TimeoutError
         budget = self.spec.timeout
@@ -439,6 +602,10 @@ class TransportEngineV2:
         parts = urlsplit(str(url))
         headers = {**headers, "Host": parts.netloc}
         url = url.copy_with(host=ip)
+        if phase == "cleanup":
+            self.runtime.ledger.spend_cleanup()
+        elif not admitted:
+            self.runtime.ledger.charge(phase)
         diagnostics["requests"][phase] += 1
         async with client.stream(
             request.method,
@@ -450,7 +617,7 @@ class TransportEngineV2:
             extensions={"sni_hostname": parts.hostname},
         ) as response:
             status = response.status_code
-            if not 200 <= status < 300 and status not in {400, 403}:
+            if phase not in {"setup", "cleanup"} and not 200 <= status < 300 and status not in {400, 403}:
                 return self.failure(
                     SafeReasonCode.HTTP_ERROR,
                     start,
@@ -478,7 +645,7 @@ class TransportEngineV2:
                     )
             try:
                 raw = body.decode("utf-8")
-                parsed = json.loads(raw) if self.spec.response.format == "json" else raw
+                parsed = (None if not raw and phase in {"setup", "cleanup"} else json.loads(raw)) if self.spec.response.format == "json" else raw
             except (UnicodeError, ValueError, RecursionError):
                 return self.failure(
                     SafeReasonCode.PARSE_ERROR,

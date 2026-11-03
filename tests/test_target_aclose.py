@@ -102,3 +102,48 @@ async def test_a_duck_typed_target_without_aclose_still_completes():
         assert len([e async for e in gen]) == len(PROBE_IDS)
 
     await _drive(_runner(), consume, target=_Duck())
+
+
+async def test_closed_once_and_undos_run_when_the_run_is_cancelled():
+    import asyncio
+    from aiohttp import web
+    from argus.targets.custom_http import CustomHTTPSpec, CustomHTTPTarget
+    from argus_transport import local_transport_mode
+    from test_transport_lifecycle import deletes, lifecycle_dict, recording_lifecycle
+    from transport_v2_fakes import serve
+
+    entered = asyncio.Event()
+    app = recording_lifecycle()
+    async def blocked(request):
+        entered.set()
+        await asyncio.sleep(10)
+        return web.json_response({})
+    app.route('POST', '/submit', blocked)
+    async with serve(app) as origin:
+        data = lifecycle_dict(origin)
+        data['request']['url'] = origin + '/submit'
+        class ClosingHTTP(CustomHTTPTarget):
+            closed = 0
+            async def aclose(self):
+                self.closed += 1
+                await super().aclose()
+        target = ClosingHTTP(CustomHTTPSpec(transport=data))
+        class SendingRunner:
+            def __init__(self, **kwargs):
+                pass
+            async def run_probe(self, probe):
+                await target.send_prompt('normal')
+                yield skipped_finding(probe, 'ok')
+        async def consume(gen):
+            async for _ in gen:
+                pass
+        with local_transport_mode():
+            task = asyncio.create_task(_drive(SendingRunner, consume, target=target))
+            await asyncio.wait_for(entered.wait(), 1)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert target.closed == 1
+        assert deletes(app) == ['/v1/messages?remoteId=local-ref&sourceId=source-one', '/v1/sources/source-one']
+        assert target.cleanup_report()['complete']
+    assert asyncio.all_tasks() == {asyncio.current_task()}

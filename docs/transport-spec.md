@@ -52,7 +52,7 @@ argus-probe validate-target --target target.json --execute --endpoint-override h
 
 Offline checks send no requests and do not resolve secret references. A sample file checks result rules and answer paths without a network connection. New transport files default to an offline check when neither mode is specified. Existing target files retain their single-prompt validation behavior.
 
-Execute mode sends the benign prompt `ping`. Synchronous delivery makes one target request, with no retries or preliminary HEAD/OPTIONS requests. The agent may use its own model or tools and incur costs. Diagnostics show status, selected rule, response paths, safe top-level keys, and request counts. They omit secret values and returned answer text.
+Execute mode sends the benign prompt `ping`. Version 1 synchronous delivery makes one target request, with no retries or preliminary HEAD/OPTIONS requests. Version 2 can also send configured lifecycle setup and undo requests. The agent may use its own model or tools and incur costs. Diagnostics show status, selected rule, response paths, safe top-level keys, and request counts. They omit secret values and returned answer text.
 
 ## Bind request values
 
@@ -131,7 +131,7 @@ Variable names match `[a-z][a-z0-9_]{0,31}` and cannot contain `key`, `token`, `
 
 URL placeholders bind declared variables in path segments. Each segment accepts one placeholder, including forms such as `{automation_id}:invoke`. Values are percent-encoded as individual segments. Placeholders in the origin or URL query are invalid. Use `request.query` for scalar query bindings. The engine URL-encodes those values and omits optional missing entries. A `query` object cannot accompany a URL that already contains `?`. Credential-like query names are rejected.
 
-`DELETE` defaults to no body. An explicit JSON or text body is also accepted for `DELETE`. The synchronous and single-ID polling behavior described on this page is available in version 2. SSE remains unsupported. Lifecycle operations, request retries, and multiple captured delivery IDs are not implemented in this version.
+`DELETE` defaults to no body. An explicit JSON or text body is also accepted for `DELETE`. The synchronous and single-ID polling behavior described on this page is available in version 2. SSE remains unsupported. Lifecycle setup and undo operations are supported. Request retries, multiple captured delivery IDs, configurable stop triggers, provisioning, and multipart bodies are not implemented in this version. HTTP 429 fails the current attempt; it does not stop later probes.
 
 ```sh
 argus-probe validate-target --target target-v2.json --offline
@@ -139,9 +139,59 @@ argus-probe validate-target --target target-v2.json --execute
 argus-probe validate-target --target target-v2.json --execute --endpoint-override http://127.0.0.1:8080
 ```
 
-Offline validation lists the method, placeholder names, query names, and declaration names. It sends no requests and does not render the body or read environment values. Empty binding lists are omitted. Execute mode reports HTTP status, selected outcome, and submission, poll, and retry counts. It omits response bodies and resolved bindings.
+Offline validation lists the method, placeholder names, query names, and declaration names. It sends no requests and does not render the body or read environment values. Empty binding lists are omitted. Execute mode reports HTTP status, selected outcome, and submission, poll, and retry counts. When lifecycle steps are configured, it appends `requests.setup=N requests.cleanup=N` and closes the run before returning. It omits response bodies and resolved bindings.
 
-A version 2 endpoint override takes an origin, with an optional trailing slash. It retains the configured paths and query bindings for submission and polling. A path, query, or fragment in the override is invalid. `--sample-response`, `--with-scenario`, and `--scenario-url` support version 1 transports only.
+A version 2 endpoint override takes an origin, with an optional trailing slash. It retains the configured paths and query bindings for submission, polling, lifecycle steps, and undo requests. A path, query, or fragment in the override is invalid. `--sample-response`, `--with-scenario`, and `--scenario-url` support version 1 transports only.
+
+## Set up and undo version 2 resources
+
+`lifecycle.run` is an ordered list of steps executed once, before the first attempt. `lifecycle.attempt` runs before each submission. Run declarations and captured values persist across probes. Attempt declarations are evaluated again for each attempt.
+
+Each step has a unique `id`, a `request`, and an `expect.http_status` list. Setup requests accept GET, POST, PUT, PATCH, and DELETE. An optional `if_present` names an already visible variable or context value. When that value is absent, Argus skips the step. A step can `capture` response fields into named variables for later steps, submission, or its own undo request.
+
+For example, add this run step to an existing version 2 transport:
+
+```json
+{
+	"lifecycle": {
+		"run": [{
+			"id": "source",
+			"request": {
+				"method": "POST",
+				"url": "https://api.vendor-a.example.test/v1/sources",
+				"body": {"none": true}
+			},
+			"expect": {"http_status": [201]},
+			"capture": {"source_id": {"path": "$.id"}},
+			"undo": {
+				"request": {
+					"method": "DELETE",
+					"url": "https://api.vendor-a.example.test/v1/sources/{source_id}"
+				},
+				"expect": {"http_status": [204, 404]}
+			}
+		}]
+	}
+}
+```
+
+A capture may set `expect_prefix` to a value expression. Argus checks that exact, case sensitive prefix before publishing any captures from the response. With `last_segment: true`, it extracts the final slash-delimited segment and requires 1 through 256 characters containing only letters, digits, `.`, `_`, `~`, or `-`. Without segment extraction, it retains the full captured value. A mismatch fails the attempt with `id_prefix_mismatch`. A run setup failure ends the run, while an attempt setup failure affects that attempt.
+
+An undo requires `request` and `expect.http_status` and accepts only GET or DELETE. Include 404 when an already absent object should count as cleaned. Configure the URL and variables so the request addresses resources this run owns. Argus does not independently verify ownership or add a prefix to resource names. Prefixes and generated names come from the configuration.
+
+Argus records each undo intent before sending the corresponding setup request. If the response is lost, an undo that uses previously known values can still execute. An undo that needs an uncaptured response value remains `unbound` for manual cleanup. Attempt undo runs in reverse order before the attempt returns, fails, or propagates cancellation. Run undo runs in reverse order when the target closes, including after an early consumer close. If an unfinished inner undo depends on an outer resource, the outer undo remains `blocked_by_inner`.
+
+### Request and cleanup budgets
+
+`budget.max_requests` limits all setup, submission, and poll requests across the entire run. Omit it for no business request limit. When the next request exceeds the limit, Argus stops the run with `request_budget`; undo requests can still use their separate reserve. `budget.cleanup_reserve` defaults to 100. Each undo intent reserves one request before its setup request can be sent. If no reserve remains, the run stops with `cleanup_reserve` before creating that resource.
+
+Run setup has its own `timeout.total_deadline_s`. Each attempt then receives a fresh business deadline. Each attempt undo and run close has a separate `timeout.cleanup_s`, default 60 seconds and maximum 300 seconds. Cleanup time does not consume the business deadline. Cleanup failures preserve the primary finding and appear in `evidence.transport.cleanup`. The final [run.json cleanup summary](run-json.md#target-cleanup) lists any remaining objects and makes the run incomplete.
+
+### Graceful cancellation
+
+Local runs handle SIGINT and SIGTERM by cancelling the active attempt, waiting for bounded configured undo requests, and exiting with 130 or 143 without writing a report. The console lists remaining undo intents for manual cleanup. A second signal can interrupt cleanup; the first signal still determines the exit code and remaining intents stay visible. Signal handlers are restored afterward.
+
+Cleanup is in memory and cannot recover from SIGKILL or a process crash. Removing a setup resource does not necessarily cancel a hosted job. Configure undo requests for the service's documented cleanup behavior.
 
 ## Map replies and outcomes
 
@@ -226,4 +276,4 @@ The same resolved authentication is used for every request. Each request recheck
 
 `validate-target --execute` reports one submission and the actual GET count, at most `max_polls` and never more than 100. Offline validation makes no requests. An endpoint override changes the origin for both submission and polling while retaining the configured poll path.
 
-Cancellation closes the local HTTP client and browser trap. The propagated cancellation carries safe `transport_diagnostics` with `job_detached` and the captured ID; browser cancellation also seals trap evidence. Argus sends no remote cancellation request. The hosted job can continue after local cancellation. SSE delivery remains unsupported.
+Cancellation closes the local HTTP client and browser trap. The propagated cancellation carries safe `transport_diagnostics` with `job_detached` and the captured ID; browser cancellation also seals trap evidence. Version 1 sends no remote cancellation request. Version 2 runs configured GET or DELETE undo requests during graceful cancellation. A hosted job can continue unless those requests stop it. SSE delivery remains unsupported.

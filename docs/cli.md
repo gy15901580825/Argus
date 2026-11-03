@@ -304,10 +304,12 @@ Exit codes:
 | 2 | Usage error: an unknown probe id, an option that does not fit the mode, or an `--out` directory that does not exist. Nothing runs and nothing is written. |
 | 3 | `--fail-on <severity>` is set, a finding with verdict `fail` is at or above that severity, and every probe reached a verdict. |
 | 4 | The cost cap. Before the run, the estimate is above `--per-run-cap` and nothing is written. During a local run, spend reached `--per-run-cap` or the daily cap, or any probe is `aborted_cost` (a probe the cap stopped or never let start, in local or server mode); the report with the findings so far is written first. 4 wins over 1 and 3. |
-| 130 | Ctrl-C. No report is written. |
-| 143 | SIGTERM, for example a CI cancel. No report is written. |
+| 130 | SIGINT. Local runs first execute bounded configured undo requests. No report is written. |
+| 143 | SIGTERM, for example a CI cancel. Local runs first execute bounded configured undo requests. No report is written. |
 
 In 0.6.0 and earlier, a probe that hit a 5xx, a timeout or a connection error stopped the whole run and lost its findings, while 401, 404, 422 and 429 were reported as `blocked_by_target` and the run exited 0. An unknown probe id ran nothing and exited 0. A CI job that passed because of those errors now exits 1 or 2.
+
+For local version 2 runs with undo requests, [run.json](run-json.md#target-cleanup) includes `target_cleanup`. Unfinished cleanup makes the report incomplete and exits 1 unless the cost cap takes priority. The console lists remaining resources for manual cleanup. SIGINT and SIGTERM write no report, even if cleanup is incomplete. A second signal may interrupt cleanup; the first signal still determines the exit code. SIGKILL and crashes cannot run the in-memory undo stack.
 
 ## Cost controls
 
@@ -556,9 +558,9 @@ Use a `transport` object in a `custom_http` target to configure request fields, 
 
 `argus-probe validate-target --target target.json --offline` sends no requests and does not resolve secrets. Add `--sample-response sample.json` to check a local response. `--execute` sends a benign request and reports status, selected rules, mapping failures, and request counts. `--endpoint-override` directs that execution to a controlled fake endpoint. Execute mode can incur model costs and use target tools.
 
-New transport files default to offline validation. Existing target files keep their single-prompt validation behavior. Synchronous execution sends exactly one request without retries. Diagnostics omit secret values and returned answer text.
+New transport files default to offline validation. Existing target files keep their single-prompt validation behavior. Version 1 synchronous execution sends exactly one request without retries. Version 2 may also send configured setup and undo requests. Diagnostics omit secret values and returned answer text.
 
-For local `custom_http` targets, [version 2](transport-spec.md#use-version-2) adds variables, generated references, and URL and query bindings. Offline validation lists binding names without rendering a body or reading environment values. Execute mode reports HTTP status, selected outcome, and request counts. Its `--endpoint-override` takes an origin and retains every configured request path. `--sample-response`, `--with-scenario`, and `--scenario-url` support version 1 transports only. Browser targets and remote clients remain on version 1.
+For local `custom_http` targets, [version 2](transport-spec.md#use-version-2) adds variables, generated references, and URL and query bindings. Offline validation lists binding names without rendering a body or reading environment values. Execute mode closes the target and reports HTTP status, selected outcome, and request counts. Configured lifecycle steps add `requests.setup=N requests.cleanup=N` after the submission, poll, and retry counts. Its `--endpoint-override` takes an origin and retains every configured request path, including lifecycle and undo paths. `--sample-response`, `--with-scenario`, and `--scenario-url` support version 1 transports only. Browser targets and remote clients remain on version 1.
 
 
 ### Browser transport validation
@@ -573,4 +575,4 @@ The operation uses its configured total deadline plus a bounded cleanup grace pe
 
 A transport with `delivery.kind: "poll"` submits once, then polls a fixed same-origin GET path with an encoded job ID. `validate-target --execute` prints the exact `requests.submit`, `requests.poll`, and `requests.retry` counts. `--offline` remains request-free; `--endpoint-override` changes both request origins and keeps the poll path.
 
-Submission refusal and failure stop before polling. Configured pending states wait until an explicit terminal reply, the poll limit, or the total deadline. The deadline covers submission, waits, and response reads together. No POST or GET is retried. Local cancellation closes resources and records a detached hosted job; it does not stop that remote job. SSE is not supported. See [poll configuration](transport-spec.md#poll-asynchronous-jobs).
+Submission refusal and failure stop before polling. Configured pending states wait until an explicit terminal reply, the poll limit, or the total deadline. The deadline covers submission, waits, and response reads together. No POST or GET is retried. Local cancellation closes resources and records a detached hosted job. Version 2 also executes configured GET or DELETE undo requests; these stop a remote job only when the service documents that behavior. SSE is not supported. See [poll configuration](transport-spec.md#poll-asynchronous-jobs).

@@ -104,3 +104,25 @@ async def test_literal_contents_and_expression_named_fields_are_ordinary_data():
             "attempt": "scenario_url",
         }]
         assert [call[:2] for call in app.calls] == [("POST", "/run?context=scenario_url")]
+
+
+@pytest.mark.parametrize("owner", ["run_request", "attempt_request", "undo_request", "run_prefix", "attempt_prefix"])
+@pytest.mark.parametrize("parsed", [False, True])
+def test_lifecycle_browser_context_rejected_at_target_boundary(owner, parsed):
+    from test_transport_v2_schema import lifecycle_dict
+
+    data = lifecycle_dict()
+    expression = {"base64": {"context": "scenario_url", "missing": "omit"}}
+    if owner == "run_request":
+        data["lifecycle"]["run"][0]["request"]["body"] = {"text": expression}
+    elif owner == "attempt_request":
+        data["lifecycle"]["attempt"][0]["request"]["query"] = {"scenario": expression}
+    elif owner == "undo_request":
+        data["lifecycle"]["run"][0]["undo"]["request"]["query"] = {"scenario": expression}
+    else:
+        scope = "run" if owner == "run_prefix" else "attempt"
+        capture = "ref" if scope == "run" else "item"
+        data["lifecycle"][scope][0]["capture"][capture]["expect_prefix"] = expression
+    transport = TransportSpecV2.from_dict(data) if parsed else data
+    with pytest.raises(ValueError, match="scenario_url context requires a browser target"):
+        CustomHTTPSpec(transport=transport)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Iterator
 from urllib.parse import urlsplit, urlunsplit
 
@@ -39,7 +39,10 @@ ENV_NAME_RE = re.compile(r"[A-Z_][A-Z0-9_]{0,63}\Z")
 SECRET_WORDS = ("key", "token", "secret", "password", "auth", "header", "cookie")
 CONTEXT_KEYS_V2 = frozenset(_CONTEXT_KEYS)
 V2_FIELD_NAMES = frozenset(
-    {"let", "run", "attempt", "var", "concat", "generate", "base64", "env", "query"}
+    {"let", "run", "attempt", "var", "concat", "generate", "base64", "env", "query",
+     "lifecycle", "id", "if_present", "expect", "http_status", "when", "capture",
+     "undo", "budget", "max_requests", "cleanup_reserve", "cleanup_s",
+     "last_segment", "expect_prefix"}
 )
 _QUERY_RESERVED = {"key", "auth", "authorization"}
 _QUERY_FRAGMENTS = ("token", "api_key", "apikey", "password", "secret", "credential")
@@ -217,6 +220,152 @@ class LetSpec(FrozenModel):
 
 
 @dataclass(frozen=True)
+class ExpectSpec(FrozenModel):
+    http_status: tuple[int, ...]
+    when: dict | None = None
+
+    @classmethod
+    def from_dict(cls, data):
+        object_fields(data, {"http_status", "when"}, {"http_status"})
+        statuses = data["http_status"]
+        if (
+            not isinstance(statuses, list)
+            or not statuses
+            or any(type(code) is not int or not 100 <= code <= 599 for code in statuses)
+        ):
+            raise ValueError("Invalid expected HTTP status")
+        return cls(tuple(statuses), predicate(data["when"]) if "when" in data else None)
+
+
+@dataclass(frozen=True)
+class CaptureSpec(FrozenModel):
+    path: str
+    last_segment: bool = False
+    expect_prefix: dict | None = None
+
+    @classmethod
+    def from_dict(cls, data, *, visible):
+        object_fields(data, {"path", "last_segment", "expect_prefix"}, {"path"})
+        path(data["path"])
+        last_segment = data.get("last_segment", False)
+        if type(last_segment) is not bool:
+            raise ValueError("Capture last_segment must be boolean")
+        prefix = (
+            value_expr_v2(data["expect_prefix"], visible=visible)
+            if "expect_prefix" in data else None
+        )
+        return cls(data["path"], last_segment, prefix)
+
+
+@dataclass(frozen=True)
+class UndoSpec(FrozenModel):
+    request: RequestSpecV2
+    expect: ExpectSpec
+
+    @classmethod
+    def from_dict(cls, data, *, visible):
+        object_fields(data, {"request", "expect"}, {"request", "expect"})
+        object_fields(data["request"], {"method", "url", "headers", "body", "query"}, {"url"})
+        method = data["request"].get("method", "POST")
+        if not isinstance(method, str) or method not in {"DELETE", "GET"}:
+            raise ValueError("Undo method must be DELETE or GET")
+        return cls(
+            RequestSpecV2.from_dict(data["request"], visible=visible),
+            ExpectSpec.from_dict(data["expect"]),
+        )
+
+
+@dataclass(frozen=True)
+class StepSpec(FrozenModel):
+    id: str
+    if_present: str | None
+    request: RequestSpecV2
+    expect: ExpectSpec
+    capture: dict[str, CaptureSpec]
+    undo: UndoSpec | None
+
+
+@dataclass(frozen=True)
+class LifecycleSpec(FrozenModel):
+    run: tuple[StepSpec, ...] = ()
+    attempt: tuple[StepSpec, ...] = ()
+
+
+@dataclass(frozen=True)
+class BudgetSpec(FrozenModel):
+    max_requests: int | None = None
+    cleanup_reserve: int = 100
+
+    @classmethod
+    def from_dict(cls, data):
+        object_fields(data, {"max_requests", "cleanup_reserve"})
+        for name, value in data.items():
+            if type(value) is not int or value < (1 if name == "max_requests" else 0):
+                raise ValueError("Invalid request budget")
+        return cls(**data)
+
+
+@dataclass(frozen=True)
+class TimeoutBudgetV2(TimeoutBudget):
+    cleanup_s: float = 60
+
+    @classmethod
+    def from_dict(cls, data):
+        object_fields(data, set(cls.__dataclass_fields__))
+        parsed = {
+            name: positive(value, 300 if name == "cleanup_s" else 86400)
+            for name, value in data.items()
+        }
+        return cls(**parsed)
+
+
+def _declare(name, declared):
+    _name(name)
+    if name in declared:
+        raise ValueError("Duplicate transport variable")
+    declared.add(name)
+
+
+def _parse_steps(values, visible, declared):
+    if not isinstance(values, list):
+        raise ValueError("Invalid lifecycle steps")
+    parsed = []
+    for data in values:
+        object_fields(
+            data,
+            {"id", "if_present", "request", "expect", "capture", "undo"},
+            {"id", "request", "expect"},
+        )
+        _declare(data["id"], declared)
+        guard = data.get("if_present")
+        if "if_present" in data and (
+            not isinstance(guard, str) or guard not in visible | CONTEXT_KEYS_V2
+        ):
+            raise ValueError("Step guard is not visible")
+        before = frozenset(visible)
+        request = RequestSpecV2.from_dict(data["request"], visible=before)
+        if request.method not in {"POST", "PUT", "PATCH", "GET", "DELETE"}:
+            raise ValueError("Invalid lifecycle step method")
+        captures = data.get("capture", {})
+        if not isinstance(captures, dict) or len(captures) > 128:
+            raise ValueError("Invalid lifecycle captures")
+        capture = {}
+        for name, selector in captures.items():
+            _declare(name, declared)
+            capture[name] = CaptureSpec.from_dict(selector, visible=before)
+        visible.update(capture)
+        undo = (
+            UndoSpec.from_dict(data["undo"], visible=frozenset(visible))
+            if "undo" in data else None
+        )
+        parsed.append(
+            StepSpec(data["id"], guard, request, ExpectSpec.from_dict(data["expect"]),
+                     capture, undo)
+        )
+    return tuple(parsed)
+
+
+@dataclass(frozen=True)
 class PollSpecV2(FrozenModel):
     kind: str
     ids: dict[str, dict]
@@ -236,33 +385,38 @@ class TransportSpecV2(FrozenModel):
     response: ResponseSpec
     outcome: OutcomeSpec
     delivery: SyncSpec | PollSpecV2 | SseSpec
-    timeout: TimeoutBudget
+    timeout: TimeoutBudgetV2
     session: SessionSpec
     limits: ResourceLimits
     let: LetSpec
+    lifecycle: LifecycleSpec
+    budget: BudgetSpec
 
     @classmethod
     def from_dict(cls, data):
         required = set(TransportSpec.__dataclass_fields__)
-        object_fields(data, required | {"let"}, required)
+        object_fields(data, required | {"let", "lifecycle", "budget"}, required)
         if type(data["version"]) is not int or data["version"] != 2:
             raise ValueError("Unsupported transport version")
         declarations = data.get("let", {})
         object_fields(declarations, {"run", "attempt"})
         visible = set()
+        declared = set()
         scopes = {}
+        lifecycle_data = data.get("lifecycle", {})
+        object_fields(lifecycle_data, {"run", "attempt"})
+        steps = {}
         for scope in ("run", "attempt"):
             values = declarations.get(scope, {})
             if not isinstance(values, dict) or len(values) > 128:
                 raise ValueError("Invalid variable declarations")
             parsed = {}
             for name, expr in values.items():
-                _name(name)
-                if name in visible:
-                    raise ValueError("Duplicate transport variable")
+                _declare(name, declared)
                 parsed[name] = value_expr_v2(expr, visible=frozenset(visible))
                 visible.add(name)
             scopes[scope] = parsed
+            steps[scope] = _parse_steps(lifecycle_data.get(scope, []), visible, declared)
         request = RequestSpecV2.from_dict(data["request"], visible=frozenset(visible))
         auth = AuthSpec.from_dict(data["auth"])
         auth_names = {h.name.lower() for h in auth.headers} | (
@@ -292,6 +446,7 @@ class TransportSpecV2(FrozenModel):
             },
             {"kind"},
         )
+        timeout = TimeoutBudgetV2.from_dict(data["timeout"])
         kind = choice(delivery_data["kind"], {"sync", "poll", "sse"})
         if kind == "sync":
             object_fields(delivery_data, {"kind"}, {"kind"})
@@ -299,6 +454,9 @@ class TransportSpecV2(FrozenModel):
         elif kind == "sse":
             envelope = copy.deepcopy(data)
             envelope.pop("let", None)
+            envelope.pop("lifecycle", None)
+            envelope.pop("budget", None)
+            envelope["timeout"].pop("cleanup_s", None)
             envelope["version"] = 1
             envelope["request"] = {
                 "url": request.url.replace("{", "").replace("}", ""),
@@ -355,18 +513,26 @@ class TransportSpecV2(FrozenModel):
         outcome = OutcomeSpec.from_dict(data["outcome"])
         if len(outcome.rules) > limits.max_rules:
             raise ValueError("Outcome rules exceed limit")
-        return cls(
+        result = cls(
             2,
             request,
             auth,
             ResponseSpec.from_dict(data["response"]),
             outcome,
             delivery,
-            TimeoutBudget.from_dict(data["timeout"]),
+            timeout,
             SessionSpec.from_dict(data["session"]),
             limits,
             LetSpec(**scopes),
+            LifecycleSpec(**steps),
+            BudgetSpec.from_dict(data.get("budget", {})),
         )
+        for _, item in iter_requests(result):
+            if origin(item.url) != origin(request.url):
+                raise ValueError("Lifecycle origin mismatch")
+            if auth_names & {name.lower() for name in item.headers}:
+                raise ValueError("Auth and public headers conflict")
+        return result
 
     def to_dict(self) -> dict:
         delivery = self.delivery
@@ -395,6 +561,18 @@ class TransportSpecV2(FrozenModel):
         result = envelope.to_dict()
         result["version"] = 2
         result["request"] = _request_dict(self.request)
+        if self.timeout.cleanup_s == 60:
+            result["timeout"].pop("cleanup_s", None)
+        if self.lifecycle.run or self.lifecycle.attempt:
+            result["lifecycle"] = {
+                scope: [_step_dict(step) for step in getattr(self.lifecycle, scope)]
+                for scope in ("run", "attempt") if getattr(self.lifecycle, scope)
+            }
+        if self.budget != BudgetSpec():
+            result["budget"] = {
+                name: value for name, value in asdict(self.budget).items()
+                if value != getattr(BudgetSpec(), name)
+            }
         if isinstance(self.delivery, PollSpecV2):
             result["delivery"]["request"] = _request_dict(self.delivery.request)
         if self.let.run or self.let.attempt:
@@ -434,10 +612,88 @@ def parse_transport_spec(data: dict) -> TransportSpec | TransportSpecV2:
     raise ValueError("Unsupported transport version")
 
 
-def iter_requests(spec: TransportSpecV2) -> Iterator[tuple[str, RequestSpecV2]]:
-    yield "submit", spec.request
+@dataclass(frozen=True)
+class _RequestOwner(FrozenModel):
+    owner: str
+    path: tuple[str | int, ...]
+    request: RequestSpecV2
+    guard: str | None = None
+
+
+@dataclass(frozen=True)
+class _ExpressionOwner(FrozenModel):
+    owner: str
+    path: tuple[str | int, ...]
+    expression: dict
+    guard: str | None = None
+
+
+def _iter_owners(spec):
+    yield _RequestOwner("submit", ("request",), spec.request)
     if isinstance(spec.delivery, PollSpecV2):
-        yield "poll", spec.delivery.request
+        yield _RequestOwner("poll", ("delivery", "request"), spec.delivery.request)
+    for scope in ("run", "attempt"):
+        for name, expression in getattr(spec.let, scope).items():
+            yield _ExpressionOwner("let", ("let", scope, name), expression)
+        for index, step in enumerate(getattr(spec.lifecycle, scope)):
+            location = ("lifecycle", scope, index)
+            yield _RequestOwner("setup", location + ("request",), step.request, step.if_present)
+            for name, capture in step.capture.items():
+                if capture.expect_prefix is not None:
+                    yield _ExpressionOwner("capture", location + ("capture", name, "expect_prefix"),
+                                           capture.expect_prefix, step.if_present)
+            if step.undo:
+                yield _RequestOwner("cleanup", location + ("undo", "request"),
+                                    step.undo.request, step.if_present)
+
+
+def iter_requests(spec: TransportSpecV2) -> Iterator[tuple[str, RequestSpecV2]]:
+    for item in _iter_owners(spec):
+        if isinstance(item, _RequestOwner):
+            yield item.owner, item.request
+
+
+def _iter_expressions(spec):
+    for item in _iter_owners(spec):
+        if isinstance(item, _ExpressionOwner):
+            yield item
+            continue
+        for name, expression in item.request.query.items():
+            yield _ExpressionOwner(item.owner, item.path + ("query", name), expression, item.guard)
+        body = item.request.body
+        if "json" in body:
+            for name, expression in body["json"].items():
+                yield _ExpressionOwner(item.owner, item.path + ("body", "json", name), expression, item.guard)
+        elif "text" in body:
+            yield _ExpressionOwner(item.owner, item.path + ("body", "text"), body["text"], item.guard)
+
+
+def _expect_dict(expect):
+    result = {"http_status": list(expect.http_status)}
+    if expect.when is not None:
+        result["when"] = json.loads(json.dumps(expect.when))
+    return result
+
+
+def _step_dict(step):
+    result = {"id": step.id, "request": _request_dict(step.request),
+              "expect": _expect_dict(step.expect)}
+    if step.if_present is not None:
+        result["if_present"] = step.if_present
+    if step.capture:
+        captures = {}
+        for name, capture in step.capture.items():
+            selector = {"path": capture.path}
+            if capture.last_segment:
+                selector["last_segment"] = True
+            if capture.expect_prefix is not None:
+                selector["expect_prefix"] = json.loads(json.dumps(capture.expect_prefix))
+            captures[name] = selector
+        result["capture"] = captures
+    if step.undo:
+        result["undo"] = {"request": _request_dict(step.undo.request),
+                          "expect": _expect_dict(step.undo.expect)}
+    return result
 
 
 def with_origin(data: dict, override: str) -> dict:
@@ -460,7 +716,10 @@ def with_origin(data: dict, override: str) -> dict:
         raise ValueError(message) from None
     spec = TransportSpecV2.from_dict(data)
     result = copy.deepcopy(data)
-    for owner, request in iter_requests(spec):
+    for item in _iter_owners(spec):
+        if not isinstance(item, _RequestOwner):
+            continue
+        request = item.request
         parts = urlsplit(request.url)
         url = urlunsplit(
             (
@@ -471,9 +730,9 @@ def with_origin(data: dict, override: str) -> dict:
                 parts.fragment,
             )
         )
-        target = (
-            result["request"] if owner == "submit" else result["delivery"]["request"]
-        )
+        target = result
+        for component in item.path:
+            target = target[component]
         target["url"] = url
     TransportSpecV2.from_dict(result)
     return result
