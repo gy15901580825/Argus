@@ -198,6 +198,11 @@ jobs:
       - name: Run test suite
         run: python -m pytest tests/ -q
 
+      - name: Run Argus hosted browser integration
+        run: |
+          pip install -e ..
+          python -m pytest tests/test_argus_hosted_e2e.py -q
+
       - name: Build non-root service image
         run: docker build -t hosted-trap:ci .
 

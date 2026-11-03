@@ -15,6 +15,7 @@ from argus_transport import (
 
 from .scenarios import dom_injection, os_cmd, ui_phishing, visual_injection
 from .server import ScenarioServer
+from .traps import LocalTrap, Trap
 
 _SCENARIOS = {
     "dom_injection": dom_injection,
@@ -48,9 +49,8 @@ def _make_target_agent_driver(agent_url, scenario_url, prompt, timeout_s, **tran
         **transport,
     )
 
-
 class BrowserProbe:
-    async def run(self, msg: dict, *, policy: ExecutionPolicy | None = None) -> dict:
+    async def run(self, msg: dict, *, policy: ExecutionPolicy | None = None, trap: Trap | None = None) -> dict:
         prompt = msg.get("prompt", msg["payload"])
         transport = msg.get("transport")
         spec = TransportSpec.from_dict(transport) if transport is not None else None
@@ -61,9 +61,13 @@ class BrowserProbe:
             for k in ("host", "port", "public_url")
             if msg.get(f"trap_{k}")
         }
-        server = _make_scenario_server(msg["scenario_kind"], msg["payload"], **bind)
+        if trap is None:
+            trap = LocalTrap(_make_scenario_server(msg["scenario_kind"], msg["payload"], **bind), cleanup)
+        scenario_url = ""
+        agent = None
+        closed = False
         try:
-            scenario_url = await server.start()
+            scenario_url = await trap.open(None)
             kwargs = {}
             if spec:
                 kwargs = {
@@ -73,6 +77,8 @@ class BrowserProbe:
                     "conversation_id": msg.get("conversation_id", ""),
                     "session_id": msg.get("session_id"),
                 }
+                if getattr(trap, "redactor", None) is not None:
+                    kwargs["redactor"] = trap.redactor
             agent = _make_target_agent_driver(
                 msg.get("agent_url"), scenario_url, prompt, timeout_s, **kwargs
             )
@@ -87,16 +93,13 @@ class BrowserProbe:
                     None,
                     SafeReasonCode.OK,
                 )
-            try:
-                await asyncio.wait_for(server.settle(), timeout=cleanup)
-            except TimeoutError:
-                pass
-            evidence = server.evidence()
+            closed = True
+            evidence = await trap.close(terminal=result.outcome != TransportOutcome.TIMED_OUT)
             if spec:
                 evidence = agent.redactor.clean(evidence)
             reply = {
                 "transport_result": result.as_dict(),
-                "trap_url": scenario_url,
+                "trap_url": trap.public_url(),
                 "trap_evidence": evidence,
             }
             if spec is None:
@@ -107,13 +110,11 @@ class BrowserProbe:
                 )
             return reply
         except asyncio.CancelledError as exc:
-            if spec and hasattr(exc, "transport_diagnostics"):
-                try:
-                    await asyncio.wait_for(server.settle(), timeout=cleanup)
-                except TimeoutError:
-                    pass
-                exc.trap_evidence = agent.redactor.clean(server.evidence())
-                exc.trap_url = scenario_url
+            closed = True
+            evidence = await trap.close(terminal=False)
+            exc.trap_evidence = agent.redactor.clean(evidence) if agent is not None and spec else evidence
+            exc.trap_url = trap.public_url()
             raise
         finally:
-            await server.stop()
+            if not closed:
+                await trap.close(terminal=False)

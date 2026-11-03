@@ -26,6 +26,7 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 SRC = REPO / "client_agent/redteam_runner"
 COPY = REPO / "argus/browser_runner"
 FILES = ["__init__.py", "browser_probe.py", "server.py", "target_agent_driver.py",
+         "traps.py",
          "scenarios/__init__.py", "scenarios/_html.py", "scenarios/dom_injection.py",
          "scenarios/os_cmd.py", "scenarios/ui_phishing.py", "scenarios/visual_injection.py"]
 
