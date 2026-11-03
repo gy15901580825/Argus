@@ -105,6 +105,149 @@ async def test_credential_echo_trips_stop_before_parsing(monkeypatch, status, va
         assert len(app.calls) == 1
 
 
+@pytest.fixture
+def response_reads(monkeypatch):
+    original = httpx.Response.aiter_bytes
+    reads = []
+    async def recorded(response, *args, **kwargs):
+        async for chunk in original(response, *args, **kwargs):
+            if response.url.path != '/echo':
+                yield chunk
+                continue
+            size = 8 if response.headers.get('X-Split') else len(chunk)
+            for offset in range(0, len(chunk), size):
+                part = chunk[offset:offset + size]
+                reads.append(len(part))
+                yield part
+    monkeypatch.setattr(httpx.Response, 'aiter_bytes', recorded)
+    return reads
+
+
+@pytest.mark.parametrize('status', [200, 503])
+@pytest.mark.parametrize('split', [False, True])
+@pytest.mark.parametrize('valid_utf8', [False, True])
+async def test_bounded_prefix_echo_trips_before_response_limit(
+    monkeypatch, response_reads, status, split, valid_utf8,
+):
+    monkeypatch.setenv('DUMMY_ACCESS', 'dummy-not-a-key')
+    app = recording_lifecycle()
+    async def echo(request):
+        value = request.headers['Authorization'].removeprefix('Bearer ')
+        text = value + 'x' * (99 - len(value)) + '\u00e9' + 'x' * 100
+        body = text.encode('utf-8')
+        if not valid_utf8:
+            body = body[:len(value)] + b'\xff' + body[len(value) + 1:]
+        return web.Response(body=body, status=status, headers={'X-Split': '1'} if split else {})
+    app.route('POST', '/echo', echo)
+    async with serve(app) as origin:
+        data = lifecycle_dict(origin)
+        data['request']['url'] = origin + '/echo'
+        data['limits']['response_bytes'] = 100
+        data['auth'] = {'kind': 'bearer', 'secret': {'source': 'env', 'name': 'DUMMY_ACCESS'}}
+        target = CustomHTTPTarget(CustomHTTPSpec(transport=data))
+        with local_transport_mode():
+            with pytest.raises(TargetRunStopped) as caught:
+                await target.send_prompt('normal task')
+            assert caught.value.reason == 'credential_echo'
+            assert 'dummy-not-a-key' not in str(caught.value)
+            assert 'dummy-not-a-key' not in str(caught.value.transport_diagnostics)
+            with pytest.raises(TargetRunStopped, match='^credential_echo$'):
+                await target.send_prompt('next task')
+            await target.aclose()
+        assert [(call[0], call[1]) for call in app.calls] == [
+            ('POST', '/v1/sources'), ('POST', '/v1/messages'), ('POST', '/echo'),
+        ]
+        report = target.cleanup_report()
+        assert report['stop_reason'] == 'credential_echo'
+        assert {item['status'] for item in report['open']} == {'skipped_stopped'}
+        assert 'dummy-not-a-key' not in str(report)
+        assert sum(response_reads) == (16 if split else 201)
+
+
+@pytest.mark.parametrize('status,reason', [(200, 'response_limit'), (503, 'http_error')])
+@pytest.mark.parametrize('split', [False, True])
+@pytest.mark.parametrize('offset', [95, 120])
+async def test_echo_not_wholly_inside_cap_preserves_limit_without_more_reads(
+    monkeypatch, response_reads, status, reason, split, offset,
+):
+    monkeypatch.setenv('DUMMY_ACCESS', 'dummy-not-a-key')
+    app = RecordingApp()
+    async def echo(request):
+        value = request.headers['Authorization'].removeprefix('Bearer ')
+        return web.Response(text='x' * offset + value + 'x' * 100, status=status,
+                            headers={'X-Split': '1'} if split else {})
+    app.route('POST', '/echo', echo)
+    async with serve(app) as origin:
+        data = v2_dict(origin + '/echo')
+        data['limits']['response_bytes'] = 100
+        data['auth'] = {'kind': 'bearer', 'secret': {'source': 'env', 'name': 'DUMMY_ACCESS'}}
+        run = runtime(data)
+        result = await run.attempt(TransportContext(prompt='normal task'))
+        assert result.reason_code.value == reason
+        assert run.ledger.stopped is None
+        assert 'dummy-not-a-key' not in str(result.diagnostics)
+        await run.close()
+        assert len(app.calls) == 1
+        assert sum(response_reads) == (104 if split else offset + 115)
+
+
+@pytest.mark.parametrize('status', [200, 503])
+async def test_received_echo_trips_before_waiting_for_more_body(monkeypatch, status):
+    monkeypatch.setenv('DUMMY_ACCESS', 'dummy-not-a-key')
+    release = asyncio.Event()
+    app = recording_lifecycle()
+    async def echo(request):
+        value = request.headers['Authorization'].removeprefix('Bearer ')
+        response = web.StreamResponse(status=status)
+        await response.prepare(request)
+        await response.write(value.encode('utf-8'))
+        await release.wait()
+        return response
+    app.route('POST', '/echo', echo)
+    async with serve(app) as origin:
+        data = lifecycle_dict(origin)
+        data['request']['url'] = origin + '/echo'
+        data['limits']['response_bytes'] = 100
+        data['timeout'] = {'read_s': .3, 'total_deadline_s': 2}
+        data['auth'] = {'kind': 'bearer', 'secret': {'source': 'env', 'name': 'DUMMY_ACCESS'}}
+        target = CustomHTTPTarget(CustomHTTPSpec(transport=data))
+        with local_transport_mode():
+            try:
+                with pytest.raises(TargetRunStopped, match='^credential_echo$'):
+                    await target.send_prompt('normal task')
+                with pytest.raises(TargetRunStopped, match='^credential_echo$'):
+                    await target.send_prompt('next task')
+            finally:
+                release.set()
+                await target.aclose()
+        assert [(call[0], call[1]) for call in app.calls] == [
+            ('POST', '/v1/sources'), ('POST', '/v1/messages'), ('POST', '/echo'),
+        ]
+        assert target.cleanup_report()['stop_reason'] == 'credential_echo'
+
+
+@pytest.mark.parametrize('status,reason', [(200, 'response_limit'), (503, 'http_error')])
+async def test_oversized_echo_opt_out_keeps_later_requests(monkeypatch, status, reason):
+    monkeypatch.setenv('DUMMY_ACCESS', 'dummy-not-a-key')
+    app = RecordingApp()
+    async def echo(request):
+        value = request.headers['Authorization'].removeprefix('Bearer ')
+        return web.Response(text=value + 'x' * 200, status=status)
+    app.route('POST', '/echo', echo)
+    async with serve(app) as origin:
+        data = v2_dict(origin + '/echo')
+        data['limits']['response_bytes'] = 100
+        data['auth'] = {'kind': 'bearer', 'secret': {'source': 'env', 'name': 'DUMMY_ACCESS'}}
+        data['budget'] = {'stop_on': {'credential_echo': False}}
+        run = runtime(data)
+        for _ in range(2):
+            result = await run.attempt(TransportContext(prompt='normal task'))
+            assert result.reason_code.value == reason
+            assert run.ledger.stopped is None
+        await run.close()
+        assert len(app.calls) == 2
+
+
 async def test_stop_on_empty_list_disables_status_trip():
     app = RecordingApp()
     app.route('POST', '/run', limited)

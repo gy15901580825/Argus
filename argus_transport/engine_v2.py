@@ -740,9 +740,14 @@ class TransportEngineV2:
                     diagnostics=redactor.clean(diagnostics),
                 )
             body = bytearray()
+            echo_values = tuple(value.encode('utf-8') for value in redactor.values) if stop.credential_echo else ()
             async for chunk in response.aiter_bytes():
-                body.extend(chunk)
-                if len(body) > self.spec.limits.response_bytes:
+                remaining = self.spec.limits.response_bytes - len(body)
+                body.extend(chunk[:remaining])
+                if any(value in body for value in echo_values):
+                    self.runtime.ledger.trip('credential_echo')
+                    raise TargetRunStopped(self.runtime.ledger.stopped)
+                if len(chunk) > remaining:
                     return self.failure(
                         SafeReasonCode.HTTP_ERROR if http_error else SafeReasonCode.RESPONSE_LIMIT,
                         start,
@@ -751,9 +756,6 @@ class TransportEngineV2:
                     )
             try:
                 raw = body.decode("utf-8")
-                if stop.credential_echo and any(value in raw for value in redactor.values):
-                    self.runtime.ledger.trip('credential_echo')
-                    raise TargetRunStopped(self.runtime.ledger.stopped)
                 if http_error:
                     return self.failure(SafeReasonCode.HTTP_ERROR, start, status=status,
                                         diagnostics=redactor.clean(diagnostics))
