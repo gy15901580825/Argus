@@ -147,7 +147,7 @@ A version 2 endpoint override takes an origin, with an optional trailing slash. 
 
 `lifecycle.run` is an ordered list of steps executed once, before the first attempt. `lifecycle.attempt` runs before each submission. Run declarations and captured values persist across probes. Attempt declarations are evaluated again for each attempt.
 
-Each step has a unique `id`, a `request`, and an `expect.http_status` list. Setup requests accept GET, POST, and DELETE. An optional `if_present` names an already visible variable or context value. When that value is absent, Argus skips the step. A step can `capture` response fields into named variables for later steps, submission, or its own undo request.
+Each step has a unique `id`, a `request`, and an `expect.http_status` list. Setup requests accept GET, POST, PUT, PATCH, and DELETE. An optional `if_present` names an already visible variable or context value. When that value is absent, Argus skips the step. A step can `capture` response fields into named variables for later steps, submission, or its own undo request.
 
 For example, add this run step to an existing version 2 transport:
 
@@ -175,7 +175,7 @@ For example, add this run step to an existing version 2 transport:
 }
 ```
 
-A capture may set `expect_prefix` to a value expression. Argus checks that exact, case sensitive prefix before publishing any captures from the response. With `last_path_segment: true`, it extracts the final slash-delimited segment and requires 1 through 256 characters containing only letters, digits, `.`, `_`, `~`, or `-`. Without segment extraction, it retains the full captured value. A mismatch fails the attempt with `id_prefix_mismatch`. A run setup failure ends the run, while an attempt setup failure affects that attempt.
+A capture may set `expect_prefix` to a value expression. Argus checks that exact, case sensitive prefix before publishing any captures from the response. With `last_segment: true`, it extracts the final slash-delimited segment and requires 1 through 256 characters containing only letters, digits, `.`, `_`, `~`, or `-`. Without segment extraction, it retains the full captured value. A mismatch fails the attempt with `id_prefix_mismatch`. A run setup failure ends the run, while an attempt setup failure affects that attempt.
 
 An undo requires `request` and `expect.http_status` and accepts only GET or DELETE. Include 404 when an already absent object should count as cleaned. Configure the URL and variables so the request addresses resources this run owns. Argus does not independently verify ownership or add a prefix to resource names. Prefixes and generated names come from the configuration.
 
