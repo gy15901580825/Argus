@@ -742,9 +742,12 @@ class TransportEngineV2:
             body = bytearray()
             echo_values = tuple(value.encode('utf-8') for value in redactor.values) if stop.credential_echo else ()
             async for chunk in response.aiter_bytes():
-                remaining = self.spec.limits.response_bytes - len(body)
+                previous_len = len(body)
+                remaining = self.spec.limits.response_bytes - previous_len
                 body.extend(chunk[:remaining])
-                if any(value in body for value in echo_values):
+                if any(len(value) <= len(body) and
+                       body.find(value, max(0, previous_len - len(value) + 1)) >= 0
+                       for value in echo_values):
                     self.runtime.ledger.trip('credential_echo')
                     raise TargetRunStopped(self.runtime.ledger.stopped)
                 if len(chunk) > remaining:

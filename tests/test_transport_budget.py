@@ -114,7 +114,7 @@ def response_reads(monkeypatch):
             if response.url.path != '/echo':
                 yield chunk
                 continue
-            size = 8 if response.headers.get('X-Split') else len(chunk)
+            size = int(response.headers['X-Split']) if response.headers.get('X-Split') else len(chunk)
             for offset in range(0, len(chunk), size):
                 part = chunk[offset:offset + size]
                 reads.append(len(part))
@@ -124,10 +124,10 @@ def response_reads(monkeypatch):
 
 
 @pytest.mark.parametrize('status', [200, 503])
-@pytest.mark.parametrize('split', [False, True])
+@pytest.mark.parametrize('chunk_size', [None, 8, 1])
 @pytest.mark.parametrize('valid_utf8', [False, True])
 async def test_bounded_prefix_echo_trips_before_response_limit(
-    monkeypatch, response_reads, status, split, valid_utf8,
+    monkeypatch, response_reads, status, chunk_size, valid_utf8,
 ):
     monkeypatch.setenv('DUMMY_ACCESS', 'dummy-not-a-key')
     app = recording_lifecycle()
@@ -137,7 +137,8 @@ async def test_bounded_prefix_echo_trips_before_response_limit(
         body = text.encode('utf-8')
         if not valid_utf8:
             body = body[:len(value)] + b'\xff' + body[len(value) + 1:]
-        return web.Response(body=body, status=status, headers={'X-Split': '1'} if split else {})
+        return web.Response(body=body, status=status,
+                            headers={'X-Split': str(chunk_size)} if chunk_size else {})
     app.route('POST', '/echo', echo)
     async with serve(app) as origin:
         data = lifecycle_dict(origin)
@@ -161,21 +162,21 @@ async def test_bounded_prefix_echo_trips_before_response_limit(
         assert report['stop_reason'] == 'credential_echo'
         assert {item['status'] for item in report['open']} == {'skipped_stopped'}
         assert 'dummy-not-a-key' not in str(report)
-        assert sum(response_reads) == (16 if split else 201)
+        assert sum(response_reads) == {None: 201, 8: 16, 1: 15}[chunk_size]
 
 
 @pytest.mark.parametrize('status,reason', [(200, 'response_limit'), (503, 'http_error')])
-@pytest.mark.parametrize('split', [False, True])
+@pytest.mark.parametrize('chunk_size', [None, 8, 1])
 @pytest.mark.parametrize('offset', [95, 120])
 async def test_echo_not_wholly_inside_cap_preserves_limit_without_more_reads(
-    monkeypatch, response_reads, status, reason, split, offset,
+    monkeypatch, response_reads, status, reason, chunk_size, offset,
 ):
     monkeypatch.setenv('DUMMY_ACCESS', 'dummy-not-a-key')
     app = RecordingApp()
     async def echo(request):
         value = request.headers['Authorization'].removeprefix('Bearer ')
         return web.Response(text='x' * offset + value + 'x' * 100, status=status,
-                            headers={'X-Split': '1'} if split else {})
+                            headers={'X-Split': str(chunk_size)} if chunk_size else {})
     app.route('POST', '/echo', echo)
     async with serve(app) as origin:
         data = v2_dict(origin + '/echo')
@@ -188,7 +189,7 @@ async def test_echo_not_wholly_inside_cap_preserves_limit_without_more_reads(
         assert 'dummy-not-a-key' not in str(result.diagnostics)
         await run.close()
         assert len(app.calls) == 1
-        assert sum(response_reads) == (104 if split else offset + 115)
+        assert sum(response_reads) == {None: offset + 115, 8: 104, 1: 101}[chunk_size]
 
 
 @pytest.mark.parametrize('status', [200, 503])
