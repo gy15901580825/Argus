@@ -446,6 +446,7 @@ class TransportSpecV2(FrozenModel):
             },
             {"kind"},
         )
+        timeout = TimeoutBudgetV2.from_dict(data["timeout"])
         kind = choice(delivery_data["kind"], {"sync", "poll", "sse"})
         if kind == "sync":
             object_fields(delivery_data, {"kind"}, {"kind"})
@@ -519,7 +520,7 @@ class TransportSpecV2(FrozenModel):
             ResponseSpec.from_dict(data["response"]),
             outcome,
             delivery,
-            TimeoutBudgetV2.from_dict(data["timeout"]),
+            timeout,
             SessionSpec.from_dict(data["session"]),
             limits,
             LetSpec(**scopes),

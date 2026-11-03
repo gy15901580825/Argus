@@ -624,3 +624,52 @@ def test_undo_method_rejects_non_strings(method):
     data["lifecycle"]["run"][0]["undo"]["request"]["method"] = method
     with pytest.raises(ValueError, match="Undo method must be DELETE or GET"):
         TransportSpecV2.from_dict(data)
+
+
+def sse_timeout_dict():
+    data = v2_dict()
+    data["delivery"] = {
+        "kind": "sse",
+        "event_names": ["message"],
+        "data_format": "json",
+        "terminal": {"path": "$.done", "equals": True},
+        "accumulation": "final_value",
+        "idle_timeout_s": 10,
+        "reconnect": False,
+    }
+    return data
+
+
+@pytest.mark.parametrize("parser", [TransportSpecV2.from_dict, parse_transport_spec])
+@pytest.mark.parametrize("timeout", [None, [], "bad"])
+def test_sse_timeout_rejects_non_objects(parser, timeout):
+    data = sse_timeout_dict()
+    data["timeout"] = timeout
+    with pytest.raises(ValueError):
+        parser(data)
+
+
+@pytest.mark.parametrize("cleanup_s", [None, 60, 120, 300])
+def test_sse_cleanup_timeout_preserves_defaults_and_roundtrip(cleanup_s):
+    data = sse_timeout_dict()
+    if cleanup_s is not None:
+        data["timeout"]["cleanup_s"] = cleanup_s
+    original = copy.deepcopy(data)
+    spec = TransportSpecV2.from_dict(data)
+    assert isinstance(spec.delivery, SseSpec)
+    assert spec.timeout.cleanup_s == (60 if cleanup_s is None else cleanup_s)
+    serialized = spec.to_dict()
+    if cleanup_s in (None, 60):
+        assert "cleanup_s" not in serialized["timeout"]
+    else:
+        assert serialized["timeout"]["cleanup_s"] == cleanup_s
+    assert TransportSpecV2.from_dict(serialized) == spec
+    assert data == original
+
+
+@pytest.mark.parametrize("cleanup_s", [0, 301, True])
+def test_sse_cleanup_timeout_rejects_invalid_bounds(cleanup_s):
+    data = sse_timeout_dict()
+    data["timeout"]["cleanup_s"] = cleanup_s
+    with pytest.raises(ValueError):
+        TransportSpecV2.from_dict(data)
