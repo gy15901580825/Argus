@@ -82,6 +82,8 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
             raise click.UsageError(f"--local runs in this process; do not pass {' or '.join(typed)}")
         _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, secret_values, skip_judged)
         return
+    if _uses_python(spec):
+        raise click.UsageError("a python target runs a local function; it needs --local")
     if skip_judged:
         # In server mode the server holds the judge key, so only it knows whether one is missing.
         raise click.UsageError("--skip-judged needs --local; in server mode the server holds the judge key")
@@ -166,6 +168,11 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
         sys.exit(1)
     if hits:
         sys.exit(3)
+
+
+def _uses_python(spec: dict) -> bool:
+    inner = spec.get("inner")
+    return spec.get("kind") == "python" or (isinstance(inner, dict) and _uses_python(inner))
 
 
 def _check_browser_spec(spec: dict) -> None:

@@ -337,3 +337,92 @@ def test_loader_requires_entry():
 
     with pytest.raises(TargetLoadError, match="missing required fields: \\['entry'\\]"):
         load_target_spec('{"kind": "python"}')
+
+
+def _fixture_spec(name):
+    return str(FIXTURES / name)
+
+
+def test_local_run_of_sync_and_async_sample_functions(tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from click.testing import CliRunner
+
+    from argus import api
+    from argus.cli.__main__ import main
+    from argus.probe import Probe, ProbeMappings
+
+    probe = Probe(
+        id="python_sample_probe",
+        name="python_sample_probe",
+        target_class=("llm_chat",),
+        attack_class=("prompt-injection",),
+        severity="high",
+        prompts=("say hello",),
+        mappings=ProbeMappings(atlas=("AML.T0051",), owasp_llm=("LLM01",), nist_ai_rmf=(), eu_ai_act=()),
+        judge_model="m",
+        judge_rubric_path="rubrics/default.md",
+    )
+    judge = MagicMock()
+    judge.judge = AsyncMock(return_value=MagicMock(
+        verdict="pass", severity="info", confidence=0.9,
+        reasoning="refused", judge_model="stub", escalated_model=None,
+    ))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "dummy-not-a-key")
+    for name in ("sync_target.json", "async_target.json"):
+        out = tmp_path / f"{name}.json"
+        with patch.object(api, "load_probe_library", return_value=[probe]), \
+             patch.object(api, "Judge", return_value=judge), \
+             patch("argus.local.load_probe_library", return_value=[probe]):
+            result = CliRunner().invoke(main, [
+                "run", "--local", "--target", _fixture_spec(name),
+                "--probes", "python_sample_probe", "--format", "json", "--out", str(out),
+            ])
+        assert result.exit_code == 0, result.output
+        import json
+        findings = json.loads(out.read_text())["findings"]
+        assert [(f["probe_id"], f["verdict"], f["target_response"]) for f in findings] == [
+            ("python_sample_probe", "pass", "echo: say hello | material=None")
+        ]
+
+
+def test_offline_does_not_import_user_module_but_execute_does(tmp_path, monkeypatch):
+    from click.testing import CliRunner
+
+    from argus.cli.__main__ import main
+
+    marker = tmp_path / "marker"
+    monkeypatch.setenv("ARGUS_TEST_IMPORT_MARKER", str(marker))
+    spec = tmp_path / "target.json"
+    spec.write_text(f'{{"kind": "python", "entry": "{FIXTURES / "import_marker.py"}:call"}}')
+    offline = CliRunner().invoke(main, ["validate-target", "--target", str(spec), "--offline"])
+    assert offline.exit_code == 0, offline.output
+    assert not marker.exists()
+    executed = CliRunner().invoke(main, ["validate-target", "--target", str(spec), "--execute"])
+    assert executed.exit_code == 0, executed.output
+    assert marker.read_text() == "imported"
+    assert "replied with 22 chars" in executed.output
+
+
+def test_validate_target_resolves_entry_next_to_the_spec_file(tmp_path, monkeypatch):
+    from click.testing import CliRunner
+
+    from argus.cli.__main__ import main
+
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(
+        main, ["validate-target", "--target", _fixture_spec("sync_target.json"), "--execute"]
+    )
+    assert result.exit_code == 0, result.output
+
+
+def test_run_probes_refuses_python_unless_trusted():
+    from argus import api
+
+    async def drain():
+        req = api.RunRequest(target=_python_spec("mod:call"), probe_ids=["x"])
+        return [e async for e in api._run_probes(req, "dummy-not-a-key")]
+
+    with pytest.raises(ValueError) as exc:
+        asyncio.run(drain())
+    assert str(exc.value) == MESSAGE

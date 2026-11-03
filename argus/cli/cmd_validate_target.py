@@ -116,7 +116,7 @@ def cmd_validate_target(
     if isinstance(raw, dict) and "kind" not in raw:
         raw = {"kind": "openai_compat", **raw}  # specs written before `kind` existed
     try:
-        spec, substituted = check_target_spec(raw)
+        spec, substituted = check_target_spec(raw, base_dir=Path(target_file).resolve().parent)
     except TargetLoadError as e:
         raise click.ClickException(str(e))
     kind = spec["kind"]
@@ -131,7 +131,7 @@ def cmd_validate_target(
         )
     if offline:
         try:
-            build_target(spec)
+            build_target(spec, trusted_code=True)
         except Exception as exc:
             raise click.ClickException(
                 f"target spec invalid: {type(exc).__name__}"
@@ -151,7 +151,7 @@ def cmd_validate_target(
         raise click.ClickException(run_json.mask_text(message, secrets))
 
     try:
-        target = build_target(spec)
+        target = build_target(spec, trusted_code=True)
     except (
         Exception
     ) as e:  # spec values the adapter rejects (a bad JSONPath, a wrong type)
@@ -173,6 +173,7 @@ def cmd_validate_target(
         raw.get("endpoint_url")
         or raw.get("request_url")
         or raw.get("url")
+        or raw.get("entry")
         or f"anthropic {raw['model']}"
     )
     click.echo(
@@ -289,7 +290,7 @@ def _validate_transport(
     from argus.targets import build_target
 
     try:
-        target = build_target(spec)
+        target = build_target(spec, trusted_code=True)
         if "transport" in spec:
             transport = TransportSpec.from_dict(spec["transport"])
         else:

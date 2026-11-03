@@ -287,7 +287,7 @@ async def test_litellm_without_credentials_and_skip_judged_skips_with_the_names(
     assertion_probe = "garak_leakreplay_guardiancloze"  # decided by deterministic checks, no judge
     seen = {}
 
-    async def spy(req, key):
+    async def spy(req, key, **_):
         seen["ids"] = req.probe_ids
         yield {"probe_id": assertion_probe, "verdict": "pass", "severity": "info"}
 
@@ -410,7 +410,7 @@ def test_run_flags_reach_the_engine_and_the_report_then_env_is_restored(tmp_path
     monkeypatch.setenv("REDTEAM_FAST_MODEL", "ollama/from-env")
     seen = {}
 
-    async def fake_run_probes(req, key):
+    async def fake_run_probes(req, key, **_):
         seen["env"] = {k: os.environ.get(k) for k in (
             "REDTEAM_MODEL_PROVIDER", "REDTEAM_FAST_MODEL", "REDTEAM_STRONG_MODEL", "REDTEAM_LLM_API_BASE",
             *price_env_names("gemini/gemini-2.5-flash"))}

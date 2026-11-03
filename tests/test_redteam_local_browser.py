@@ -297,7 +297,7 @@ async def test_abandoned_run_local_does_not_leave_local_mode_set(monkeypatch):
     from argus.targets import browser_use
     seen = []
 
-    async def fake_run_probes(req, key):
+    async def fake_run_probes(req, key, **_):
         for i in range(3):
             seen.append(browser_use._LOCAL_RUN.get())
             yield {"probe_id": f"p{i}", "verdict": "pass"}

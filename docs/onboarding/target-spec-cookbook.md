@@ -2,10 +2,10 @@
 
 Argus needs to know how to reach your AI agent. The "target spec" is a small JSON file (`argus-target.json`) that describes the agent endpoint and how to authenticate against it.
 
-The fastest way to generate it is interactively, for any of the 14 kinds `init` knows how to ask questions about (`openai_compat`, `anthropic_native`, `custom_http`, `grpc`, `browser_use`, `web_chat`, `payment_agent`, `mcp_agent`, `testbed_agent`, `http_upload`, `a2a_server`, `mcp_server`, `vllm_server`, `a2a_agent`):
+The fastest way to generate it is interactively, for any of the 15 kinds `init` knows how to ask questions about (`openai_compat`, `anthropic_native`, `custom_http`, `grpc`, `browser_use`, `web_chat`, `payment_agent`, `mcp_agent`, `testbed_agent`, `http_upload`, `a2a_server`, `mcp_server`, `vllm_server`, `a2a_agent`, `python`):
 
 ```bash
-argus-probe init --kind <one of those 14>
+argus-probe init --kind <one of those 15>
 ```
 
 Below are copy-paste templates for each supported agent shape, plus the gotchas we've run into in real deployments.
@@ -532,6 +532,60 @@ argus-probe run --local --target a2a-target.json --probes all --format json --ou
 - Exactly one of `render_url_jsonpath` or `render_url_header` must be set — how the adapter finds the render URL in the upload response (a JSON body field vs. a response header like `Location`). Setting both, or neither, is rejected at construction.
 - If the render URL can't be located, the adapter returns the upload response body itself so the judge can still inspect it, rather than erroring.
 - `upload_headers` / `render_headers` / `extra_form_fields` are Jinja2 templates rendered with `{{api_key}}` in scope, so a bearer token only needs to be written once via the `api_key` field. They render in the same sandbox as `custom_http` templates.
+
+---
+
+## python
+
+**Use this for**: an agent you can call as a Python function, in your own repository, with no HTTP adapter in front of it. Argus imports your function and calls it once per prompt. It runs only on your machine or in your CI: `argus-probe run --local`, `validate-target --execute` and `list-probes`. A server never builds a python target and answers `422` to one. `run` without `--local` exits 2 with `a python target runs a local function; it needs --local`. A python target cannot sit in the `inner` of another target in any mode.
+
+```json
+{"kind": "python", "entry": "tests/argus_target.py:call", "history": true, "timeout_s": 300}
+```
+
+| Field | Meaning |
+|---|---|
+| `entry` | Required. `module.path:func` or `path/to/file.py:func`. A value that contains `/` or ends in `.py` before the last `:` is a file path; anything else is a module name. A relative file path is relative to the spec file's directory (to the working directory for inline JSON). A module must be importable from the CI job: installed, or on `PYTHONPATH`. |
+| `history` | Default `true`. Set `false` when the function keeps no conversation, so Argus skips probes that need one. |
+| `timeout_s` | Default `300`. |
+
+The function can be `def` or `async def`:
+
+```python
+def call(prompt: str, material: str | None, context: dict) -> dict:
+    return {"output": my_agent.run(prompt)}
+```
+
+- `prompt` is the attack text. `material` is `None` unless the run uses a probe's `indirect` channel for third-party content. `context` is `{"history": [{"role", "content"}, ...], "conversation_id": str, "probe_id": str}`.
+- Return a dict. `output` (a string) is the reply. `error` marks the call as failed, and the finding is an error with the message `python_target_error`. `run_log` takes the same shape as `custom_http`'s run log. Any other key is a mapping error. Argus measures latency itself.
+- An exception from your function is reported as its class name only, never its message, so a secret in the message does not reach the report. A call that runs past `timeout_s` is a timeout error. A synchronous function runs in a worker thread, and Python cannot stop a thread: after a timeout Argus stops waiting, but the function keeps running until it returns.
+- `validate-target --offline` checks the spec and does not import your module, because importing runs its top-level code. `--execute` and `run` import it.
+- The baseline identity of the run hashes the spec, not the function's source file. Changing the function does not start a new baseline.
+
+A job that gates a pull request on the function:
+
+```yaml
+      - uses: actions/checkout@v4
+      - run: pip install -r requirements.txt argus-probe  # your agent's dependencies, then Argus
+      - run: argus-probe run --local --target argus-target.json --probes all --format sarif --out argus.sarif
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+Wrapping a framework agent takes one function. These examples are not shipped in the package and are not run by Argus's tests.
+
+```python
+# LangChain
+def call(prompt, material, context):
+    result = agent_executor.invoke({"input": prompt})
+    return {"output": result["output"]}
+```
+
+```python
+# LlamaIndex
+def call(prompt, material, context):
+    return {"output": str(query_engine.query(prompt))}
+```
 
 ---
 

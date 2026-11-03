@@ -20,7 +20,7 @@ def _target_probe_ids(target: str) -> set[str]:
     from argus.targets import build_target
 
     try:
-        return set(compatible_probe_ids(build_target(load_target_spec(target))))
+        return set(compatible_probe_ids(build_target(load_target_spec(target), trusted_code=True)))
     except (TargetLoadError, ValueError, TypeError) as e:
         # TypeError: the spec class rejects unexpected or missing fields.
         raise click.UsageError(f"--target: {e}") from None
