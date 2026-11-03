@@ -192,6 +192,63 @@ Server mode accepts the same three options. There the client agent serves the tr
 
 If your agent can't reach your machine at all, submit the run with `--api-url` and `--token` to a compatible hosted service instead.
 
+### Use hosted pages with a local scan
+
+Set `trap_mode` to `hosted` when your browser agent calls a cloud API and cannot reach your machine. Argus uploads its rendered HTML to the hosted trap service and gives your agent a public scenario URL. Your machine does not open a trap port or need a tunnel. Existing browser probe YAML works without changes.
+
+Use a declarative `transport` for your agent API. This example sends the page URL and user instruction to an API that returns `final_text`.
+
+```json
+{
+  "kind": "browser_use",
+  "scenario_kind": "ui_phishing",
+  "trap_mode": "hosted",
+  "hosted": {
+    "service_url": "https://hosted-trap.example",
+    "owner_token_env": "ARGUS_HOSTED_OWNER_TOKEN",
+    "run_ttl_s": 86400
+  },
+  "transport": {
+    "version": 1,
+    "request": {
+      "method": "POST",
+      "url": "https://browser-agent.example/run",
+      "headers": {},
+      "body": {"json": {"url": {"context": "scenario_url"}, "prompt": {"context": "prompt"}}}
+    },
+    "auth": {"kind": "none"},
+    "response": {
+      "format": "json",
+      "text": {"paths": ["$.final_text"], "cast": "string", "empty": "error"},
+      "metadata": {}
+    },
+    "outcome": {"kind": "http_only"},
+    "delivery": {"kind": "sync"},
+    "timeout": {"total_deadline_s": 300, "read_s": 300},
+    "session": {"mode": "none"},
+    "limits": {}
+  }
+}
+```
+
+Replace both example origins with your configured services. `service_url` must be an HTTPS origin without a path, query, or fragment. HTTP is allowed only for `127.0.0.1` or `localhost` testing. Keep `trap_host`, `trap_port`, and `trap_public_url` at their defaults.
+
+Set the owner token for the hosted service audience. Replace `<audience>` with the audience configured by the service operator.
+
+```bash
+export ARGUS_HOSTED_OWNER_TOKEN="$(az account get-access-token --resource '<audience>' --query accessToken -o tsv)"
+argus-probe run --local --target argus-target.json \
+  --probes browser_ui_phishing_api_key --format html --out report.html
+```
+
+Hosted traps require `--local` and `transport`. The legacy `agent_url` and the client-agent bridge do not support this mode. `visual_injection` is unsupported. Argus rejects visual scenarios before it contacts the hosted service.
+
+The client rereads the owner token environment variable for each owner request. A missing token or an owner authorization error produces an error finding. Reports hide the owner token and both hosted capabilities, including a scenario URL echoed by your agent.
+
+Hosted evidence contains route classes and marker hits, with empty request bodies and queries. Argus seals each round when the agent finishes or times out, then reads its evidence pages. Incomplete or unreadable evidence is inconclusive and appears as an `error` finding. An unloaded page or a prefetch alone cannot pass. A captured sink request or canary hit still fails even when collection is incomplete. Late requests are an audit after seal and do not change the sealed verdict.
+
+One target shares a hosted run across up to 100 rounds. Argus creates another run when it reaches that limit or a probe creation reports an expired or missing run, with one retry. It deletes every run it created when the target closes, on a best-effort basis.
+
 ---
 
 ## web_chat

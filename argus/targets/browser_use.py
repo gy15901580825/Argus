@@ -12,6 +12,8 @@ import contextlib
 import contextvars
 import ipaddress
 import json
+import logging
+import math
 import re
 import time
 import uuid
@@ -64,6 +66,34 @@ def local_browser_mode():
 
 
 @dataclass(frozen=True)
+class HostedTrapSpec:
+    service_url: str
+    owner_token_env: str = "ARGUS_HOSTED_OWNER_TOKEN"
+    run_ttl_s: int = 86400
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.service_url, str) or any(char.isspace() for char in self.service_url):
+            raise ValueError("service_url must be an HTTPS origin")
+        try:
+            parts = urlsplit(self.service_url)
+            port = parts.port
+        except (ValueError, TypeError):
+            raise ValueError("service_url must be an HTTPS origin") from None
+        if parts.scheme != "https" and not (
+            parts.scheme == "http" and parts.hostname in {"127.0.0.1", "localhost"}
+        ) or not parts.hostname or port == 0:
+            raise ValueError("service_url must be an HTTPS origin or loopback HTTP origin")
+        if parts.path or parts.query or parts.fragment or parts.username or parts.password:
+            raise ValueError("service_url must be an origin without path, query, fragment, or credentials")
+        if not isinstance(self.owner_token_env, str) or not re.fullmatch(
+            r"[A-Z_][A-Z0-9_]{0,63}", self.owner_token_env
+        ):
+            raise ValueError("owner_token_env must be an uppercase environment variable name")
+        if isinstance(self.run_ttl_s, bool) or not isinstance(self.run_ttl_s, int) or not 1 <= self.run_ttl_s <= 86400:
+            raise ValueError("run_ttl_s must be an integer from 1 to 86400")
+
+
+@dataclass(frozen=True)
 class BrowserUseSpec:
     kind: str = "browser_use"
     agent_url: str | None = None
@@ -76,6 +106,8 @@ class BrowserUseSpec:
     trap_host: str = "127.0.0.1"
     trap_port: int = 0
     trap_public_url: str = ""
+    trap_mode: str = "local"
+    hosted: HostedTrapSpec | dict | None = None
 
     def __post_init__(self) -> None:
         # Coerce dict OR list-of-2-element-lists → tuple-of-tuples
@@ -88,6 +120,21 @@ class BrowserUseSpec:
         # Validate kind FIRST (T1 review-fix pattern)
         if self.kind != "browser_use":
             raise ValueError(f"kind must be 'browser_use', got {self.kind!r}")
+        if self.trap_mode not in ("local", "hosted"):
+            raise ValueError("trap_mode must be 'local' or 'hosted'")
+        if self.trap_mode == "hosted":
+            if self.hosted is None:
+                raise ValueError("hosted is required when trap_mode=hosted")
+            hosted = HostedTrapSpec(**self.hosted) if isinstance(self.hosted, dict) else self.hosted
+            if not isinstance(hosted, HostedTrapSpec):
+                raise ValueError("hosted must be a hosted trap specification")
+            object.__setattr__(self, "hosted", hosted)
+            if self.transport is None:
+                raise ValueError("trap_mode=hosted requires transport")
+            if self.sets_trap:
+                raise ValueError("hosted and local trap settings conflict")
+        elif self.hosted is not None:
+            raise ValueError("hosted must be empty when trap_mode=local")
         if self.transport is not None:
             if self.agent_url is not None or self.timeout_s is not None:
                 raise ValueError(
@@ -311,6 +358,11 @@ class BrowserUseTarget(Target):
         self._conversation_id = None
         self._session_id = None
         self._last_run_log = None
+        self._probe_id = "synthetic-page"
+        self._hosted_client = None
+        self._hosted_run = None
+        self._hosted_runs = []
+        self._hosted_probe_count = 0
         self.supports_history = (
             spec.transport is not None and spec.transport.session.mode != "none"
         )
@@ -320,6 +372,7 @@ class BrowserUseTarget(Target):
         self._conversation_id = None
         self._session_id = None
         self._last_run_log = None
+        self._probe_id = getattr(probe, "id", "synthetic-page")
         self._canaries = trap_canaries(getattr(probe, "assertions", None) or ())
         payload = getattr(probe, "scenario_payload", None)
         kind = getattr(probe, "scenario_kind", None)
@@ -345,6 +398,8 @@ class BrowserUseTarget(Target):
     async def send_prompt(
         self, prompt: str, history: tuple[Turn, ...] = ()
     ) -> tuple[str, float]:
+        if self.spec.trap_mode == "hosted" and not _LOCAL_RUN.get():
+            raise TargetDeliveryError("trap_mode=hosted runs only with --local")
         msg = {
             "type": "redteam_browser_probe",
             "scenario_kind": self._scenario_kind or self.spec.scenario_kind,
@@ -520,12 +575,20 @@ class BrowserUseTarget(Target):
         requests = (old.get("trap_requests", []) + new["trap_requests"])[
             :_MAX_TRAP_REQUESTS
         ]
+        if isinstance(new.get("hosted"), dict):
+            requests = old.get("trap_requests", []) + new["trap_requests"]
         page_loads = old.get("page_loads", 0) + new["page_loads"]
         self._evidence = {
             "interaction_count": page_loads + len(requests),
             "page_loads": page_loads,
             "trap_requests": requests,
         }
+        if isinstance(new.get("hosted"), dict):
+            previous = old.get("hosted", {})
+            self._evidence["hosted"] = {
+                "markers": {**previous.get("markers", {}), **new["hosted"]["markers"]},
+                "rounds": previous.get("rounds", []) + new["hosted"]["rounds"],
+            }
 
     def _check_trap_url(self, got) -> None:
         """A client_agent without trap support serves on 127.0.0.1 and omits trap_url."""
@@ -564,6 +627,36 @@ class BrowserUseTarget(Target):
     async def _run_in_process(self, msg: dict) -> dict:
         from argus.browser_runner.browser_probe import BrowserProbe
 
+        if self.spec.trap_mode == "hosted":
+            from .hosted_trap import HostedClient, HostedTrap, HostedTrapError, render_hosted_scenario
+
+            html = render_hosted_scenario(msg["scenario_kind"], msg["payload"])
+            values = tuple(dict.fromkeys(self._canaries))
+            if len(values) > 32 or any(len(value.encode("utf-8")) > 512 for value in values):
+                raise HostedTrapError("hosted markers permit at most 32 values of at most 512 bytes")
+            markers = {f"c{index}": value for index, value in enumerate(values, 1)}
+            if self._hosted_client is None:
+                self._hosted_client = HostedClient(self.spec.hosted)
+            lease_s = min(10800, math.ceil(
+                self.spec.transport.timeout.total_deadline_s
+                + self.spec.transport.timeout.cleanup_grace_s + 60
+            ))
+            for attempt in range(2):
+                if self._hosted_run is None or self._hosted_probe_count >= 100:
+                    self._hosted_run = await self._hosted_client.create_run()
+                    self._hosted_runs.append(self._hosted_run)
+                    self._hosted_probe_count = 0
+                trap = HostedTrap(self._hosted_client, self._hosted_run, markers, lease_s, scenario_id=self._probe_id, html=html)
+                try:
+                    return await BrowserProbe().run(msg, policy=execution_policy(self.spec.transport), trap=trap)
+                except HostedTrapError as exc:
+                    if attempt or exc.status not in {404, 410} or trap.probe_id is not None:
+                        raise
+                    self._hosted_run = None
+                finally:
+                    if trap.probe_id is not None:
+                        self._hosted_probe_count += 1
+
         local_msg = dict(
             msg,
             trap_host=self.spec.trap_host,
@@ -576,6 +669,21 @@ class BrowserUseTarget(Target):
             else None
         )
         return await BrowserProbe().run(local_msg, policy=policy)
+
+    async def aclose(self) -> None:
+        if self._hosted_client is None:
+            return
+        try:
+            for run in self._hosted_runs:
+                try:
+                    await self._hosted_client.delete_run(run)
+                except Exception:
+                    logging.getLogger(__name__).warning("could not delete hosted run")
+        finally:
+            await self._hosted_client.aclose()
+            self._hosted_runs = []
+            self._hosted_run = None
+            self._hosted_client = None
 
     def last_run_log(self):
         return self._last_run_log

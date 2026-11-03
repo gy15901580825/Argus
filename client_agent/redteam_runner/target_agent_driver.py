@@ -22,6 +22,9 @@ class TargetAgentDriver:
     session_id: str | None = None
     redactor: Redactor = field(default_factory=Redactor, repr=False, compare=False)
 
+    def __repr__(self):
+        return "TargetAgentDriver()"
+
     async def run(self):
         context = TransportContext(
             prompt=self.prompt,
