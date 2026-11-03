@@ -225,6 +225,9 @@ class CustomHTTPTarget(Target):
             result = await self._v2_run.attempt(context)
         else:
             result = await TransportEngine(spec, policy=execution_policy(spec)).run(context)
+        cleanup = {}
+        if self._v2_run is not None and "cleanup" in result.diagnostics:
+            cleanup["cleanup"] = result.diagnostics["cleanup"]
         metadata = result.metadata
         if result.outcome == TransportOutcome.SUCCEEDED:
             if spec.session.mode == "server_returned":
@@ -243,20 +246,20 @@ class CustomHTTPTarget(Target):
                         "http_status": result.http_status,
                         "matched_rule_id": result.matched_rule_id,
                         "reason_code": "mapping_error",
+                        **cleanup,
                     }
                 }
                 raise TargetTransportError("target_error: mapping_error") from None
-            if self._v2_run is not None and 'cleanup' in result.diagnostics:
-                self._last_transport_evidence = {'transport': {'cleanup': result.diagnostics['cleanup']}}
+            if cleanup:
+                self._last_transport_evidence = {"transport": cleanup}
             return result.response_text, result.latency_ms
         transport = {
             "outcome": result.outcome.value,
             "http_status": result.http_status,
             "matched_rule_id": result.matched_rule_id,
             "reason_code": result.reason_code.value,
+            **cleanup,
         }
-        if self._v2_run is not None and 'cleanup' in result.diagnostics:
-            transport['cleanup'] = result.diagnostics['cleanup']
         if result.outcome == TransportOutcome.BLOCKED and result.matched_rule_id:
             transport["origin"] = "mapped_body_rule"
         self._last_transport_evidence = {"transport": transport}

@@ -121,6 +121,37 @@ async def test_cancellation_waits_for_undos_without_background_task():
     assert asyncio.all_tasks() == {asyncio.current_task()}
 
 
+async def test_run_log_mapping_error_preserves_failed_attempt_cleanup():
+    app = recording_lifecycle(undo_status=500)
+
+    async def invalid_run_log(request):
+        return web.json_response({
+            'status': 'COMPLETED', 'result': 'done', 'run_log': {'events': 7},
+        })
+
+    app.route('POST', '/submit', invalid_run_log)
+    async with serve(app) as origin:
+        data = lifecycle_dict(origin)
+        data['request']['url'] = origin + '/submit'
+        data['response']['metadata'] = {'run_log': {'path': '$.run_log'}}
+        target = CustomHTTPTarget(CustomHTTPSpec(transport=data))
+        with local_transport_mode():
+            try:
+                with pytest.raises(TargetTransportError, match='mapping_error'):
+                    await target.send_prompt('normal')
+                assert deletes(app) == ['/v1/messages?remoteId=local-ref&sourceId=source-one']
+                assert target.cleanup_report()['complete'] is False
+                transport = (await target.collect_evidence())['transport']
+                assert transport['reason_code'] == 'mapping_error'
+                assert transport['outcome'] == 'target_error'
+                assert transport['http_status'] == 200
+                assert transport['cleanup']['complete'] is False
+                assert [(item['scope'], item['step'], item['status'], item['http_status'])
+                        for item in transport['cleanup']['open']] == [('attempt', 'ingest', 'failed', 500)]
+            finally:
+                await target.aclose()
+
+
 @pytest.mark.parametrize('undo_status,disconnect', [(500, False), (204, True)])
 async def test_undo_failures_remain_visible(undo_status, disconnect):
     app = recording_lifecycle(undo_status=undo_status, undo_disconnect=disconnect)
