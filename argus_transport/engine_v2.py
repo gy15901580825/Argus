@@ -184,6 +184,7 @@ class ExchangeResponse:
     status: int
     body: object
     headers: Mapping[str, str]
+    _parse_failed: bool = False
 
 
 class _CapturePrefixError(ValueError):
@@ -421,6 +422,8 @@ class TransportEngineV2:
                     stack._resources.extend(records)
                 if isinstance(response, TransportResult):
                     reason = response.reason_code
+                elif response._parse_failed:
+                    reason = SafeReasonCode.PARSE_ERROR
                 elif response.status in step.expect.http_status and (
                     step.expect.when is None or matches_predicate(response.body, step.expect.when)
                 ):
@@ -910,6 +913,8 @@ class TransportEngineV2:
             except (ValueError, RecursionError):
                 if phase == "cleanup":
                     return exchange
+                if phase == "setup":
+                    return replace(exchange, _parse_failed=True)
                 return self.failure(SafeReasonCode.PARSE_ERROR, start, status=status,
                                     diagnostics=redactor.clean(diagnostics))
             return replace(exchange, body=parsed)

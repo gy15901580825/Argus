@@ -397,6 +397,41 @@ async def test_no_undo_unidentified_creation_has_generic_descriptor():
         assert run.cleanup_report()['leftover'] == ["step 'upload_sample' POST " + origin + '/files']
 
 
+@pytest.mark.parametrize('scope', ['attempt', 'run'])
+async def test_malformed_successful_creation_retains_redacted_unidentified_leftover(scope):
+    from argus_transport.runtime_v2 import TargetRunStopped
+
+    app = RecordingApp()
+    async def created(request):
+        return web.Response(status=201, body=b'{')
+    app.route('POST', '/files', created)
+    app.route('POST', '/run', completed)
+    async with serve(app) as origin:
+        data = confirmation_data(origin, undo=False)
+        step = data['lifecycle']['attempt'][0]
+        step['capture'] = {}
+        data['lifecycle'] = {scope: [step]}
+        data['budget']['stop_on'] = {'credential_echo': False}
+        run = runtime(data)
+        run.redactor.add('files')
+        if scope == 'run':
+            with pytest.raises(TargetRunStopped) as caught:
+                await run.attempt(TransportContext(prompt='Read'))
+            assert caught.value.reason == 'setup_failed_run'
+        else:
+            result = await run.attempt(TransportContext(prompt='Read'))
+            assert result.reason_code.value == 'parse_error'
+        await run.close()
+        report = run.cleanup_report()
+        assert report is not None
+        assert report['complete']
+        assert report['open'] == []
+        assert report['leftover'] == ["step 'upload_sample' POST " + origin + '/<redacted>']
+        await run.close()
+        assert run.cleanup_report() == report
+        assert [(call[0], call[1]) for call in app.calls] == [('POST', '/files')]
+
+
 async def test_confirmation_shares_entire_unwind_deadline():
     app = confirmation_app(delay=.08)
     async with serve(app) as origin:
