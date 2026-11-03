@@ -165,7 +165,7 @@ Any material expression makes the target declare a material channel. A material 
 
 Multipart accepts one to four parts on POST or PUT. Each part has `filename`, `content_type`, and `content`. Content is a UTF-8 string of at most 1 MiB per part. Media types are `text/plain`, `text/markdown`, `application/json`, and `text/csv`. Filename expressions must produce a nonempty string without quotes, CR, LF, or NUL characters. Argus generates the multipart boundary. A conflicting configured Content-Type is rejected. Multipart is forbidden during cleanup. Material is literal content, so a path-shaped string does not read a local file. Capture a returned full resource name with `expect_prefix` and pass it through `var` when the API requires a remote file reference.
 
-A material target receives separate task and material values. Other targets receive the original prompt. Findings keep that original prompt and add `evidence.indirect.task` and `material_sha256`. Deep mode runs indirect probes statically on material targets. The built-in probe migration is separate, so a material channel alone does not imply built-in indirect coverage.
+A material target receives separate task and material values. Other targets receive the original prompt. Findings keep that original prompt and add `evidence.indirect.task` and `material_sha256`. Deep mode runs indirect probes statically on material targets. The library includes 34 built-in probes with `indirect` entries, and 33 support the `custom_http` material channel. The SVG upload probe requires an `http-upload` target.
 
 promptfoo's `indirectInjectionVar: X` corresponds to binding the API's X field to `{"context": "material"}` in Argus. The context name is fixed as `material`.
 
