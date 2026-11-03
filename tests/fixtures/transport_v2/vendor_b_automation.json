@@ -1,0 +1,290 @@
+{
+	"kind": "custom_http",
+	"transport": {
+		"version": 2,
+		"lifecycle": {
+			"provision": {
+				"find": [
+					{
+						"id": "org",
+						"request": {
+							"method": "GET",
+							"url": "https://app.vendor-b.example.test/api/v1/me/organizations",
+							"query": {"page_size": {"literal": 1000}},
+							"body": {"none": true}
+						},
+						"expect": {
+							"http_status": [200],
+							"when": {
+								"any": [
+									{"path": "$.next_page_token", "exists": false},
+									{"path": "$.next_page_token", "equals": ""}
+								]
+							}
+						},
+						"capture": {
+							"org_id": {
+								"items": "$.user_organizations",
+								"where": {"path": "$.name", "exists": true},
+								"take": "$.name",
+								"last_segment": true,
+								"expect_prefix": {"literal": "organizations/"}
+							}
+						}
+					},
+					{
+						"id": "workspace",
+						"request": {
+							"method": "GET",
+							"url": "https://app.vendor-b.example.test/api/v1/me/organizations/{org_id}/workspaces",
+							"query": {"page_size": {"literal": 1000}},
+							"body": {"none": true}
+						},
+						"expect": {
+							"http_status": [200],
+							"when": {
+								"any": [
+									{"path": "$.next_page_token", "exists": false},
+									{"path": "$.next_page_token", "equals": ""}
+								]
+							}
+						},
+						"capture": {
+							"ws_id": {
+								"items": "$.user_workspaces",
+								"where": {"path": "$.name", "exists": true},
+								"take": "$.name",
+								"last_segment": true,
+								"expect_prefix": {
+									"concat": [{"literal": "organizations/"}, {"var": "org_id"}, {"literal": "/workspaces/"}]
+								}
+							}
+						}
+					},
+					{
+						"id": "automation",
+						"request": {
+							"method": "GET",
+							"url": "https://app.vendor-b.example.test/api/v1/organizations/{org_id}/workspaces/{ws_id}/automations",
+							"query": {"page_size": {"literal": 1000}},
+							"body": {"none": true}
+						},
+						"expect": {
+							"http_status": [200],
+							"when": {
+								"any": [
+									{"path": "$.next_page_token", "exists": false},
+									{"path": "$.next_page_token", "equals": ""}
+								]
+							}
+						},
+						"capture": {
+							"automation_id": {
+								"items": "$.automations",
+								"where": {
+									"path": "$.display_name",
+									"equals": {"env": "VENDOR_B_AUTOMATION_NAME", "missing": "omit"}
+								},
+								"take": "$.name",
+								"last_segment": true,
+								"expect_prefix": {
+									"concat": [
+										{"literal": "organizations/"},
+										{"var": "org_id"},
+										{"literal": "/workspaces/"},
+										{"var": "ws_id"},
+										{"literal": "/automations/"}
+									]
+								}
+							}
+						},
+						"given": {"automation_id": {"env": "VENDOR_B_AUTOMATION_ID", "missing": "omit"}},
+						"hint": "The automations list omits drafts that were never built. Build the automation once, or set VENDOR_B_AUTOMATION_ID from its URL."
+					}
+				],
+				"manual": {
+					"title": "Prepare the automation that Argus tests",
+					"steps": [
+						"Sign in with the account whose personal access token is in VENDOR_B_PAT.",
+						"Create an automation in the workspace under test and set VENDOR_B_AUTOMATION_NAME to its display name.",
+						"Give it a file input named invoice_file and a text input named user_question, and have it answer the question from the file.",
+						"Build the automation at least once.",
+						"Or set VENDOR_B_AUTOMATION_ID to the ID in the automation URL to skip its list lookup.",
+						"Leave it in the draft stage. Argus invokes AUTOMATION_STAGE_DRAFT.",
+						"Run argus-probe validate-target --target vendor_b_automation.json --execute."
+					]
+				}
+			},
+			"attempt": [
+				{
+					"id": "upload",
+					"request": {
+						"method": "POST",
+						"url": "https://app.vendor-b.example.test/api/v1/organizations/{org_id}/workspaces/{ws_id}/files:upload",
+						"headers": {"Accept": "application/json"},
+						"body": {
+							"multipart": {
+								"file": {
+									"filename": {"literal": "invoice.txt"},
+									"content_type": "text/plain",
+									"content": {"context": "material"}
+								}
+							}
+						}
+					},
+					"expect": {"http_status": [201], "when": {"path": "$.metadata.name", "exists": true}},
+					"capture": {
+						"file_name": {
+							"path": "$.metadata.name",
+							"expect_prefix": {
+								"concat": [
+									{"literal": "organizations/"},
+									{"var": "org_id"},
+									{"literal": "/workspaces/"},
+									{"var": "ws_id"},
+									{"literal": "/files/"}
+								]
+							}
+						},
+						"file_id": {
+							"path": "$.metadata.name",
+							"expect_prefix": {
+								"concat": [
+									{"literal": "organizations/"},
+									{"var": "org_id"},
+									{"literal": "/workspaces/"},
+									{"var": "ws_id"},
+									{"literal": "/files/"}
+								]
+							},
+							"last_segment": true
+						}
+					},
+					"undo": {
+						"request": {
+							"method": "DELETE",
+							"url": "https://app.vendor-b.example.test/api/v1/organizations/{org_id}/workspaces/{ws_id}/files/{file_id}"
+						},
+						"expect": {"http_status": [200, 204]},
+						"confirm": {
+							"request": {
+								"method": "GET",
+								"url": "https://app.vendor-b.example.test/api/v1/organizations/{org_id}/workspaces/{ws_id}/files/{file_id}/metadata"
+							},
+							"gone_status": [404]
+						}
+					}
+				}
+			]
+		},
+		"request": {
+			"method": "POST",
+			"url": "https://app.vendor-b.example.test/api/v1/organizations/{org_id}/workspaces/{ws_id}/automations/{automation_id}:invoke",
+			"headers": {"Accept": "application/json"},
+			"body": {
+				"json": {
+					"stage": {"literal": "AUTOMATION_STAGE_DRAFT"},
+					"inputs": {
+						"object": {
+							"invoice_file": {"object": {"file": {"object": {"remote": {"var": "file_name"}}}}},
+							"user_question": {"object": {"text": {"context": "prompt"}}}
+						}
+					}
+				}
+			}
+		},
+		"auth": {"kind": "bearer", "secret": {"source": "env", "name": "VENDOR_B_PAT"}},
+		"response": {
+			"format": "json",
+			"text": {"paths": ["$.state.completed.outputs"], "cast": "string_or_json", "empty": "error"},
+			"metadata": {}
+		},
+		"outcome": {
+			"kind": "rules",
+			"unmatched": "target_error",
+			"rules": [
+				{
+					"id": "failed",
+					"priority": 100,
+					"http_status": [200],
+					"when": {"path": "$.state.failed", "exists": true},
+					"outcome": "target_error"
+				},
+				{
+					"id": "awaiting_guidance",
+					"priority": 90,
+					"http_status": [200],
+					"when": {"path": "$.state.awaiting_guidance", "exists": true},
+					"outcome": "target_error"
+				},
+				{
+					"id": "stopped",
+					"priority": 80,
+					"http_status": [200],
+					"when": {"path": "$.state.stopped", "exists": true},
+					"outcome": "target_error"
+				},
+				{
+					"id": "stopping",
+					"priority": 70,
+					"http_status": [200],
+					"when": {"path": "$.state.stopping", "exists": true},
+					"outcome": "target_error"
+				},
+				{
+					"id": "completed",
+					"priority": 10,
+					"http_status": [200],
+					"when": {"path": "$.state.completed", "exists": true},
+					"outcome": "succeeded"
+				}
+			]
+		},
+		"delivery": {
+			"kind": "poll",
+			"request": {
+				"method": "GET",
+				"url": "https://app.vendor-b.example.test/api/v1/organizations/{org_id}/workspaces/{ws_id}/automations/{automation_id}/runs/{run_id}",
+				"body": {"none": true}
+			},
+			"pending": {"any": [{"path": "$.state.pending", "exists": true}, {"path": "$.state.executing", "exists": true}]},
+			"interval_s": 1,
+			"max_polls": 4,
+			"submit_http_status": [200],
+			"submit_outcome": {"kind": "rules", "unmatched": "accepted", "rules": []},
+			"ids": {
+				"run_id": {
+					"path": "$.run_id",
+					"last_segment": true,
+					"expect_prefix": {
+						"concat": [
+							{"literal": "organizations/"},
+							{"var": "org_id"},
+							{"literal": "/workspaces/"},
+							{"var": "ws_id"},
+							{"literal": "/automations/"},
+							{"var": "automation_id"},
+							{"literal": "/runs/"}
+						]
+					}
+				}
+			}
+		},
+		"budget": {
+			"max_requests": 23,
+			"cleanup_reserve": 4,
+			"stop_on": {"http_status": [429], "alert_names": [], "credential_echo": true}
+		},
+		"timeout": {
+			"total_deadline_s": 240,
+			"connect_s": 5,
+			"read_s": 65,
+			"write_s": 15,
+			"pool_s": 5,
+			"cleanup_grace_s": 2,
+			"cleanup_s": 60
+		},
+		"session": {"mode": "none"},
+		"limits": {"response_bytes": 1048576, "event_bytes": 65536, "max_events": 128, "max_rules": 32}
+	}
+}

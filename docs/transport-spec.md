@@ -255,6 +255,474 @@ Local runs handle SIGINT and SIGTERM by cancelling the active attempt, waiting f
 
 Cleanup is in memory and cannot recover from SIGKILL or a process crash. Removing a setup resource does not necessarily cancel a hosted job. Configure undo requests for the service's documented cleanup behavior.
 
+## Complete version 2 examples
+
+These neutral configurations describe two API shapes without vendor adapter code. Their hosts use reserved example domains. Each complete JSON example also exists as a test fixture.
+
+The automated checks invoke the same Click command as `argus-probe run --local` in process with `CliRunner`. This allows injection of synthetic probes with neutral task and material text and a stub judge. The HTTP requests reach fake services bound to `127.0.0.1`. These checks do not invoke a subprocess or call a live vendor account. The upload and deletion shapes follow the coordinator's recorded live API checks.
+
+### Vendor A threads
+
+The [vendor A fixture](../tests/fixtures/transport_v2/vendor_a_threads.json) creates one source per run. Each material attempt inserts a message, asks a question, polls with thread and run IDs, and deletes the message. Source deletion runs last. A prompt-only probe skips message ingestion and still sends its question. The fixture's budget covers the tested batch of three material probes and one prompt-only probe. A larger batch needs its own request and cleanup budgets.
+
+```json
+{
+	"kind": "custom_http",
+	"transport": {
+		"version": 2,
+		"request": {
+			"method": "POST",
+			"url": "https://api.vendor-a.example.test/v1/ask",
+			"headers": {"Accept": "application/json"},
+			"body": {"json": {"message": {"context": "prompt"}}}
+		},
+		"auth": {"kind": "bearer", "secret": {"source": "env", "name": "VENDOR_A_API_KEY"}},
+		"let": {
+			"run": {"source_name": {"concat": [{"literal": "argus-"}, {"generate": "uuid4"}]}},
+			"attempt": {"ref": {"concat": [{"literal": "argus-msg-"}, {"generate": "uuid4"}]}}
+		},
+		"lifecycle": {
+			"run": [
+				{
+					"id": "source",
+					"request": {
+						"method": "POST",
+						"url": "https://api.vendor-a.example.test/v1/sources",
+						"headers": {"Accept": "application/json"},
+						"body": {
+							"json": {
+								"name": {"var": "source_name"},
+								"displayName": {"literal": "Argus isolated synthetic test"}
+							}
+						}
+					},
+					"expect": {"http_status": [201], "when": {"path": "$.id", "exists": true}},
+					"capture": {"source_id": {"path": "$.id"}},
+					"undo": {
+						"request": {"method": "DELETE", "url": "https://api.vendor-a.example.test/v1/sources/{source_id}"},
+						"expect": {"http_status": [200, 404]}
+					}
+				}
+			],
+			"attempt": [
+				{
+					"id": "ingest",
+					"if_present": "material",
+					"request": {
+						"method": "POST",
+						"url": "https://api.vendor-a.example.test/v1/messages",
+						"headers": {"Accept": "application/json"},
+						"body": {
+							"json": {
+								"id": {"var": "ref"},
+								"threadId": {"var": "ref"},
+								"sourceId": {"var": "source_id"},
+								"displayName": {"literal": "Synthetic customer email"},
+								"createdAt": {"generate": "now_iso8601"},
+								"body": {"context": "material"},
+								"sender": {"object": {"id": {"concat": [{"literal": "synthetic-customer-"}, {"var": "ref"}]}}},
+								"recipients": {"literal": [{"id": "synthetic-test-company"}]},
+								"attachments": {"literal": []},
+								"public": {"literal": true}
+							}
+						}
+					},
+					"expect": {"http_status": [201], "when": {"path": "$.recordId", "exists": true}},
+					"undo": {
+						"request": {
+							"method": "DELETE",
+							"url": "https://api.vendor-a.example.test/v1/messages",
+							"query": {"remoteId": {"var": "ref"}, "sourceId": {"var": "source_id"}}
+						},
+						"expect": {"http_status": [200, 404]}
+					}
+				}
+			]
+		},
+		"response": {"format": "json", "text": {"paths": ["$.output"], "cast": "string", "empty": "error"}, "metadata": {}},
+		"outcome": {
+			"kind": "rules",
+			"unmatched": "target_error",
+			"rules": [
+				{
+					"id": "failed",
+					"priority": 100,
+					"http_status": [200],
+					"when": {"path": "$.status", "equals": "failed"},
+					"outcome": "target_error"
+				},
+				{
+					"id": "stopped",
+					"priority": 90,
+					"http_status": [200],
+					"when": {"path": "$.status", "equals": "stopped"},
+					"outcome": "target_error"
+				},
+				{
+					"id": "completed",
+					"priority": 10,
+					"http_status": [200],
+					"when": {"path": "$.status", "equals": "completed"},
+					"outcome": "succeeded"
+				}
+			]
+		},
+		"delivery": {
+			"kind": "poll",
+			"ids": {"thread_id": {"path": "$.threadId"}, "run_id": {"path": "$.runId"}},
+			"request": {
+				"method": "GET",
+				"url": "https://api.vendor-a.example.test/v1/ask/{thread_id}/{run_id}",
+				"headers": {"Accept": "application/json"},
+				"body": {"none": true}
+			},
+			"location": "verify",
+			"wait": {"from": "Retry-After", "default_s": 5, "max_s": 60},
+			"pending": {"path": "$.status", "equals": "running"},
+			"max_polls": 12,
+			"submit_http_status": [200, 202],
+			"submit_outcome": {
+				"kind": "rules",
+				"unmatched": "accepted",
+				"rules": [
+					{
+						"id": "submit_failed",
+						"priority": 100,
+						"http_status": [200],
+						"when": {"path": "$.status", "one_of": ["failed", "stopped"]},
+						"outcome": "target_error"
+					},
+					{
+						"id": "submit_completed",
+						"priority": 10,
+						"http_status": [200],
+						"when": {"path": "$.status", "equals": "completed"},
+						"outcome": "succeeded"
+					}
+				]
+			}
+		},
+		"budget": {
+			"max_requests": 20,
+			"cleanup_reserve": 5,
+			"stop_on": {"http_status": [429], "alert_names": ["X-Security-Alert"], "credential_echo": true}
+		},
+		"timeout": {
+			"total_deadline_s": 240,
+			"connect_s": 5,
+			"read_s": 65,
+			"write_s": 15,
+			"pool_s": 5,
+			"cleanup_grace_s": 2,
+			"cleanup_s": 60
+		},
+		"session": {"mode": "none"},
+		"limits": {"response_bytes": 1048576, "event_bytes": 65536, "max_events": 128, "max_rules": 32}
+	}
+}
+```
+
+### Vendor B automation
+
+The [vendor B fixture](../tests/fixtures/transport_v2/vendor_b_automation.json) looks up one organization, workspace, and automation per run. The automation display name comes from `VENDOR_B_AUTOMATION_NAME`. Setting `VENDOR_B_AUTOMATION_ID` supplies the final ID and skips only the automation list request. The earlier organization and workspace lookups still run. Empty automation results print the configured preparation checklist and stop before any upload or invocation.
+
+Each material attempt uploads `invoice.txt` as multipart and invokes the automation with that upload's complete resource name. Prefix checks retain the full file name for the remote reference and extract safe suffixes for DELETE and run polling. Material is required, so a probe without `indirect` is skipped before any request. The fixture's budgets cover four material attempts. Successful cleanup leaves no live uploaded files or reported leftovers.
+
+Primary DELETE accepts 200 or 204. An unexpected status permits one metadata GET when cleanup reserve remains. A configured 404 confirmation completes cleanup. A present response or unavailable reserve leaves the full resource name in `leftover`, keeps the intent `unconfirmed`, and makes the run incomplete with exit 1. Argus sends no DELETE retry. The fake models a first DELETE returning 200 with `{}`, a repeated DELETE returning empty 500, and metadata returning snake_case fields before deletion and 404 afterward.
+
+```json
+{
+	"kind": "custom_http",
+	"transport": {
+		"version": 2,
+		"lifecycle": {
+			"provision": {
+				"find": [
+					{
+						"id": "org",
+						"request": {
+							"method": "GET",
+							"url": "https://app.vendor-b.example.test/api/v1/me/organizations",
+							"query": {"page_size": {"literal": 1000}},
+							"body": {"none": true}
+						},
+						"expect": {
+							"http_status": [200],
+							"when": {
+								"any": [
+									{"path": "$.next_page_token", "exists": false},
+									{"path": "$.next_page_token", "equals": ""}
+								]
+							}
+						},
+						"capture": {
+							"org_id": {
+								"items": "$.user_organizations",
+								"where": {"path": "$.name", "exists": true},
+								"take": "$.name",
+								"last_segment": true,
+								"expect_prefix": {"literal": "organizations/"}
+							}
+						}
+					},
+					{
+						"id": "workspace",
+						"request": {
+							"method": "GET",
+							"url": "https://app.vendor-b.example.test/api/v1/me/organizations/{org_id}/workspaces",
+							"query": {"page_size": {"literal": 1000}},
+							"body": {"none": true}
+						},
+						"expect": {
+							"http_status": [200],
+							"when": {
+								"any": [
+									{"path": "$.next_page_token", "exists": false},
+									{"path": "$.next_page_token", "equals": ""}
+								]
+							}
+						},
+						"capture": {
+							"ws_id": {
+								"items": "$.user_workspaces",
+								"where": {"path": "$.name", "exists": true},
+								"take": "$.name",
+								"last_segment": true,
+								"expect_prefix": {
+									"concat": [{"literal": "organizations/"}, {"var": "org_id"}, {"literal": "/workspaces/"}]
+								}
+							}
+						}
+					},
+					{
+						"id": "automation",
+						"request": {
+							"method": "GET",
+							"url": "https://app.vendor-b.example.test/api/v1/organizations/{org_id}/workspaces/{ws_id}/automations",
+							"query": {"page_size": {"literal": 1000}},
+							"body": {"none": true}
+						},
+						"expect": {
+							"http_status": [200],
+							"when": {
+								"any": [
+									{"path": "$.next_page_token", "exists": false},
+									{"path": "$.next_page_token", "equals": ""}
+								]
+							}
+						},
+						"capture": {
+							"automation_id": {
+								"items": "$.automations",
+								"where": {
+									"path": "$.display_name",
+									"equals": {"env": "VENDOR_B_AUTOMATION_NAME", "missing": "omit"}
+								},
+								"take": "$.name",
+								"last_segment": true,
+								"expect_prefix": {
+									"concat": [
+										{"literal": "organizations/"},
+										{"var": "org_id"},
+										{"literal": "/workspaces/"},
+										{"var": "ws_id"},
+										{"literal": "/automations/"}
+									]
+								}
+							}
+						},
+						"given": {"automation_id": {"env": "VENDOR_B_AUTOMATION_ID", "missing": "omit"}},
+						"hint": "The automations list omits drafts that were never built. Build the automation once, or set VENDOR_B_AUTOMATION_ID from its URL."
+					}
+				],
+				"manual": {
+					"title": "Prepare the automation that Argus tests",
+					"steps": [
+						"Sign in with the account whose personal access token is in VENDOR_B_PAT.",
+						"Create an automation in the workspace under test and set VENDOR_B_AUTOMATION_NAME to its display name.",
+						"Give it a file input named invoice_file and a text input named user_question, and have it answer the question from the file.",
+						"Build the automation at least once.",
+						"Or set VENDOR_B_AUTOMATION_ID to the ID in the automation URL to skip its list lookup.",
+						"Leave it in the draft stage. Argus invokes AUTOMATION_STAGE_DRAFT.",
+						"Run argus-probe validate-target --target vendor_b_automation.json --execute."
+					]
+				}
+			},
+			"attempt": [
+				{
+					"id": "upload",
+					"request": {
+						"method": "POST",
+						"url": "https://app.vendor-b.example.test/api/v1/organizations/{org_id}/workspaces/{ws_id}/files:upload",
+						"headers": {"Accept": "application/json"},
+						"body": {
+							"multipart": {
+								"file": {
+									"filename": {"literal": "invoice.txt"},
+									"content_type": "text/plain",
+									"content": {"context": "material"}
+								}
+							}
+						}
+					},
+					"expect": {"http_status": [201], "when": {"path": "$.metadata.name", "exists": true}},
+					"capture": {
+						"file_name": {
+							"path": "$.metadata.name",
+							"expect_prefix": {
+								"concat": [
+									{"literal": "organizations/"},
+									{"var": "org_id"},
+									{"literal": "/workspaces/"},
+									{"var": "ws_id"},
+									{"literal": "/files/"}
+								]
+							}
+						},
+						"file_id": {
+							"path": "$.metadata.name",
+							"expect_prefix": {
+								"concat": [
+									{"literal": "organizations/"},
+									{"var": "org_id"},
+									{"literal": "/workspaces/"},
+									{"var": "ws_id"},
+									{"literal": "/files/"}
+								]
+							},
+							"last_segment": true
+						}
+					},
+					"undo": {
+						"request": {
+							"method": "DELETE",
+							"url": "https://app.vendor-b.example.test/api/v1/organizations/{org_id}/workspaces/{ws_id}/files/{file_id}"
+						},
+						"expect": {"http_status": [200, 204]},
+						"confirm": {
+							"request": {
+								"method": "GET",
+								"url": "https://app.vendor-b.example.test/api/v1/organizations/{org_id}/workspaces/{ws_id}/files/{file_id}/metadata"
+							},
+							"gone_status": [404]
+						}
+					}
+				}
+			]
+		},
+		"request": {
+			"method": "POST",
+			"url": "https://app.vendor-b.example.test/api/v1/organizations/{org_id}/workspaces/{ws_id}/automations/{automation_id}:invoke",
+			"headers": {"Accept": "application/json"},
+			"body": {
+				"json": {
+					"stage": {"literal": "AUTOMATION_STAGE_DRAFT"},
+					"inputs": {
+						"object": {
+							"invoice_file": {"object": {"file": {"object": {"remote": {"var": "file_name"}}}}},
+							"user_question": {"object": {"text": {"context": "prompt"}}}
+						}
+					}
+				}
+			}
+		},
+		"auth": {"kind": "bearer", "secret": {"source": "env", "name": "VENDOR_B_PAT"}},
+		"response": {
+			"format": "json",
+			"text": {"paths": ["$.state.completed.outputs"], "cast": "string_or_json", "empty": "error"},
+			"metadata": {}
+		},
+		"outcome": {
+			"kind": "rules",
+			"unmatched": "target_error",
+			"rules": [
+				{
+					"id": "failed",
+					"priority": 100,
+					"http_status": [200],
+					"when": {"path": "$.state.failed", "exists": true},
+					"outcome": "target_error"
+				},
+				{
+					"id": "awaiting_guidance",
+					"priority": 90,
+					"http_status": [200],
+					"when": {"path": "$.state.awaiting_guidance", "exists": true},
+					"outcome": "target_error"
+				},
+				{
+					"id": "stopped",
+					"priority": 80,
+					"http_status": [200],
+					"when": {"path": "$.state.stopped", "exists": true},
+					"outcome": "target_error"
+				},
+				{
+					"id": "stopping",
+					"priority": 70,
+					"http_status": [200],
+					"when": {"path": "$.state.stopping", "exists": true},
+					"outcome": "target_error"
+				},
+				{
+					"id": "completed",
+					"priority": 10,
+					"http_status": [200],
+					"when": {"path": "$.state.completed", "exists": true},
+					"outcome": "succeeded"
+				}
+			]
+		},
+		"delivery": {
+			"kind": "poll",
+			"request": {
+				"method": "GET",
+				"url": "https://app.vendor-b.example.test/api/v1/organizations/{org_id}/workspaces/{ws_id}/automations/{automation_id}/runs/{run_id}",
+				"body": {"none": true}
+			},
+			"pending": {"any": [{"path": "$.state.pending", "exists": true}, {"path": "$.state.executing", "exists": true}]},
+			"interval_s": 1,
+			"max_polls": 4,
+			"submit_http_status": [200],
+			"submit_outcome": {"kind": "rules", "unmatched": "accepted", "rules": []},
+			"ids": {
+				"run_id": {
+					"path": "$.run_id",
+					"last_segment": true,
+					"expect_prefix": {
+						"concat": [
+							{"literal": "organizations/"},
+							{"var": "org_id"},
+							{"literal": "/workspaces/"},
+							{"var": "ws_id"},
+							{"literal": "/automations/"},
+							{"var": "automation_id"},
+							{"literal": "/runs/"}
+						]
+					}
+				}
+			}
+		},
+		"budget": {
+			"max_requests": 23,
+			"cleanup_reserve": 4,
+			"stop_on": {"http_status": [429], "alert_names": [], "credential_echo": true}
+		},
+		"timeout": {
+			"total_deadline_s": 240,
+			"connect_s": 5,
+			"read_s": 65,
+			"write_s": 15,
+			"pool_s": 5,
+			"cleanup_grace_s": 2,
+			"cleanup_s": 60
+		},
+		"session": {"mode": "none"},
+		"limits": {"response_bytes": 1048576, "event_bytes": 65536, "max_events": 128, "max_rules": 32}
+	}
+}
+```
+
 ## Map replies and outcomes
 
 JSON paths support the root, fields, and array indexes. Wildcards, filters, and recursive descent are rejected. The first existing answer path wins. Only a missing path tries the next path. A wrong type or an empty value is a mapping error.
