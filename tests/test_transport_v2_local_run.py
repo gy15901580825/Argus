@@ -8,7 +8,7 @@ from click.testing import CliRunner
 from argus import api, local
 from argus.cli.__main__ import main
 from argus.probe import load_probe_library
-from test_transport_lifecycle import lifecycle_dict
+from test_transport_lifecycle import lifecycle_dict, recording_lifecycle
 from transport_v2_fakes import RecordingApp, serve_in_thread
 
 
@@ -119,3 +119,20 @@ def test_cleanup_lines_redact_secret_values_in_undo_urls(tmp_path, stop_library,
         assert f"[ ] DELETE {origin}/v1/sources/<redacted>" in result.stderr
         assert "dummy-private-value" not in result.output + text
         assert [(method, path) for method, path, _, _ in app.calls] == [("POST", "/v1/sources"), ("POST", "/run")]
+
+
+def test_request_budget_stop_reports_cleanup_enabled_after_actual_delete(tmp_path, stop_library):
+    app = recording_lifecycle()
+    with serve_in_thread(app) as origin:
+        data = lifecycle_dict(origin, attempt=False)
+        data["budget"] = {"max_requests": 2}
+        result, record, _ = invoke_run(tmp_path, data, stop_library)
+        assert record["status"] == "incomplete"
+        assert "target stopped the run: request_budget" in record["incomplete_reason"]
+        assert [(item["probe_id"], item["verdict"]) for item in record["findings"]] == [(stop_library[0].id, "pass")]
+        assert record["target_cleanup"] == {"complete": True, "done": 1, "open": [], "stop_reason": "request_budget"}
+        assert [(method, path) for method, path, _, _ in app.calls] == [
+            ("POST", "/v1/sources"), ("POST", "/run"), ("DELETE", "/v1/sources/source-one"),
+        ]
+        assert "Target stopped the run: request_budget. Configured cleanup remained enabled." in result.stderr
+        assert "No further request was sent, cleanup included." not in result.stderr

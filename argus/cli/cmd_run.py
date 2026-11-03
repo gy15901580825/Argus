@@ -278,8 +278,13 @@ def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, se
     _write_report(out_file, result.report)
     click.echo(f"Wrote report to {out_file}")
     if isinstance(result.stopped_by, TargetRunStopped):
+        cleanup_note = (
+            "No further request was sent, cleanup included."
+            if result.stopped_by.reason in {"stop_on_status", "alert", "unsafe_location", "credential_echo"}
+            else "Configured cleanup remained enabled."
+        )
         _echo_masked([
-            f"Target stopped the run: {result.stopped_by}. No further request was sent, cleanup included."
+            f"Target stopped the run: {result.stopped_by}. {cleanup_note}"
         ], spec, secret_values)
     incomplete = incomplete_lines(result.findings, result.stop_reason)
     _echo_masked(incomplete, spec, secret_values)
