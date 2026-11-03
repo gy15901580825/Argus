@@ -6,6 +6,8 @@ from .engine import (
     evaluate_response,
     render_request,
 )
+from .engine_v2 import TransportEngineV2
+from .runtime_v2 import V2Run
 from .models import (
     AuthHeader,
     AuthSpec,
@@ -38,6 +40,15 @@ from .models import (
     TransportResult,
     TransportSpec,
 )
+from .spec_v2 import (
+    LetSpec,
+    PollSpecV2,
+    RequestSpecV2,
+    TransportSpecV2,
+    parse_transport_spec,
+    with_origin,
+)
+
 from .security import ExecutionPolicy, Redactor, execution_policy, local_transport_mode
 
 __all__ = [
@@ -74,9 +85,17 @@ __all__ = [
     "TimeoutBudget",
     "TransportContext",
     "TransportEngine",
+    "TransportEngineV2",
+    "V2Run",
     "TransportOutcome",
     "TransportResult",
     "TransportSpec",
+    "LetSpec",
+    "PollSpecV2",
+    "RequestSpecV2",
+    "TransportSpecV2",
+    "parse_transport_spec",
+    "with_origin",
     "evaluate_response",
     "execution_policy",
     "local_transport_mode",

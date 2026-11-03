@@ -10,6 +10,8 @@ argus-probe run --local --target target.json --probes all --format json --out ru
 
 `--format json` works only with `--local`. In server mode the CLI stops with a usage error, because the server's report endpoint has no json format yet.
 
+Local `custom_http` runs accept [transport version 2](transport-spec.md#use-version-2). The report format remains `argus.run/1`. Changing the transport version changes the target's baseline identity and requires a new baseline. Browser targets and remote clients still support transport version 1.
+
 If a run stops partway, for example when the daily cost cap is crossed, the target stops answering or the judge fails unexpectedly, the CLI still writes `run.json` with the findings gathered so far, sets `status` to `"incomplete"` and exits with a non-zero code. A run that never starts (no judge key, an unknown probe id, a target spec that cannot be built, an estimate above `--per-run-cap`) writes no file. Ctrl-C and SIGTERM write no file either.
 
 ## Fields

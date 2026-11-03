@@ -55,6 +55,8 @@ Below are copy-paste templates for each supported agent shape, plus the gotchas 
 
 ## custom_http
 
+For declarative local HTTP APIs with generated references, URL bindings, and polling, see [Use version 2](../transport-spec.md#use-version-2).
+
 **Use this for**: production agents that wrap an LLM behind their own HTTP shape — almost every "real" customer-facing agent falls into this category. The agent's request and response don't follow OpenAI's format, but you can describe them with a request template + a response selector.
 
 ```json
