@@ -60,6 +60,87 @@ Each value has one shape. Use `{"context": "prompt"}` for the current prompt, `{
 
 The available context names are `prompt`, `history`, `conversation_id`, `session_id`, and `run_id`. Browser targets also have `scenario_url`. A custom HTTP target cannot bind `scenario_url`.
 
+## Use version 2
+
+Version 2 lets you describe a SaaS agent's documented HTTP API with one JSON configuration. It supports local `custom_http` runs and `validate-target`. Browser targets and remote clients still support version 1. The client advertises `transport_versions: [1]`. Server API authorization policy is unchanged.
+
+Set `transport.version` to the integer `2`. The parser requires an explicit integer version and rejects unknown versions. The string `"2"` and decimal `2.0` are invalid. Version 1 files remain valid without changes. Changing a file from version 1 to version 2 changes its baseline identity. Collect a new baseline before comparing runs.
+
+This example binds an automation ID from a nonsecret environment variable and generates a reference for each attempt.
+
+```json
+{
+	"kind": "custom_http",
+	"transport": {
+		"version": 2,
+		"let": {
+			"run": {
+				"automation_id": {"env": "AUTOMATION_ID"},
+				"source_name": {"concat": [{"literal": "argus-"}, {"generate": "uuid4"}]}
+			},
+			"attempt": {"ref": {"generate": "uuid4"}}
+		},
+		"request": {
+			"method": "POST",
+			"url": "https://api.vendor-a.example.test/automations/{automation_id}:invoke",
+			"query": {"page_size": {"literal": 10}},
+			"body": {"json": {
+				"goal": {"context": "prompt"},
+				"source": {"var": "source_name"},
+				"ref": {"var": "ref"}
+			}}
+		},
+		"auth": {"kind": "none"},
+		"response": {
+			"format": "json",
+			"text": {"paths": ["$.result"], "cast": "string_or_json", "empty": "error"},
+			"metadata": {}
+		},
+		"outcome": {
+			"kind": "rules",
+			"unmatched": "target_error",
+			"rules": [{"id": "completed", "priority": 10, "http_status": [200], "when": {"path": "$.status", "equals": "COMPLETED"}, "outcome": "succeeded"}]
+		},
+		"delivery": {"kind": "sync"},
+		"timeout": {"total_deadline_s": 300, "read_s": 300},
+		"session": {"mode": "none"},
+		"limits": {"response_bytes": 8388608, "event_bytes": 1048576, "max_events": 1024, "max_rules": 32}
+	}
+}
+```
+
+Version 2 preserves the version 1 `literal`, `context`, `object`, and `array` expressions. Each expression has one variant. These additional variants are available.
+
+| Expression | Value |
+| --- | --- |
+| `{"var": "ref"}` | A declared variable. `missing: "omit"` omits a missing optional value. |
+| `{"concat": [{"literal": "item-"}, {"var": "ref"}]}` | Concatenates 2 to 16 strings or integers, up to 8192 UTF-8 bytes. |
+| `{"generate": "uuid4"}` | A fresh UUID string. |
+| `{"generate": "now_iso8601"}` | A UTC timestamp with millisecond precision and a `Z` suffix. |
+| `{"generate": "now_unix_ms"}` | An integer Unix timestamp in milliseconds. |
+| `{"base64": {"context": "prompt"}}` | Base64 of a bound string's UTF-8 bytes. |
+| `{"env": "AUTOMATION_ID"}` | A nonsecret environment value, up to 1024 UTF-8 bytes. Missing values fail unless `missing: "omit"` is set. |
+
+Use `auth` secret references for credentials. An `env` expression is for nonsecret data and is checked against the execution policy's permitted environment names. Every required reference is checked before submission, including references used only by polling.
+
+`let.run` evaluates in declaration order at the first attempt. Its values and referenced nonsecret environment values remain fixed for that target run, including across probes. `let.attempt` evaluates again for each prompt. An attempt declaration can use run variables and earlier attempt declarations. A run declaration can use earlier run declarations. Forward references and duplicate declarations are invalid. Reuse a generated value through `var` when two fields must receive the same value.
+
+Variable names match `[a-z][a-z0-9_]{0,31}` and cannot contain `key`, `token`, `secret`, `password`, `auth`, `header`, or `cookie`. Context names are reserved. Polling reserves `run_id` for the captured submission ID and its poll URL placeholder.
+
+URL placeholders bind declared variables in path segments. Each segment accepts one placeholder, including forms such as `{automation_id}:invoke`. Values are percent-encoded as individual segments. Placeholders in the origin or URL query are invalid. Use `request.query` for scalar query bindings. The engine URL-encodes those values and omits optional missing entries. A `query` object cannot accompany a URL that already contains `?`. Credential-like query names are rejected.
+
+`DELETE` defaults to no body. An explicit JSON or text body is also accepted for `DELETE`. The synchronous and single-ID polling behavior described on this page is available in version 2. SSE remains unsupported. Lifecycle operations, request retries, and multiple captured delivery IDs are not implemented in this version.
+
+```sh
+argus-probe validate-target --target target-v2.json --offline
+argus-probe validate-target --target target-v2.json --execute
+argus-probe validate-target --target target-v2.json --execute --endpoint-override http://127.0.0.1:8080
+```
+
+Offline validation lists the method, placeholder names, query names, and declaration names. It sends no requests and does not render the body or read environment values. Empty binding lists are omitted. Execute mode reports HTTP status, selected outcome, and submission, poll, and retry counts. It omits response bodies and resolved bindings.
+
+A version 2 endpoint override takes an origin, with an optional trailing slash. It retains the configured paths and query bindings for submission and polling. A path, query, or fragment in the override is invalid. `--sample-response`, `--with-scenario`, and `--scenario-url` support version 1 transports only.
+
 ## Map replies and outcomes
 
 JSON paths support the root, fields, and array indexes. Wildcards, filters, and recursive descent are rejected. The first existing answer path wins. Only a missing path tries the next path. A wrong type or an empty value is a mapping error.

@@ -558,6 +558,8 @@ Use a `transport` object in a `custom_http` target to configure request fields, 
 
 New transport files default to offline validation. Existing target files keep their single-prompt validation behavior. Synchronous execution sends exactly one request without retries. Diagnostics omit secret values and returned answer text.
 
+For local `custom_http` targets, [version 2](transport-spec.md#use-version-2) adds variables, generated references, and URL and query bindings. Offline validation lists binding names without rendering a body or reading environment values. Execute mode reports HTTP status, selected outcome, and request counts. Its `--endpoint-override` takes an origin and retains every configured request path. `--sample-response`, `--with-scenario`, and `--scenario-url` support version 1 transports only. Browser targets and remote clients remain on version 1.
+
 
 ### Browser transport validation
 

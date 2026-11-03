@@ -120,6 +120,19 @@ def cmd_validate_target(
     except TargetLoadError as e:
         raise click.ClickException(str(e))
     kind = spec["kind"]
+    if (
+        kind == "custom_http"
+        and isinstance(spec.get("transport"), dict)
+        and type(spec["transport"].get("version")) is int
+        and spec["transport"]["version"] == 2
+    ):
+        from argus.cli.validate_transport_v2 import validate
+
+        if sample_response or with_scenario or scenario_url:
+            raise click.UsageError("this option supports version 1 transports only")
+        return validate(
+            spec, offline=offline or not execute, endpoint_override=endpoint_override
+        )
     if "transport" in spec or kind == "browser_use":
         return _validate_transport(
             spec,
