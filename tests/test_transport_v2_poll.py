@@ -285,8 +285,9 @@ async def test_unsafe_location_stops_business_and_skips_undo(location):
 async def test_429_is_never_retried():
     app = responses(submit_status=429, submit_headers={'Retry-After': '0'})
     async with serve(app) as origin:
-        result = await runtime(wait_spec(poll_spec(origin + '/run'))).attempt(TransportContext(prompt='normal task'))
-        assert result.reason_code.value == 'http_error'
+        with pytest.raises(TargetRunStopped) as caught:
+            await runtime(wait_spec(poll_spec(origin + '/run'))).attempt(TransportContext(prompt='normal task'))
+        assert caught.value.reason == 'stop_on_status'
         assert [call[0] for call in app.calls] == ['POST']
 
 

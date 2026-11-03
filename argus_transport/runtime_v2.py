@@ -109,10 +109,18 @@ class UndoStack:
     async def unwind(self, send: Callable[[UndoIntent], Awaitable[None]], *, timeout_s: float) -> None:
         async def unwind_all():
             for intent in reversed(self.intents):
-                if self.ledger.stopped is not None and intent.status != 'done':
+                if self.ledger.stopped is not None and intent.status == 'pending':
                     intent.status = 'skipped_stopped'
                 if intent.status == 'pending':
-                    await send(intent)
+                    try:
+                        await send(intent)
+                    except TargetRunStopped:
+                        if self.ledger.stopped is not None:
+                            intent.status = 'skipped_stopped'
+                            for remaining in self.intents:
+                                if remaining.status == 'pending':
+                                    remaining.status = 'skipped_stopped'
+                        raise
         try:
             await asyncio.wait_for(unwind_all(), timeout_s)
         except (TimeoutError, asyncio.CancelledError):
@@ -243,7 +251,7 @@ class V2Run:
         self._closed = True
         try:
             for intent in self.run_undos.intents:
-                if intent.status == 'pending' and any(
+                if self.ledger.stopped is None and intent.status == 'pending' and any(
                     intent.provides & inner.needs
                     for stack in self.attempt_undos for inner in stack.intents
                     if inner.status != 'done'
@@ -251,6 +259,9 @@ class V2Run:
                     intent.status = 'blocked_by_inner'
             engine = TransportEngineV2(self.spec, run=self, client=self.client)
             await engine.cleanup(self.run_undos)
+        except TargetRunStopped as exc:
+            self._stop_error = exc
+            raise
         finally:
             if self._stop_error is not None:
                 self._stop_error.set_cleanup(self.cleanup_report())
@@ -260,4 +271,4 @@ class V2Run:
             return None
         intents = [*self.run_undos.intents,
                    *(item for stack in self.attempt_undos for item in stack.intents)]
-        return cleanup_summary(intents, self._stop_error.reason if self._stop_error else None)
+        return cleanup_summary(intents, self.ledger.stopped or (self._stop_error.reason if self._stop_error else None))

@@ -663,6 +663,7 @@ class TransportEngineV2:
         phase,
         admitted=False,
     ):
+        from .runtime_v2 import TargetRunStopped
         self.runtime.ledger._check_stopped()
         if phase == "cleanup" and (request.method not in {"GET", "DELETE"} or "multipart" in request.body):
             return self.failure(SafeReasonCode.SETUP_FAILED, start, diagnostics=redactor.clean(diagnostics))
@@ -689,6 +690,7 @@ class TransportEngineV2:
         parts = urlsplit(str(url))
         headers = {**headers, "Host": parts.netloc}
         url = url.copy_with(host=ip)
+        self.runtime.ledger._check_stopped()
         if phase == "cleanup":
             self.runtime.ledger.spend_cleanup()
         elif not admitted:
@@ -704,8 +706,15 @@ class TransportEngineV2:
             extensions={"sni_hostname": parts.hostname},
         ) as response:
             status = response.status_code
-            response_headers = {name: response.headers[name] for name in ('location', 'retry-after')
+            stop = self.spec.budget.stop_on
+            retained = {'location', 'retry-after', *(name.lower() for name in stop.alert_names)}
+            response_headers = {name: response.headers[name] for name in retained
                                 if name in response.headers}
+            reason = ('stop_on_status' if status in stop.http_status else
+                      'alert' if any(name.lower() in response_headers for name in stop.alert_names) else None)
+            if reason is not None:
+                self.runtime.ledger.trip(reason)
+                raise TargetRunStopped(self.runtime.ledger.stopped)
             exchange = ExchangeResponse(status, None, response_headers)
             if phase in {'submit', 'poll'} and isinstance(self.spec.delivery, PollSpecV2):
                 location_error = self._verify_location(
@@ -713,7 +722,8 @@ class TransportEngineV2:
                 )
                 if location_error is not None:
                     return location_error
-            if phase not in {"setup", "cleanup"} and not 200 <= status < 300 and status not in {400, 403}:
+            http_error = phase not in {'setup', 'cleanup'} and not 200 <= status < 300 and status not in {400, 403}
+            if http_error and not (stop.credential_echo and redactor.values):
                 return self.failure(
                     SafeReasonCode.HTTP_ERROR,
                     start,
@@ -724,7 +734,7 @@ class TransportEngineV2:
                 "Content-Encoding", "identity"
             ).strip().lower() not in {"", "identity"}:
                 return self.failure(
-                    SafeReasonCode.PARSE_ERROR,
+                    SafeReasonCode.HTTP_ERROR if http_error else SafeReasonCode.PARSE_ERROR,
                     start,
                     status=status,
                     diagnostics=redactor.clean(diagnostics),
@@ -734,17 +744,23 @@ class TransportEngineV2:
                 body.extend(chunk)
                 if len(body) > self.spec.limits.response_bytes:
                     return self.failure(
-                        SafeReasonCode.RESPONSE_LIMIT,
+                        SafeReasonCode.HTTP_ERROR if http_error else SafeReasonCode.RESPONSE_LIMIT,
                         start,
                         status=status,
                         diagnostics=redactor.clean(diagnostics),
                     )
             try:
                 raw = body.decode("utf-8")
+                if stop.credential_echo and any(value in raw for value in redactor.values):
+                    self.runtime.ledger.trip('credential_echo')
+                    raise TargetRunStopped(self.runtime.ledger.stopped)
+                if http_error:
+                    return self.failure(SafeReasonCode.HTTP_ERROR, start, status=status,
+                                        diagnostics=redactor.clean(diagnostics))
                 parsed = (None if not raw and phase in {"setup", "cleanup"} else json.loads(raw)) if self.spec.response.format == "json" else raw
             except (UnicodeError, ValueError, RecursionError):
                 return self.failure(
-                    SafeReasonCode.PARSE_ERROR,
+                    SafeReasonCode.HTTP_ERROR if http_error else SafeReasonCode.PARSE_ERROR,
                     start,
                     status=status,
                     diagnostics=redactor.clean(diagnostics),

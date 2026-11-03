@@ -209,7 +209,9 @@ async def test_startup_and_first_attempt_have_separate_deadlines():
 async def test_private_bound_cleanup_sends_original_url_and_reports_redacted_url():
     app = recording_lifecycle(undo_status=500)
     async with serve(app) as origin:
-        run = runtime(lifecycle_dict(origin, attempt=False))
+        data = lifecycle_dict(origin, attempt=False)
+        data['budget'] = {'stop_on': {'credential_echo': False}}
+        run = runtime(data)
         run.redactor.add('source-one')
         await run.attempt(TransportContext(prompt='normal'))
         await run.close()

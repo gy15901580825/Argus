@@ -42,7 +42,8 @@ V2_FIELD_NAMES = frozenset(
     {"let", "run", "attempt", "var", "concat", "generate", "base64", "env", "query",
      "lifecycle", "id", "if_present", "expect", "http_status", "when", "capture",
      "undo", "budget", "max_requests", "cleanup_reserve", "cleanup_s",
-     "last_segment", "expect_prefix", "ids", "wait", "from", "default_s", "max_s", "location"}
+     "last_segment", "expect_prefix", "ids", "wait", "from", "default_s", "max_s", "location",
+     "stop_on", "alert_names", "credential_echo"}
 )
 _QUERY_RESERVED = {"key", "auth", "authorization"}
 _QUERY_FRAGMENTS = ("token", "api_key", "apikey", "password", "secret", "credential")
@@ -292,17 +293,46 @@ class LifecycleSpec(FrozenModel):
 
 
 @dataclass(frozen=True)
-class BudgetSpec(FrozenModel):
-    max_requests: int | None = None
-    cleanup_reserve: int = 100
+class StopOnSpec(FrozenModel):
+    http_status: tuple[int, ...] = (429,)
+    alert_names: tuple[str, ...] = ()
+    credential_echo: bool = True
 
     @classmethod
     def from_dict(cls, data):
-        object_fields(data, {"max_requests", "cleanup_reserve"})
+        object_fields(data, {"http_status", "alert_names", "credential_echo"})
+        statuses = data.get('http_status', [429])
+        if not isinstance(statuses, list) or any(type(value) is not int or not 100 <= value <= 599
+                                                for value in statuses):
+            raise ValueError('Invalid stop HTTP status')
+        names = data.get('alert_names', [])
+        if not isinstance(names, list):
+            raise ValueError('Invalid alert names')
+        for name in names:
+            if not isinstance(name, str) or not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", name):
+                raise ValueError('Invalid alert name')
+        echo = data.get('credential_echo', True)
+        if type(echo) is not bool:
+            raise ValueError('Invalid credential echo switch')
+        return cls(tuple(statuses), tuple(names), echo)
+
+
+@dataclass(frozen=True)
+class BudgetSpec(FrozenModel):
+    max_requests: int | None = None
+    cleanup_reserve: int = 100
+    stop_on: StopOnSpec = StopOnSpec()
+
+    @classmethod
+    def from_dict(cls, data):
+        object_fields(data, {"max_requests", "cleanup_reserve", "stop_on"})
         for name, value in data.items():
+            if name == 'stop_on':
+                continue
             if type(value) is not int or value < (1 if name == "max_requests" else 0):
                 raise ValueError("Invalid request budget")
-        return cls(**data)
+        return cls(**{name: value for name, value in data.items() if name != 'stop_on'},
+                   stop_on=StopOnSpec.from_dict(data.get('stop_on', {})))
 
 
 @dataclass(frozen=True)
@@ -607,9 +637,14 @@ class TransportSpecV2(FrozenModel):
             }
         if self.budget != BudgetSpec():
             result["budget"] = {
-                name: value for name, value in asdict(self.budget).items()
+                name: value for name, value in asdict(self.budget).items() if name != 'stop_on'
                 if value != getattr(BudgetSpec(), name)
             }
+            if self.budget.stop_on != StopOnSpec():
+                stop = self.budget.stop_on
+                result['budget']['stop_on'] = {'http_status': list(stop.http_status),
+                                             'alert_names': list(stop.alert_names),
+                                             'credential_echo': stop.credential_echo}
         if isinstance(self.delivery, PollSpecV2):
             poll = self.delivery
             result['delivery'] = {

@@ -538,6 +538,7 @@ async def test_v2_poll_auth_and_redaction_survive_attempts(monkeypatch):
             "kind": "bearer",
             "secret": {"source": "env", "name": "DUMMY_ACCESS"},
         }
+        data['budget'] = {'stop_on': {'credential_echo': False}}
         run = runtime(data)
         for _ in range(2):
             result = await run.attempt(TransportContext(prompt="normal task"))
