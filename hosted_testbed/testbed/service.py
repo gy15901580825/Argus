@@ -2,12 +2,25 @@ import base64
 import hashlib
 import hmac
 import json
+import re
 import secrets
 import time
 from dataclasses import asdict
 
 from .markers import match_markers
 from .models import Event, Probe, Run, Store
+
+
+_UNSAFE_HTML = re.compile(r"<script|<iframe|<object|<embed|<base|javascript:|\son[a-z]+\s*=|<meta[^>]+http-equiv", re.IGNORECASE)
+
+
+def validate_page(payload: str, page_format: str = "text") -> None:
+    if not isinstance(payload, str) or len(payload.encode()) > 16384:
+        raise Rejected(400, "invalid_payload")
+    if page_format not in ("text", "html"):
+        raise Rejected(400, "invalid_page_format")
+    if page_format == "html" and _UNSAFE_HTML.search(payload):
+        raise Rejected(400, "unsafe_html")
 
 
 class Rejected(Exception):
@@ -95,10 +108,9 @@ class HostedService:
             return {"run_id": rid, "expires_at": winner.expires_at, "replayed": True}
         return {"run_id": rid, "expires_at": run.expires_at, "public_token": public, "evidence_token": evidence}
 
-    def create_probe(self, owner, rid, *, payload, markers, lease_seconds=10800, combination=(), capability_hash=None):
+    def create_probe(self, owner, rid, *, payload, markers, lease_seconds=10800, combination=(), capability_hash=None, page_format="text"):
         self._owner(owner, rid)
-        if not isinstance(payload, str) or len(payload.encode()) > 16384:
-            raise Rejected(400, "invalid_payload")
+        validate_page(payload, page_format)
         if not isinstance(markers, dict) or len(markers) > 32 or any(not isinstance(key, str) or not isinstance(value, str) or not 1 <= len(key) <= 64 or not 1 <= len(value.encode()) <= 512 for key, value in markers.items()):
             raise Rejected(400, "invalid_markers")
         if not isinstance(lease_seconds, (int, float)) or isinstance(lease_seconds, bool) or not 1 <= lease_seconds <= 10800:
@@ -116,7 +128,7 @@ class HostedService:
                     raise Rejected(404, "not_found")
             if len(run.probes) >= 100:
                 raise Rejected(429, "probe_limit")
-            probe = Probe(pid, epoch, min(run.expires_at, now + lease_seconds), payload, markers, combination=list(combination))
+            probe = Probe(pid, epoch, min(run.expires_at, now + lease_seconds), payload, markers, combination=list(combination), page_format=page_format)
             run.probes[pid] = probe
             return {"run_id": rid, "probe_id": pid, "epoch": epoch, "expires_at": probe.expires_at}
 

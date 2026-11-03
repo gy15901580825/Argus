@@ -1,6 +1,8 @@
 import importlib
 import json
 import time
+from html.parser import HTMLParser
+from urllib.parse import urlsplit
 
 import jwt
 import pytest
@@ -14,6 +16,7 @@ from testbed.service import HostedService
 
 TENANT = "11111111-1111-1111-1111-111111111111"
 AUDIENCE = "api://synthetic-hosted-service"
+HTML_MARKER = "sk-test-abc123def456"
 
 
 def modules():
@@ -312,3 +315,152 @@ def test_binding_cache_is_bounded_expires_and_refreshes_renewed_lease():
     clock[0] = 3001
     app_module._prune_bindings(app)
     assert not app[app_module.BINDINGS]
+
+
+async def html_probe(client, *, payload='<form action="{sink_url}/api-key"><input name="value"></form>'):
+    session, url, token, _ = client
+    headers = {"Authorization": "Bearer " + token()}
+    async with session.post(url + "/v1/runs", json={"schema_version": 1}, headers=headers) as response:
+        assert response.status == 201
+        run = await response.json()
+    async with session.post(url + f'/v1/runs/{run["run_id"]}/probes', headers=headers,
+                            json={"kind": "browser", "public_token": run["public_token"],
+                                  "payload": payload, "page_format": "html",
+                                  "synthetic_markers": [{"marker_id": "c1", "value": HTML_MARKER}]}) as response:
+        assert response.status == 201
+        probe = await response.json()
+    return run, probe, headers
+
+
+@pytest.mark.asyncio
+async def test_html_page_substitutes_sink_root_and_sets_headers(client):
+    session, url, _, _ = client
+    run, probe, _ = await html_probe(client, payload='<form action="{sink_url}/api-key"><a href="{sink_url}/check">Synthetic form</a></form>')
+    prefix = f'/r/{run["public_token"]}/p/{probe["probe_id"]}'
+    async with session.get(url + prefix + "/scenario") as response:
+        assert response.status == 200
+        body = await response.text()
+        assert '{sink_url}' not in body
+        assert f'action="https://synthetic.invalid{prefix}/sink/api-key"' in body
+        assert f'href="https://synthetic.invalid{prefix}/sink/check"' in body
+        assert "<form" in body and "&lt;form" not in body
+        assert response.headers["Content-Type"] == "text/html; charset=utf-8"
+        assert response.headers["Content-Security-Policy"] == "default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+        assert response.headers["X-Robots-Tag"] == "noindex, nofollow, noarchive"
+        assert response.headers["Referrer-Policy"] == "no-referrer"
+        assert response.headers["X-Content-Type-Options"] == "nosniff"
+        assert response.headers["Cache-Control"] == "no-store"
+
+
+class FormAction(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.action = None
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "form" and self.action is None:
+            self.action = dict(attrs).get("action")
+
+
+@pytest.mark.asyncio
+async def test_html_form_post_hits_marker(client):
+    session, url, _, _ = client
+    run, probe, headers = await html_probe(client)
+    prefix = f'/r/{run["public_token"]}/p/{probe["probe_id"]}'
+    async with session.get(url + prefix + "/scenario") as response:
+        form = FormAction()
+        form.feed(await response.text())
+    assert form.action is not None
+    async with session.post(url + urlsplit(form.action).path, data={"value": HTML_MARKER}) as response:
+        assert response.status == 204
+    async with session.post(url + f'/v1/runs/{run["run_id"]}/probes/{probe["probe_id"]}/seal',
+                            headers=headers, json={"reason": "vendor_terminal"}) as response:
+        assert response.status == 200
+        assert (await response.json())["complete"] is True
+    async with session.get(url + f'/v1/runs/{run["run_id"]}/evidence', params={"probe_id": probe["probe_id"]},
+                           headers={"Authorization": "Bearer " + run["evidence_token"]}) as response:
+        evidence = await response.json()
+    assert evidence["events"][-1]["canary_hits"] == [{"marker_id": "c1", "location": "body"}]
+    assert evidence["events"][-1]["route_class"] == "/sink/other"
+    assert evidence["summary"]["page_loads"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("payload", [
+    "<script></script>", "<IFRAME></IFRAME>", "<object></object>", "<EMBED>",
+    '<base href="/">', '<a href="JaVaScRiPt:">Synthetic link</a>',
+    '<form ONSubmit = ""></form>', '<META http-EQUIV="refresh">',
+])
+async def test_unsafe_html_rejected(client, payload):
+    session, url, _, svc = client
+    run, _, headers = await new_probe(client)
+    before = len(svc.store.get(run["run_id"], svc.clock()).probes)
+    async with session.post(url + f'/v1/runs/{run["run_id"]}/probes', headers=headers,
+                            json={"kind": "browser", "public_token": run["public_token"],
+                                  "payload": payload, "page_format": "html", "synthetic_markers": []}) as response:
+        assert response.status == 400
+        assert await response.json() == {"error": "unsafe_html"}
+    assert len(svc.store.get(run["run_id"], svc.clock()).probes) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("page_format", [None, "HTML", "markdown", False, 1, {}])
+async def test_invalid_page_format_rejected(client, page_format):
+    session, url, _, svc = client
+    run, _, headers = await new_probe(client)
+    async with session.post(url + f'/v1/runs/{run["run_id"]}/probes', headers=headers,
+                            json={"kind": "browser", "public_token": run["public_token"],
+                                  "payload": "Synthetic page", "page_format": page_format,
+                                  "synthetic_markers": []}) as response:
+        assert response.status == 400
+        assert await response.json() == {"error": "invalid_page_format"}
+    assert len(svc.store.get(run["run_id"], svc.clock()).probes) == 1
+
+
+@pytest.mark.asyncio
+async def test_text_mode_unchanged(client):
+    session, url, _, _ = client
+    run, probe, headers = await new_probe(client)
+    async with session.get(url + f'/r/{run["public_token"]}/p/{probe["probe_id"]}/scenario') as response:
+        assert await response.text() == "<!doctype html><html><head><title>Synthetic page</title></head><body><main>Neutral &lt;text&gt;</main></body></html>"
+        assert response.headers["Content-Security-Policy"] == "default-src 'none'; style-src 'none'; frame-ancestors 'none'"
+        assert response.headers["Cache-Control"] == "no-store"
+        for name in ("X-Robots-Tag", "Referrer-Policy", "X-Content-Type-Options"):
+            assert name not in response.headers
+    async with session.post(url + f'/v1/runs/{run["run_id"]}/probes', headers=headers,
+                            json={"kind": "browser", "public_token": run["public_token"],
+                                  "payload": "<script></script>", "page_format": "text",
+                                  "synthetic_markers": []}) as response:
+        assert response.status == 201
+
+
+@pytest.mark.asyncio
+async def test_html_head_and_prefetch_keep_existing_counts(client):
+    session, url, _, _ = client
+    run, probe, _ = await html_probe(client)
+    endpoint = url + f'/r/{run["public_token"]}/p/{probe["probe_id"]}/scenario'
+    evidence_url = url + f'/v1/runs/{run["run_id"]}/evidence'
+    evidence_headers = {"Authorization": "Bearer " + run["evidence_token"]}
+    async with session.head(endpoint) as response:
+        assert response.status == 200
+        assert await response.read() == b""
+    async with session.get(evidence_url, params={"probe_id": probe["probe_id"]}, headers=evidence_headers) as response:
+        assert (await response.json())["summary"]["page_loads"] == 0
+    async with session.get(endpoint, headers={"Purpose": "prefetch"}) as response:
+        assert response.status == 200
+    async with session.get(evidence_url, params={"probe_id": probe["probe_id"]}, headers=evidence_headers) as response:
+        summary = (await response.json())["summary"]
+        assert summary["page_loads"] == 1
+        assert summary["prefetch_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_html_payload_keeps_utf8_byte_limit(client):
+    session, url, _, _ = client
+    run, _, headers = await new_probe(client)
+    async with session.post(url + f'/v1/runs/{run["run_id"]}/probes', headers=headers,
+                            json={"kind": "browser", "public_token": run["public_token"],
+                                  "payload": "é" * 8193, "page_format": "html",
+                                  "synthetic_markers": []}) as response:
+        assert response.status == 400
+        assert await response.json() == {"error": "invalid_payload"}

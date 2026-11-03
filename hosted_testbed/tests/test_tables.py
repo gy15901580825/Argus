@@ -108,6 +108,35 @@ def test_sealed_evidence_survives_a_new_store_client():
     assert recovered.probes["probe1"].snapshot_hash == "abc"
     assert recovered.probes["probe1"].snapshot["summary"]["complete"] is True
     assert recovered.probes["probe1"].events[0].canary_hits == [{"marker_id": "m1", "location": "body"}]
+
+
+def test_page_format_persists_in_tables():
+    service = Service()
+    store = backend(service)
+    run = make_run()
+    run.probes["probe1"].page_format = "html"
+    assert store.create(run)
+    recovered = backend(service).get("run1", 100)
+    assert recovered.probes["probe1"].page_format == "html"
+
+
+def test_old_table_probe_defaults_to_text():
+    service = Service()
+    store = backend(service)
+    run = make_run()
+    original_blob = store._blob
+
+    def legacy_blob(partition, value, expires_at):
+        value = copy.deepcopy(value)
+        if isinstance(value, dict) and "probes" in value:
+            for probe in value["probes"].values():
+                probe.pop("page_format", None)
+        return original_blob(partition, value, expires_at)
+
+    store._blob = legacy_blob
+    assert store.create(run)
+    recovered = backend(service).get("run1", 100)
+    assert recovered.probes["probe1"].page_format == "text"
     assert set(service.tables) == {"hostedruns", "hostedevents", "hostedlimits"}
 
 

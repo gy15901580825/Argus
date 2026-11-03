@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Callable, Protocol, TypeVar
+from typing import Callable, Literal, Protocol, TypeVar
 
 
 @dataclass
@@ -38,6 +38,7 @@ class Probe:
     seal_revision: int = 0
     snapshot: dict | None = None
     snapshot_hash: str | None = None
+    page_format: Literal["text", "html"] = "text"
 
 
 @dataclass
