@@ -10,6 +10,7 @@ import time
 import uuid
 from dataclasses import dataclass, replace
 from contextlib import asynccontextmanager
+from collections.abc import Callable
 from types import MappingProxyType
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -66,6 +67,8 @@ def bind_v2(
         return time.time_ns() // 1_000_000
     if "concat" in value:
         items = [bind_v2(part, context, scope, env) for part in value["concat"]]
+        if any(item is _OMIT for item in items):
+            return _OMIT
         if any(type(item) not in {str, int} for item in items):
             raise ValueError("Concat requires strings or integers")
         result = "".join(str(item) for item in items)
@@ -74,6 +77,8 @@ def bind_v2(
         return result
     if "base64" in value:
         item = bind_v2(value["base64"], context, scope, env)
+        if item is _OMIT:
+            return _OMIT
         if not isinstance(item, str):
             raise ValueError("Base64 requires a string")
         return base64.b64encode(item.encode("utf-8")).decode("ascii")
@@ -133,6 +138,7 @@ def render_body_v2(
     context: TransportContext,
     scope: Mapping[str, str | int],
     env: Mapping[str, str],
+    *, boundary: str | None = None,
 ) -> bytes | None:
     if "none" in request.body:
         return None
@@ -143,6 +149,31 @@ def render_body_v2(
             if (item := bind_v2(expr, context, scope, env)) is not _OMIT
         }
         return json.dumps(data, ensure_ascii=False, allow_nan=False).encode("utf-8")
+    if "multipart" in request.body:
+        if request.method not in {"POST", "PUT"}:
+            raise ValueError("Multipart method must be POST or PUT")
+        boundary = boundary or uuid.uuid4().hex
+        parts = []
+        for name, part in request.body["multipart"].items():
+            if re.fullmatch(r"[a-z][a-z0-9_]{0,31}", name) is None:
+                raise ValueError("Invalid multipart part name")
+            if part["content_type"] not in {"text/plain", "text/markdown", "application/json", "text/csv"}:
+                raise ValueError("Invalid multipart media type")
+            filename = bind_v2(part["filename"], context, scope, env)
+            content = bind_v2(part["content"], context, scope, env)
+            if filename is _OMIT or content is _OMIT:
+                continue
+            if not isinstance(filename, str) or not filename or any(char in filename for char in '\r\n\0"'):
+                raise ValueError("Invalid multipart filename")
+            if not isinstance(content, str):
+                raise ValueError("Multipart content must be a string")
+            encoded = content.encode("utf-8")
+            if len(encoded) > 1048576:
+                raise ValueError("Multipart content exceeds byte limit")
+            disposition = f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'
+            parts.append(disposition.encode("utf-8") +
+                         f'Content-Type: {part["content_type"]}\r\n\r\n'.encode("ascii") + encoded + b"\r\n")
+        return b"".join(parts) + f"--{boundary}--\r\n".encode("ascii")
     data = bind_v2(request.body["text"], context, scope, env)
     if not isinstance(data, str):
         raise ValueError("Text body must be a string")
@@ -160,16 +191,67 @@ class _CapturePrefixError(ValueError):
     pass
 
 
+class _CaptureNotFound(ValueError):
+    pass
+
+
+class _CaptureAmbiguous(ValueError):
+    def __init__(self, count):
+        super().__init__('Ambiguous captured item')
+        self.count = count
+
+
 class _SecretBindingError(ValueError):
     pass
 
 
-def capture_value(selector, body, context, scope, env):
-    raw = select(body, selector.path)
+def _resolved_where(value, context, scope, env):
+    result = json.loads(json.dumps(value))
+    for operator in ('all', 'any', 'not'):
+        if operator in value:
+            children = [value[operator]] if operator == 'not' else value[operator]
+            resolved = [_resolved_where(child, context, scope, env) for child in children]
+            if any(child is _OMIT for child in resolved):
+                return _OMIT
+            result[operator] = resolved[0] if operator == 'not' else resolved
+            return result
+    operator = 'equals' if 'equals' in value else 'one_of' if 'one_of' in value else None
+    if operator is not None:
+        values = [result[operator]] if operator == 'equals' else result[operator]
+        resolved = []
+        for item in values:
+            if isinstance(item, dict) and set(item) in ({'env'}, {'env', 'missing'}, {'var'}):
+                expression = {**item, 'missing': 'omit'} if 'var' in item else item
+                item = bind_v2(expression, context, scope, env)
+            if item is _OMIT:
+                return _OMIT
+            resolved.append(item)
+        result[operator] = resolved[0] if operator == 'equals' else resolved
+    return result
+
+
+def capture_value(selector, body, context, scope, env, *, given=False):
+    if given:
+        raw = body
+    elif selector.items is not None:
+        items = select(body, selector.items)
+        if not isinstance(items, list):
+            raise ValueError('Capture items must be an array')
+        where = _resolved_where(selector.where, context, scope, env)
+        matched = [] if where is _OMIT else [item for item in items if matches_predicate(item, where)]
+        if not matched:
+            raise _CaptureNotFound('No captured item')
+        if len(matched) != 1:
+            raise _CaptureAmbiguous(len(matched))
+        raw = select(matched[0], selector.take)
+    else:
+        raw = select(body, selector.path)
+    if raw is _MISSING:
+        raise _CaptureNotFound('No captured item')
     if selector.last_segment or selector.expect_prefix is not None:
         if not isinstance(raw, str) or not raw:
             raise _CapturePrefixError('Invalid captured identifier')
-        if selector.expect_prefix is not None:
+        if selector.expect_prefix is not None and not (given and selector.last_segment):
             try:
                 prefix = bind_v2(selector.expect_prefix, context, scope, env)
             except (ValueError, TypeError, AttributeError, OverflowError, RecursionError):
@@ -177,7 +259,7 @@ def capture_value(selector, body, context, scope, env):
             if not isinstance(prefix, str) or not prefix or not raw.startswith(prefix):
                 raise _CapturePrefixError('Invalid capture prefix')
         if selector.last_segment:
-            value = raw.rsplit('/', 1)[-1]
+            value = raw if given else raw.rsplit('/', 1)[-1]
             if re.fullmatch(r'[A-Za-z0-9._~-]{1,256}', value) is None:
                 raise _CapturePrefixError('Invalid captured identifier')
             return value
@@ -253,11 +335,19 @@ class TransportEngineV2:
         return headers
 
     def _bind_request(self, request, context, scope):
+        boundary = None
+        if "multipart" in request.body:
+            if any(name.lower() == "content-type" for name in request.headers):
+                raise ValueError("Content-Type conflicts with multipart body")
+            boundary = uuid.uuid4().hex
+            request = replace(request, headers={**request.headers,
+                              "Content-Type": "multipart/form-data; boundary=" + boundary})
         bound = replace(request, url=render_url(request, context, scope, self.runtime.env))
-        return bound, render_body_v2(bound, context, scope, self.runtime.env)
+        return bound, render_body_v2(bound, context, scope, self.runtime.env, boundary=boundary)
 
     def _bind_undo(self, intent, context, scope):
         intent._bindings = MappingProxyType(dict(scope))
+        intent._context = context
         try:
             request, content = self._bind_request(intent.spec.request, context, scope)
             headers = self._headers(request)
@@ -273,16 +363,23 @@ class TransportEngineV2:
     async def startup(self, context):
         start = time.monotonic()
         scope = dict(self.runtime.run_vars)
-        diagnostics = {'requests': {'setup': 0, 'cleanup': 0}}
+        diagnostics = {'requests': {'provision': 0, 'setup': 0, 'cleanup': 0}}
         with redacted_transport_logs(self.redactor):
             async with asyncio.timeout(self.spec.timeout.total_deadline_s):
                 async with self._client() as client:
+                    if self.spec.lifecycle.provision is not None:
+                        from .provision_v2 import run_provision
+                        async def exchange(request, bindings):
+                            request, content = self._bind_request(request, context, bindings)
+                            return await self._exchange(client, request, self._headers(request), content,
+                                                        start, self.redactor, diagnostics, phase='provision')
+                        scope.update(await run_provision(self.runtime, exchange))
                     await self._steps(self.spec.lifecycle.run, 'run', self.runtime.run_undos,
                                       client, context, scope, start, diagnostics)
         self.runtime.run_vars = MappingProxyType(scope)
 
     async def _steps(self, steps, scope_name, stack, client, context, scope, start, diagnostics):
-        from .runtime_v2 import TargetRunStopped, UndoIntent
+        from .runtime_v2 import TargetRunStopped, UndoIntent, _ResourceRecord
         for step in steps:
             if step.if_present is not None:
                 guard = scope.get(step.if_present, getattr(context, step.if_present, None))
@@ -295,13 +392,44 @@ class TransportEngineV2:
                 self.runtime.ledger._check_request()
                 intent = None
                 if step.undo is not None:
-                    intent = UndoIntent(scope_name, step.id, step.undo,
-                                        _request_needs(step.undo.request), frozenset(step.capture))
+                    needs = _request_needs(step.undo.request)
+                    if step.undo.confirm is not None:
+                        needs |= _request_needs(step.undo.confirm.request)
+                    intent = UndoIntent(scope_name, step.id, step.undo, needs, frozenset(step.capture))
                     self._bind_undo(intent, context, scope)
                     stack.register(intent)
                 self.runtime.ledger.charge('setup')
+                records = []
+                def record_accepted():
+                    record = _ResourceRecord(
+                        self.redactor.clean(f"step '{step.id}' {request.method} {request.url}"),
+                        scope_name, step.id, intent,
+                        len(self.runtime.attempt_undos) - 1 if scope_name == 'attempt' else None,
+                    )
+                    records.append(record)
+                    self.runtime._resources.append(record)
+                    stack._resources.append(record)
                 response = await self._exchange(client, request, headers, content, start,
-                                                self.redactor, diagnostics, phase='setup', admitted=True)
+                                                self.redactor, diagnostics, phase='setup', admitted=True,
+                                                on_accepted=record_accepted if request.method in {"POST", "PUT", "PATCH", "DELETE"} else None)
+                if records and isinstance(response, ExchangeResponse):
+                    names = []
+                    for selector in step.capture.values():
+                        if selector.expect_prefix is not None:
+                            try:
+                                name = capture_value(replace(selector, last_segment=False), response.body,
+                                                     context, scope, self.runtime.env)
+                            except (ValueError, TypeError, AttributeError, OverflowError, RecursionError):
+                                continue
+                            if name not in names:
+                                names.append(name)
+                    if names:
+                        record = records[0]
+                        self.runtime._resources.remove(record)
+                        stack._resources.remove(record)
+                        identified = [replace(record, name=name) for name in names]
+                        self.runtime._resources.extend(identified)
+                        stack._resources.extend(identified)
                 if isinstance(response, TransportResult):
                     reason = response.reason_code
                 elif response.status in step.expect.http_status and (
@@ -345,11 +473,34 @@ class TransportEngineV2:
                 if isinstance(response, TransportResult):
                     intent.http_status = response.http_status
                     intent.status = 'failed'
+                    return
+                intent.http_status = response.status
+                if response.status in intent.spec.expect.http_status:
+                    intent.status = 'done' if intent.spec.expect.when is None or matches_predicate(
+                        response.body, intent.spec.expect.when) else 'failed'
+                    return
+                intent.status = 'failed'
+                confirm = intent.spec.confirm
+                if confirm is None:
+                    return
+                self.runtime.ledger._check_stopped()
+                if confirm.request.method != 'GET' or 'multipart' in confirm.request.body:
+                    return
+                try:
+                    request, content = self._bind_request(confirm.request, intent._context, intent._bindings)
+                    headers = self._headers(request)
+                except (ValueError, TypeError, AttributeError, OverflowError, RecursionError):
+                    intent.status = 'unconfirmed'
+                    return
+                if not self.runtime.ledger.reserve_optional_cleanup():
+                    intent.status = 'unconfirmed'
+                    return
+                confirmed = await self._exchange(client, request, headers, content, start, self.redactor,
+                                                 diagnostics, phase='cleanup')
+                if isinstance(confirmed, TransportResult):
+                    intent.status = 'failed'
                 else:
-                    intent.http_status = response.status
-                    intent.status = 'done' if response.status in intent.spec.expect.http_status and (
-                        intent.spec.expect.when is None or matches_predicate(response.body, intent.spec.expect.when)
-                    ) else 'failed'
+                    intent.status = 'done' if confirmed.status in confirm.gone_status else 'unconfirmed'
             except (TimeoutError, httpx.HTTPError, ValueError, OSError):
                 intent.status = 'failed'
         with redacted_transport_logs(self.redactor):
@@ -364,7 +515,7 @@ class TransportEngineV2:
         start = time.monotonic()
         if not isinstance(self.spec.delivery, (SyncSpec, PollSpecV2)):
             return self.failure(SafeReasonCode.UNSUPPORTED_DELIVERY, start)
-        stack = UndoStack(self.runtime.ledger)
+        stack = UndoStack(self.runtime.ledger, self.redactor)
         self.runtime.attempt_undos.append(stack)
         diagnostics = {
             'request_method': self.spec.request.method,
@@ -417,7 +568,7 @@ class TransportEngineV2:
                 interrupted = exc
                 raise
             finally:
-                if any(step.undo for step in self.spec.lifecycle.attempt):
+                if stack._resources or any(step.undo for step in self.spec.lifecycle.attempt):
                     diagnostics['cleanup'] = stack.report()
                 if interrupted is not None:
                     interrupted.transport_diagnostics = self.redactor.clean(diagnostics)
@@ -662,6 +813,7 @@ class TransportEngineV2:
         *,
         phase,
         admitted=False,
+        on_accepted: Callable[[], None] | None = None,
     ):
         from .runtime_v2 import TargetRunStopped
         self.runtime.ledger._check_stopped()
@@ -706,6 +858,8 @@ class TransportEngineV2:
             extensions={"sni_hostname": parts.hostname},
         ) as response:
             status = response.status_code
+            if on_accepted is not None and 200 <= status < 300:
+                on_accepted()
             stop = self.spec.budget.stop_on
             retained = {'location', 'retry-after', *(name.lower() for name in stop.alert_names)}
             response_headers = {name: response.headers[name] for name in retained
@@ -722,7 +876,7 @@ class TransportEngineV2:
                 )
                 if location_error is not None:
                     return location_error
-            http_error = phase not in {'setup', 'cleanup'} and not 200 <= status < 300 and status not in {400, 403}
+            http_error = phase not in {'provision', 'setup', 'cleanup'} and not 200 <= status < 300 and status not in {400, 403}
             if http_error and not (stop.credential_echo and redactor.values):
                 return self.failure(
                     SafeReasonCode.HTTP_ERROR,
@@ -759,17 +913,19 @@ class TransportEngineV2:
                     )
             try:
                 raw = body.decode("utf-8")
-                if http_error:
-                    return self.failure(SafeReasonCode.HTTP_ERROR, start, status=status,
-                                        diagnostics=redactor.clean(diagnostics))
-                parsed = (None if not raw and phase in {"setup", "cleanup"} else json.loads(raw)) if self.spec.response.format == "json" else raw
-            except (UnicodeError, ValueError, RecursionError):
-                return self.failure(
-                    SafeReasonCode.HTTP_ERROR if http_error else SafeReasonCode.PARSE_ERROR,
-                    start,
-                    status=status,
-                    diagnostics=redactor.clean(diagnostics),
-                )
+            except UnicodeError:
+                return self.failure(SafeReasonCode.HTTP_ERROR if http_error else SafeReasonCode.PARSE_ERROR,
+                                    start, status=status, diagnostics=redactor.clean(diagnostics))
+            if http_error:
+                return self.failure(SafeReasonCode.HTTP_ERROR, start, status=status,
+                                    diagnostics=redactor.clean(diagnostics))
+            try:
+                parsed = (None if not raw and phase in {"provision", "setup", "cleanup"} else json.loads(raw)) if self.spec.response.format == "json" else raw
+            except (ValueError, RecursionError):
+                if phase == "cleanup":
+                    return exchange
+                return self.failure(SafeReasonCode.PARSE_ERROR, start, status=status,
+                                    diagnostics=redactor.clean(diagnostics))
             return replace(exchange, body=parsed)
 
     @staticmethod

@@ -31,13 +31,19 @@ class TargetCleanupIncomplete(Exception):
 
 
 def cleanup_lines(report: dict) -> list[str]:
-    if report["complete"]:
-        return []
-    opened = report["open"]
-    return [
-        f"Target cleanup incomplete: {len(opened)} item(s) left on the target. Remove them by hand:",
-        *(f"[ ] {item['method']} {item['url']} (step {item['step']}, {item['status']})" for item in opened),
-    ]
+    lines = []
+    if not report["complete"]:
+        opened = report["open"]
+        lines.extend([
+            f"Target cleanup incomplete: {len(opened)} item(s) left on the target. Remove them by hand:",
+            *(f"[ ] {item['method']} {item['url']} (step {item['step']}, {item['status']})" for item in opened),
+        ])
+    if leftover := report.get("leftover"):
+        lines.extend([
+            f"Target resources left on the target: {len(leftover)} item(s). Review them for manual cleanup:",
+            *(f"[ ] {name}" for name in leftover),
+        ])
+    return lines
 
 
 class LocalRunResult(NamedTuple):

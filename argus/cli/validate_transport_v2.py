@@ -6,9 +6,11 @@ import click
 
 from argus.targets import build_target
 from argus.targets.custom_http import run_log_from_metadata
+from argus.cli.local_run import cleanup_lines
+from argus_transport.runtime_v2 import TargetRunStopped
+from argus_transport.spec_v2 import TransportContextV2, material_binding, provision_checklist
 from argus_transport import (
     SafeReasonCode,
-    TransportContext,
     TransportOutcome,
     TransportSpecV2,
     V2Run,
@@ -52,19 +54,31 @@ def validate(
             if values:
                 click.echo(f"{name}: {json.dumps(list(values))}")
         click.echo("requests.submit=0 requests.poll=0 requests.retry=0")
+        if transport.lifecycle.provision is not None:
+            click.echo("provision.manual (shown when a find step matches nothing):")
+            for line in provision_checklist(transport, step_id=None, hint=None):
+                click.echo(line)
         return
 
     async def execute_transport():
         with local_transport_mode():
             run = V2Run(transport, policy=execution_policy(transport))
             try:
-                result = await run.attempt(TransportContext(prompt="ping"))
+                result = await run.attempt(TransportContextV2(
+                    prompt="ping",
+                    material="Argus validation sample." if material_binding(transport) != "none" else None,
+                ))
+            except TargetRunStopped as stopped:
+                result = stopped
             finally:
-                await run.close()
-            return result, run.ledger.counts
+                try:
+                    await run.close()
+                except TargetRunStopped as stopped:
+                    result = stopped
+            return result, run.ledger.counts, run.cleanup_report()
 
-    result, requests = asyncio.run(execute_transport())
-    if result.outcome == TransportOutcome.SUCCEEDED:
+    result, requests, cleanup = asyncio.run(execute_transport())
+    if not isinstance(result, TargetRunStopped) and result.outcome == TransportOutcome.SUCCEEDED:
         try:
             run_log_from_metadata(result.as_dict()["metadata"])
         except (ValueError, TypeError):
@@ -74,18 +88,37 @@ def validate(
                 response_text=None,
                 reason_code=SafeReasonCode.MAPPING_ERROR,
             )
-    click.echo(f"HTTP.status: {result.http_status}")
-    click.echo(f"outcome.selected: {result.matched_rule_id} -> {result.outcome.value}")
+    if isinstance(result, TargetRunStopped):
+        cleanup_note = (
+            "No further request was sent, cleanup included."
+            if result.reason in {"stop_on_status", "alert", "unsafe_location", "credential_echo"}
+            else "Configured cleanup remained enabled."
+        )
+        click.echo(f"Target stopped the run: {result}. {cleanup_note}")
+        if result.reason == "not_provisioned":
+            for line in getattr(result, "checklist", ()):
+                click.echo(line)
+    else:
+        click.echo(f"HTTP.status: {result.http_status}")
+        click.echo(f"outcome.selected: {result.matched_rule_id} -> {result.outcome.value}")
+    names = ["submit", "poll", "retry"]
+    if transport.lifecycle.run or transport.lifecycle.attempt:
+        names.extend(["setup", "cleanup"])
+    if transport.lifecycle.provision is not None:
+        names.append("provision")
     click.echo(
         " ".join(
             f"requests.{name}={requests.get(name, 0)}"
-            for name in (
-                ("submit", "poll", "retry", "setup", "cleanup")
-                if transport.lifecycle.run or transport.lifecycle.attempt
-                else ("submit", "poll", "retry")
-            )
+            for name in names
         )
     )
+    if cleanup is not None:
+        for line in cleanup_lines(cleanup):
+            click.echo(line)
+    if isinstance(result, TargetRunStopped):
+        raise click.ClickException(f"target stopped the run: {result}")
+    if cleanup is not None and not cleanup["complete"]:
+        raise click.ClickException("target cleanup incomplete")
     if result.outcome not in {TransportOutcome.SUCCEEDED, TransportOutcome.BLOCKED}:
         raise click.ClickException(
             f"transport.{result.reason_code.value}: {result.outcome.value}; check configured response paths"

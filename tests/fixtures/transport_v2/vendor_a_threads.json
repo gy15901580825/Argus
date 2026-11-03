@@ -1,0 +1,154 @@
+{
+	"kind": "custom_http",
+	"transport": {
+		"version": 2,
+		"request": {
+			"method": "POST",
+			"url": "https://api.vendor-a.example.test/v1/ask",
+			"headers": {"Accept": "application/json"},
+			"body": {"json": {"message": {"context": "prompt"}}}
+		},
+		"auth": {"kind": "bearer", "secret": {"source": "env", "name": "VENDOR_A_API_KEY"}},
+		"let": {
+			"run": {"source_name": {"concat": [{"literal": "argus-"}, {"generate": "uuid4"}]}},
+			"attempt": {"ref": {"concat": [{"literal": "argus-msg-"}, {"generate": "uuid4"}]}}
+		},
+		"lifecycle": {
+			"run": [
+				{
+					"id": "source",
+					"request": {
+						"method": "POST",
+						"url": "https://api.vendor-a.example.test/v1/sources",
+						"headers": {"Accept": "application/json"},
+						"body": {
+							"json": {
+								"name": {"var": "source_name"},
+								"displayName": {"literal": "Argus isolated synthetic test"}
+							}
+						}
+					},
+					"expect": {"http_status": [201], "when": {"path": "$.id", "exists": true}},
+					"capture": {"source_id": {"path": "$.id"}},
+					"undo": {
+						"request": {"method": "DELETE", "url": "https://api.vendor-a.example.test/v1/sources/{source_id}"},
+						"expect": {"http_status": [200, 404]}
+					}
+				}
+			],
+			"attempt": [
+				{
+					"id": "ingest",
+					"if_present": "material",
+					"request": {
+						"method": "POST",
+						"url": "https://api.vendor-a.example.test/v1/messages",
+						"headers": {"Accept": "application/json"},
+						"body": {
+							"json": {
+								"id": {"var": "ref"},
+								"threadId": {"var": "ref"},
+								"sourceId": {"var": "source_id"},
+								"displayName": {"literal": "Synthetic customer email"},
+								"createdAt": {"generate": "now_iso8601"},
+								"body": {"context": "material"},
+								"sender": {"object": {"id": {"concat": [{"literal": "synthetic-customer-"}, {"var": "ref"}]}}},
+								"recipients": {"literal": [{"id": "synthetic-test-company"}]},
+								"attachments": {"literal": []},
+								"public": {"literal": true}
+							}
+						}
+					},
+					"expect": {"http_status": [201], "when": {"path": "$.recordId", "exists": true}},
+					"undo": {
+						"request": {
+							"method": "DELETE",
+							"url": "https://api.vendor-a.example.test/v1/messages",
+							"query": {"remoteId": {"var": "ref"}, "sourceId": {"var": "source_id"}}
+						},
+						"expect": {"http_status": [200, 404]}
+					}
+				}
+			]
+		},
+		"response": {"format": "json", "text": {"paths": ["$.output"], "cast": "string", "empty": "error"}, "metadata": {}},
+		"outcome": {
+			"kind": "rules",
+			"unmatched": "target_error",
+			"rules": [
+				{
+					"id": "failed",
+					"priority": 100,
+					"http_status": [200],
+					"when": {"path": "$.status", "equals": "failed"},
+					"outcome": "target_error"
+				},
+				{
+					"id": "stopped",
+					"priority": 90,
+					"http_status": [200],
+					"when": {"path": "$.status", "equals": "stopped"},
+					"outcome": "target_error"
+				},
+				{
+					"id": "completed",
+					"priority": 10,
+					"http_status": [200],
+					"when": {"path": "$.status", "equals": "completed"},
+					"outcome": "succeeded"
+				}
+			]
+		},
+		"delivery": {
+			"kind": "poll",
+			"ids": {"thread_id": {"path": "$.threadId"}, "run_id": {"path": "$.runId"}},
+			"request": {
+				"method": "GET",
+				"url": "https://api.vendor-a.example.test/v1/ask/{thread_id}/{run_id}",
+				"headers": {"Accept": "application/json"},
+				"body": {"none": true}
+			},
+			"location": "verify",
+			"wait": {"from": "Retry-After", "default_s": 5, "max_s": 60},
+			"pending": {"path": "$.status", "equals": "running"},
+			"max_polls": 12,
+			"submit_http_status": [200, 202],
+			"submit_outcome": {
+				"kind": "rules",
+				"unmatched": "accepted",
+				"rules": [
+					{
+						"id": "submit_failed",
+						"priority": 100,
+						"http_status": [200],
+						"when": {"path": "$.status", "one_of": ["failed", "stopped"]},
+						"outcome": "target_error"
+					},
+					{
+						"id": "submit_completed",
+						"priority": 10,
+						"http_status": [200],
+						"when": {"path": "$.status", "equals": "completed"},
+						"outcome": "succeeded"
+					}
+				]
+			}
+		},
+		"budget": {
+			"max_requests": 20,
+			"cleanup_reserve": 5,
+			"stop_on": {"http_status": [429], "alert_names": ["X-Security-Alert"], "credential_echo": true}
+		},
+		"timeout": {
+			"total_deadline_s": 240,
+			"connect_s": 5,
+			"read_s": 65,
+			"write_s": 15,
+			"pool_s": 5,
+			"cleanup_grace_s": 2,
+			"cleanup_s": 60
+		},
+		"session": {"mode": "none"},
+		"limits": {"response_bytes": 1048576, "event_bytes": 65536, "max_events": 128, "max_rules": 32}
+	}
+}

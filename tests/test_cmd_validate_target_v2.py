@@ -282,3 +282,151 @@ async def test_v2_execute_closes_run_after_failed_submit(tmp_path):
             '/v1/messages?remoteId=local-ref&sourceId=source-one', '/v1/sources/source-one',
         ]
         assert 'requests.setup=2 requests.cleanup=2' in result.output
+
+
+async def test_offline_prints_checklist_with_zero_requests(tmp_path):
+    from test_transport_provision import provision_app, provision_dict
+    app = provision_app()
+    async with serve(app) as origin:
+        data = provision_dict(origin)
+        result = await invoke(target_file(tmp_path, data), '--offline')
+        assert result.exit_code == 0, result.output
+        assert 'provision.manual (shown when a find step matches nothing):' in result.output
+        assert '[ ] Build the example.' in result.output
+        assert '[ ] Exactly one item in $.automations has $.display_name = Example (skipped when $EXAMPLE_AUTOMATION_ID is set)' in result.output
+        assert app.calls == []
+
+
+async def test_execute_reports_provision_count(tmp_path, monkeypatch):
+    from test_transport_provision import provision_app, provision_dict
+    monkeypatch.delenv('EXAMPLE_AUTOMATION_ID', raising=False)
+    app = provision_app()
+    async with serve(app) as origin:
+        result = await invoke(target_file(tmp_path, provision_dict(origin)), '--execute')
+        assert result.exit_code == 0, result.output
+        assert 'requests.provision=3' in result.output
+        assert [call[0] for call in app.calls] == ['GET', 'GET', 'GET', 'POST']
+
+
+async def test_execute_sends_neutral_sample_material(tmp_path):
+    import base64
+    app = RecordingApp()
+    app.route('POST', '/run', completed)
+    async with serve(app) as origin:
+        data = spec_dict(origin + '/run')
+        data['version'] = 2
+        data['request']['body']['json']['document'] = {'base64': {'context': 'material'}}
+        result = await invoke(target_file(tmp_path, data), '--execute')
+        assert result.exit_code == 0, result.output
+        assert json.loads(app.calls[0][3]) == {'goal': 'ping', 'document': base64.b64encode(b'Argus validation sample.').decode('ascii')}
+
+
+async def test_endpoint_override_rewrites_provision_and_confirmation(tmp_path, monkeypatch):
+    from test_transport_provision import provision_app, provision_dict
+    monkeypatch.delenv('EXAMPLE_AUTOMATION_ID', raising=False)
+    app = provision_app()
+    async def created(request):
+        return web.json_response({'name': 'files/sample.txt'}, status=201)
+    async def unexpected(request):
+        return web.Response(status=500)
+    async def gone(request):
+        return web.Response(status=404)
+    app.route('POST', '/upload', created)
+    app.route('DELETE', '/files/{ref}', unexpected)
+    app.route('GET', '/files/{ref}/metadata', gone)
+    async with serve(app) as origin:
+        configured = 'https://api.vendor-a.example.test'
+        data = provision_dict(configured)
+        data['lifecycle']['run'] = [{'id': 'upload',
+            'request': {'url': configured + '/upload', 'body': {'none': True}},
+            'expect': {'http_status': [201]},
+            'capture': {'file_id': {'path': '$.name', 'expect_prefix': {'literal': 'files/'}, 'last_segment': True}},
+            'undo': {'request': {'method': 'DELETE', 'url': configured + '/files/{file_id}'},
+                'expect': {'http_status': [204]}, 'confirm': {'request': {'method': 'GET',
+                    'url': configured + '/files/{file_id}/metadata'}, 'gone_status': [404]}}}]
+        result = await invoke(target_file(tmp_path, data), '--execute', '--endpoint-override', origin)
+        assert result.exit_code == 0, result.output
+        assert [call[:2] for call in app.calls] == [
+            ('GET', '/organizations'), ('GET', '/organizations/o1/workspaces'),
+            ('GET', '/organizations/o1/workspaces/w1/automations'), ('POST', '/upload'),
+            ('POST', '/automations/a1:invoke'), ('DELETE', '/files/sample.txt'), ('GET', '/files/sample.txt/metadata')]
+        assert 'requests.setup=1 requests.cleanup=2 requests.provision=3' in result.output
+
+
+async def test_execute_not_provisioned_prints_checklist_and_final_counts(tmp_path, monkeypatch):
+    from test_transport_provision import provision_app, provision_dict
+    monkeypatch.delenv('EXAMPLE_AUTOMATION_ID', raising=False)
+    app = provision_app(count=0)
+    async with serve(app) as origin:
+        result = await invoke(target_file(tmp_path, provision_dict(origin)), '--execute')
+        assert result.exit_code == 1
+        assert 'NOT PROVISIONED:' in result.output
+        assert 'Build the example or supply its ID.' in result.output
+        assert 'requests.submit=0 requests.poll=0 requests.retry=0 requests.provision=3' in result.output
+        assert 'Configured cleanup remained enabled.' in result.output
+        assert len(app.calls) == 3
+
+
+@pytest.mark.parametrize('undo', [False, True], ids=['informational', 'unconfirmed'])
+async def test_execute_reports_leftover_and_cleanup_completeness(tmp_path, undo):
+    from test_transport_v2_local_run import resource_run_dict
+    app = RecordingApp()
+    async def created(request):
+        return web.json_response({'name': 'files/sample.txt'}, status=201)
+    async def unexpected(request):
+        return web.Response(status=500)
+    app.route('POST', '/v1/sources', created)
+    app.route('POST', '/run', completed)
+    app.route('DELETE', '/v1/sources/{ref}', unexpected)
+    async with serve(app) as origin:
+        data = resource_run_dict(origin, undo=undo)
+        data['budget'] = {'cleanup_reserve': 1}
+        result = await invoke(target_file(tmp_path, data), '--execute')
+        assert result.exit_code == int(undo), result.output
+        assert 'Target resources left on the target: 1 item(s).' in result.output
+        assert '[ ] files/sample.txt' in result.output
+        assert ('Target cleanup incomplete' in result.output) is undo
+        assert f'requests.setup=1 requests.cleanup={int(undo)}' in result.output
+
+
+async def test_execute_cleanup_stop_still_reports_final_counts(tmp_path):
+    from test_transport_v2_local_run import resource_run_dict
+    app = RecordingApp()
+    async def created(request):
+        return web.json_response({'name': 'files/sample.txt'}, status=201)
+    async def stopped(request):
+        return web.Response(status=429)
+    app.route('POST', '/v1/sources', created)
+    app.route('POST', '/run', completed)
+    app.route('DELETE', '/v1/sources/{ref}', stopped)
+    async with serve(app) as origin:
+        result = await invoke(target_file(tmp_path, resource_run_dict(origin, undo=True)), '--execute')
+        assert result.exit_code == 1
+        assert 'Target stopped the run: stop_on_status. No further request was sent, cleanup included.' in result.output
+        assert 'requests.setup=1 requests.cleanup=1' in result.output
+        assert '[ ] files/sample.txt' in result.output
+        assert [call[0] for call in app.calls] == ['POST', 'POST', 'DELETE']
+
+
+@pytest.mark.parametrize('reason', ['request_budget', 'setup_failed_run'])
+async def test_execute_startup_stop_keeps_cleanup_enabled(tmp_path, reason):
+    from test_transport_lifecycle import lifecycle_dict, recording_lifecycle
+    app = recording_lifecycle()
+    async def failed(request):
+        return web.Response(status=500)
+    app.route('GET', '/startup-check', failed)
+    async with serve(app) as origin:
+        data = lifecycle_dict(origin, attempt=False)
+        if reason == 'request_budget':
+            data['budget'] = {'max_requests': 1}
+        else:
+            data['lifecycle']['run'].append({'id': 'check', 'request': {'method': 'GET',
+                'url': origin + '/startup-check'}, 'expect': {'http_status': [200]}})
+        result = await invoke(target_file(tmp_path, data), '--execute')
+        assert result.exit_code == 1
+        assert f'Target stopped the run: {reason}' in result.output
+        assert 'Configured cleanup remained enabled.' in result.output
+        assert 'No further request was sent, cleanup included.' not in result.output
+        assert 'requests.submit=0 requests.poll=0 requests.retry=0 requests.setup=' in result.output
+        assert 'requests.cleanup=1' in result.output
+        assert app.calls[-1][:2] == ('DELETE', '/v1/sources/source-one')

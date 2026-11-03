@@ -52,7 +52,7 @@ argus-probe validate-target --target target.json --execute --endpoint-override h
 
 Offline checks send no requests and do not resolve secret references. A sample file checks result rules and answer paths without a network connection. New transport files default to an offline check when neither mode is specified. Existing target files retain their single-prompt validation behavior.
 
-Execute mode sends the benign prompt `ping`. Version 1 synchronous delivery makes one target request, with no retries or preliminary HEAD/OPTIONS requests. Version 2 can also send configured lifecycle setup and undo requests. The agent may use its own model or tools and incur costs. Diagnostics show status, selected rule, response paths, safe top-level keys, and request counts. They omit secret values and returned answer text.
+Execute mode sends the benign prompt `ping`. Version 1 synchronous delivery makes one target request, with no retries or preliminary HEAD/OPTIONS requests. Version 2 runs configured provision lookups, lifecycle setup, one attempt, and cleanup. When any material binding exists, it supplies `Argus validation sample.` through that channel. Provision may add read-only lookup requests and configured persistent creation requests. The agent may use its own model or tools and incur costs. Diagnostics show status, selected rule, response paths, safe top-level keys, and request counts. They omit secret values and returned answer text.
 
 ## Bind request values
 
@@ -131,7 +131,7 @@ Variable names match `[a-z][a-z0-9_]{0,31}` and cannot contain `key`, `token`, `
 
 URL placeholders bind declared variables in path segments. Each segment accepts one placeholder, including forms such as `{automation_id}:invoke`. Values are percent-encoded as individual segments. Placeholders in the origin or URL query are invalid. Use `request.query` for scalar query bindings. The engine URL-encodes those values and omits optional missing entries. A `query` object cannot accompany a URL that already contains `?`. Credential-like query names are rejected.
 
-`DELETE` defaults to no body. An explicit JSON or text body is also accepted for `DELETE`. Version 2 supports synchronous delivery, multiple captured polling IDs, configurable stop triggers, and lifecycle setup and undo operations. SSE, request retries, provisioning, and multipart bodies remain unsupported. HTTP 429 stops the entire version 2 run by default, including cleanup requests.
+`DELETE` defaults to no body. An explicit JSON or text body is also accepted for `DELETE`. Version 2 supports synchronous delivery, multiple captured polling IDs, configurable stop triggers, and lifecycle setup and undo operations. SSE and request retries remain unsupported. Provisioning and multipart bodies are available in version 2. HTTP 429 stops the entire version 2 run by default, including cleanup requests.
 
 ```sh
 argus-probe validate-target --target target-v2.json --offline
@@ -139,9 +139,45 @@ argus-probe validate-target --target target-v2.json --execute
 argus-probe validate-target --target target-v2.json --execute --endpoint-override http://127.0.0.1:8080
 ```
 
-Offline validation lists the method, placeholder names, query names, and declaration names. It sends no requests and does not render the body or read environment values. Empty binding lists are omitted. Execute mode reports HTTP status, selected outcome, and submission, poll, and retry counts. When lifecycle steps are configured, it appends `requests.setup=N requests.cleanup=N` and closes the run before returning. It omits response bodies and resolved bindings.
+Offline validation lists the method, placeholder names, query names, and declaration names. It sends no requests and does not render the body or read environment values. Empty binding lists are omitted. Execute mode reports HTTP status, selected outcome, and submission, poll, and retry counts. When lifecycle steps are configured, it appends `requests.setup=N requests.cleanup=N`. Provision adds `requests.provision=N`. Counts include all requests through run close, including confirmation GETs. Offline provision validation prints the manual checklist without resolving values or sending requests. It omits response bodies and resolved bindings.
 
-A version 2 endpoint override takes an origin, with an optional trailing slash. It retains the configured paths and query bindings for submission, polling, lifecycle steps, and undo requests. A path, query, or fragment in the override is invalid. `--sample-response`, `--with-scenario`, and `--scenario-url` support version 1 transports only.
+A version 2 endpoint override takes an origin, with an optional trailing slash. It retains the configured paths and query bindings for submission, polling, lifecycle steps, undo and confirmation requests, and provision requests. A path, query, or fragment in the override is invalid. `--sample-response`, `--with-scenario`, and `--scenario-url` support version 1 transports only.
+
+## Bind task and material separately
+
+Bind `{"context": "prompt"}` to the user's task and `{"context": "material"}` to the API field that accepts third-party content. A probe can supply `indirect` entries with exactly `task` and `material`, one entry per original prompt. Both strings must be nonempty. `indirect` cannot accompany sessions or `conversation: true`. Original prompts remain unchanged for judging and findings.
+
+Any material expression makes the target declare a material channel. A material reference without `missing: "omit"`, outside a step guarded by `if_present: "material"`, makes material required. A required target skips probes without `indirect` before provision or setup sends any request. Its reasoning says `target requires material; probe has no indirect field`. Optional targets also accept prompt-only probes. Guards skip their entire step and undo. Omitted values propagate through base64 and concat and omit their JSON field, query entry, or multipart part. Nested objects and arrays omit absent members.
+
+`{"base64": {"context": "material"}}` encodes the material's UTF-8 bytes. For APIs that require uploads, use a multipart request body in an attempt step:
+
+```json
+{
+	"multipart": {
+		"file": {
+			"filename": {"literal": "sample.txt"},
+			"content_type": "text/plain",
+			"content": {"context": "material"}
+		}
+	}
+}
+```
+
+Multipart accepts one to four parts on POST or PUT. Each part has `filename`, `content_type`, and `content`. Content is a UTF-8 string of at most 1 MiB per part. Media types are `text/plain`, `text/markdown`, `application/json`, and `text/csv`. Filename expressions must produce a nonempty string without quotes, CR, LF, or NUL characters. Argus generates the multipart boundary. A conflicting configured Content-Type is rejected. Multipart is forbidden during cleanup. Material is literal content, so a path-shaped string does not read a local file. Capture a returned full resource name with `expect_prefix` and pass it through `var` when the API requires a remote file reference.
+
+A material target receives separate task and material values. Other targets receive the original prompt. Findings keep that original prompt and add `evidence.indirect.task` and `material_sha256`. Deep mode runs indirect probes statically on material targets. The built-in probe migration is separate, so a material channel alone does not imply built-in indirect coverage.
+
+promptfoo's `indirectInjectionVar: X` corresponds to binding the API's X field to `{"context": "material"}` in Argus. The context name is fixed as `material`.
+
+## Find provisioned resources
+
+`lifecycle.provision` runs once per target run, before `lifecycle.run`. Its ordered `find` steps use GET requests and capture exactly one item from a response array. An items capture has `items`, a `where` predicate, and `take`. It can also use `expect_prefix` and `last_segment`. An ambiguous match ends the run. Expectation checks can reject a paginated response so the configured first page cannot silently select an incomplete list.
+
+A find step can provide `given` values for every declared capture. When all supplied values resolve, Argus skips that GET. Values already supplied as final segments bypass network extraction. Optional `env` bindings with `missing: "omit"` allow lookup when the ID is absent. A step's `hint` can explain missing prerequisites, such as building the selected automation.
+
+If the final find matches nothing, optional `create` steps run and then the find sequence runs again. These created resources persist and never enter the undo stack. Without creation, Argus stops with `not_provisioned` and sends no submission or lifecycle setup request. The CLI prints the failed step, its hint, `manual.title` and `manual.steps`, and a checklist derived from the configured selectors. Compound filters get one checklist row for the complete filter. Offline validation prints the same preparation checklist with zero HTTP requests.
+
+Provision lookup IDs and generated values do not enter baseline identity. Only the configuration does. Use unique generated names and avoid simultaneous creation runs that could introduce ambiguous matches.
 
 ## Set up and undo version 2 resources
 
@@ -177,15 +213,19 @@ For example, add this run step to an existing version 2 transport:
 
 A capture may set `expect_prefix` to a value expression. Argus checks that exact, case sensitive prefix before publishing any captures from the response. With `last_segment: true`, it extracts the final slash-delimited segment and requires 1 through 256 characters containing only letters, digits, `.`, `_`, `~`, or `-`. Without segment extraction, it retains the full captured value. A mismatch fails the attempt with `id_prefix_mismatch`. A run setup failure ends the run, while an attempt setup failure affects that attempt.
 
-An undo requires `request` and `expect.http_status` and accepts only GET or DELETE. Include 404 when an already absent object should count as cleaned. Configure the URL and variables so the request addresses resources this run owns. Argus does not independently verify ownership or add a prefix to resource names. Prefixes and generated names come from the configuration.
+A step can omit `undo`. Argus reports resources created by such steps as informational leftovers. A successful HTTP status on a mutating lifecycle step retains a redacted creation descriptor even when its response body is rejected or interrupted, or a stop suppresses cleanup. Only safely parsed prefix captures supply full resource names. Persistent provision creation is excluded. An undo requires `request` and `expect.http_status` and accepts only GET or DELETE. Include 404 when an already absent object should count as cleaned. Configure the URL and variables so the request addresses resources this run owns. Argus does not independently verify ownership or add a prefix to resource names. Prefixes and generated names come from the configuration.
+
+An undo can add `confirm: {"request": {"method": "GET", "url": "https://api.vendor-a.example.test/files/{file_id}/metadata"}, "gone_status": [404]}`. Argus sends this GET only after a fully received primary response whose HTTP status is outside `expect.http_status`. An accepted primary status sends no confirmation. A primary network failure or a failed body predicate with an accepted status also sends no confirmation. A configured `gone_status` marks the intent done. Another confirmation status or an unresolved binding leaves it `unconfirmed`. Confirmation shares the cleanup deadline and consumes one extra available cleanup request without taking another intent's reserved slot. With no extra capacity, Argus sends no GET and reports `unconfirmed`. A configured absence response does not independently prove physical deletion.
+
+The upload and deletion behavior in this design follows the coordinator's recorded live API checks. Automated tests use loopback fake services. This implementation does not independently verify a live account.
 
 Argus records each undo intent before sending the corresponding setup request. If the response is lost, an undo that uses previously known values can still execute. An undo that needs an uncaptured response value remains `unbound` for manual cleanup. Attempt undo runs in reverse order before the attempt returns, fails, or propagates cancellation. Run undo runs in reverse order when the target closes, including after an early consumer close. If an unfinished inner undo depends on an outer resource, the outer undo remains `blocked_by_inner`.
 
 ### Request and cleanup budgets
 
-`budget.max_requests` limits all setup, submission, and poll requests across the entire run. Omit it for no business request limit. When the next request exceeds the limit, Argus stops the run with `request_budget`; undo requests can still use their separate reserve. `budget.cleanup_reserve` defaults to 100. Each undo intent reserves one request before its setup request can be sent. If no reserve remains, the run stops with `cleanup_reserve` before creating that resource.
+`budget.max_requests` limits all provision, setup, submission, and poll requests across the entire run. Omit it for no business request limit. When the next request exceeds the limit, Argus stops the run with `request_budget`; undo requests can still use their separate reserve. `budget.cleanup_reserve` defaults to 100. Each undo intent reserves one request before its setup request can be sent. If no reserve remains, the run stops with `cleanup_reserve` before creating that resource.
 
-Run setup has its own `timeout.total_deadline_s`. Each attempt then receives a fresh business deadline. Each attempt undo and run close has a separate `timeout.cleanup_s`, default 60 seconds and maximum 300 seconds. Cleanup time does not consume the business deadline. Cleanup failures preserve the primary finding and appear in `evidence.transport.cleanup`. The final [run.json cleanup summary](run-json.md#target-cleanup) lists any remaining objects and makes the run incomplete.
+Run setup has its own `timeout.total_deadline_s`. Each attempt then receives a fresh business deadline. Each attempt undo and run close has a separate `timeout.cleanup_s`, default 60 seconds and maximum 300 seconds. Cleanup time does not consume the business deadline. Cleanup failures preserve the primary finding and appear in `evidence.transport.cleanup`. The final [run.json cleanup summary](run-json.md#target-cleanup) lists unresolved undo intents and tracked resource names. Unresolved intents make the run incomplete. Leftover names alone leave the run status and exit code unchanged.
 
 ### Polling with multiple IDs
 
@@ -214,6 +254,474 @@ Location verification remains active when selected. A stop trigger takes priorit
 Local runs handle SIGINT and SIGTERM by cancelling the active attempt, waiting for bounded configured undo requests, and exiting with 130 or 143 without writing a report. The console lists remaining undo intents for manual cleanup. A second signal can interrupt cleanup; the first signal still determines the exit code and remaining intents stay visible. Signal handlers are restored afterward.
 
 Cleanup is in memory and cannot recover from SIGKILL or a process crash. Removing a setup resource does not necessarily cancel a hosted job. Configure undo requests for the service's documented cleanup behavior.
+
+## Complete version 2 examples
+
+These neutral configurations describe two API shapes without vendor adapter code. Their hosts use reserved example domains. Each complete JSON example also exists as a test fixture.
+
+The automated checks invoke the same Click command as `argus-probe run --local` in process with `CliRunner`. This allows injection of synthetic probes with neutral task and material text and a stub judge. The HTTP requests reach fake services bound to `127.0.0.1`. These checks do not invoke a subprocess or call a live vendor account. The upload and deletion shapes follow the coordinator's recorded live API checks.
+
+### Vendor A threads
+
+The [vendor A fixture](../tests/fixtures/transport_v2/vendor_a_threads.json) creates one source per run. Each material attempt inserts a message, asks a question, polls with thread and run IDs, and deletes the message. Source deletion runs last. A prompt-only probe skips message ingestion and still sends its question. The fixture's budget covers the tested batch of three material probes and one prompt-only probe. A larger batch needs its own request and cleanup budgets.
+
+```json
+{
+	"kind": "custom_http",
+	"transport": {
+		"version": 2,
+		"request": {
+			"method": "POST",
+			"url": "https://api.vendor-a.example.test/v1/ask",
+			"headers": {"Accept": "application/json"},
+			"body": {"json": {"message": {"context": "prompt"}}}
+		},
+		"auth": {"kind": "bearer", "secret": {"source": "env", "name": "VENDOR_A_API_KEY"}},
+		"let": {
+			"run": {"source_name": {"concat": [{"literal": "argus-"}, {"generate": "uuid4"}]}},
+			"attempt": {"ref": {"concat": [{"literal": "argus-msg-"}, {"generate": "uuid4"}]}}
+		},
+		"lifecycle": {
+			"run": [
+				{
+					"id": "source",
+					"request": {
+						"method": "POST",
+						"url": "https://api.vendor-a.example.test/v1/sources",
+						"headers": {"Accept": "application/json"},
+						"body": {
+							"json": {
+								"name": {"var": "source_name"},
+								"displayName": {"literal": "Argus isolated synthetic test"}
+							}
+						}
+					},
+					"expect": {"http_status": [201], "when": {"path": "$.id", "exists": true}},
+					"capture": {"source_id": {"path": "$.id"}},
+					"undo": {
+						"request": {"method": "DELETE", "url": "https://api.vendor-a.example.test/v1/sources/{source_id}"},
+						"expect": {"http_status": [200, 404]}
+					}
+				}
+			],
+			"attempt": [
+				{
+					"id": "ingest",
+					"if_present": "material",
+					"request": {
+						"method": "POST",
+						"url": "https://api.vendor-a.example.test/v1/messages",
+						"headers": {"Accept": "application/json"},
+						"body": {
+							"json": {
+								"id": {"var": "ref"},
+								"threadId": {"var": "ref"},
+								"sourceId": {"var": "source_id"},
+								"displayName": {"literal": "Synthetic customer email"},
+								"createdAt": {"generate": "now_iso8601"},
+								"body": {"context": "material"},
+								"sender": {"object": {"id": {"concat": [{"literal": "synthetic-customer-"}, {"var": "ref"}]}}},
+								"recipients": {"literal": [{"id": "synthetic-test-company"}]},
+								"attachments": {"literal": []},
+								"public": {"literal": true}
+							}
+						}
+					},
+					"expect": {"http_status": [201], "when": {"path": "$.recordId", "exists": true}},
+					"undo": {
+						"request": {
+							"method": "DELETE",
+							"url": "https://api.vendor-a.example.test/v1/messages",
+							"query": {"remoteId": {"var": "ref"}, "sourceId": {"var": "source_id"}}
+						},
+						"expect": {"http_status": [200, 404]}
+					}
+				}
+			]
+		},
+		"response": {"format": "json", "text": {"paths": ["$.output"], "cast": "string", "empty": "error"}, "metadata": {}},
+		"outcome": {
+			"kind": "rules",
+			"unmatched": "target_error",
+			"rules": [
+				{
+					"id": "failed",
+					"priority": 100,
+					"http_status": [200],
+					"when": {"path": "$.status", "equals": "failed"},
+					"outcome": "target_error"
+				},
+				{
+					"id": "stopped",
+					"priority": 90,
+					"http_status": [200],
+					"when": {"path": "$.status", "equals": "stopped"},
+					"outcome": "target_error"
+				},
+				{
+					"id": "completed",
+					"priority": 10,
+					"http_status": [200],
+					"when": {"path": "$.status", "equals": "completed"},
+					"outcome": "succeeded"
+				}
+			]
+		},
+		"delivery": {
+			"kind": "poll",
+			"ids": {"thread_id": {"path": "$.threadId"}, "run_id": {"path": "$.runId"}},
+			"request": {
+				"method": "GET",
+				"url": "https://api.vendor-a.example.test/v1/ask/{thread_id}/{run_id}",
+				"headers": {"Accept": "application/json"},
+				"body": {"none": true}
+			},
+			"location": "verify",
+			"wait": {"from": "Retry-After", "default_s": 5, "max_s": 60},
+			"pending": {"path": "$.status", "equals": "running"},
+			"max_polls": 12,
+			"submit_http_status": [200, 202],
+			"submit_outcome": {
+				"kind": "rules",
+				"unmatched": "accepted",
+				"rules": [
+					{
+						"id": "submit_failed",
+						"priority": 100,
+						"http_status": [200],
+						"when": {"path": "$.status", "one_of": ["failed", "stopped"]},
+						"outcome": "target_error"
+					},
+					{
+						"id": "submit_completed",
+						"priority": 10,
+						"http_status": [200],
+						"when": {"path": "$.status", "equals": "completed"},
+						"outcome": "succeeded"
+					}
+				]
+			}
+		},
+		"budget": {
+			"max_requests": 20,
+			"cleanup_reserve": 5,
+			"stop_on": {"http_status": [429], "alert_names": ["X-Security-Alert"], "credential_echo": true}
+		},
+		"timeout": {
+			"total_deadline_s": 240,
+			"connect_s": 5,
+			"read_s": 65,
+			"write_s": 15,
+			"pool_s": 5,
+			"cleanup_grace_s": 2,
+			"cleanup_s": 60
+		},
+		"session": {"mode": "none"},
+		"limits": {"response_bytes": 1048576, "event_bytes": 65536, "max_events": 128, "max_rules": 32}
+	}
+}
+```
+
+### Vendor B automation
+
+The [vendor B fixture](../tests/fixtures/transport_v2/vendor_b_automation.json) looks up one organization, workspace, and automation per run. The automation display name comes from `VENDOR_B_AUTOMATION_NAME`. Setting `VENDOR_B_AUTOMATION_ID` supplies the final ID and skips only the automation list request. The earlier organization and workspace lookups still run. Empty automation results print the configured preparation checklist and stop before any upload or invocation.
+
+Each material attempt uploads `invoice.txt` as multipart and invokes the automation with that upload's complete resource name. Prefix checks retain the full file name for the remote reference and extract safe suffixes for DELETE and run polling. Material is required, so a probe without `indirect` is skipped before any request. The fixture's budgets cover four material attempts. Successful cleanup leaves no live uploaded files or reported leftovers.
+
+Primary DELETE accepts 200 or 204. An unexpected status permits one metadata GET when cleanup reserve remains. A configured 404 confirmation completes cleanup. A present response or unavailable reserve leaves the full resource name in `leftover`, keeps the intent `unconfirmed`, and makes the run incomplete with exit 1. Argus sends no DELETE retry. The fake models a first DELETE returning 200 with `{}`, a repeated DELETE returning empty 500, and metadata returning snake_case fields before deletion and 404 afterward.
+
+```json
+{
+	"kind": "custom_http",
+	"transport": {
+		"version": 2,
+		"lifecycle": {
+			"provision": {
+				"find": [
+					{
+						"id": "org",
+						"request": {
+							"method": "GET",
+							"url": "https://app.vendor-b.example.test/api/v1/me/organizations",
+							"query": {"page_size": {"literal": 1000}},
+							"body": {"none": true}
+						},
+						"expect": {
+							"http_status": [200],
+							"when": {
+								"any": [
+									{"path": "$.next_page_token", "exists": false},
+									{"path": "$.next_page_token", "equals": ""}
+								]
+							}
+						},
+						"capture": {
+							"org_id": {
+								"items": "$.user_organizations",
+								"where": {"path": "$.name", "exists": true},
+								"take": "$.name",
+								"last_segment": true,
+								"expect_prefix": {"literal": "organizations/"}
+							}
+						}
+					},
+					{
+						"id": "workspace",
+						"request": {
+							"method": "GET",
+							"url": "https://app.vendor-b.example.test/api/v1/me/organizations/{org_id}/workspaces",
+							"query": {"page_size": {"literal": 1000}},
+							"body": {"none": true}
+						},
+						"expect": {
+							"http_status": [200],
+							"when": {
+								"any": [
+									{"path": "$.next_page_token", "exists": false},
+									{"path": "$.next_page_token", "equals": ""}
+								]
+							}
+						},
+						"capture": {
+							"ws_id": {
+								"items": "$.user_workspaces",
+								"where": {"path": "$.name", "exists": true},
+								"take": "$.name",
+								"last_segment": true,
+								"expect_prefix": {
+									"concat": [{"literal": "organizations/"}, {"var": "org_id"}, {"literal": "/workspaces/"}]
+								}
+							}
+						}
+					},
+					{
+						"id": "automation",
+						"request": {
+							"method": "GET",
+							"url": "https://app.vendor-b.example.test/api/v1/organizations/{org_id}/workspaces/{ws_id}/automations",
+							"query": {"page_size": {"literal": 1000}},
+							"body": {"none": true}
+						},
+						"expect": {
+							"http_status": [200],
+							"when": {
+								"any": [
+									{"path": "$.next_page_token", "exists": false},
+									{"path": "$.next_page_token", "equals": ""}
+								]
+							}
+						},
+						"capture": {
+							"automation_id": {
+								"items": "$.automations",
+								"where": {
+									"path": "$.display_name",
+									"equals": {"env": "VENDOR_B_AUTOMATION_NAME", "missing": "omit"}
+								},
+								"take": "$.name",
+								"last_segment": true,
+								"expect_prefix": {
+									"concat": [
+										{"literal": "organizations/"},
+										{"var": "org_id"},
+										{"literal": "/workspaces/"},
+										{"var": "ws_id"},
+										{"literal": "/automations/"}
+									]
+								}
+							}
+						},
+						"given": {"automation_id": {"env": "VENDOR_B_AUTOMATION_ID", "missing": "omit"}},
+						"hint": "The automations list omits drafts that were never built. Build the automation once, or set VENDOR_B_AUTOMATION_ID from its URL."
+					}
+				],
+				"manual": {
+					"title": "Prepare the automation that Argus tests",
+					"steps": [
+						"Sign in with the account whose personal access token is in VENDOR_B_PAT.",
+						"Create an automation in the workspace under test and set VENDOR_B_AUTOMATION_NAME to its display name.",
+						"Give it a file input named invoice_file and a text input named user_question, and have it answer the question from the file.",
+						"Build the automation at least once.",
+						"Or set VENDOR_B_AUTOMATION_ID to the ID in the automation URL to skip its list lookup.",
+						"Leave it in the draft stage. Argus invokes AUTOMATION_STAGE_DRAFT.",
+						"Run argus-probe validate-target --target vendor_b_automation.json --execute."
+					]
+				}
+			},
+			"attempt": [
+				{
+					"id": "upload",
+					"request": {
+						"method": "POST",
+						"url": "https://app.vendor-b.example.test/api/v1/organizations/{org_id}/workspaces/{ws_id}/files:upload",
+						"headers": {"Accept": "application/json"},
+						"body": {
+							"multipart": {
+								"file": {
+									"filename": {"literal": "invoice.txt"},
+									"content_type": "text/plain",
+									"content": {"context": "material"}
+								}
+							}
+						}
+					},
+					"expect": {"http_status": [201], "when": {"path": "$.metadata.name", "exists": true}},
+					"capture": {
+						"file_name": {
+							"path": "$.metadata.name",
+							"expect_prefix": {
+								"concat": [
+									{"literal": "organizations/"},
+									{"var": "org_id"},
+									{"literal": "/workspaces/"},
+									{"var": "ws_id"},
+									{"literal": "/files/"}
+								]
+							}
+						},
+						"file_id": {
+							"path": "$.metadata.name",
+							"expect_prefix": {
+								"concat": [
+									{"literal": "organizations/"},
+									{"var": "org_id"},
+									{"literal": "/workspaces/"},
+									{"var": "ws_id"},
+									{"literal": "/files/"}
+								]
+							},
+							"last_segment": true
+						}
+					},
+					"undo": {
+						"request": {
+							"method": "DELETE",
+							"url": "https://app.vendor-b.example.test/api/v1/organizations/{org_id}/workspaces/{ws_id}/files/{file_id}"
+						},
+						"expect": {"http_status": [200, 204]},
+						"confirm": {
+							"request": {
+								"method": "GET",
+								"url": "https://app.vendor-b.example.test/api/v1/organizations/{org_id}/workspaces/{ws_id}/files/{file_id}/metadata"
+							},
+							"gone_status": [404]
+						}
+					}
+				}
+			]
+		},
+		"request": {
+			"method": "POST",
+			"url": "https://app.vendor-b.example.test/api/v1/organizations/{org_id}/workspaces/{ws_id}/automations/{automation_id}:invoke",
+			"headers": {"Accept": "application/json"},
+			"body": {
+				"json": {
+					"stage": {"literal": "AUTOMATION_STAGE_DRAFT"},
+					"inputs": {
+						"object": {
+							"invoice_file": {"object": {"file": {"object": {"remote": {"var": "file_name"}}}}},
+							"user_question": {"object": {"text": {"context": "prompt"}}}
+						}
+					}
+				}
+			}
+		},
+		"auth": {"kind": "bearer", "secret": {"source": "env", "name": "VENDOR_B_PAT"}},
+		"response": {
+			"format": "json",
+			"text": {"paths": ["$.state.completed.outputs"], "cast": "string_or_json", "empty": "error"},
+			"metadata": {}
+		},
+		"outcome": {
+			"kind": "rules",
+			"unmatched": "target_error",
+			"rules": [
+				{
+					"id": "failed",
+					"priority": 100,
+					"http_status": [200],
+					"when": {"path": "$.state.failed", "exists": true},
+					"outcome": "target_error"
+				},
+				{
+					"id": "awaiting_guidance",
+					"priority": 90,
+					"http_status": [200],
+					"when": {"path": "$.state.awaiting_guidance", "exists": true},
+					"outcome": "target_error"
+				},
+				{
+					"id": "stopped",
+					"priority": 80,
+					"http_status": [200],
+					"when": {"path": "$.state.stopped", "exists": true},
+					"outcome": "target_error"
+				},
+				{
+					"id": "stopping",
+					"priority": 70,
+					"http_status": [200],
+					"when": {"path": "$.state.stopping", "exists": true},
+					"outcome": "target_error"
+				},
+				{
+					"id": "completed",
+					"priority": 10,
+					"http_status": [200],
+					"when": {"path": "$.state.completed", "exists": true},
+					"outcome": "succeeded"
+				}
+			]
+		},
+		"delivery": {
+			"kind": "poll",
+			"request": {
+				"method": "GET",
+				"url": "https://app.vendor-b.example.test/api/v1/organizations/{org_id}/workspaces/{ws_id}/automations/{automation_id}/runs/{run_id}",
+				"body": {"none": true}
+			},
+			"pending": {"any": [{"path": "$.state.pending", "exists": true}, {"path": "$.state.executing", "exists": true}]},
+			"interval_s": 1,
+			"max_polls": 4,
+			"submit_http_status": [200],
+			"submit_outcome": {"kind": "rules", "unmatched": "accepted", "rules": []},
+			"ids": {
+				"run_id": {
+					"path": "$.run_id",
+					"last_segment": true,
+					"expect_prefix": {
+						"concat": [
+							{"literal": "organizations/"},
+							{"var": "org_id"},
+							{"literal": "/workspaces/"},
+							{"var": "ws_id"},
+							{"literal": "/automations/"},
+							{"var": "automation_id"},
+							{"literal": "/runs/"}
+						]
+					}
+				}
+			}
+		},
+		"budget": {
+			"max_requests": 23,
+			"cleanup_reserve": 4,
+			"stop_on": {"http_status": [429], "alert_names": [], "credential_echo": true}
+		},
+		"timeout": {
+			"total_deadline_s": 240,
+			"connect_s": 5,
+			"read_s": 65,
+			"write_s": 15,
+			"pool_s": 5,
+			"cleanup_grace_s": 2,
+			"cleanup_s": 60
+		},
+		"session": {"mode": "none"},
+		"limits": {"response_bytes": 1048576, "event_bytes": 65536, "max_events": 128, "max_rules": 32}
+	}
+}
+```
 
 ## Map replies and outcomes
 

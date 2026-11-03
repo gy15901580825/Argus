@@ -673,3 +673,140 @@ def test_sse_cleanup_timeout_rejects_invalid_bounds(cleanup_s):
     data["timeout"]["cleanup_s"] = cleanup_s
     with pytest.raises(ValueError):
         TransportSpecV2.from_dict(data)
+
+
+def multipart_request():
+    return {'method': 'POST', 'url': 'http://127.0.0.1:1/upload', 'body': {'multipart': {
+        'file': {'filename': {'literal': 'sample.txt'}, 'content_type': 'text/plain', 'content': {'context': 'prompt'}}}}}
+
+
+@pytest.mark.parametrize('media', ['text/plain', 'text/markdown', 'application/json', 'text/csv'])
+def test_multipart_schema_roundtrip_and_expression_traversal(media):
+    data = v2_dict()
+    data['request'] = multipart_request()
+    data['request']['body']['multipart']['file']['content_type'] = media
+    data['request']['body']['multipart']['file']['filename'] = {'env': 'EXAMPLE_FILENAME'}
+    spec = TransportSpecV2.from_dict(data)
+    assert TransportSpecV2.from_dict(spec.to_dict()) == spec
+    expressions = list(spec_v2._iter_expressions(spec))
+    assert [item.path[-1] for item in expressions] == ['filename', 'content']
+
+
+@pytest.mark.parametrize('mutate', [
+    lambda r: r.update(method='GET'), lambda r: r.update(method='PATCH'),
+    lambda r: r['body'].update(multipart={}),
+    lambda r: r['body'].update(multipart={str(i): {} for i in range(5)}),
+    lambda r: r['body']['multipart'].update({'Bad': r['body']['multipart'].pop('file')}),
+    lambda r: r['body']['multipart']['file'].update(content_type='application/octet-stream'),
+    lambda r: r['body']['multipart']['file'].update(extra=True),
+    lambda r: r['body']['multipart']['file'].update(filename='sample.txt'),
+    lambda r: r.update(headers={'content-type': 'multipart/form-data'}),
+])
+def test_multipart_schema_rejects_invalid_shape(mutate):
+    request = multipart_request()
+    mutate(request)
+    with pytest.raises(ValueError):
+        RequestSpecV2.from_dict(request, visible=frozenset())
+
+
+def confirm_dict():
+    data = v2_dict()
+    data['lifecycle'] = {'attempt': [{
+        'id': 'upload', 'request': multipart_request(), 'expect': {'http_status': [201]},
+        'capture': {'file_id': {'path': '$.id'}},
+        'undo': {'request': {'method': 'DELETE', 'url': 'http://127.0.0.1:1/files/{file_id}'},
+                 'expect': {'http_status': [200, 204]},
+                 'confirm': {'request': {'method': 'GET', 'url': 'http://127.0.0.1:1/files/{file_id}/metadata',
+                                         'query': {'region': {'env': 'EXAMPLE_REGION'}}}, 'gone_status': [404]}}}]}
+    return data
+
+
+def test_undo_confirm_schema_roundtrip_and_origin_override():
+    spec = TransportSpecV2.from_dict(confirm_dict())
+    assert TransportSpecV2.from_dict(spec.to_dict()) == spec
+    assert [owner for owner, _ in iter_requests(spec)] == ['submit', 'setup', 'cleanup', 'cleanup']
+    updated = TransportSpecV2.from_dict(with_origin(confirm_dict(), 'http://127.0.0.1:2'))
+    assert all(request.url.startswith('http://127.0.0.1:2/') for _, request in iter_requests(updated))
+    assert any(item.expression == {'env': 'EXAMPLE_REGION'} for item in spec_v2._iter_expressions(spec))
+
+
+@pytest.mark.parametrize('method', ['POST', 'PUT', 'DELETE', 'HEAD'])
+def test_confirm_rejects_non_get_at_parse(method):
+    data = confirm_dict()
+    confirm = data['lifecycle']['attempt'][0]['undo']['confirm']
+    confirm['request']['method'] = method
+    confirm['request']['body'] = {'none': True}
+    with pytest.raises(ValueError, match='Confirmation method must be GET'):
+        TransportSpecV2.from_dict(data)
+
+
+@pytest.mark.parametrize('statuses', [[], [True], [99], [600], ['404'], [404.0]])
+def test_confirm_rejects_invalid_gone_status(statuses):
+    data = confirm_dict()
+    data['lifecycle']['attempt'][0]['undo']['confirm']['gone_status'] = statuses
+    with pytest.raises(ValueError):
+        TransportSpecV2.from_dict(data)
+
+
+@pytest.mark.parametrize('count', [1, 4])
+@pytest.mark.parametrize('method', ['POST', 'PUT'])
+def test_multipart_schema_accepts_part_count_and_method_boundaries(count, method):
+    request = multipart_request()
+    request['method'] = method
+    part = request['body']['multipart']['file']
+    request['body']['multipart'] = {'file' + str(index): copy.deepcopy(part) for index in range(count)}
+    assert len(RequestSpecV2.from_dict(request, visible=frozenset()).body['multipart']) == count
+
+
+@pytest.mark.parametrize('which', ['primary', 'confirm'])
+def test_multipart_rejected_in_cleanup_schema(which):
+    data = confirm_dict()
+    undo = data['lifecycle']['attempt'][0]['undo']
+    if which == 'primary':
+        undo['request'] = multipart_request()
+    else:
+        undo['confirm']['request'] = multipart_request()
+    with pytest.raises(ValueError):
+        TransportSpecV2.from_dict(data)
+
+
+@pytest.mark.parametrize('invalid', ['foreign', 'later_variable', 'recursive', 'captures', 'missing_status', 'multipart', 'auth_conflict'])
+def test_confirmation_rejects_scope_origin_and_shape_errors(invalid):
+    data = confirm_dict()
+    confirm = data['lifecycle']['attempt'][0]['undo']['confirm']
+    if invalid == 'foreign':
+        confirm['request']['url'] = 'http://127.0.0.1:2/metadata'
+    elif invalid == 'later_variable':
+        confirm['request']['query']['region'] = {'var': 'later_id'}
+    elif invalid == 'recursive':
+        confirm['undo'] = {}
+    elif invalid == 'captures':
+        confirm['capture'] = {}
+    elif invalid == 'missing_status':
+        confirm.pop('gone_status')
+    elif invalid == 'multipart':
+        confirm['request']['body'] = multipart_request()['body']
+    elif invalid == 'auth_conflict':
+        data['auth'] = {'kind': 'bearer', 'secret': {'source': 'env', 'name': 'EXAMPLE_PAT'}}
+        confirm['request']['headers'] = {'Authorization': 'dummy-not-a-key'}
+    with pytest.raises(ValueError):
+        TransportSpecV2.from_dict(data)
+
+
+def test_delivery_ids_reject_items_capture_selectors():
+    data = poll_dict()
+    data['delivery'].pop('run_id')
+    data['delivery']['ids'] = {'run_id': {'items': '$.jobs', 'where': {'path': '$.id', 'exists': True}, 'take': '$.id'}}
+    with pytest.raises(ValueError, match='Delivery IDs require path selectors'):
+        TransportSpecV2.from_dict(data)
+
+
+def test_confirmation_model_is_frozen_and_status_boundaries_are_valid():
+    data = confirm_dict()
+    data['lifecycle']['attempt'][0]['undo']['confirm']['gone_status'] = [100, 599]
+    confirm = TransportSpecV2.from_dict(data).lifecycle.attempt[0].undo.confirm
+    assert confirm.gone_status == (100, 599)
+    with pytest.raises(AttributeError):
+        confirm.gone_status = (404,)
+    with pytest.raises(TypeError):
+        confirm.request.query['region'] = {'literal': 'other'}

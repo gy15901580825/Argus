@@ -38,7 +38,7 @@ class TargetRunStopped(Exception):
             self.transport_diagnostics['cleanup'] = self.cleanup
 
 
-UndoStatus = Literal['pending', 'done', 'failed', 'skipped_stopped', 'blocked_by_inner', 'unbound']
+UndoStatus = Literal['pending', 'done', 'failed', 'skipped_stopped', 'blocked_by_inner', 'unbound', 'unconfirmed']
 
 
 @dataclass
@@ -55,6 +55,16 @@ class UndoIntent:
     _content: bytes | None = field(default=None, repr=False)
     _headers: dict[str, str] = field(default_factory=dict, repr=False)
     _bindings: Mapping[str, str | int] = field(default_factory=dict, repr=False)
+    _context: TransportContext | None = field(default=None, repr=False)
+
+
+@dataclass(frozen=True)
+class _ResourceRecord:
+    name: str = field(repr=False)
+    scope: str
+    step_id: str
+    undo: UndoIntent | None = field(default=None, repr=False)
+    attempt: int | None = None
 
 
 class RequestLedger:
@@ -90,6 +100,13 @@ class RequestLedger:
             raise TargetRunStopped('cleanup_reserve')
         self._reserved += 1
 
+    def reserve_optional_cleanup(self) -> bool:
+        self._check_stopped()
+        if self._reserved >= self.cleanup_reserve:
+            return False
+        self._reserved += 1
+        return True
+
     def spend_cleanup(self) -> None:
         self._check_stopped()
         if self.counts['cleanup'] >= self._reserved:
@@ -98,8 +115,10 @@ class RequestLedger:
 
 
 class UndoStack:
-    def __init__(self, ledger: RequestLedger):
+    def __init__(self, ledger: RequestLedger, redactor: Redactor | None = None):
         self.ledger = ledger
+        self.redactor = redactor or Redactor()
+        self._resources: list[_ResourceRecord] = []
         self.intents: list[UndoIntent] = []
 
     def register(self, intent: UndoIntent) -> None:
@@ -130,17 +149,19 @@ class UndoStack:
             raise
 
     def report(self, stop_reason: str | None = None) -> dict:
-        return cleanup_summary(self.intents, stop_reason)
+        return cleanup_summary(self.intents, stop_reason, self._resources, self.redactor)
 
 
-def cleanup_summary(intents, stop_reason=None):
+def cleanup_summary(intents, stop_reason=None, resources=(), redactor=None):
     opened = [
         {'scope': item.scope, 'step': item.step_id, 'status': item.status,
          'method': item.spec.request.method, 'url': item.url, 'http_status': item.http_status}
         for item in intents if item.status != 'done'
     ]
+    leftover = list(dict.fromkeys((redactor.clean(record.name) if redactor else record.name)
+                                  for record in resources if record.undo is None or record.undo.status != 'done'))
     return {'complete': not opened, 'done': sum(item.status == 'done' for item in intents),
-            'open': opened, 'stop_reason': stop_reason}
+            'open': opened, 'stop_reason': stop_reason, 'leftover': leftover}
 
 
 class V2Run:
@@ -161,15 +182,18 @@ class V2Run:
         self._environ = os.environ if environ is None else environ
         self._started = False
         self._start_failed = False
+        self._provision_context: TransportContext | None = None
         self._startup_error: BaseException | None = None
         self._stop_error: TargetRunStopped | None = None
         self._closed = False
         self.ledger = RequestLedger(spec.budget.max_requests, spec.budget.cleanup_reserve)
-        self.run_undos = UndoStack(self.ledger)
+        self._resources: list[_ResourceRecord] = []
+        self.run_undos = UndoStack(self.ledger, self.redactor)
         self.attempt_undos: list[UndoStack] = []
         self._has_undo = any(step.undo for step in (*spec.lifecycle.run, *spec.lifecycle.attempt))
 
     def _start(self, context: TransportContext):
+        self._provision_context = context
         requirements: dict[str, bool] = {}
 
         def collect(expression, required_owner):
@@ -267,8 +291,9 @@ class V2Run:
                 self._stop_error.set_cleanup(self.cleanup_report())
 
     def cleanup_report(self) -> dict | None:
-        if not self._has_undo:
+        if not self._has_undo and not self._resources:
             return None
         intents = [*self.run_undos.intents,
                    *(item for stack in self.attempt_undos for item in stack.intents)]
-        return cleanup_summary(intents, self.ledger.stopped or (self._stop_error.reason if self._stop_error else None))
+        return cleanup_summary(intents, self.ledger.stopped or (self._stop_error.reason if self._stop_error else None),
+                               self._resources, self.redactor)
