@@ -286,6 +286,8 @@ def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, se
         _echo_masked([
             f"Target stopped the run: {result.stopped_by}. {cleanup_note}"
         ], spec, secret_values)
+        if result.stopped_by.reason == "not_provisioned":
+            _echo_masked(getattr(result.stopped_by, "checklist", ()), spec, secret_values)
     incomplete = incomplete_lines(result.findings, result.stop_reason)
     _echo_masked(incomplete, spec, secret_values)
     if result.target_cleanup is not None:

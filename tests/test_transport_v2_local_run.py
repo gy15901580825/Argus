@@ -130,9 +130,89 @@ def test_request_budget_stop_reports_cleanup_enabled_after_actual_delete(tmp_pat
         assert record["status"] == "incomplete"
         assert "target stopped the run: request_budget" in record["incomplete_reason"]
         assert [(item["probe_id"], item["verdict"]) for item in record["findings"]] == [(stop_library[0].id, "pass")]
-        assert record["target_cleanup"] == {"complete": True, "done": 1, "open": [], "stop_reason": "request_budget"}
+        assert record["target_cleanup"] == {"complete": True, "done": 1, "open": [], "stop_reason": "request_budget", "leftover": []}
         assert [(method, path) for method, path, _, _ in app.calls] == [
             ("POST", "/v1/sources"), ("POST", "/run"), ("DELETE", "/v1/sources/source-one"),
         ]
         assert "Target stopped the run: request_budget. Configured cleanup remained enabled." in result.stderr
         assert "No further request was sent, cleanup included." not in result.stderr
+
+
+def resource_run_dict(origin, *, undo=False):
+    data = lifecycle_dict(origin, attempt=False)
+    step = data['lifecycle']['run'][0]
+    step['capture'] = {'source_id': {'path': '$.name', 'last_segment': True,
+        'expect_prefix': {'literal': 'files/'}}}
+    if undo:
+        step['undo']['expect'] = {'http_status': [204]}
+        step['undo']['confirm'] = {'request': {'method': 'GET', 'url': origin + '/v1/sources/{source_id}/metadata'},
+            'gone_status': [404]}
+    else:
+        step.pop('undo')
+    return data
+
+
+def test_informational_leftover_alone_keeps_completed_exit_zero(tmp_path, stop_library):
+    app = RecordingApp()
+    async def created(request):
+        return web.json_response({'name': 'files/sample.txt'}, status=201)
+    async def completed(request):
+        return web.json_response({'status': 'COMPLETED', 'result': 'done'})
+    app.route('POST', '/v1/sources', created)
+    app.route('POST', '/run', completed)
+    with serve_in_thread(app) as origin:
+        target = tmp_path / 'target.json'
+        target.write_text(json.dumps({'kind': 'custom_http', 'transport': resource_run_dict(origin)}))
+        out = tmp_path / 'run.json'
+        result = CliRunner().invoke(main, ['run', '--local', '--target', str(target), '--probes',
+            stop_library[0].id, '--format', 'json', '--out', str(out)])
+        assert result.exit_code == 0, result.output
+        record = json.loads(out.read_text())
+        assert record['status'] == 'completed'
+        assert record['target_cleanup']['complete'] is True
+        assert record['target_cleanup']['leftover'] == ['files/sample.txt']
+        assert 'Target resources left on the target: 1 item(s).' in result.stderr
+        assert '[ ] files/sample.txt' in result.stderr
+        assert 'Target cleanup incomplete' not in result.stderr
+        assert [call[0] for call in app.calls] == ['POST', 'POST']
+
+
+def test_unconfirmed_cleanup_lists_redacted_full_resource_and_exits_one(tmp_path, stop_library, monkeypatch):
+    monkeypatch.setenv('DUMMY_ACCESS', 'dummy-private-value')
+    app = RecordingApp()
+    async def created(request):
+        return web.json_response({'name': 'files/dummy-private-value.txt'}, status=201)
+    async def completed(request):
+        return web.json_response({'status': 'COMPLETED', 'result': 'done'})
+    async def unexpected(request):
+        return web.Response(status=500)
+    app.route('POST', '/v1/sources', created)
+    app.route('POST', '/run', completed)
+    app.route('DELETE', '/v1/sources/{ref}', unexpected)
+    with serve_in_thread(app) as origin:
+        data = resource_run_dict(origin, undo=True)
+        data['auth'] = {'kind': 'bearer', 'secret': {'source': 'env', 'name': 'DUMMY_ACCESS'}}
+        data['budget'] = {'cleanup_reserve': 1, 'stop_on': {'credential_echo': False}}
+        result, record, text = invoke_run(tmp_path, data, stop_library[:1])
+        assert record['status'] == 'incomplete'
+        assert record['target_cleanup']['complete'] is False
+        assert record['target_cleanup']['open'][0]['status'] == 'unconfirmed'
+        assert record['target_cleanup']['leftover'] == ['files/<redacted>.txt']
+        assert '[ ] files/<redacted>.txt' in result.stderr
+        assert 'unconfirmed' in result.stderr
+        assert 'dummy-private-value' not in result.output + text
+        assert [call[0] for call in app.calls] == ['POST', 'POST', 'DELETE']
+
+
+def test_not_provisioned_run_prints_manual_checklist(tmp_path, stop_library, monkeypatch):
+    from test_transport_provision import provision_app, provision_dict
+    monkeypatch.delenv('EXAMPLE_AUTOMATION_ID', raising=False)
+    app = provision_app(count=0)
+    with serve_in_thread(app) as origin:
+        result, record, _ = invoke_run(tmp_path, provision_dict(origin), stop_library)
+        assert record['status'] == 'incomplete'
+        assert record['findings'] == []
+        assert 'NOT PROVISIONED:' in result.stderr
+        assert 'Build the example or supply its ID.' in result.stderr
+        assert '[ ] Build the example.' in result.stderr
+        assert [call[0] for call in app.calls] == ['GET', 'GET', 'GET']

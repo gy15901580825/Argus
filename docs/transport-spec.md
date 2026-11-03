@@ -52,7 +52,7 @@ argus-probe validate-target --target target.json --execute --endpoint-override h
 
 Offline checks send no requests and do not resolve secret references. A sample file checks result rules and answer paths without a network connection. New transport files default to an offline check when neither mode is specified. Existing target files retain their single-prompt validation behavior.
 
-Execute mode sends the benign prompt `ping`. Version 1 synchronous delivery makes one target request, with no retries or preliminary HEAD/OPTIONS requests. Version 2 can also send configured lifecycle setup and undo requests. The agent may use its own model or tools and incur costs. Diagnostics show status, selected rule, response paths, safe top-level keys, and request counts. They omit secret values and returned answer text.
+Execute mode sends the benign prompt `ping`. Version 1 synchronous delivery makes one target request, with no retries or preliminary HEAD/OPTIONS requests. Version 2 runs configured provision lookups, lifecycle setup, one attempt, and cleanup. When any material binding exists, it supplies `Argus validation sample.` through that channel. Provision may add read-only lookup requests and configured persistent creation requests. The agent may use its own model or tools and incur costs. Diagnostics show status, selected rule, response paths, safe top-level keys, and request counts. They omit secret values and returned answer text.
 
 ## Bind request values
 
@@ -131,7 +131,7 @@ Variable names match `[a-z][a-z0-9_]{0,31}` and cannot contain `key`, `token`, `
 
 URL placeholders bind declared variables in path segments. Each segment accepts one placeholder, including forms such as `{automation_id}:invoke`. Values are percent-encoded as individual segments. Placeholders in the origin or URL query are invalid. Use `request.query` for scalar query bindings. The engine URL-encodes those values and omits optional missing entries. A `query` object cannot accompany a URL that already contains `?`. Credential-like query names are rejected.
 
-`DELETE` defaults to no body. An explicit JSON or text body is also accepted for `DELETE`. Version 2 supports synchronous delivery, multiple captured polling IDs, configurable stop triggers, and lifecycle setup and undo operations. SSE, request retries, provisioning, and multipart bodies remain unsupported. HTTP 429 stops the entire version 2 run by default, including cleanup requests.
+`DELETE` defaults to no body. An explicit JSON or text body is also accepted for `DELETE`. Version 2 supports synchronous delivery, multiple captured polling IDs, configurable stop triggers, and lifecycle setup and undo operations. SSE and request retries remain unsupported. Provisioning and multipart bodies are available in version 2. HTTP 429 stops the entire version 2 run by default, including cleanup requests.
 
 ```sh
 argus-probe validate-target --target target-v2.json --offline
@@ -139,9 +139,45 @@ argus-probe validate-target --target target-v2.json --execute
 argus-probe validate-target --target target-v2.json --execute --endpoint-override http://127.0.0.1:8080
 ```
 
-Offline validation lists the method, placeholder names, query names, and declaration names. It sends no requests and does not render the body or read environment values. Empty binding lists are omitted. Execute mode reports HTTP status, selected outcome, and submission, poll, and retry counts. When lifecycle steps are configured, it appends `requests.setup=N requests.cleanup=N` and closes the run before returning. It omits response bodies and resolved bindings.
+Offline validation lists the method, placeholder names, query names, and declaration names. It sends no requests and does not render the body or read environment values. Empty binding lists are omitted. Execute mode reports HTTP status, selected outcome, and submission, poll, and retry counts. When lifecycle steps are configured, it appends `requests.setup=N requests.cleanup=N`. Provision adds `requests.provision=N`. Counts include all requests through run close, including confirmation GETs. Offline provision validation prints the manual checklist without resolving values or sending requests. It omits response bodies and resolved bindings.
 
-A version 2 endpoint override takes an origin, with an optional trailing slash. It retains the configured paths and query bindings for submission, polling, lifecycle steps, and undo requests. A path, query, or fragment in the override is invalid. `--sample-response`, `--with-scenario`, and `--scenario-url` support version 1 transports only.
+A version 2 endpoint override takes an origin, with an optional trailing slash. It retains the configured paths and query bindings for submission, polling, lifecycle steps, undo and confirmation requests, and provision requests. A path, query, or fragment in the override is invalid. `--sample-response`, `--with-scenario`, and `--scenario-url` support version 1 transports only.
+
+## Bind task and material separately
+
+Bind `{"context": "prompt"}` to the user's task and `{"context": "material"}` to the API field that accepts third-party content. A probe can supply `indirect` entries with exactly `task` and `material`, one entry per original prompt. Both strings must be nonempty. `indirect` cannot accompany sessions or `conversation: true`. Original prompts remain unchanged for judging and findings.
+
+Any material expression makes the target declare a material channel. A material reference without `missing: "omit"`, outside a step guarded by `if_present: "material"`, makes material required. A required target skips probes without `indirect` before provision or setup sends any request. Its reasoning says `target requires material; probe has no indirect field`. Optional targets also accept prompt-only probes. Guards skip their entire step and undo. Omitted values propagate through base64 and concat and omit their JSON field, query entry, or multipart part. Nested objects and arrays omit absent members.
+
+`{"base64": {"context": "material"}}` encodes the material's UTF-8 bytes. For APIs that require uploads, use a multipart request body in an attempt step:
+
+```json
+{
+	"multipart": {
+		"file": {
+			"filename": {"literal": "sample.txt"},
+			"content_type": "text/plain",
+			"content": {"context": "material"}
+		}
+	}
+}
+```
+
+Multipart accepts one to four parts on POST or PUT. Each part has `filename`, `content_type`, and `content`. Content is a UTF-8 string of at most 1 MiB per part. Media types are `text/plain`, `text/markdown`, `application/json`, and `text/csv`. Filename expressions must produce a nonempty string without quotes, CR, LF, or NUL characters. Argus generates the multipart boundary. A conflicting configured Content-Type is rejected. Multipart is forbidden during cleanup. Material is literal content, so a path-shaped string does not read a local file. Capture a returned full resource name with `expect_prefix` and pass it through `var` when the API requires a remote file reference.
+
+A material target receives separate task and material values. Other targets receive the original prompt. Findings keep that original prompt and add `evidence.indirect.task` and `material_sha256`. Deep mode runs indirect probes statically on material targets. The built-in probe migration is separate, so a material channel alone does not imply built-in indirect coverage.
+
+promptfoo's `indirectInjectionVar: X` corresponds to binding the API's X field to `{"context": "material"}` in Argus. The context name is fixed as `material`.
+
+## Find provisioned resources
+
+`lifecycle.provision` runs once per target run, before `lifecycle.run`. Its ordered `find` steps use GET requests and capture exactly one item from a response array. An items capture has `items`, a `where` predicate, and `take`. It can also use `expect_prefix` and `last_segment`. An ambiguous match ends the run. Expectation checks can reject a paginated response so the configured first page cannot silently select an incomplete list.
+
+A find step can provide `given` values for every declared capture. When all supplied values resolve, Argus skips that GET. Values already supplied as final segments bypass network extraction. Optional `env` bindings with `missing: "omit"` allow lookup when the ID is absent. A step's `hint` can explain missing prerequisites, such as building the selected automation.
+
+If the final find matches nothing, optional `create` steps run and then the find sequence runs again. These created resources persist and never enter the undo stack. Without creation, Argus stops with `not_provisioned` and sends no submission or lifecycle setup request. The CLI prints the failed step, its hint, `manual.title` and `manual.steps`, and a checklist derived from the configured selectors. Compound filters get one checklist row for the complete filter. Offline validation prints the same preparation checklist with zero HTTP requests.
+
+Provision lookup IDs and generated values do not enter baseline identity. Only the configuration does. Use unique generated names and avoid simultaneous creation runs that could introduce ambiguous matches.
 
 ## Set up and undo version 2 resources
 
@@ -177,15 +213,19 @@ For example, add this run step to an existing version 2 transport:
 
 A capture may set `expect_prefix` to a value expression. Argus checks that exact, case sensitive prefix before publishing any captures from the response. With `last_segment: true`, it extracts the final slash-delimited segment and requires 1 through 256 characters containing only letters, digits, `.`, `_`, `~`, or `-`. Without segment extraction, it retains the full captured value. A mismatch fails the attempt with `id_prefix_mismatch`. A run setup failure ends the run, while an attempt setup failure affects that attempt.
 
-An undo requires `request` and `expect.http_status` and accepts only GET or DELETE. Include 404 when an already absent object should count as cleaned. Configure the URL and variables so the request addresses resources this run owns. Argus does not independently verify ownership or add a prefix to resource names. Prefixes and generated names come from the configuration.
+A step can omit `undo`. Argus reports resources created by such steps as informational leftovers. An undo requires `request` and `expect.http_status` and accepts only GET or DELETE. Include 404 when an already absent object should count as cleaned. Configure the URL and variables so the request addresses resources this run owns. Argus does not independently verify ownership or add a prefix to resource names. Prefixes and generated names come from the configuration.
+
+An undo can add `confirm: {"request": {"method": "GET", "url": "https://api.vendor-a.example.test/files/{file_id}/metadata"}, "gone_status": [404]}`. Argus sends this GET only after a fully received primary response whose HTTP status is outside `expect.http_status`. An accepted primary status sends no confirmation. A primary network failure or a failed body predicate with an accepted status also sends no confirmation. A configured `gone_status` marks the intent done. Another confirmation status or an unresolved binding leaves it `unconfirmed`. Confirmation shares the cleanup deadline and consumes one extra available cleanup request without taking another intent's reserved slot. With no extra capacity, Argus sends no GET and reports `unconfirmed`. A configured absence response does not independently prove physical deletion.
+
+The upload and deletion behavior in this design follows the coordinator's recorded live API checks. Automated tests use loopback fake services. This implementation does not independently verify a live account.
 
 Argus records each undo intent before sending the corresponding setup request. If the response is lost, an undo that uses previously known values can still execute. An undo that needs an uncaptured response value remains `unbound` for manual cleanup. Attempt undo runs in reverse order before the attempt returns, fails, or propagates cancellation. Run undo runs in reverse order when the target closes, including after an early consumer close. If an unfinished inner undo depends on an outer resource, the outer undo remains `blocked_by_inner`.
 
 ### Request and cleanup budgets
 
-`budget.max_requests` limits all setup, submission, and poll requests across the entire run. Omit it for no business request limit. When the next request exceeds the limit, Argus stops the run with `request_budget`; undo requests can still use their separate reserve. `budget.cleanup_reserve` defaults to 100. Each undo intent reserves one request before its setup request can be sent. If no reserve remains, the run stops with `cleanup_reserve` before creating that resource.
+`budget.max_requests` limits all provision, setup, submission, and poll requests across the entire run. Omit it for no business request limit. When the next request exceeds the limit, Argus stops the run with `request_budget`; undo requests can still use their separate reserve. `budget.cleanup_reserve` defaults to 100. Each undo intent reserves one request before its setup request can be sent. If no reserve remains, the run stops with `cleanup_reserve` before creating that resource.
 
-Run setup has its own `timeout.total_deadline_s`. Each attempt then receives a fresh business deadline. Each attempt undo and run close has a separate `timeout.cleanup_s`, default 60 seconds and maximum 300 seconds. Cleanup time does not consume the business deadline. Cleanup failures preserve the primary finding and appear in `evidence.transport.cleanup`. The final [run.json cleanup summary](run-json.md#target-cleanup) lists any remaining objects and makes the run incomplete.
+Run setup has its own `timeout.total_deadline_s`. Each attempt then receives a fresh business deadline. Each attempt undo and run close has a separate `timeout.cleanup_s`, default 60 seconds and maximum 300 seconds. Cleanup time does not consume the business deadline. Cleanup failures preserve the primary finding and appear in `evidence.transport.cleanup`. The final [run.json cleanup summary](run-json.md#target-cleanup) lists unresolved undo intents and tracked resource names. Unresolved intents make the run incomplete. Leftover names alone leave the run status and exit code unchanged.
 
 ### Polling with multiple IDs
 

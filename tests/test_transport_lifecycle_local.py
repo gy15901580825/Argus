@@ -128,6 +128,6 @@ async def test_budget_stop_keeps_stable_cleanup_aliases_after_run_close(local_li
         assert exc.reason == 'request_budget'
         assert exc.cleanup is exc.target_cleanup
         assert exc.transport_diagnostics['cleanup'] is exc.target_cleanup
-        assert exc.target_cleanup == {'complete': True, 'done': 2, 'open': [], 'stop_reason': 'request_budget'}
+        assert exc.target_cleanup == {'complete': True, 'done': 2, 'open': [], 'stop_reason': 'request_budget', 'leftover': []}
         assert len(events) == 1
         assert deletes(app) == ['/v1/messages?remoteId=local-ref&sourceId=source-one', '/v1/sources/source-one']

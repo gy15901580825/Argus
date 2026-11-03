@@ -21,8 +21,8 @@ from argus_transport import (
     parse_transport_spec,
     execution_policy,
 )
-from argus_transport.spec_v2 import _iter_expressions
-from argus.targets._base import Target, TargetBlockedError, TargetTransportError, Turn
+from argus_transport.spec_v2 import TransportContextV2, _iter_expressions, material_binding
+from argus.targets._base import ProbeNotApplicable, Target, TargetBlockedError, TargetTransportError, Turn
 from argus.targets._template import compile_template, render
 
 LEGACY_TRANSPORT_FIELDS = frozenset(
@@ -157,6 +157,10 @@ class CustomHTTPTarget(Target):
         self._v2_run = None
         self._last_run_log = None
         self._last_transport_evidence = {}
+        binding = material_binding(spec.transport) if isinstance(spec.transport, TransportSpecV2) else "none"
+        self.material_channel = binding != "none"
+        self._material_required = binding == "required"
+        self._indirect = ()
         self.supports_history = (
             spec.transport is None or spec.transport.session.mode != "none"
         )
@@ -203,7 +207,7 @@ class CustomHTTPTarget(Target):
                     parse(path)
 
     async def send_prompt(
-        self, prompt: str, history: tuple[Turn, ...] = ()
+        self, prompt: str, history: tuple[Turn, ...] = (), *, material: str | None = None
     ) -> tuple[str, float]:
         self._last_run_log = None
         self._last_transport_evidence = {}
@@ -213,11 +217,13 @@ class CustomHTTPTarget(Target):
         if self.spec.transport is None:
             return await self._send_legacy(prompt, history)
         spec = self.spec.transport
-        context = TransportContext(
+        context_type = TransportContextV2 if isinstance(spec, TransportSpecV2) else TransportContext
+        context = context_type(
             prompt=prompt,
             history=tuple({"role": t.role, "content": t.content} for t in history),
             conversation_id=self._conversation_id,
             session_id=self._session_id,
+            **({"material": material} if isinstance(spec, TransportSpecV2) else {}),
         )
         if isinstance(spec, TransportSpecV2):
             if self._v2_run is None:
@@ -305,6 +311,9 @@ class CustomHTTPTarget(Target):
         self._last_run_log = run_log_from_metadata(metadata)
 
     async def begin_probe(self, probe) -> None:
+        self._indirect = getattr(probe, "indirect", ())
+        if self._material_required and not self._indirect:
+            raise ProbeNotApplicable("target requires material; probe has no indirect field")
         self._last_run_log = None
         self._conversation_id = None
         self._session_id = None
