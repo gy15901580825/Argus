@@ -412,3 +412,215 @@ def test_run_id_cannot_be_used_as_a_value_expression():
 def test_direct_v2_parser_rejects_invalid_version_or_missing_fields(data):
     with pytest.raises(ValueError):
         TransportSpecV2.from_dict(data)
+
+
+def lifecycle_dict():
+    data = v2_dict()
+    data["let"] = {"run": {"prefix": {"literal": "objects/"}}}
+    data["lifecycle"] = {"run": [{
+        "id": "create", "request": {
+            "method": "POST", "url": "http://127.0.0.1:1/objects",
+            "body": {"text": {"var": "prefix"}},
+        }, "expect": {"http_status": [201], "when": {"path": "$.ok", "equals": True}},
+        "capture": {"ref": {"path": "$.id", "expect_prefix": {"var": "prefix"}}},
+        "undo": {"request": {"method": "DELETE", "url": "http://127.0.0.1:1/objects/{ref}"},
+                 "expect": {"http_status": [200, 204, 404]}},
+    }], "attempt": [{
+        "id": "fetch", "if_present": "prompt", "request": {
+            "method": "GET", "url": "http://127.0.0.1:1/objects/{ref}",
+        }, "expect": {"http_status": [200]},
+        "capture": {"item": {"path": "$.id", "last_segment": True}},
+    }]}
+    for scope in ("run", "attempt"):
+        for step in data["lifecycle"][scope]:
+            requests = [step["request"]]
+            if "undo" in step:
+                requests.append(step["undo"]["request"])
+            for request in requests:
+                request.setdefault("headers", {})
+                request.setdefault("body", {"none": True})
+    return data
+
+
+@pytest.mark.parametrize("method", ["POST", "PUT"])
+def test_undo_method_must_be_delete_or_get(method):
+    data = lifecycle_dict()
+    TransportSpecV2.from_dict(data)
+    data["lifecycle"]["run"][0]["undo"]["request"].update(method=method, body={"none": True})
+    with pytest.raises(ValueError, match="Undo method must be DELETE or GET"):
+        TransportSpecV2.from_dict(data)
+
+
+@pytest.mark.parametrize("owner", ["step", "undo"])
+def test_step_and_undo_must_share_submit_origin(owner):
+    data = lifecycle_dict()
+    TransportSpecV2.from_dict(data)
+    step = data["lifecycle"]["run"][0]
+    request = step["request"] if owner == "step" else step["undo"]["request"]
+    request["url"] = "http://127.0.0.1:2/objects"
+    with pytest.raises(ValueError):
+        TransportSpecV2.from_dict(data)
+
+
+@pytest.mark.parametrize("change", ["step", "capture_let", "capture_id", "let_id", "context_id"])
+def test_step_ids_and_captures_share_the_namespace(change):
+    data = lifecycle_dict()
+    TransportSpecV2.from_dict(data)
+    if change == "step":
+        data["lifecycle"]["attempt"][0]["id"] = "create"
+    elif change == "capture_let":
+        data["let"]["attempt"] = {"ref": {"literal": "x"}}
+    elif change == "capture_id":
+        data["lifecycle"]["attempt"][0]["capture"] = {"create": {"path": "$.id"}}
+    elif change == "let_id":
+        data["let"]["run"]["fetch"] = {"literal": "x"}
+    else:
+        data["lifecycle"]["run"][0]["id"] = "run_id"
+    with pytest.raises(ValueError):
+        TransportSpecV2.from_dict(data)
+
+
+def test_undo_sees_own_capture_and_outer_scope_only():
+    data = lifecycle_dict()
+    data["lifecycle"]["run"][0]["undo"]["request"]["query"] = {"outer": {"var": "prefix"}}
+    TransportSpecV2.from_dict(data)
+    data["lifecycle"]["run"][0]["undo"]["request"]["query"] = {"later": {"var": "item"}}
+    with pytest.raises(ValueError):
+        TransportSpecV2.from_dict(data)
+
+
+def test_let_attempt_and_submit_see_run_captures():
+    data = lifecycle_dict()
+    data["let"]["attempt"] = {"local": {"var": "ref"}}
+    data["request"]["body"] = {"json": {"ref": {"var": "ref"}, "item": {"var": "item"}}}
+    assert TransportSpecV2.from_dict(data).let.attempt["local"] == {"var": "ref"}
+    data["lifecycle"]["run"][0]["request"]["body"] = {"text": {"var": "local"}}
+    with pytest.raises(ValueError):
+        TransportSpecV2.from_dict(data)
+
+
+@pytest.mark.parametrize("name", ["create", "missing", "item"])
+def test_if_present_requires_visible_binding_or_context(name):
+    data = lifecycle_dict()
+    TransportSpecV2.from_dict(data)
+    data["lifecycle"]["run"][0]["if_present"] = name
+    with pytest.raises(ValueError):
+        TransportSpecV2.from_dict(data)
+
+
+@pytest.mark.parametrize("value", [True, False, "60", 0, -1, 301, float("inf")])
+def test_cleanup_s_defaults_to_60_and_caps_at_300(value):
+    data = v2_dict()
+    assert TransportSpecV2.from_dict(data).timeout.cleanup_s == 60
+    data["timeout"]["cleanup_s"] = 300
+    assert TransportSpecV2.from_dict(data).timeout.cleanup_s == 300
+    data["timeout"]["cleanup_s"] = value
+    with pytest.raises(ValueError):
+        TransportSpecV2.from_dict(data)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("max_requests", True), ("max_requests", 0), ("max_requests", -1),
+    ("max_requests", 1.0), ("max_requests", None),
+    ("cleanup_reserve", True), ("cleanup_reserve", -1), ("cleanup_reserve", 1.0),
+])
+def test_budget_requires_strict_integer_bounds(field, value):
+    data = v2_dict()
+    data["budget"] = {"max_requests": 1, "cleanup_reserve": 0}
+    assert TransportSpecV2.from_dict(data).budget.cleanup_reserve == 0
+    data["budget"][field] = value
+    with pytest.raises(ValueError):
+        TransportSpecV2.from_dict(data)
+
+
+def test_lifecycle_roundtrip():
+    data = lifecycle_dict()
+    data["budget"] = {"max_requests": 20, "cleanup_reserve": 5}
+    data["timeout"]["cleanup_s"] = 120
+    spec = TransportSpecV2.from_dict(data)
+    serialized = spec.to_dict()
+    assert serialized["lifecycle"] == data["lifecycle"]
+    assert serialized["budget"] == data["budget"]
+    assert serialized["timeout"]["cleanup_s"] == 120
+    assert TransportSpecV2.from_dict(serialized) == spec
+    defaults = TransportSpecV2.from_dict(v2_dict()).to_dict()
+    assert "lifecycle" not in defaults and "budget" not in defaults
+    assert "cleanup_s" not in defaults["timeout"]
+
+
+@pytest.mark.parametrize("field,value", [("last_segment", 1), ("last_segment", None),
+    ("last_segment", "true"), ("expect_prefix", "objects/"), ("expect_prefix", None)])
+def test_capture_transform_fields_have_exact_types(field, value):
+    data = lifecycle_dict()
+    TransportSpecV2.from_dict(data)
+    data["lifecycle"]["run"][0]["capture"]["ref"][field] = value
+    with pytest.raises(ValueError):
+        TransportSpecV2.from_dict(data)
+
+
+@pytest.mark.parametrize("name", ["ref", "item", "create"])
+def test_capture_prefix_uses_only_pre_step_visibility(name):
+    data = lifecycle_dict()
+    TransportSpecV2.from_dict(data)
+    data["lifecycle"]["run"][0]["capture"]["ref"]["expect_prefix"] = {"var": name}
+    with pytest.raises(ValueError):
+        TransportSpecV2.from_dict(data)
+
+
+def test_lifecycle_field_names_avoid_baseline_secret_words():
+    assert {"lifecycle", "run", "attempt", "id", "if_present", "expect", "http_status",
+            "when", "capture", "undo", "budget", "max_requests", "cleanup_reserve",
+            "cleanup_s", "last_segment", "expect_prefix"} <= spec_v2.V2_FIELD_NAMES
+    assert all(not any(word in name.lower() for word in _SECRET_WORDS)
+               for name in spec_v2.V2_FIELD_NAMES)
+
+
+def test_lifecycle_request_traversal_and_origin_override():
+    data = lifecycle_dict()
+    spec = TransportSpecV2.from_dict(data)
+    assert [owner for owner, _ in iter_requests(spec)] == ["submit", "setup", "cleanup", "setup"]
+    rewritten = with_origin(data, "http://127.0.0.1:8080")
+    assert rewritten["lifecycle"]["run"][0]["request"]["url"] == "http://127.0.0.1:8080/objects"
+    assert rewritten["lifecycle"]["run"][0]["undo"]["request"]["url"] == "http://127.0.0.1:8080/objects/{ref}"
+    assert rewritten["lifecycle"]["attempt"][0]["request"]["url"] == "http://127.0.0.1:8080/objects/{ref}"
+    assert data["request"]["url"] == "http://127.0.0.1:1/run"
+
+
+@pytest.mark.parametrize("field,value", [
+    ("expect", {"http_status": []}), ("expect", {"http_status": [True]}),
+    ("expect", {"http_status": [99]}), ("expect", {"http_status": [600]}),
+    ("expect", {"http_status": [200.0]}),
+    ("expect", {"http_status": [200], "when": {"path": "$.x", "exists": "yes"}}),
+    ("capture", {"ref": {"path": "$..id"}}),
+])
+def test_lifecycle_expect_and_capture_validation(field, value):
+    data = lifecycle_dict()
+    TransportSpecV2.from_dict(data)
+    data["lifecycle"]["run"][0][field] = value
+    with pytest.raises(ValueError):
+        TransportSpecV2.from_dict(data)
+
+
+@pytest.mark.parametrize("method", ["HEAD", "OPTIONS"])
+def test_lifecycle_step_method_is_restricted(method):
+    data = lifecycle_dict()
+    TransportSpecV2.from_dict(data)
+    data["lifecycle"]["run"][0]["request"].update(method=method, body={"none": True})
+    with pytest.raises(ValueError):
+        TransportSpecV2.from_dict(data)
+
+
+@pytest.mark.parametrize("payload", [None, [], "DELETE"])
+def test_undo_request_rejects_non_objects(payload):
+    data = lifecycle_dict()
+    data["lifecycle"]["run"][0]["undo"]["request"] = payload
+    with pytest.raises(ValueError):
+        TransportSpecV2.from_dict(data)
+
+
+@pytest.mark.parametrize("method", [[], {}, 7])
+def test_undo_method_rejects_non_strings(method):
+    data = lifecycle_dict()
+    data["lifecycle"]["run"][0]["undo"]["request"]["method"] = method
+    with pytest.raises(ValueError, match="Undo method must be DELETE or GET"):
+        TransportSpecV2.from_dict(data)

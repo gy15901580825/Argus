@@ -21,7 +21,7 @@ from argus_transport import (
     parse_transport_spec,
     execution_policy,
 )
-from argus_transport.spec_v2 import iter_requests
+from argus_transport.spec_v2 import _iter_expressions
 from argus.targets._base import Target, TargetBlockedError, TargetTransportError, Turn
 from argus.targets._template import compile_template, render
 
@@ -73,20 +73,10 @@ def _v2_expression_uses_context(expression, name):
 
 
 def _v2_uses_context(spec, name):
-    for declarations in (spec.let.run, spec.let.attempt):
-        if any(
-            _v2_expression_uses_context(expr, name) for expr in declarations.values()
-        ):
-            return True
-    for _, request in iter_requests(spec):
-        expressions = list(request.query.values())
-        if "json" in request.body:
-            expressions.extend(request.body["json"].values())
-        elif "text" in request.body:
-            expressions.append(request.body["text"])
-        if any(_v2_expression_uses_context(expr, name) for expr in expressions):
-            return True
-    return False
+    return any(
+        _v2_expression_uses_context(item.expression, name)
+        for item in _iter_expressions(spec)
+    )
 
 
 @dataclass(frozen=True)
