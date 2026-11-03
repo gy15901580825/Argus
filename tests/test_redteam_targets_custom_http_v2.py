@@ -1,6 +1,7 @@
 import asyncio
 import json
 
+import httpx
 import pytest
 from aiohttp import web
 
@@ -21,27 +22,39 @@ def test_v2_session_none_has_no_history_support():
 
 
 @pytest.mark.parametrize("failure", ["http", "timeout"])
-async def test_v2_failure_maps_like_v1(failure):
+async def test_v2_failure_maps_like_v1(failure, monkeypatch):
     app = RecordingApp()
+    response_release = asyncio.Event()
+
+    if failure == "timeout":
+        class DelayedClient(httpx.AsyncClient):
+            async def __aenter__(self):
+                await asyncio.sleep(0.05)
+                return await super().__aenter__()
+
+        monkeypatch.setattr("argus_transport.engine_v2.httpx.AsyncClient", DelayedClient)
 
     async def failed(request):
         if failure == "timeout":
-            await asyncio.sleep(0.05)
+            await response_release.wait()
         return web.Response(status=500)
 
     app.route("POST", "/run", failed)
     async with serve(app) as origin:
         data = spec_dict(origin + "/run")
         if failure == "timeout":
-            data["timeout"] = {"total_deadline_s": 0.01, "read_s": 0.01}
+            data["timeout"] = {"total_deadline_s": 5, "read_s": 0.1}
         instance = target(data)
-        with local_transport_mode():
-            if failure == "http":
-                with pytest.raises(TargetTransportError, match="^target_error: http_error$"):
-                    await instance.send_prompt("ping")
-            else:
-                with pytest.raises(TimeoutError):
-                    await instance.send_prompt("ping")
+        try:
+            with local_transport_mode():
+                if failure == "http":
+                    with pytest.raises(TargetTransportError, match="^target_error: http_error$"):
+                        await instance.send_prompt("ping")
+                else:
+                    with pytest.raises(TimeoutError):
+                        await instance.send_prompt("ping")
+        finally:
+            response_release.set()
         evidence = (await instance.collect_evidence())["transport"]
         assert evidence["outcome"] == ("target_error" if failure == "http" else "timed_out")
         assert len(app.calls) == 1
