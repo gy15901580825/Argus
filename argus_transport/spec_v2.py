@@ -696,7 +696,7 @@ class TransportSpecV2(FrozenModel):
             for name, selector in ids.items():
                 if name != 'run_id':
                     _name(name)
-                if name in visible:
+                if name in declared:
                     raise ValueError('Duplicate transport variable')
                 if sugar:
                     object_fields(selector, {'path'}, {'path'})
@@ -1009,27 +1009,21 @@ def provision_checklist(spec: TransportSpecV2, *, step_id: str | None, hint: str
         result.extend(f'[ ] {step}' for step in provision.manual.steps)
     result.append('Derived from the config:')
 
-    def equalities(value):
-        if 'equals' in value:
-            yield value['path'], value['equals']
-        for operator in ('all', 'any'):
-            for child in value.get(operator, []):
-                yield from equalities(child)
-        if 'not' in value:
-            yield from equalities(value['not'])
-
     for step in provision.find:
         env_names = [expr['env'] for expr in step.given.values() if 'env' in expr]
         suffix = f" (skipped when ${env_names[0]} is set)" if env_names else ''
         for capture in step.capture.values():
             if capture.where is None:
                 continue
-            for item_path, literal in equalities(capture.where):
+            if set(capture.where) == {'path', 'equals'}:
+                item_path, literal = capture.where['path'], capture.where['equals']
                 if isinstance(literal, dict) and set(literal) in ({'env'}, {'env', 'missing'}, {'var'}):
                     display = '$' + literal.get('env', literal.get('var'))
                 else:
                     display = literal if isinstance(literal, str) else json.dumps(literal)
                 result.append(f'[ ] Exactly one item in {capture.items} has {item_path} = {display}{suffix}')
+            else:
+                result.append(f'[ ] Exactly one item in {capture.items} matches the complete configured filter.{suffix}')
     bindings = {}
 
     def collect(expr, location):

@@ -191,6 +191,8 @@ def test_provision_checklist_derives_where_and_binding_lines():
         "NOT PROVISIONED: find step 'automation' matched no item (0 business requests sent)",
         'Hint: Build first.', 'Prepare the example', '[ ] Build the example.', '[ ] Set the selected ID.',
         'Derived from the config:',
+        '[ ] Exactly one item in $.organizations matches the complete configured filter.',
+        '[ ] Exactly one item in $.workspaces matches the complete configured filter.',
         '[ ] Exactly one item in $.automations has $.display_name = $EXAMPLE_NAME (skipped when $EXAMPLE_AUTOMATION_ID is set)',
         '[ ] Argus sends the prompt to inputs.question.text.',
     ]
@@ -486,3 +488,59 @@ def test_where_expression_owners_retain_exact_config_paths():
     expressions = [item for item in _iter_expressions(TransportSpecV2.from_dict(data)) if item.expression.get('env') in {'EXAMPLE_NAME', 'EXAMPLE_OTHER_NAME'}]
     prefix = ('lifecycle', 'provision', 'find', 2, 'capture', 'automation_id', 'where')
     assert [item.path for item in expressions] == [prefix + ('all', 0, 'equals'), prefix + ('all', 1, 'one_of', 1)]
+
+
+def delivery_step_dict(origin, scope, *, step_id='job_id', delivery_id='job_id'):
+    from test_transport_v2_poll import poll_spec
+    data = provision_dict(origin)
+    data['delivery'] = poll_spec(origin + '/run')['delivery']
+    data['delivery']['ids'] = {delivery_id: {'path': '$.job_id'}}
+    data['delivery']['request']['url'] = origin + '/runs/{' + delivery_id + '}'
+    if scope == 'find':
+        data['lifecycle']['provision']['find'][-1]['id'] = step_id
+    else:
+        step = {'id': step_id, 'request': {'method': 'POST', 'url': origin + '/create', 'body': {'none': True}},
+                'expect': {'http_status': [201]}}
+        if scope == 'create':
+            data['lifecycle']['provision']['create'] = [step]
+        else:
+            data['lifecycle'][scope] = [step]
+    return data
+
+
+@pytest.mark.parametrize('scope', ['find', 'create', 'run', 'attempt'])
+async def test_delivery_id_collision_with_step_is_rejected_before_http(scope):
+    app = provision_app()
+    async with serve(app) as origin:
+        with pytest.raises(ValueError, match='Duplicate transport variable'):
+            CustomHTTPSpec(transport=delivery_step_dict(origin, scope))
+        assert app.calls == []
+
+
+@pytest.mark.parametrize('scope', ['find', 'create', 'run', 'attempt'])
+@pytest.mark.parametrize('delivery_id', ['job_id', 'run_id'])
+def test_distinct_step_and_delivery_ids_remain_valid(scope, delivery_id):
+    data = delivery_step_dict('http://127.0.0.1:1', scope, step_id='prepare', delivery_id=delivery_id)
+    spec = TransportSpecV2.from_dict(data)
+    assert set(spec.delivery.ids) == {delivery_id}
+
+
+@pytest.mark.parametrize('where', [
+    {'not': {'path': '$.display_name', 'equals': 'Excluded'}},
+    {'any': [{'path': '$.display_name', 'equals': 'Example'}, {'path': '$.display_name', 'equals': 'Other'}]},
+    {'all': [{'path': '$.display_name', 'equals': 'Example'}, {'path': '$.active', 'equals': True}]},
+    {'path': '$.display_name', 'one_of': ['Example', 'Other']},
+])
+@pytest.mark.parametrize('given', [False, True])
+def test_provision_checklist_describes_complete_filter_without_positive_equality_claims(where, given):
+    from argus_transport.spec_v2 import provision_checklist
+    data = provision_dict('http://127.0.0.1:1')
+    step = data['lifecycle']['provision']['find'][-1]
+    step['capture']['automation_id']['where'] = where
+    if not given:
+        step.pop('given')
+    spec = TransportSpecV2.from_dict(data)
+    lines = provision_checklist(spec, step_id=None, hint=None)
+    derived = [line for line in lines if line.startswith('[ ] Exactly one item in $.automations')]
+    suffix = ' (skipped when $EXAMPLE_AUTOMATION_ID is set)' if given else ''
+    assert derived == ['[ ] Exactly one item in $.automations matches the complete configured filter.' + suffix]
