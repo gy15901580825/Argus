@@ -257,3 +257,83 @@ def test_python_target_serves_the_same_probes_as_custom_http():
 
     assert PythonTarget.compatible_classes == CustomHTTPTarget.compatible_classes
     assert PythonTarget.material_channel is True
+
+
+MESSAGE = "python targets run only on the local machine: use argus-probe run --local"
+
+
+def _python_spec(entry):
+    return {"kind": "python", "entry": entry}
+
+
+def test_build_target_denies_python_by_default():
+    from argus.targets import build_target
+
+    with pytest.raises(ValueError) as exc:
+        build_target(_python_spec("mod:call"))
+    assert str(exc.value) == MESSAGE
+
+
+def test_trusted_build_returns_python_target():
+    from argus.targets import build_target
+
+    target = build_target(_python_spec("mod:call"), trusted_code=True)
+    assert isinstance(target, PythonTarget)
+    assert target.spec.entry == "mod:call"
+
+
+def _nested(entry, *, depth):
+    inner = _python_spec(entry)
+    for _ in range(depth):
+        inner = {
+            "kind": "payment_agent",
+            "testbed_url": "http://127.0.0.1:1",
+            "sandbox": True,
+            "inner": inner,
+        }
+    return inner
+
+
+@pytest.mark.parametrize("depth", [1, 2])
+@pytest.mark.parametrize("trusted", [False, True])
+def test_inner_python_is_denied_in_every_mode(tmp_path, monkeypatch, depth, trusted):
+    from argus.targets import build_target
+
+    marker = tmp_path / "marker"
+    monkeypatch.setenv("ARGUS_TEST_IMPORT_MARKER", str(marker))
+    spec = _nested(f"{FIXTURES / 'import_marker.py'}:call", depth=depth)
+    with pytest.raises(ValueError) as exc:
+        build_target(spec, trusted_code=trusted)
+    assert str(exc.value) == "a python target cannot be nested in inner"
+    assert not marker.exists()
+
+
+def test_relative_path_is_relative_to_spec_file(tmp_path, monkeypatch):
+    from argus.cli.target_loader import load_target_spec
+
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "agent.py").write_text("def call(p, m, c):\n    return {'output': 'x'}\n")
+    spec_file = tmp_path / "sub" / "target.json"
+    spec_file.write_text('{"kind": "python", "entry": "agent.py:call"}')
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    spec = load_target_spec(str(spec_file))
+    assert spec["entry"] == f"{tmp_path / 'sub' / 'agent.py'}:call"
+
+
+def test_inline_json_and_module_entries_are_left_alone(tmp_path, monkeypatch):
+    from argus.cli.target_loader import load_target_spec
+
+    monkeypatch.chdir(tmp_path)
+    assert load_target_spec('{"kind": "python", "entry": "agent.py:call"}')["entry"] == "agent.py:call"
+    spec_file = tmp_path / "t.json"
+    spec_file.write_text('{"kind": "python", "entry": "pkg.mod:call"}')
+    assert load_target_spec(str(spec_file))["entry"] == "pkg.mod:call"
+
+
+def test_loader_requires_entry():
+    from argus.cli.target_loader import TargetLoadError, load_target_spec
+
+    with pytest.raises(TargetLoadError, match="missing required fields: \\['entry'\\]"):
+        load_target_spec('{"kind": "python"}')

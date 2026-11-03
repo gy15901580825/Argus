@@ -30,6 +30,13 @@ _KIND_QUESTIONS: dict[str, list[tuple[str, str, str | None]]] = {
         ),
         ("response_jsonpath", "Response JSONPath", "$.output"),
     ],
+    "python": [
+        (
+            "entry",
+            "Python entry (module:func or path/to/file.py:func)",
+            "argus_target.py:call",
+        ),
+    ],
     "grpc": [
         ("endpoint", "Endpoint (host:port)", "localhost:50051"),
         ("service_method", "Service method (pkg.Service/Method)", None),
@@ -139,7 +146,7 @@ _KIND_QUESTIONS: dict[str, list[tuple[str, str, str | None]]] = {
 # apply to it and would be skipped, leaving a job that tests nothing. Assumes `all` fits the target (PR5a).
 _CHAT_PROBES = "owasp_01_prompt_injection_basic,syscard_crescendo"
 _CHAT_KINDS = frozenset(
-    {"openai_compat", "anthropic_native", "custom_http", "web_chat"}
+    {"openai_compat", "anthropic_native", "custom_http", "web_chat", "python"}
 )
 
 

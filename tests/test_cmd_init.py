@@ -372,3 +372,27 @@ def test_init_a2a_agent_writes_loadable_spec_with_sandbox(tmp_path, monkeypatch)
     assert spec["sandbox"] is True
     assert spec["capabilities"] == ["peer_http_json_1_0"]
     assert build_target(spec).compatible_classes == {"a2a_agent"}
+
+
+def test_init_python_kind_writes_a_local_run(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(
+        init_command,
+        ["--kind", "python", "--workflow"],
+        input="agent.py:answer\n",
+    )
+    assert result.exit_code == 0, result.output
+    assert json.loads((tmp_path / "argus-target.json").read_text()) == {
+        "kind": "python",
+        "entry": "agent.py:answer",
+    }
+    workflow = (tmp_path / ".github/workflows/argus-probe.yml").read_text()
+    assert "uses: gy15901580825/argus-probe-action@v2" in workflow
+    assert "target: argus-target.json" in workflow
+    assert "probes: owasp_01_prompt_injection_basic,syscard_crescendo" in workflow
+    assert "--api-url" not in workflow
+    assert (
+        "Next: argus-probe run --local --target argus-target.json "
+        "--probes owasp_01_prompt_injection_basic,syscard_crescendo "
+        "--out argus-report.html"
+    ) in result.output

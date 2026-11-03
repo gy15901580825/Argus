@@ -14,7 +14,7 @@ from argus.cli.target_loader import TargetLoadError, check_target_spec
 
 # Kinds that answer a chat prompt. The others (A2A, MCP and vLLM servers, testbed agents, uploads)
 # are checked by their probes, so a ping proves nothing about them.
-_CHAT_KINDS = ("openai_compat", "anthropic_native", "custom_http", "web_chat")
+_CHAT_KINDS = ("openai_compat", "anthropic_native", "custom_http", "web_chat", "python")
 
 
 def _failure(exc: Exception) -> str:
