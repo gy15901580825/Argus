@@ -10,6 +10,7 @@ import time
 import uuid
 from dataclasses import dataclass, replace
 from contextlib import asynccontextmanager
+from collections.abc import Callable
 from types import MappingProxyType
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -184,7 +185,6 @@ class ExchangeResponse:
     status: int
     body: object
     headers: Mapping[str, str]
-    _parse_failed: bool = False
 
 
 class _CapturePrefixError(ValueError):
@@ -379,7 +379,7 @@ class TransportEngineV2:
         self.runtime.run_vars = MappingProxyType(scope)
 
     async def _steps(self, steps, scope_name, stack, client, context, scope, start, diagnostics):
-        from .runtime_v2 import TargetRunStopped, UndoIntent
+        from .runtime_v2 import TargetRunStopped, UndoIntent, _ResourceRecord
         for step in steps:
             if step.if_present is not None:
                 guard = scope.get(step.if_present, getattr(context, step.if_present, None))
@@ -399,10 +399,20 @@ class TransportEngineV2:
                     self._bind_undo(intent, context, scope)
                     stack.register(intent)
                 self.runtime.ledger.charge('setup')
+                records = []
+                def record_accepted():
+                    record = _ResourceRecord(
+                        self.redactor.clean(f"step '{step.id}' {request.method} {request.url}"),
+                        scope_name, step.id, intent,
+                        len(self.runtime.attempt_undos) - 1 if scope_name == 'attempt' else None,
+                    )
+                    records.append(record)
+                    self.runtime._resources.append(record)
+                    stack._resources.append(record)
                 response = await self._exchange(client, request, headers, content, start,
-                                                self.redactor, diagnostics, phase='setup', admitted=True)
-                if isinstance(response, ExchangeResponse) and 200 <= response.status < 300 and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
-                    from .runtime_v2 import _ResourceRecord
+                                                self.redactor, diagnostics, phase='setup', admitted=True,
+                                                on_accepted=record_accepted if request.method in {"POST", "PUT", "PATCH", "DELETE"} else None)
+                if records and isinstance(response, ExchangeResponse):
                     names = []
                     for selector in step.capture.values():
                         if selector.expect_prefix is not None:
@@ -413,17 +423,15 @@ class TransportEngineV2:
                                 continue
                             if name not in names:
                                 names.append(name)
-                    if not names:
-                        names.append(f"step '{step.id}' {request.method} {request.url}")
-                    records = [_ResourceRecord(name, scope_name, step.id, intent,
-                                              len(self.runtime.attempt_undos) - 1 if scope_name == 'attempt' else None)
-                               for name in names]
-                    self.runtime._resources.extend(records)
-                    stack._resources.extend(records)
+                    if names:
+                        record = records[0]
+                        self.runtime._resources.remove(record)
+                        stack._resources.remove(record)
+                        identified = [replace(record, name=name) for name in names]
+                        self.runtime._resources.extend(identified)
+                        stack._resources.extend(identified)
                 if isinstance(response, TransportResult):
                     reason = response.reason_code
-                elif response._parse_failed:
-                    reason = SafeReasonCode.PARSE_ERROR
                 elif response.status in step.expect.http_status and (
                     step.expect.when is None or matches_predicate(response.body, step.expect.when)
                 ):
@@ -805,6 +813,7 @@ class TransportEngineV2:
         *,
         phase,
         admitted=False,
+        on_accepted: Callable[[], None] | None = None,
     ):
         from .runtime_v2 import TargetRunStopped
         self.runtime.ledger._check_stopped()
@@ -849,6 +858,8 @@ class TransportEngineV2:
             extensions={"sni_hostname": parts.hostname},
         ) as response:
             status = response.status_code
+            if on_accepted is not None and 200 <= status < 300:
+                on_accepted()
             stop = self.spec.budget.stop_on
             retained = {'location', 'retry-after', *(name.lower() for name in stop.alert_names)}
             response_headers = {name: response.headers[name] for name in retained
@@ -913,8 +924,6 @@ class TransportEngineV2:
             except (ValueError, RecursionError):
                 if phase == "cleanup":
                     return exchange
-                if phase == "setup":
-                    return replace(exchange, _parse_failed=True)
                 return self.failure(SafeReasonCode.PARSE_ERROR, start, status=status,
                                     diagnostics=redactor.clean(diagnostics))
             return replace(exchange, body=parsed)
