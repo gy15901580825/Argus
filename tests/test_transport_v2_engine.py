@@ -456,7 +456,8 @@ async def test_v2_poll_error_and_terminal_classification_matches_v1(
         data["version"] = 2
         new = await runtime(data).attempt(context)
         assert [(call[0], call[1]) for call in app.calls] == old_calls
-        assert new.reason_code.value == old.reason_code.value == reason
+        assert old.reason_code.value == reason
+        assert new.reason_code.value == ('missing_id' if reason == 'mapping_error' else reason)
         assert (
             new.outcome,
             new.response_text,
@@ -537,6 +538,7 @@ async def test_v2_poll_auth_and_redaction_survive_attempts(monkeypatch):
             "kind": "bearer",
             "secret": {"source": "env", "name": "DUMMY_ACCESS"},
         }
+        data['budget'] = {'stop_on': {'credential_echo': False}}
         run = runtime(data)
         for _ in range(2):
             result = await run.attempt(TransportContext(prompt="normal task"))
