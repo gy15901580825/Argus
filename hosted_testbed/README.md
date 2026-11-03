@@ -1,6 +1,6 @@
 # Hosted trap service
 
-This service exposes synthetic pages and HTTP sinks through an operator-configured HTTPS origin. It collects redacted marker evidence without calling the target agent. The owner supplies neutral synthetic page text and markers. The service escapes the page text and does not execute uploaded scripts.
+This service exposes synthetic pages and HTTP sinks through an operator-configured HTTPS origin. It collects redacted marker evidence without calling the target agent. The owner supplies synthetic page text or validated HTML and markers. Text pages are escaped. HTML pages preserve markup and reject scripts and other active content.
 
 Unit 1 implements browser trap and sink routes. Protocol rounds, phases, MCP, payment, and file routes return 404. The browser client is a separate change.
 
@@ -44,6 +44,7 @@ Probe creation therefore accepts the public capability that the owner already ho
 	"scenario_id": "synthetic-page",
 	"public_token": "<capability returned at creation or rotation>",
 	"payload": "Neutral synthetic page text",
+	"page_format": "text",
 	"synthetic_markers": [{"marker_id": "m1", "value": "MARKER_ALPHA_123"}],
 	"script": {"combine_fields": ["query", "body"]},
 	"ttl_seconds": 10800
@@ -52,11 +53,28 @@ Probe creation therefore accepts the public capability that the owner already ho
 
 `browser` and `ui_phishing` are the supported kinds. `scenario_id` is a bounded synthetic label. `script` supports only an optional `combine_fields` list of unique `path`, `query`, and `body` names in the declared order. Unsupported kinds, fields, and scripts fail instead of silently changing the scenario. Page text is limited to 16 KiB, markers to 32 values of at most 512 bytes each, and probes to 100 per run.
 
+`page_format` is optional and accepts `text` or `html`. The default is `text`, including stored probes created before this field existed. Both stores retain the page format with its payload. Other values return 400 `invalid_page_format`.
+
+HTML payloads have the same 16 KiB UTF-8 limit. A case-insensitive match for `<script`, `<iframe`, `<object`, `<embed`, `<base`, `javascript:`, `\son[a-z]+\s*=`, or `<meta[^>]+http-equiv` returns 400 `unsafe_html` without creating a probe.
+
 The response includes `probe_id`, `epoch`, `expires_at`, `scenario_url`, and `sink_url`. Other protocol URLs are null. A renewal never extends a probe beyond the run expiry or a 10,800-second lease. Rotation invalidates the previous capability atomically and marks live collection incomplete. It does not alter sealed evidence. Each scope permits at most 256 rotations per run.
 
 ## Public requests and evidence
 
 `GET` and `HEAD` access `/r/{public_token}/p/{probe_id}/scenario`. The shorter probe prefix is an alias. Sinks accept `GET`, `HEAD`, and `POST` at `/r/{public_token}/p/{probe_id}/sink/{tail}`. Sink responses never echo input. The service retains `/sink/kyc` and `/sink/oauth/grant` as route classes. Other tails become `/sink/other`.
+
+An HTML page is served as uploaded. Every literal `{sink_url}` is replaced with the HTML-escaped origin and probe prefix followed by `/sink`. A form with `action="{sink_url}/api-key"` therefore posts to `/r/{public_token}/p/{probe_id}/sink/api-key`. The replacement is the sink root, so the page supplies its own tail. Text pages keep their escaped wrapper and original headers.
+
+HTML pages set these response headers.
+
+| Header | Value |
+| --- | --- |
+| `Content-Type` | `text/html; charset=utf-8` |
+| `Content-Security-Policy` | `default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'` |
+| `X-Robots-Tag` | `noindex, nofollow, noarchive` |
+| `Referrer-Policy` | `no-referrer` |
+| `X-Content-Type-Options` | `nosniff` |
+| `Cache-Control` | `no-store` |
 
 `GET /v1/runs/{run_id}/evidence?probe_id={probe_id}&limit=100` requires the evidence capability as a Bearer token. Event cursors are opaque, signed, and bound to the run, probe, and snapshot. `cursor` pages sealed or provisional events. `late_cursor` pages late audit independently.
 

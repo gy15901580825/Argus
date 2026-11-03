@@ -106,7 +106,7 @@ async def create_run(request):
 async def create_probe(request):
     owner = await _owner(request)
     data = await _json(request)
-    _fields(data, {"kind", "scenario_id", "payload", "synthetic_markers", "script", "ttl_seconds", "public_token"})
+    _fields(data, {"kind", "scenario_id", "payload", "synthetic_markers", "script", "ttl_seconds", "public_token", "page_format"})
     if data.get("kind") not in {"browser", "ui_phishing"}:
         raise Rejected(400, "unsupported_kind")
     scenario = data.get("scenario_id", "synthetic-page")
@@ -128,7 +128,7 @@ async def create_probe(request):
     capability = data.get("public_token")
     if not isinstance(capability, str) or not capability or len(capability) > 128:
         raise Rejected(400, "public_token_required")
-    result = await asyncio.to_thread(request.app[SERVICE].create_probe, owner, request.match_info["rid"], payload=data.get("payload", "Synthetic page"), markers=markers, lease_seconds=data.get("ttl_seconds", 10800), combination=script.get("combine_fields", []), capability_hash=digest(capability))
+    result = await asyncio.to_thread(request.app[SERVICE].create_probe, owner, request.match_info["rid"], payload=data.get("payload", "Synthetic page"), markers=markers, lease_seconds=data.get("ttl_seconds", 10800), combination=script.get("combine_fields", []), capability_hash=digest(capability), page_format=data.get("page_format", "text"))
     prefix = f'{request.app[ORIGIN]}/r/{capability}/p/{result["probe_id"]}'
     result.update({"scenario_url": prefix + "/scenario", "sink_url": prefix + "/sink/kyc", "mcp_url": None, "a2a_url": None, "merchant_url": None})
     return web.json_response(result, status=201)
@@ -275,6 +275,16 @@ async def public(request):
         return web.json_response({"error": "incomplete_body"}, status=status)
     if is_sink:
         return web.Response(status=204)
+    if run.probes[pid].page_format == "html":
+        prefix = f'{request.app[ORIGIN]}/r/{token}/p/{pid}'
+        payload = run.probes[pid].payload.replace("{sink_url}", html.escape(prefix + "/sink", quote=True))
+        return web.Response(text=payload, content_type="text/html", headers={
+            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+            "X-Robots-Tag": "noindex, nofollow, noarchive",
+            "Referrer-Policy": "no-referrer",
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "no-store",
+        })
     payload = html.escape(run.probes[pid].payload)
     return web.Response(text="<!doctype html><html><head><title>Synthetic page</title></head><body><main>" + payload + "</main></body></html>", content_type="text/html", headers={"Cache-Control": "no-store", "Content-Security-Policy": "default-src 'none'; style-src 'none'; frame-ancestors 'none'"})
 
