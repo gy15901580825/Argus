@@ -703,6 +703,24 @@ class TransportEngineV2:
                     return polled
                 status, body = polled.status, polled.body
                 for name, selector in delivery.ids.items():
+                    poll_selector = delivery.poll_selectors.get(name)
+                    if poll_selector is not None:
+                        raw = select(body, poll_selector.path)
+                        valid = type(raw) is type(ids[name]) and raw == ids[name]
+                        if poll_selector.expect_prefix is not None:
+                            try:
+                                prefix = bind_v2(poll_selector.expect_prefix, context, scope, self.runtime.env)
+                                valid_prefix = isinstance(prefix, str) and bool(prefix)
+                                if poll_selector.last_segment:
+                                    valid = valid_prefix and type(raw) is str and raw == prefix + str(ids[name])
+                                else:
+                                    valid = valid and valid_prefix and type(raw) is str and raw.startswith(prefix)
+                            except (ValueError, TypeError, AttributeError, OverflowError, RecursionError):
+                                valid = False
+                        if not valid:
+                            return self.failure(SafeReasonCode.POLL_IDENTITY_CHANGED, start, status=status,
+                                                diagnostics=redactor.clean(diagnostics))
+                        continue
                     raw = select(body, selector['path'])
                     if raw is _MISSING:
                         continue

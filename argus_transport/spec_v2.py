@@ -568,6 +568,21 @@ class WaitSpec(FrozenModel):
 
 
 @dataclass(frozen=True)
+class PollIdentitySpec(FrozenModel):
+    path: str
+    last_segment: bool = False
+    expect_prefix: dict | None = None
+
+    @classmethod
+    def from_dict(cls, data, *, visible):
+        object_fields(data, {'path', 'last_segment', 'expect_prefix'}, {'path'})
+        selector = CaptureSpec.from_dict(data, visible=visible)
+        if selector.last_segment and selector.expect_prefix is None:
+            raise ValueError('Poll last_segment requires expect_prefix')
+        return cls(selector.path, selector.last_segment, selector.expect_prefix)
+
+
+@dataclass(frozen=True)
 class PollSpecV2(FrozenModel):
     kind: str
     ids: dict[str, dict]
@@ -580,6 +595,7 @@ class PollSpecV2(FrozenModel):
     wait: WaitSpec | None = None
     location: Literal['ignore', 'verify'] = 'ignore'
     _run_id_sugar: bool = field(default=False, compare=False, repr=False)
+    poll_selectors: dict[str, PollIdentitySpec] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -701,6 +717,7 @@ class TransportSpecV2(FrozenModel):
             if not isinstance(ids, dict) or not 1 <= len(ids) <= 4:
                 raise ValueError('Poll requires one to four IDs')
             parsed_ids = {}
+            poll_selectors = {}
             for name, selector in ids.items():
                 if name != 'run_id':
                     _name(name)
@@ -708,7 +725,12 @@ class TransportSpecV2(FrozenModel):
                     raise ValueError('Duplicate transport variable')
                 if sugar:
                     object_fields(selector, {'path'}, {'path'})
-                CaptureSpec.from_dict(selector, visible=frozenset(visible))
+                elif isinstance(selector, dict) and 'poll' in selector:
+                    poll_selectors[name] = PollIdentitySpec.from_dict(
+                        selector['poll'], visible=frozenset(visible))
+                CaptureSpec.from_dict(
+                    {key: value for key, value in selector.items() if key != 'poll'}
+                    if isinstance(selector, dict) else selector, visible=frozenset(visible))
                 if 'path' not in selector:
                     raise ValueError('Delivery IDs require path selectors')
                 parsed_ids[name] = copy.deepcopy(selector)
@@ -746,6 +768,7 @@ class TransportSpecV2(FrozenModel):
                 WaitSpec.from_dict(delivery_data['wait']) if 'wait' in delivery_data else None,
                 location,
                 sugar,
+                poll_selectors,
             )
         limits = ResourceLimits.from_dict(data["limits"])
         outcome = OutcomeSpec.from_dict(data["outcome"])
@@ -901,6 +924,10 @@ def _iter_owners(spec):
             if 'expect_prefix' in selector:
                 yield _ExpressionOwner('delivery_id', ('delivery', 'ids', name, 'expect_prefix'),
                                        selector['expect_prefix'])
+            poll = spec.delivery.poll_selectors.get(name)
+            if poll is not None and poll.expect_prefix is not None:
+                yield _ExpressionOwner('poll', ('delivery', 'ids', name, 'poll', 'expect_prefix'),
+                                       poll.expect_prefix)
     for scope in ("run", "attempt"):
         for name, expression in getattr(spec.let, scope).items():
             yield _ExpressionOwner("let", ("let", scope, name), expression)
