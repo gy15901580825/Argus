@@ -1,5 +1,7 @@
 import asyncio
 import json
+import os
+import sys
 from contextlib import asynccontextmanager
 
 import pytest
@@ -13,7 +15,7 @@ from tests.test_transport_browser import browser_spec
 
 
 @asynccontextmanager
-async def target_services(*, expired=None, permanent=False, delete_failure=False, delay=0, probe_delay=0, merge_overflow=False):
+async def target_services(*, expired=None, permanent=False, delete_failure=False, delay=0, probe_delay=0, merge_overflow=False, scenario_origin=None, delete_status=200):
     calls = []
     seen = asyncio.Event()
     runs = 0
@@ -30,7 +32,9 @@ async def target_services(*, expired=None, permanent=False, delete_failure=False
                 await asyncio.sleep(delay)
             return web.json_response({"status": "COMPLETED", "result": {"result": body["url"]}})
         if request.method == "DELETE":
-            return web.json_response({"error": PUBLIC}, status=503 if delete_failure else 200)
+            if delete_status == 204:
+                return web.Response(status=204)
+            return web.json_response({"error": PUBLIC}, status=503 if delete_failure else delete_status)
         if request.path == "/v1/runs":
             runs += 1
             data = {"run_id": f"r{runs}", "public_token": PUBLIC, "evidence_token": EVIDENCE, "expires_at": 9999999999}
@@ -41,7 +45,8 @@ async def target_services(*, expired=None, permanent=False, delete_failure=False
                 await asyncio.sleep(probe_delay)
             if expired and (probes == 1 or permanent):
                 return web.json_response({"error": "run_expired"}, status=expired)
-            data = {"probe_id": f"p{probes}", "scenario_url": "https://hosted-trap.example/r/" + PUBLIC + f"/p/p{probes}/scenario"}
+            origin = scenario_origin(request) if scenario_origin else f"{request.scheme}://{request.host}"
+            data = {"probe_id": f"p{probes}", "scenario_url": origin + "/r/" + PUBLIC + f"/p/p{probes}/scenario"}
         elif request.path.endswith("/seal"):
             data = {"sealed": True, "seal_revision": 1}
         else:
@@ -66,6 +71,132 @@ def target(url, kind="ui_phishing", deadline=3):
         transport=browser_spec(url + "/vendor", deadline), scenario_kind=kind,
         trap_mode="hosted", hosted={"service_url": url, "owner_token_env": "ARGUS_TEST_HOSTED_OWNER"},
     ))
+
+
+@pytest.mark.parametrize("delete_failure", [False, True])
+async def test_hosted_cleanup_report_survives_close(monkeypatch, delete_failure):
+    monkeypatch.setenv("ARGUS_TEST_HOSTED_OWNER", OWNER)
+    async with target_services(expired=410, delete_failure=delete_failure) as (url, calls, _):
+        browser = target(url)
+        with local_browser_mode(), local_transport_mode():
+            text, _ = await browser.send_prompt("Read the page")
+        await browser.aclose()
+        report = browser.cleanup_report()
+        await browser.aclose()
+        assert browser.cleanup_report() == report
+    assert text
+    assert [call[1] for call in calls if call[0] == "DELETE"] == ["/v1/runs/r1", "/v1/runs/r2"]
+    assert report == {
+        "complete": not delete_failure, "done": 0 if delete_failure else 2,
+        "open": [{
+            "scope": "run", "step": f"r{index}", "status": "failed",
+            "method": "DELETE", "url": url + f"/v1/runs/r{index}", "http_status": 503,
+        } for index in (1, 2)] if delete_failure else [],
+        "stop_reason": None, "leftover": [],
+    }
+    for token in (OWNER, PUBLIC, EVIDENCE):
+        assert token not in json.dumps(report)
+
+
+@pytest.mark.parametrize("foreign", [
+    lambda request: f"https://{request.host}",
+    lambda request: f"http://localhost:{request.url.port}",
+    lambda request: "http://127.0.0.1:1",
+    lambda request: "//" + request.host,
+    lambda request: f"http://{request.host}:invalid",
+    lambda request: f"http://foreign.invalid\\@{request.host}",
+    lambda request: f"http://{request.host}/\\foreign.invalid",
+    lambda request: f"http://{request.host}/\x00",
+    lambda request: f"http://{request.host}/\t",
+    lambda request: f"http://{request.host}:0",
+])
+async def test_foreign_scenario_origin_never_reaches_agent(monkeypatch, foreign):
+    from argus.targets.hosted_trap import HostedTrapError
+
+    monkeypatch.setenv("ARGUS_TEST_HOSTED_OWNER", OWNER)
+    async with target_services(scenario_origin=foreign) as (url, calls, _):
+        browser = target(url)
+        try:
+            with local_browser_mode(), local_transport_mode():
+                with pytest.raises(HostedTrapError):
+                    await browser.send_prompt("Read the page")
+        finally:
+            await browser.aclose()
+    assert not [call for call in calls if call[1] == "/vendor"]
+    assert [call[1] for call in calls if call[0] == "DELETE"] == ["/v1/runs/r1"]
+
+
+async def test_nonhosted_cleanup_report_remains_none():
+    from dataclasses import replace
+
+    browser = target("http://127.0.0.1:1")
+    browser = type(browser)(replace(browser.spec, trap_mode="local", hosted=None))
+    assert getattr(browser, "cleanup_report", lambda: None)() is None
+    await browser.aclose()
+    assert getattr(browser, "cleanup_report", lambda: None)() is None
+
+
+async def test_empty_delete_response_and_client_close_failure_keep_cleanup(monkeypatch):
+    monkeypatch.setenv("ARGUS_TEST_HOSTED_OWNER", OWNER)
+    async with target_services(delete_status=204) as (url, calls, _):
+        browser = target(url)
+        with local_browser_mode(), local_transport_mode():
+            text, _ = await browser.send_prompt("Read the page")
+        client = browser._hosted_client
+        close = client.aclose
+
+        async def fail_after_close():
+            await close()
+            raise RuntimeError(PUBLIC)
+
+        monkeypatch.setattr(client, "aclose", fail_after_close)
+        await browser.aclose()
+        await browser.aclose()
+        report = browser.cleanup_report()
+    assert text
+    assert report == {"complete": True, "done": 1, "open": [], "stop_reason": None, "leftover": []}
+    assert [call[1] for call in calls if call[0] == "DELETE"] == ["/v1/runs/r1"]
+
+
+@pytest.mark.parametrize("delete_failure", [False, True])
+async def test_native_cli_run_json_contains_hosted_cleanup(monkeypatch, tmp_path, delete_failure):
+    monkeypatch.setenv("ARGUS_TEST_HOSTED_OWNER", OWNER)
+    async with target_services(delete_failure=delete_failure) as (url, calls, _):
+        spec = target(url).spec
+        target_file = tmp_path / "target.json"
+        target_file.write_text(json.dumps({
+            "kind": spec.kind, "transport": browser_spec(url + "/vendor"),
+            "scenario_kind": spec.scenario_kind, "trap_mode": spec.trap_mode,
+            "hosted": {"service_url": url, "owner_token_env": "ARGUS_TEST_HOSTED_OWNER"},
+        }))
+        output = tmp_path / "run.json"
+        process = await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "argus.cli", "run", "--local", "--target", str(target_file),
+            "--probes", "browser_ui_phishing_api_key", "--format", "json", "--out", str(output),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+            env={key: value for key, value in os.environ.items()
+                 if not key.endswith("_API_KEY") and key not in {"ARGUS_API_URL", "ARGUS_API_TOKEN"}},
+        )
+        try:
+            stdout, _ = await asyncio.wait_for(process.communicate(), 30)
+        finally:
+            if process.returncode is None:
+                process.kill()
+                await process.wait()
+        assert process.returncode == (1 if delete_failure else 0), stdout.decode()
+        record = json.loads(output.read_text())
+    report = record["target_cleanup"]
+    assert record["status"] == ("incomplete" if delete_failure else "completed")
+    assert record["findings"][0]["verdict"] == "fail"
+    assert report["complete"] is not delete_failure
+    assert report["done"] == (0 if delete_failure else 1)
+    assert len(report["open"]) == int(delete_failure)
+    if delete_failure:
+        assert report["open"][0]["http_status"] == 503
+    assert [call[1] for call in calls if call[0] == "DELETE"] == ["/v1/runs/r1"]
+    for token in (OWNER, PUBLIC, EVIDENCE):
+        assert token not in output.read_text()
+        assert token not in stdout.decode()
 
 
 async def test_shared_run_cap_rotation_and_delete_every_run(monkeypatch):

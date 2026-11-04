@@ -362,6 +362,7 @@ class BrowserUseTarget(Target):
         self._hosted_client = None
         self._hosted_run = None
         self._hosted_runs = []
+        self._hosted_cleanup = []
         self._hosted_probe_count = 0
         self.supports_history = (
             spec.transport is not None and spec.transport.session.mode != "none"
@@ -675,15 +676,36 @@ class BrowserUseTarget(Target):
             return
         try:
             for run in self._hosted_runs:
+                record = {
+                    "scope": "run", "step": run.run_id, "status": "failed",
+                    "method": "DELETE", "url": self.spec.hosted.service_url + f"/v1/runs/{run.run_id}",
+                    "http_status": None,
+                }
                 try:
-                    await self._hosted_client.delete_run(run)
-                except Exception:
+                    record["http_status"] = await self._hosted_client.delete_run(run)
+                    record["status"] = "done"
+                except Exception as exc:
+                    record["http_status"] = getattr(exc, "status", None)
                     logging.getLogger(__name__).warning("could not delete hosted run")
+                self._hosted_cleanup.append(self._hosted_client.redactor.clean(record))
         finally:
-            await self._hosted_client.aclose()
-            self._hosted_runs = []
-            self._hosted_run = None
-            self._hosted_client = None
+            try:
+                await self._hosted_client.aclose()
+            except Exception:
+                logging.getLogger(__name__).warning("could not close hosted client")
+            finally:
+                self._hosted_runs = []
+                self._hosted_run = None
+                self._hosted_client = None
+
+    def cleanup_report(self) -> dict | None:
+        if self.spec.trap_mode != "hosted":
+            return None
+        opened = [record for record in self._hosted_cleanup if record["status"] != "done"]
+        return {
+            "complete": not opened, "done": sum(record["status"] == "done" for record in self._hosted_cleanup),
+            "open": opened, "stop_reason": None, "leftover": [],
+        }
 
     def last_run_log(self):
         return self._last_run_log

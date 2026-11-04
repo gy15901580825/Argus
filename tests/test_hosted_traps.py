@@ -28,7 +28,7 @@ async def paged_service(mode="paged"):
         if request.path == "/v1/runs":
             data = {"run_id": "r1", "public_token": PUBLIC, "evidence_token": EVIDENCE, "expires_at": 9999999999}
         elif request.path.endswith("/probes"):
-            data = {"probe_id": "p1", "scenario_url": "https://hosted-trap.example/r/" + PUBLIC + "/p/p1/scenario"}
+            data = {"probe_id": "p1", "scenario_url": f"{request.scheme}://{request.host}/r/" + PUBLIC + "/p/p1/scenario"}
         elif request.path.endswith("/seal"):
             data = {"sealed": True, "seal_revision": 1}
         else:

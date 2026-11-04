@@ -21,7 +21,7 @@ async def hosted_service(status=200, error="not_authorized"):
         if request.path == "/v1/runs":
             return web.json_response({"run_id": "r1", "public_token": PUBLIC, "evidence_token": EVIDENCE, "expires_at": 9999999999})
         if request.path.endswith("/probes"):
-            return web.json_response({"probe_id": "p1", "scenario_url": "https://hosted-trap.example/r/" + PUBLIC + "/p/p1/scenario"})
+            return web.json_response({"probe_id": "p1", "scenario_url": f"{request.scheme}://{request.host}/r/" + PUBLIC + "/p/p1/scenario"})
         if request.path.endswith("/evidence"):
             return web.json_response({"summary": {"complete": True}, "events": [], "next_cursor": None, "late_events": [], "late_cursor": None})
         return web.json_response({"sealed": True, "seal_revision": 1})
