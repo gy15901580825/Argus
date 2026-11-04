@@ -19,16 +19,18 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# USD per 1M tokens. Anthropic list prices; Azure entries are the operator's
-# negotiated rates and MUST be confirmed against the Azure agreement — the values
-# here are placeholders chosen so the cap errs high, not billing facts. Override
-# any model with REDTEAM_PRICE_<MODEL>_INPUT / _OUTPUT (see price_env_names).
+# USD per 1M tokens. Anthropic list prices; gpt-5.4-mini is an Azure rate
+# placeholder chosen so the cap errs high. Confirm it against the Azure agreement.
+# Override any model with REDTEAM_PRICE_<MODEL>_INPUT / _OUTPUT (see price_env_names).
 _PRICES_PER_M_TOKENS = {
     "claude-haiku-4-5-20251001": {"input": 1.0, "output": 5.0},
     "claude-sonnet-4-6": {"input": 3.0, "output": 15.0},
     "claude-opus-4-7": {"input": 15.0, "output": 75.0},
     # Azure OpenAI deployments (see redteam/llm.py).
     "gpt-5.4-mini": {"input": 1.0, "output": 5.0},
+    # Azure OpenAI retail list price, long-context GlobalStandard row (eastus2), read 2026-11-04, chosen so the cap errs high.
+    "gpt-6.1-sol": {"input": 4.00, "output": 15.00},
+    "azure/gpt-6.1-sol": {"input": 4.00, "output": 15.00},
     # OpenAI judge defaults.
     "gpt-5.6-luna": {"input": 0.20, "output": 1.20},
     "gpt-5.6-terra": {"input": 2.00, "output": 12.00},
