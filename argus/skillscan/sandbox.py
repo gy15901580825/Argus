@@ -390,10 +390,16 @@ def ensure_images(echo: Callable[[str], None]) -> tuple[str, str]:
     return tags["agent"], tags["proxy"]
 
 
+_DUMMY_KEY_FORBIDDEN_WORDS = ("argus", "dummy")
+
+
 def make_dummy_key() -> str:
     # Shaped like a real key and fresh per run, so a skill cannot spot the sandbox by its value.
     alphabet = string.ascii_letters + string.digits + "-_"
-    return "sk-ant-api03-" + "".join(secrets.choice(alphabet) for _ in range(93)) + "AA"
+    while True:
+        key = "sk-ant-api03-" + "".join(secrets.choice(alphabet) for _ in range(93)) + "AA"
+        if not any(word in key.lower() for word in _DUMMY_KEY_FORBIDDEN_WORDS):
+            return key
 
 
 def _agent_env(decoys: list[Decoy], dummy_key: str) -> dict[str, str]:
