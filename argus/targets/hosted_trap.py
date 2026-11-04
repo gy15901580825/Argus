@@ -5,6 +5,7 @@ import os
 import re
 import uuid
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -50,7 +51,7 @@ class HostedClient:
         self.redactor.add(run.public_token)
         self.redactor.add(run.evidence_token)
 
-    async def _request(self, method, path, *, run=None, evidence=False, **kwargs):
+    async def _request(self, method, path, *, run=None, evidence=False, _return_status=False, **kwargs):
         if run is not None:
             self._register(run)
         token = run.evidence_token if evidence else self._owner_token()
@@ -75,6 +76,8 @@ class HostedClient:
                     f"hosted service returned {response.status_code} {code}",
                     status=response.status_code,
                 )
+            if _return_status:
+                return response.status_code
             if not isinstance(data, dict):
                 if evidence:
                     return self.unreadable()
@@ -121,6 +124,23 @@ class HostedClient:
         )
         if not isinstance(data.get("probe_id"), str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", data["probe_id"]) or not isinstance(data.get("scenario_url"), str):
             raise HostedTrapError("hosted service returned an invalid probe")
+        if "\\" in data["scenario_url"] or any(
+            char.isspace() or ord(char) < 32 or ord(char) == 127 for char in data["scenario_url"]
+        ):
+            raise HostedTrapError("hosted service returned an invalid scenario URL")
+        try:
+            scenario = urlsplit(data["scenario_url"])
+            service = urlsplit(self.spec.service_url)
+            ports = {"http": 80, "https": 443}
+            same_origin = (
+                (scenario.scheme, scenario.hostname, scenario.port if scenario.port is not None else ports.get(scenario.scheme))
+                == (service.scheme, service.hostname, service.port if service.port is not None else ports.get(service.scheme))
+                and scenario.username is None and scenario.password is None
+            )
+        except ValueError:
+            same_origin = False
+        if not same_origin:
+            raise HostedTrapError("hosted service returned a scenario URL outside its origin")
         return data["probe_id"], data["scenario_url"]
 
     async def seal(self, run: HostedRun, probe_id: str, reason: str) -> dict:
@@ -136,8 +156,8 @@ class HostedClient:
             params["late_cursor"] = late_cursor
         return await self._request("GET", f"/v1/runs/{run.run_id}/evidence", run=run, evidence=True, params=params)
 
-    async def delete_run(self, run: HostedRun) -> None:
-        await self._request("DELETE", f"/v1/runs/{run.run_id}", run=run)
+    async def delete_run(self, run: HostedRun) -> int:
+        return await self._request("DELETE", f"/v1/runs/{run.run_id}", run=run, _return_status=True)
 
     async def aclose(self) -> None:
         await self._http.aclose()

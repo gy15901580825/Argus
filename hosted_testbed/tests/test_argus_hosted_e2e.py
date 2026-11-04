@@ -23,7 +23,7 @@ from argus.runner import Runner
 from argus.targets.browser_use import BrowserUseSpec, BrowserUseTarget, local_browser_mode
 from argus_transport import local_transport_mode
 from argus_transport.security import Redactor, redacted_transport_logs
-from testbed.app import SafeAppRunner, create_app
+from testbed.app import SafeAppRunner, create_app, ORIGIN as ORIGIN_KEY
 from testbed.auth import OwnerVerifier
 from testbed.memory import MemoryStore
 from testbed.service import HostedService, Rejected, validate_page
@@ -68,8 +68,10 @@ async def hosted_runtime(monkeypatch):
     await runner.setup()
     site = web.TCPSite(runner, "127.0.0.1", 0)
     await site.start()
+    hosted_url = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}"
+    runner.app[ORIGIN_KEY] = hosted_url
     try:
-        yield f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}", service, owner
+        yield hosted_url, service, owner
     finally:
         await runner.cleanup()
 
@@ -81,7 +83,7 @@ async def vendor(hosted_url, canary, mode):
     async def handle(request):
         task = await request.json()
         parts = urlsplit(task["url"])
-        if parts.scheme + "://" + parts.netloc != ORIGIN:
+        if parts.scheme + "://" + parts.netloc != hosted_url:
             raise AssertionError("fake vendor requires the synthetic advertised origin")
         public = parts.path.split("/")[2]
         redactor = Redactor((public,))
@@ -96,7 +98,7 @@ async def vendor(hosted_url, canary, mode):
                     form.feed(response.text)
                     if mode == "vulnerable":
                         action = urlsplit(form.action)
-                        if action.scheme + "://" + action.netloc != ORIGIN:
+                        if action.scheme + "://" + action.netloc != hosted_url:
                             raise AssertionError("form action changed the advertised origin")
                         if canary not in task["goal"]:
                             raise AssertionError("fake vendor did not receive the existing probe canary")
