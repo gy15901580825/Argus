@@ -6,6 +6,7 @@ import copy
 import json
 import math
 import re
+import sys
 import time
 import uuid
 from dataclasses import dataclass, replace
@@ -334,6 +335,29 @@ class TransportEngineV2:
             headers['Content-Type'] = 'application/json'
         return headers
 
+    def _auth_headers(self, headers):
+        names = {header.name.lower() for header in self.spec.auth.headers}
+        if self.spec.auth.kind == 'bearer':
+            names.add('authorization')
+        return {key: value for key, value in headers.items() if key.lower() in names}
+
+    def _arm_abort(self, intent, context, scope, headers):
+        if intent is None:
+            return
+        intent.status = 'armed'
+        intent._bindings = MappingProxyType(dict(scope))
+        intent._context = copy.deepcopy(context)
+        try:
+            request, content = self._bind_request(intent.spec.request, intent._context, intent._bindings)
+            intent._headers = {**request.headers, **self._auth_headers(headers), 'Accept-Encoding': 'identity'}
+            if 'json' in request.body and not any(key.lower() == 'content-type' for key in intent._headers):
+                intent._headers['Content-Type'] = 'application/json'
+            intent._request = request
+            intent._content = content
+            intent.url = self.redactor.clean(request.url)
+        except (ValueError, TypeError, AttributeError, OverflowError, RecursionError):
+            intent.failure_reason = 'binding'
+
     def _bind_request(self, request, context, scope):
         boundary = None
         if "multipart" in request.body:
@@ -456,8 +480,8 @@ class TransportEngineV2:
             return self.failure(reason, start, diagnostics=self.redactor.clean(diagnostics))
         return None
 
-    async def cleanup(self, stack, diagnostics=None):
-        start = time.monotonic()
+    async def cleanup(self, stack, diagnostics=None, *, start=None):
+        start = time.monotonic() if start is None else start
         diagnostics = diagnostics if diagnostics is not None else {'requests': {'cleanup': 0}}
         async def send(intent):
             if intent.spec.request.method not in {'GET', 'DELETE'} or 'multipart' in intent.spec.request.body:
@@ -506,17 +530,54 @@ class TransportEngineV2:
         with redacted_transport_logs(self.redactor):
             async with self._client() as client:
                 try:
-                    await stack.unwind(send, timeout_s=self.spec.timeout.cleanup_s)
+                    await stack.unwind(send, timeout_s=max(0, self.spec.timeout.cleanup_s - (time.monotonic() - start)))
                 except TimeoutError:
                     pass
 
+    async def cleanup_abort(self, intent, diagnostics, start):
+        from .runtime_v2 import TargetRunStopped
+        if intent.status != 'armed':
+            return
+        intent.status = 'failed'
+        if self.runtime.ledger.stopped is not None:
+            intent.status = 'skipped_stopped'
+            return
+        if intent._request is None:
+            return
+        if not self.runtime.ledger.reserve_optional_cleanup():
+            intent.failure_reason = 'budget'
+            return
+        try:
+            with redacted_transport_logs(self.redactor):
+                async with asyncio.timeout(max(0, self.spec.timeout.cleanup_s - (time.monotonic() - start))):
+                    async with self._client() as client:
+                        response = await self._exchange(client, intent._request, intent._headers, intent._content,
+                                                        start, self.redactor, diagnostics, phase='cleanup')
+            intent.http_status = response.http_status if isinstance(response, TransportResult) else response.status
+            if isinstance(response, TransportResult):
+                intent.failure_reason = response.reason_code.value
+            elif response.status in intent.spec.expect.http_status:
+                intent.status = 'done' if intent.spec.expect.when is None or matches_predicate(
+                    response.body, intent.spec.expect.when) else 'unconfirmed'
+        except asyncio.CancelledError:
+            intent.status = 'interrupted'
+            raise
+        except TargetRunStopped:
+            intent.status = 'skipped_stopped' if self.runtime.ledger.stopped is not None else 'failed'
+        except (TimeoutError, httpx.HTTPError, ValueError, OSError, TypeError, AttributeError, OverflowError, RecursionError):
+            intent.status = 'failed'
+
     async def _run(self, context):
-        from .runtime_v2 import UndoStack
+        from .runtime_v2 import AbortIntent, UndoStack
         start = time.monotonic()
         if not isinstance(self.spec.delivery, (SyncSpec, PollSpecV2)):
             return self.failure(SafeReasonCode.UNSUPPORTED_DELIVERY, start)
         stack = UndoStack(self.runtime.ledger, self.redactor)
         self.runtime.attempt_undos.append(stack)
+        abort = None
+        if isinstance(self.spec.delivery, PollSpecV2) and self.spec.delivery.abort is not None:
+            abort = AbortIntent(self.spec.delivery.abort, len(self.runtime.attempt_undos) - 1)
+            self.runtime.aborts.append(abort)
         diagnostics = {
             'request_method': self.spec.request.method,
             'request_url': self.spec.request.url,
@@ -525,6 +586,8 @@ class TransportEngineV2:
         }
         if self.spec.lifecycle.attempt:
             diagnostics['requests'].update(setup=0, cleanup=0)
+        if abort is not None:
+            diagnostics['requests']['cleanup'] = 0
         result = None
         interrupted = None
         try:
@@ -544,7 +607,7 @@ class TransportEngineV2:
                         headers = self._headers(request)
                         diagnostics['request_url'] = request.url
                         result = await self._operate(client, headers, content, start, self.redactor,
-                                                     diagnostics, request, context, scope)
+                                                     diagnostics, request, context, scope, abort)
         except asyncio.CancelledError as exc:
             interrupted = exc
             if isinstance(self.spec.delivery, PollSpecV2) and diagnostics.get('run_id'):
@@ -561,14 +624,29 @@ class TransportEngineV2:
         except httpx.HTTPError:
             result = self.failure(SafeReasonCode.NETWORK_ERROR, start, diagnostics=diagnostics)
         finally:
+            primary = sys.exception()
+            cleanup_start = time.monotonic()
             try:
-                if stack.intents:
-                    await self.cleanup(stack, diagnostics)
+                try:
+                    if abort is not None:
+                        await self.cleanup_abort(abort, diagnostics, cleanup_start)
+                finally:
+                    if stack.intents:
+                        await self.cleanup(stack, diagnostics, start=cleanup_start)
             except asyncio.CancelledError as exc:
-                interrupted = exc
-                raise
+                if interrupted is None:
+                    interrupted = exc
+                if primary is None:
+                    raise
+            except Exception:
+                if abort is None or (primary is None and result is None):
+                    raise
             finally:
-                if stack._resources or any(step.undo for step in self.spec.lifecycle.attempt):
+                if abort is not None:
+                    from .runtime_v2 import cleanup_summary
+                    diagnostics['cleanup'] = cleanup_summary(stack.intents, self.runtime.ledger.stopped,
+                                                              stack._resources, self.redactor, [abort])
+                elif stack._resources or any(step.undo for step in self.spec.lifecycle.attempt):
                     diagnostics['cleanup'] = stack.report()
                 if interrupted is not None:
                     interrupted.transport_diagnostics = self.redactor.clean(diagnostics)
@@ -585,6 +663,7 @@ class TransportEngineV2:
         request,
         context,
         scope,
+        abort=None,
     ):
         submitted = await self._exchange(
             client,
@@ -605,6 +684,8 @@ class TransportEngineV2:
         try:
             _, _, reason, matched = outcome_match(delivery.submit_outcome, status, body)
             terminal_submit = matched or reason == SafeReasonCode.HTTP_ERROR
+            if matched and abort is not None:
+                abort.status = 'not_needed'
             verify_submit = status == 202 and delivery.location == 'verify'
             if terminal_submit and not verify_submit:
                 return self._evaluate(
@@ -641,6 +722,8 @@ class TransportEngineV2:
             except ValueError:
                 return self.failure(SafeReasonCode.MISSING_ID, start, status=status,
                                     diagnostics=redactor.clean(diagnostics))
+            if not matched:
+                self._arm_abort(abort, context, {**scope, **ids}, headers)
             if 'run_id' in ids:
                 diagnostics['run_id'] = redactor.clean(str(ids['run_id']))
             try:
@@ -663,14 +746,7 @@ class TransportEngineV2:
                 else:
                     metadata.pop('run_id', None)
                 return replace(result, metadata=metadata)
-            auth_names = {header.name.lower() for header in self.spec.auth.headers}
-            if self.spec.auth.kind == "bearer":
-                auth_names.add("authorization")
-            auth_headers = {
-                key: value
-                for key, value in headers.items()
-                if key.lower() in auth_names
-            }
+            auth_headers = self._auth_headers(headers)
             poll_headers = {
                 **poll_request.headers,
                 **auth_headers,
@@ -738,6 +814,8 @@ class TransportEngineV2:
                         return self.failure(SafeReasonCode.POLL_IDENTITY_CHANGED, start, status=status,
                                             diagnostics=redactor.clean(diagnostics))
                 _, _, reason, matched = outcome_match(self.spec.outcome, status, body)
+                if matched and abort is not None:
+                    abort.status = 'not_needed'
                 pending = (
                     not matched
                     and reason != SafeReasonCode.HTTP_ERROR
@@ -835,7 +913,7 @@ class TransportEngineV2:
     ):
         from .runtime_v2 import TargetRunStopped
         self.runtime.ledger._check_stopped()
-        if phase == "cleanup" and (request.method not in {"GET", "DELETE"} or "multipart" in request.body):
+        if phase == "cleanup" and (request.method not in {"GET", "DELETE", "POST"} or "multipart" in request.body):
             return self.failure(SafeReasonCode.SETUP_FAILED, start, diagnostics=redactor.clean(diagnostics))
         try:
             ip = await self.policy.endpoint_ip(request.url)

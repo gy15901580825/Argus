@@ -225,7 +225,7 @@ Argus records each undo intent before sending the corresponding setup request. I
 
 `budget.max_requests` limits all provision, setup, submission, and poll requests across the entire run. Omit it for no business request limit. When the next request exceeds the limit, Argus stops the run with `request_budget`; undo requests can still use their separate reserve. `budget.cleanup_reserve` defaults to 100. Each undo intent reserves one request before its setup request can be sent. If no reserve remains, the run stops with `cleanup_reserve` before creating that resource.
 
-Run setup has its own `timeout.total_deadline_s`. Each attempt then receives a fresh business deadline. Each attempt undo and run close has a separate `timeout.cleanup_s`, default 60 seconds and maximum 300 seconds. Cleanup time does not consume the business deadline. Cleanup failures preserve the primary finding and appear in `evidence.transport.cleanup`. The final [run.json cleanup summary](run-json.md#target-cleanup) lists unresolved undo intents and tracked resource names. Unresolved intents make the run incomplete. Leftover names alone leave the run status and exit code unchanged.
+Run setup has its own `timeout.total_deadline_s`. Each attempt then receives a fresh business deadline. Attempt cleanup shares one `timeout.cleanup_s` across delivery abort and step undos. Run close has its own cleanup deadline. The default is 60 seconds and the maximum is 300 seconds. Cleanup time does not consume the business deadline. Cleanup failures preserve the primary finding and appear in `evidence.transport.cleanup`. The final [run.json cleanup summary](run-json.md#target-cleanup) lists unresolved cleanup intents and tracked resource names. Unresolved intents make the run incomplete. Leftover names alone leave the run status and exit code unchanged.
 
 ### Polling with multiple IDs
 
@@ -243,6 +243,34 @@ Replace `interval_s` with `wait: {"from": "Retry-After", "default_s": 2, "max_s"
 
 `delivery.location` defaults to `"ignore"`. Set it to `"verify"` to check every HTTP 202 response's `Location`. Relative values resolve against the URL of that request. The result must match the rendered poll URL's scheme, origin, and exact path, and cannot contain a query, fragment, or user information. A missing Location fails only the attempt with `location_missing`. An unsafe Location stops the run with `unsafe_location`. Submit responses receive a structural header check before body handling. Exact path verification follows ID extraction once all IDs are available. Poll responses can use the already rendered poll URL for full verification before body handling. Malformed bodies or missing IDs cannot hide a structurally unsafe header, and unavailable IDs never imply a path mismatch. `"follow"` is rejected at validation.
 
+### Aborting abnormal poll delivery
+
+Poll delivery can declare `delivery.abort` to stop a remote run when delivery ends abnormally:
+
+```json
+"abort": {
+  "request": {
+    "method": "POST",
+    "url": "https://api.vendor-a.example.test/runs/{run_id}:stop",
+    "body": {"none": true}
+  },
+  "expect": {
+    "http_status": [200],
+    "when": {"path": "$.state.stopped", "exists": true}
+  }
+}
+```
+
+The method is required and must be POST, DELETE, or GET. GET has no body. Multipart is forbidden. `expect.http_status` is required. `expect.when` is optional and uses the lifecycle predicate format. The abort request must share the submit origin and follows the same endpoint pinning, auth, redaction, and no-redirect rules. Step undo still accepts only DELETE or GET.
+
+Argus arms the abort after every invoke ID is captured and validated. It freezes those IDs, pre-submit bindings, context, and the auth headers resolved for submit. The abort uses its own public headers and body content type. It does not resolve auth again. An explicit matched submit or poll outcome suppresses abort before response mapping, including success, target error, and blocked outcomes.
+
+An armed abort runs once after timeout, poll or wait limits, network, HTTP, parse, response-size, poll identity or mapping errors, unmatched state, request-budget exhaustion, or cancellation. It runs before attempt step undos and shares their cleanup deadline. It reserves one available cleanup request only when cleanup needs the abort, without taking an existing step undo's reserved slot. An empty reserve records `failed` with `failure_reason: "budget"` and sends no abort. There are no retries. Cleanup errors preserve the original attempt result or exception.
+
+An allowed HTTP status and matching optional predicate record `done`. An allowed status with a false predicate records `unconfirmed`. Other responses or cleanup errors record `failed`. A security stop records `skipped_stopped` and prevents further requests. A cancellation during abort cleanup records `interrupted`. Attempts that never arm the abort or match a terminal outcome record `not_needed`. Declaring an abort adds an `aborts` list to the cleanup report. A done abort adds one to `done`. Any status except `done` or `not_needed` adds an open item and makes cleanup incomplete.
+
+Abort state is in memory. Argus does not reserve a slot before submit or retain a recovery record when the submit response is lost. It does not verify abort response IDs, retain step-undo inputs until an abort is confirmed, or abort after a security stop.
+
 ### Stop triggers
 
 Version 2 defaults to `budget.stop_on.http_status: [429]`, `alert_names: []`, and `credential_echo: true`, even when `budget` is absent. A matching status stops the run with `stop_on_status`. A configured alert header's presence stops it with `alert`, regardless of casing. Credential echo detection stops it with `credential_echo` when the raw response body contains an exact resolved credential value. Detection checks only the bounded `limits.response_bytes` prefix. A complete match within that prefix trips before a response-size error or another body read, including across chunks. Values crossing or beyond the cap retain the size error and do not cause extra reads.
@@ -257,7 +285,7 @@ Location verification remains active when selected. A stop trigger takes priorit
 
 ### Graceful cancellation
 
-Local runs handle SIGINT and SIGTERM by cancelling the active attempt, waiting for bounded configured undo requests, and exiting with 130 or 143 without writing a report. The console lists remaining undo intents for manual cleanup. A second signal can interrupt cleanup; the first signal still determines the exit code and remaining intents stay visible. Signal handlers are restored afterward.
+Local runs handle SIGINT and SIGTERM by cancelling the active attempt, waiting for bounded configured delivery abort and undo requests, and exiting with 130 or 143 without writing a report. The console lists remaining cleanup intents for manual cleanup. A second signal can interrupt cleanup; an active abort records `interrupted`. The first signal still determines the exit code and remaining intents stay visible. Signal handlers are restored afterward.
 
 Cleanup is in memory and cannot recover from SIGKILL or a process crash. Removing a setup resource does not necessarily cancel a hosted job. Configure undo requests for the service's documented cleanup behavior.
 

@@ -14,7 +14,7 @@ from .engine import _OMIT
 from .engine_v2 import TransportEngineV2, bind_v2
 from .models import SafeReasonCode, SyncSpec, TransportContext, TransportResult
 from .security import ExecutionPolicy, Redactor
-from .spec_v2 import PollSpecV2, RequestSpecV2, TransportSpecV2, UndoSpec, _iter_expressions
+from .spec_v2 import AbortSpec, PollSpecV2, RequestSpecV2, TransportSpecV2, UndoSpec, _iter_expressions
 
 
 class TargetRunStopped(Exception):
@@ -39,6 +39,21 @@ class TargetRunStopped(Exception):
 
 
 UndoStatus = Literal['pending', 'done', 'failed', 'skipped_stopped', 'blocked_by_inner', 'unbound', 'unconfirmed']
+
+
+@dataclass
+class AbortIntent:
+    spec: AbortSpec
+    attempt: int
+    status: Literal['not_needed', 'armed', 'done', 'failed', 'unconfirmed', 'skipped_stopped', 'interrupted'] = 'not_needed'
+    http_status: int | None = None
+    url: str | None = None
+    failure_reason: str | None = None
+    _request: RequestSpecV2 | None = field(default=None, repr=False)
+    _content: bytes | None = field(default=None, repr=False)
+    _headers: dict[str, str] = field(default_factory=dict, repr=False)
+    _bindings: Mapping[str, str | int] = field(default_factory=dict, repr=False)
+    _context: TransportContext | None = field(default=None, repr=False)
 
 
 @dataclass
@@ -152,7 +167,7 @@ class UndoStack:
         return cleanup_summary(self.intents, stop_reason, self._resources, self.redactor)
 
 
-def cleanup_summary(intents, stop_reason=None, resources=(), redactor=None):
+def cleanup_summary(intents, stop_reason=None, resources=(), redactor=None, aborts=None):
     opened = [
         {'scope': item.scope, 'step': item.step_id, 'status': item.status,
          'method': item.spec.request.method, 'url': item.url, 'http_status': item.http_status}
@@ -160,8 +175,18 @@ def cleanup_summary(intents, stop_reason=None, resources=(), redactor=None):
     ]
     leftover = list(dict.fromkeys((redactor.clean(record.name) if redactor else record.name)
                                   for record in resources if record.undo is None or record.undo.status != 'done'))
-    return {'complete': not opened, 'done': sum(item.status == 'done' for item in intents),
-            'open': opened, 'stop_reason': stop_reason, 'leftover': leftover}
+    report = {'complete': not opened, 'done': sum(item.status == 'done' for item in intents),
+              'open': opened, 'stop_reason': stop_reason, 'leftover': leftover}
+    if aborts is not None:
+        records = [dict(scope='attempt', step='delivery.abort', attempt=item.attempt, status=item.status,
+                        method=item.spec.request.method, url=item.url, http_status=item.http_status,
+                        **({'failure_reason': item.failure_reason} if item.failure_reason else {}))
+                   for item in aborts]
+        report['aborts'] = records
+        report['open'].extend(item for item in records if item['status'] not in {'done', 'not_needed'})
+        report['done'] += sum(item.status == 'done' for item in aborts)
+        report['complete'] = not report['open']
+    return report
 
 
 class V2Run:
@@ -190,6 +215,8 @@ class V2Run:
         self._resources: list[_ResourceRecord] = []
         self.run_undos = UndoStack(self.ledger, self.redactor)
         self.attempt_undos: list[UndoStack] = []
+        self.aborts: list[AbortIntent] = []
+        self._has_abort = isinstance(spec.delivery, PollSpecV2) and spec.delivery.abort is not None
         self._has_undo = any(step.undo for step in (*spec.lifecycle.run, *spec.lifecycle.attempt))
 
     def _start(self, context: TransportContext):
@@ -291,9 +318,9 @@ class V2Run:
                 self._stop_error.set_cleanup(self.cleanup_report())
 
     def cleanup_report(self) -> dict | None:
-        if not self._has_undo and not self._resources:
+        if not self._has_undo and not self._resources and not self._has_abort:
             return None
         intents = [*self.run_undos.intents,
                    *(item for stack in self.attempt_undos for item in stack.intents)]
         return cleanup_summary(intents, self.ledger.stopped or (self._stop_error.reason if self._stop_error else None),
-                               self._resources, self.redactor)
+                               self._resources, self.redactor, self.aborts if self._has_abort else None)

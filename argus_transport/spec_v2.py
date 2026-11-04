@@ -358,6 +358,22 @@ class UndoSpec(FrozenModel):
 
 
 @dataclass(frozen=True)
+class AbortSpec(FrozenModel):
+    request: RequestSpecV2
+    expect: ExpectSpec
+
+    @classmethod
+    def from_dict(cls, data, *, visible):
+        object_fields(data, {'request', 'expect'}, {'request', 'expect'})
+        object_fields(data['request'], {'method', 'url', 'headers', 'body', 'query'}, {'method', 'url'})
+        choice(data['request']['method'], {'POST', 'DELETE', 'GET'})
+        request = RequestSpecV2.from_dict(data['request'], visible=visible)
+        if 'multipart' in request.body:
+            raise ValueError('Abort cannot have a multipart body')
+        return cls(request, ExpectSpec.from_dict(data['expect']))
+
+
+@dataclass(frozen=True)
 class StepSpec(FrozenModel):
     id: str
     if_present: str | None
@@ -596,6 +612,7 @@ class PollSpecV2(FrozenModel):
     location: Literal['ignore', 'verify'] = 'ignore'
     _run_id_sugar: bool = field(default=False, compare=False, repr=False)
     poll_selectors: dict[str, PollIdentitySpec] = field(default_factory=dict)
+    abort: AbortSpec | None = None
 
 
 @dataclass(frozen=True)
@@ -670,6 +687,7 @@ class TransportSpecV2(FrozenModel):
                 "idle_timeout_s",
                 "reconnect",
                 "delta_selector",
+                "abort",
             },
             {"kind"},
         )
@@ -703,8 +721,9 @@ class TransportSpecV2(FrozenModel):
                 "max_polls",
                 "submit_http_status",
                 "submit_outcome",
+                "abort",
             }
-            object_fields(delivery_data, fields, fields - {'run_id', 'ids', 'interval_s', 'wait', 'location'})
+            object_fields(delivery_data, fields, fields - {'run_id', 'ids', 'interval_s', 'wait', 'location', 'abort'})
             if ('ids' in delivery_data) == ('run_id' in delivery_data):
                 raise ValueError('Poll requires either ids or run_id')
             if ('wait' in delivery_data) == ('interval_s' in delivery_data):
@@ -769,6 +788,8 @@ class TransportSpecV2(FrozenModel):
                 location,
                 sugar,
                 poll_selectors,
+                AbortSpec.from_dict(delivery_data['abort'], visible=frozenset(visible | set(ids)))
+                if 'abort' in delivery_data else None,
             )
         limits = ResourceLimits.from_dict(data["limits"])
         outcome = OutcomeSpec.from_dict(data["outcome"])
@@ -863,6 +884,9 @@ class TransportSpecV2(FrozenModel):
                 result['delivery']['interval_s'] = poll.interval_s
             if poll.location != 'ignore':
                 result['delivery']['location'] = poll.location
+            if poll.abort is not None:
+                result['delivery']['abort'] = {'request': _request_dict(poll.abort.request),
+                                               'expect': _expect_dict(poll.abort.expect)}
         if self.let.run or self.let.attempt:
             result["let"] = json.loads(
                 json.dumps({"run": self.let.run, "attempt": self.let.attempt})
@@ -920,6 +944,8 @@ def _iter_owners(spec):
     yield _RequestOwner("submit", ("request",), spec.request)
     if isinstance(spec.delivery, PollSpecV2):
         yield _RequestOwner('poll', ('delivery', 'request'), spec.delivery.request)
+        if spec.delivery.abort is not None:
+            yield _RequestOwner('cleanup', ('delivery', 'abort', 'request'), spec.delivery.abort.request)
         for name, selector in spec.delivery.ids.items():
             if 'expect_prefix' in selector:
                 yield _ExpressionOwner('delivery_id', ('delivery', 'ids', name, 'expect_prefix'),
