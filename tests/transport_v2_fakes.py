@@ -79,12 +79,13 @@ class VendorAThreadsFake:
 
 
 class VendorBAutomationFake:
-    def __init__(self, *, automation_count=1, delete_mode='normal'):
+    def __init__(self, *, automation_count=1, delete_mode='normal', poll_name=None):
         self.recorder = RecordingApp()
         self.app = self.recorder.app
         self.calls = self.recorder.calls
         self.automation_count = automation_count
         self.delete_mode = delete_mode
+        self.poll_name = poll_name
         self.org_id = 'neutral-org-' + 'o' * 30
         self.ws_id = 'neutral-workspace-' + 'w' * 30
         self.automation_id = 'neutral-automation-' + 'a' * 30
@@ -185,7 +186,10 @@ class VendorBAutomationFake:
         else:
             state = {'completed': {'outputs': {'answer': 'Sample handled.'}}}
             self.runs.pop(ident)
-        return web.json_response({'run_id': run['name'], 'state': state}, headers={'Retry-After': '0'})
+        identity = {'run_id': run['name']} if self.poll_name is None else {
+            'name': run['name'] if self.poll_name == 'canonical' else
+                    self.automation_name + '/runs/other/' + ident}
+        return web.json_response({**identity, 'state': state}, headers={'Retry-After': '0'})
 
 
 class RecordingApp:
