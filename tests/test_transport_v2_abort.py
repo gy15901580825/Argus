@@ -535,7 +535,7 @@ def test_abort_first_signal(tmp_path, signum, exit_code):
         target = tmp_path / 'target.json'
         target.write_text(json.dumps({'kind': 'custom_http', 'transport': data}))
         output = tmp_path / 'run.json'
-        env = {**os.environ, 'PYTHONPATH': str(tmp_path) + os.pathsep + os.environ['PYTHONPATH']}
+        env = {**os.environ, 'PYTHONPATH': os.pathsep.join(filter(None, (str(tmp_path), os.environ.get('PYTHONPATH'))))}
         process = subprocess.Popen([sys.executable, '-m', 'argus.cli', 'run', '--local', '--target',
                                     str(target), '--probes', 'abort_signal_probe', '--format', 'json',
                                     '--out', str(output)], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
