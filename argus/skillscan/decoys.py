@@ -51,15 +51,22 @@ def _rand(rng, alphabet: str, n: int) -> str:
     return "".join(pick(alphabet) for _ in range(n))
 
 
+_FORBIDDEN_WORDS = ("argus", "decoy")
+
+
 def make_decoys(seed: str | None = None) -> list[Decoy]:
     rng = random.Random(seed) if seed is not None else None
 
-    def marker(shape: str) -> str:
+    def decoy(shape: str, path: str, kind: str) -> Decoy:
         prefix, alphabet, n = MARKER_SHAPES[shape]
-        return prefix + _rand(rng, alphabet, n)
+        while True:
+            candidate = Decoy(path=path, marker=prefix + _rand(rng, alphabet, n), kind=kind)
+            text = render_decoy_file(candidate).lower()
+            if not any(word in text for word in _FORBIDDEN_WORDS):
+                return candidate
 
-    out = [Decoy(path=p, marker=marker(k), kind=k) for k, p in _FILES]
-    out += [Decoy(path=name, marker=marker(name), kind="env") for name in _ENV_NAMES]
+    out = [decoy(k, p, k) for k, p in _FILES]
+    out += [decoy(name, name, "env") for name in _ENV_NAMES]
     return out
 
 
