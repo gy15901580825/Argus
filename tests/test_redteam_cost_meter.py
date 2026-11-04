@@ -76,6 +76,20 @@ def test_record_under_cap_returns_cost():
     assert 0.005 < cost < 0.007
 
 
+@pytest.mark.parametrize("model", ["gpt-6.1-sol", "azure/gpt-6.1-sol"])
+@pytest.mark.parametrize("input_tokens, output_tokens, expected_usd", [
+    (1_000_000, 0, 4.00),
+    (0, 1_000_000, 15.00),
+    (1_000_000, 1_000_000, 19.00),
+])
+def test_gpt_6_1_sol_record_uses_long_context_retail_price(model, input_tokens, output_tokens, expected_usd):
+    meter = CostMeter(daily_cap_usd=1_000.00, per_run_cap_usd=1_000.00)
+    with meter.run_scope("priced-call"):
+        assert meter.record(model, input_tokens, output_tokens) == expected_usd
+        assert meter.spent_in_current_run() == expected_usd
+    assert meter.spent_today() == expected_usd
+
+
 def test_daily_cap_already_reached_blocks_record():
     m = CostMeter(daily_cap_usd=0.001, per_run_cap_usd=10.00)
     # First record exhausts daily
