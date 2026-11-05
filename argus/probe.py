@@ -213,6 +213,17 @@ def load_probe(path: Path) -> Probe:
                 raise ValueError(
                     f"invalid mappings.owasp_agentic id {category_id!r} in {path}; expected ASI01..ASI10"
                 )
+        assertions = raw.get("assertions", ()) or ()
+        if isinstance(assertions, dict) and "response_fields" in assertions:
+            raise ValueError(f"response_fields requires an assertions list in {path}")
+        for entry in assertions:
+            if isinstance(entry, dict) and "response_fields" in entry:
+                from argus.assertions import validate_response_fields
+
+                try:
+                    validate_response_fields(entry["response_fields"])
+                except ValueError:
+                    raise ValueError(f"invalid response_fields spec in {path}") from None
         scenario_kind = None
         scenario_payload = ""
         if "scenario" in raw:
