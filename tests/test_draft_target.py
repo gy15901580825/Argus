@@ -94,7 +94,7 @@ def test_cli_writes_three_truthful_artifacts_without_requests_or_secrets(tmp_pat
 
 @pytest.mark.parametrize("mutation,code", [
     (lambda d: d["paths"]["/ask"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"].pop("answer"), "reply_binding_missing"),
-    (lambda d: d["paths"]["/ask"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]["status"].pop("enum"), "completion_missing"),
+    (lambda d: d["paths"]["/ask"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"].clear(), "completion_missing"),
     (lambda d: d["servers"].append({"url": "http://127.0.0.1:8124"}), "server_ambiguous"),
     (lambda d: d["paths"].update({"/other": copy.deepcopy(d["paths"]["/ask"])}), "operation_ambiguous"),
 ])
@@ -121,11 +121,18 @@ def test_operation_and_declared_origin_are_explicit_choices(tmp_path):
     assert json.loads(out.read_text())["transport"]["request"]["url"] == "http://127.0.0.1:8124/ask"
 
 
-def test_no_model_is_explicit_until_model_stage(tmp_path):
-    result = CliRunner().invoke(main, ["draft-target", "--openapi", str(input_file(tmp_path)),
-                                     "--out", str(tmp_path / "target.json")])
-    assert result.exit_code == 2
-    assert "--no-model" in result.output
+def test_default_model_unavailable_is_explicit_no_model_fallback(tmp_path, monkeypatch):
+    from argus import llm
+    def unavailable(): raise ValueError("no text config")
+    monkeypatch.setattr(llm, "text_config", unavailable)
+    source = input_file(tmp_path)
+    out = tmp_path / "target.json"
+    result = CliRunner().invoke(main, ["draft-target", "--openapi", str(source), "--out", str(out)])
+    assert result.exit_code == 3, result.output
+    assert out.exists()
+    gaps = json.loads(out.with_suffix(".gaps.json").read_text())["gaps"]
+    assert any(g["code"] == "model_unavailable" for g in gaps)
+    assert "model.status: unavailable" in result.output
 
 
 @pytest.mark.parametrize("existing", ["target.json", "target.gaps.json", "target.provenance.json"])
@@ -404,7 +411,7 @@ def test_prompt_enum_is_not_used_as_arbitrary_prompt_binding(tmp_path):
     assert not out.exists()
 
 
-@pytest.mark.parametrize("field,keyword", [("question", "readOnly"), ("status", "writeOnly"), ("answer", "writeOnly")])
+@pytest.mark.parametrize("field,keyword", [("question", "readOnly"), ("answer", "writeOnly")])
 def test_schema_access_direction_blocks_invalid_binding(tmp_path, field, keyword):
     d = agent_document(); op = d["paths"]["/ask"]["post"]
     schema = (op["requestBody"]["content"]["application/json"]["schema"] if field == "question"
@@ -891,18 +898,21 @@ def test_invalid_idna_hosts_produce_specific_blocking_server_gap(tmp_path, host)
     assert any(g["code"] == "server_invalid" and g["blocking"] for g in gaps)
 
 
-def test_plain_sync_reply_reports_transport_predicate_limitation(tmp_path):
+def test_plain_sync_reply_uses_proposed_presence_and_strict_mapping(tmp_path):
     document = agent_document()
     properties = document["paths"]["/ask"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
     properties.pop("status")
     result, out = invoke(tmp_path, document)
     assert result.exit_code == 3, result.output
-    assert not out.exists()
-    gap = next(g for g in json.loads(out.with_suffix(".gaps.json").read_text())["gaps"] if g["code"] == "completion_missing")
-    assert gap["blocking"] and gap["kind"] == "unsupported_feature"
-    assert "predicate" in gap["why"] and "nonempty string" in gap["why"]
+    spec = json.loads(out.read_text())
+    rule = spec["transport"]["outcome"]["rules"][0]
+    assert rule["http_status"] == [200]
+    assert rule["when"] == {"path": "$.answer", "exists": True}
+    assert spec["transport"]["response"]["text"] == {"paths": ["$.answer"], "cast": "string", "empty": "error"}
+    gap = next(g for g in json.loads(out.with_suffix(".gaps.json").read_text())["gaps"] if g["code"] == "completion_proposed")
+    assert not gap["blocking"] and gap["kind"] == "proposal"
+    assert "synchronous" in gap["decision"] and "enum" not in gap["decision"]
     assert gap["source"][0]["pointer"].endswith("/properties/answer")
-    assert "transport" in gap["decision"].lower()
 
 
 @pytest.mark.parametrize("value", [1, True, {}, [], " "])
@@ -958,6 +968,15 @@ def test_single_terminal_enum_guard_does_not_choose_first_status(tmp_path):
     properties["status"]["enum"] = ["completed", "failed"]
     result, out = invoke(tmp_path, document)
     assert result.exit_code == 3, result.output
-    assert not out.exists()
-    gaps = json.loads(out.with_suffix(".gaps.json").read_text())["gaps"]
-    assert any(g["code"] == "completion_missing" and g["blocking"] for g in gaps)
+    rule = json.loads(out.read_text())["transport"]["outcome"]["rules"][0]
+    assert rule["when"] == {"path": "$.answer", "exists": True}
+    assert "completed" not in json.dumps(rule["when"])
+
+
+def test_write_only_terminal_field_is_ignored_for_valid_reply_presence(tmp_path):
+    d = agent_document()
+    d["paths"]["/ask"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]["status"]["writeOnly"] = True
+    result, out = invoke(tmp_path, d)
+    assert result.exit_code == 3, result.output
+    rule = json.loads(out.read_text())["transport"]["outcome"]["rules"][0]
+    assert rule["when"] == {"path": "$.answer", "exists": True}

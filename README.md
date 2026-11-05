@@ -329,9 +329,10 @@ errors (for example a 401 or a timeout from your agent):
 
 ## Draft a target from OpenAPI
 
-Create a transport v2 draft from a local OpenAPI 3.x JSON/YAML file without model or target requests.
+Create a transport v2 draft from a local OpenAPI 3.x JSON/YAML file. The default makes one bounded model proposal using your existing configuration; `--no-model` stays offline. Neither mode calls the target.
 
 ```bash
+argus-probe draft-target --openapi api.yaml --out target.json
 argus-probe draft-target --openapi api.yaml --out target.json --no-model
 ```
 

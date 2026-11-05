@@ -87,12 +87,25 @@ class Binding:
 
 
 @dataclass(frozen=True)
+class ReplyPresence:
+    pass
+
+
+@dataclass(frozen=True)
+class OperationSelection:
+    operation: str
+    prompt: Binding
+    reply: Binding
+    completion: Binding | ReplyPresence
+
+
+@dataclass(frozen=True)
 class DraftChoices:
     operation: str | None
     server: str | None
     prompt: Binding | None
     reply: Binding | None
-    completion: Binding | None
+    completion: Binding | ReplyPresence | None
     gaps: tuple[Gap, ...]
     intent: str
 
@@ -106,6 +119,10 @@ class DraftArtifacts:
 
     def validated(self):
         return replace(self, provenance={**self.provenance, "validation": {"offline": "passed"}})
+
+    def with_proposal(self, disclosure):
+        return replace(self, provenance={**self.provenance, "model_proposal": disclosure,
+                       "selection": {**self.provenance["selection"], "mode": disclosure["effective_mode"]}})
 
 
 def _gap(catalog, field, code, why, *, pointer="", kind="documentation_gap", blocking=True):
@@ -205,10 +222,22 @@ def _unsupported(value):
 
 def choose_without_model(catalog: OperationCatalog, *, operation=None, server_origin=None,
                          intent="Ask an agent a question, optionally with third-party material.") -> DraftChoices:
+    return _choose(catalog, operation=operation, server_origin=server_origin, intent=intent)
+
+
+def choices_from_selection(catalog: OperationCatalog, selection: OperationSelection, *, operation=None,
+                           server_origin=None, intent="Ask an agent a question, optionally with third-party material.") -> DraftChoices:
+    if operation is not None and operation != selection.operation:
+        raise ValueError("Model operation conflicts with the explicit selection")
+    return _choose(catalog, operation=operation, server_origin=server_origin, intent=intent, selection=selection)
+
+
+def _choose(catalog, *, operation, server_origin, intent, selection=None):
     doc = catalog.document
     gaps = []
     chosen = None
-    candidates = [op for op in catalog.operations if op.id == operation] if operation else list(catalog.operations)
+    selected_id = operation or (selection.operation if selection else None)
+    candidates = [op for op in catalog.operations if op.id == selected_id] if selected_id else list(catalog.operations)
     if len(candidates) == 1:
         chosen = candidates[0]
         if operation is None:
@@ -269,6 +298,8 @@ def choose_without_model(catalog: OperationCatalog, *, operation=None, server_or
             if len(fields) == 1:
                 name, _ = fields[0]
                 prompt = Binding(name, pointer_child(request_pointer, name))
+        if selection is not None:
+            prompt = selection.prompt
         if prompt is None:
             gaps.append(_gap(catalog, "/transport/request/body", "prompt_binding_missing",
                              "No unique prompt field can be proposed from the JSON schema.", pointer=pointer))
@@ -303,16 +334,14 @@ def choose_without_model(catalog: OperationCatalog, *, operation=None, server_or
                 reply = Binding(texts[0][0], pointer_child(response_pointer, texts[0][0]))
             if len(states) == 1:
                 completion = Binding(states[0][0], pointer_child(response_pointer, states[0][0]), value=states[0][1]["enum"][0])
+            elif reply is not None:
+                completion = ReplyPresence()
+        if selection is not None:
+            reply, completion = selection.reply, selection.completion
         for binding, field, missing in ((reply, "/transport/response/text", "reply_binding_missing"),
                                          (completion, "/transport/outcome", "completion_missing")):
             if binding is None:
-                if missing == "completion_missing" and reply is not None:
-                    gaps.append(Gap(field,
-                                    "Transport outcome predicates cannot express a generic nonempty string reply without a documented terminal state.",
-                                    "Select a documented terminal-success state or review a transport predicate enhancement before compiling this synchronous response.",
-                                    missing, "unsupported_feature", True, (doc.source(reply.pointer),)))
-                else:
-                    gaps.append(_gap(catalog, field, missing, "No unique documented reply or terminal state can be proposed.", pointer=pointer))
+                gaps.append(_gap(catalog, field, missing, "No unique documented reply or terminal state can be proposed.", pointer=pointer))
     return DraftChoices(chosen.id if chosen else None, server, prompt, reply, completion, tuple(gaps), intent)
 
 
@@ -396,7 +425,16 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
         for binding, role, field, code in ((choices.prompt, "prompt", "/transport/request/body", "prompt_binding_proposed"),
                                            (choices.reply, "reply", "/transport/response/text", "reply_binding_proposed"),
                                            (choices.completion, "completion", "/transport/outcome/rules/0", "completion_proposed")):
-            if binding:
+            if isinstance(binding, ReplyPresence):
+                if choices.reply is None:
+                    raise ValueError("Reply presence requires a selected reply field")
+                _binding_schema(catalog, operation, choices.reply, "reply")
+                provenance["fields"][field] = {"source": [catalog.document.source(choices.reply.pointer).to_dict()], "basis": "proposal", "strategy": "reply_presence_and_strict_mapping"}
+                gaps.append(Gap(field,
+                                "Reply presence with strict string mapping is a proposed synchronous completion rule.",
+                                "Confirm that the synchronous reply rule matches the documented API's completion semantics.",
+                                code, "proposal", False, (catalog.document.source(choices.reply.pointer),)))
+            elif binding:
                 _binding_schema(catalog, operation, binding, role)
                 source = catalog.document.source(binding.pointer)
                 provenance["fields"][field] = {"source": [source.to_dict()], "basis": binding.basis}
@@ -488,7 +526,9 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                     "response": {"format": "json", "text": {"paths": [_field_path(choices.reply.name)], "cast": "string", "empty": "error"}, "metadata": {}},
                     "outcome": {"kind": "rules", "unmatched": "target_error", "rules": [{"id": "completed", "priority": 10,
                         "http_status": [int(next(key for key in operation.data["responses"] if re.fullmatch(r"2\d\d", str(key))))],
-                        "when": {"path": _field_path(choices.completion.name), "equals": choices.completion.value}, "outcome": "succeeded"}]},
+                        "when": ({"path": _field_path(choices.reply.name), "exists": True}
+                                 if isinstance(choices.completion, ReplyPresence)
+                                 else {"path": _field_path(choices.completion.name), "equals": choices.completion.value}), "outcome": "succeeded"}]},
                     "delivery": {"kind": "sync"}, "let": {"run": declarations},
                     "timeout": {"total_deadline_s": 120, "read_s": 120, "cleanup_s": 60},
                     "session": {"mode": "none"},
@@ -505,13 +545,19 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
     return DraftArtifacts(state, spec, gaps, provenance)
 
 
-def write_artifacts(artifacts: DraftArtifacts, out: Path) -> tuple[Path, ...]:
+def artifact_destinations(out: Path) -> tuple[Path, ...]:
     out = Path(out)
     destinations = (out, out.with_suffix(".gaps.json"), out.with_suffix(".provenance.json"))
     if any(os.path.lexists(path) for path in destinations):
         raise FileExistsError("A draft artifact already exists; choose a new output path")
     if len(set(destinations)) != 3 or not out.parent.is_dir():
         raise ValueError("Output requires distinct JSON artifacts in an existing directory")
+    return destinations
+
+
+def write_artifacts(artifacts: DraftArtifacts, out: Path) -> tuple[Path, ...]:
+    out = Path(out)
+    destinations = artifact_destinations(out)
     gap_data = {"schema_version": 1, "state": artifacts.state.value,
                 "spec_written": artifacts.spec is not None, "gaps": [gap.to_dict() for gap in artifacts.gaps]}
     payloads = [(destinations[1], gap_data), (destinations[2], artifacts.provenance)]
