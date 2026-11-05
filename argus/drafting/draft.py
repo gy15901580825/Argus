@@ -132,6 +132,13 @@ def _server(url):
     return origin, origin + parsed.path.rstrip("/")
 
 
+def validate_server_origin(value: str) -> str:
+    origin, server = _server(value)
+    if origin != server:
+        raise ValueError("Expected a bare HTTP(S) origin")
+    return origin
+
+
 def _object_schema(content):
     if not isinstance(content, dict) or set(content) != {"application/json"}:
         return None
