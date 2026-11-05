@@ -71,9 +71,11 @@ def _unique_object(pairs):
 
 
 def parse_proposal(text: str, catalog: OperationCatalog) -> OperationSelection:
-    if not isinstance(text, str) or len(text.encode("utf-8")) > OUTPUT_LIMIT_BYTES:
+    if not isinstance(text, str):
         raise ProposalError("model_output_invalid")
     try:
+        if len(text.encode("utf-8")) > OUTPUT_LIMIT_BYTES:
+            raise ProposalError("model_output_invalid")
         data = json.loads(text, object_pairs_hook=_unique_object)
     except (ValueError, RecursionError):
         raise ProposalError("model_output_invalid") from None
@@ -181,7 +183,7 @@ async def propose_choices(catalog: OperationCatalog, *, operation=None, server_o
     estimate = None
     error_type = None
     application_calls = 0
-    user, clipped = _model_input(catalog, intent)
+    clipped = False
 
     def finish(status, code=None, choices=baseline):
         if code:
@@ -192,7 +194,13 @@ async def propose_choices(catalog: OperationCatalog, *, operation=None, server_o
         return ProposalResult(choices, ProposalDisclosure(status, configured, actual_model, usage, refusals,
                                                         cost, estimate, error_type, application_calls, clipped))
 
-    if len((SYSTEM + user).encode("utf-8")) > INPUT_LIMIT_BYTES:
+    try:
+        user, clipped = _model_input(catalog, intent)
+        input_bytes = len((SYSTEM + user).encode("utf-8"))
+    except UnicodeError as exc:
+        error_type = type(exc).__name__
+        return finish("input_invalid", "model_input_invalid")
+    if input_bytes > INPUT_LIMIT_BYTES:
         return finish("input_too_large", "model_input_too_large")
     try:
         cfg = llm.text_config()
