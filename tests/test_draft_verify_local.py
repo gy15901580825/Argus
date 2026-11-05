@@ -358,22 +358,62 @@ async def test_paused_branch_is_not_business_success():
 
 
 async def test_cleanup_is_inside_same_wall_deadline(monkeypatch):
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+    from argus_transport.runtime_v2 import RequestLedger
     module = importlib.import_module('argus.cli.verify_local')
-    handle = module.LocalFake.handle
-    async def slow_delete(self, request):
+    loop = asyncio.get_running_loop()
+    call_at, handle = loop.call_at, module.LocalFake.handle
+    scopes, expiries = [], []
+
+    @asynccontextmanager
+    async def controlled_timeout(when):
+        timeout = asyncio.Timeout(None)
+        scope = {'when': when, 'timeout': timeout, 'active': True}
+        scopes.append(scope)
+        try:
+            async with timeout:
+                yield timeout
+        finally:
+            scope['active'] = False
+
+    def controlled_call_at(when, callback, *args, context=None):
+        if isinstance(getattr(callback, '__self__', None), RequestLedger) and args == ('verification_budget_exceeded',):
+            expiry = {'when': when, 'callback': callback, 'args': args, 'cancelled': False}
+            expiries.append(expiry)
+            return SimpleNamespace(cancel=lambda: expiry.update(cancelled=True))
+        return call_at(when, callback, *args, context=context)
+
+    async def blocked_delete(self, request):
         response = await handle(self, request)
-        if request.method == 'DELETE': await asyncio.sleep(5)
+        if request.method == 'DELETE':
+            assert len(scopes) == 2 and scopes[-1]['active'], 'cleanup must share the active execution deadline'
+            assert len(expiries) == 1
+            expiry = expiries[0]
+            expiry['callback'](*expiry['args'])
+            scopes[-1]['timeout'].reschedule(loop.time())
+            await asyncio.Event().wait()
         return response
-    monkeypatch.setattr(module.LocalFake, 'handle', slow_delete)
+
+    controlled_asyncio = SimpleNamespace(**{**vars(asyncio), 'timeout_at': controlled_timeout})
+    monkeypatch.setattr(module, 'asyncio', controlled_asyncio)
+    monkeypatch.setattr(importlib.import_module('argus.cli.validate_transport_v2'), 'asyncio', controlled_asyncio)
+    monkeypatch.setattr(loop, 'call_at', controlled_call_at)
+    monkeypatch.setattr(module.LocalFake, 'handle', blocked_delete)
     monkeypatch.setattr(module, 'VERIFY_DEADLINE_S', .1)
-    start = asyncio.get_running_loop().time()
     spec, raw = upload_case()
     spec['transport']['lifecycle']['run'] = spec['transport']['lifecycle'].pop('attempt')
     result = await verify(spec, raw)
-    assert asyncio.get_running_loop().time() - start < .5
+    assert len(scopes) == 3
+    assert scopes[0]['when'] == scopes[1]['when'] == expiries[0]['when']
+    assert scopes[2]['when'] > scopes[1]['when']
+    assert expiries[0]['cancelled'] and not any(scope['active'] for scope in scopes)
     assert result.status == 'failed'
     assert 'verification_budget_exceeded' in result.checks
+    assert result.execution['close_stop'] == 'verification_budget_exceeded'
+    assert result.execution['requests']['setup'] == result.execution['requests']['submit'] == 1
     assert result.execution['requests']['cleanup'] == 1
+    assert [row['role'] for row in result.trace] == ['upload', 'invoke', 'delete']
 
 
 async def test_interrupted_bootstrap_closes_partial_runner(monkeypatch):
