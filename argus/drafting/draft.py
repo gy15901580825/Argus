@@ -92,6 +92,14 @@ class ReplyPresence:
 
 
 @dataclass(frozen=True)
+class OperationSelection:
+    operation: str
+    prompt: Binding
+    reply: Binding
+    completion: Binding | ReplyPresence
+
+
+@dataclass(frozen=True)
 class DraftChoices:
     operation: str | None
     server: str | None
@@ -210,10 +218,22 @@ def _unsupported(value):
 
 def choose_without_model(catalog: OperationCatalog, *, operation=None, server_origin=None,
                          intent="Ask an agent a question, optionally with third-party material.") -> DraftChoices:
+    return _choose(catalog, operation=operation, server_origin=server_origin, intent=intent)
+
+
+def choices_from_selection(catalog: OperationCatalog, selection: OperationSelection, *, operation=None,
+                           server_origin=None, intent="Ask an agent a question, optionally with third-party material.") -> DraftChoices:
+    if operation is not None and operation != selection.operation:
+        raise ValueError("Model operation conflicts with the explicit selection")
+    return _choose(catalog, operation=operation, server_origin=server_origin, intent=intent, selection=selection)
+
+
+def _choose(catalog, *, operation, server_origin, intent, selection=None):
     doc = catalog.document
     gaps = []
     chosen = None
-    candidates = [op for op in catalog.operations if op.id == operation] if operation else list(catalog.operations)
+    selected_id = operation or (selection.operation if selection else None)
+    candidates = [op for op in catalog.operations if op.id == selected_id] if selected_id else list(catalog.operations)
     if len(candidates) == 1:
         chosen = candidates[0]
         if operation is None:
@@ -274,6 +294,8 @@ def choose_without_model(catalog: OperationCatalog, *, operation=None, server_or
             if len(fields) == 1:
                 name, _ = fields[0]
                 prompt = Binding(name, pointer_child(request_pointer, name))
+        if selection is not None:
+            prompt = selection.prompt
         if prompt is None:
             gaps.append(_gap(catalog, "/transport/request/body", "prompt_binding_missing",
                              "No unique prompt field can be proposed from the JSON schema.", pointer=pointer))
@@ -310,6 +332,8 @@ def choose_without_model(catalog: OperationCatalog, *, operation=None, server_or
                 completion = Binding(states[0][0], pointer_child(response_pointer, states[0][0]), value=states[0][1]["enum"][0])
             elif reply is not None:
                 completion = ReplyPresence()
+        if selection is not None:
+            reply, completion = selection.reply, selection.completion
         for binding, field, missing in ((reply, "/transport/response/text", "reply_binding_missing"),
                                          (completion, "/transport/outcome", "completion_missing")):
             if binding is None:
