@@ -18,6 +18,7 @@ from argus.a2a.world import (
 )
 from argus.agentic import VALID_OWASP_AGENTIC_IDS
 from argus.remediation import parse_actions
+from argus.assertions import validate_response_fields
 
 logger = logging.getLogger(__name__)
 
@@ -213,6 +214,12 @@ def load_probe(path: Path) -> Probe:
                 raise ValueError(
                     f"invalid mappings.owasp_agentic id {category_id!r} in {path}; expected ASI01..ASI10"
                 )
+        assertions = raw.get("assertions", ()) or ()
+        if isinstance(assertions, dict) and "response_fields" in assertions:
+            raise ValueError("response_fields requires an assertions list")
+        for entry in assertions:
+            if isinstance(entry, dict) and "response_fields" in entry:
+                validate_response_fields(entry["response_fields"])
         scenario_kind = None
         scenario_payload = ""
         if "scenario" in raw:

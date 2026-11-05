@@ -97,6 +97,10 @@ How the response is parsed: `response_jsonpath` is a [JSONPath](https://goessner
 - A JSONPath that doesn't match returns an empty string (not an error). If your `verdict=fail` findings show empty `target_response`, your JSONPath is probably wrong — re-check by manually running a curl and applying the path to the response.
 - TLS errors → check that `request_url` is `https://` and the target's certificate chain is valid.
 
+### Deterministic workflow targets
+
+When an indirect attack changes structured output rather than the free-text answer, the [`response_fields` assertion](../reference/assertions.md#response_fields) checks declared JSON fields without a judge or Python plugin. Set `requires_interaction: false` when the response is the evidence and no testbed interaction is expected. `trials` evaluates each response independently.
+
 ---
 
 ## grpc
