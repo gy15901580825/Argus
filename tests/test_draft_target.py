@@ -750,3 +750,31 @@ def test_yaml_integer_non_response_key_rejected(tmp_path):
     document["paths"][1] = {}
     with pytest.raises(DocumentError):
         load_openapi(input_file(tmp_path, document, ".yaml"))
+
+
+@pytest.mark.parametrize("via_symlink", [False, True])
+def test_explicit_main_input_resolves_parent_paths_and_directory_symlinks(tmp_path, monkeypatch, via_symlink):
+    directory = tmp_path / "in"
+    directory.mkdir()
+    source = input_file(directory)
+    cwd = tmp_path / "work"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    if via_symlink:
+        (cwd / "chosen").symlink_to(directory, target_is_directory=True)
+        chosen = Path("chosen/api.json")
+    else:
+        chosen = Path("../in/api.json")
+    loaded = load_openapi(chosen)
+    assert loaded.data == agent_document()
+    assert loaded.inputs[0]["file"] == "api.json"
+
+
+def test_existing_symlink_reference_target_rejected(tmp_path):
+    schemas = tmp_path / "real.json"
+    schemas.write_text(json.dumps({"Reply": {"type": "string"}}))
+    (tmp_path / "linked.json").symlink_to(schemas)
+    document = agent_document()
+    document["components"] = {"schemas": {"Reply": {"$ref": "linked.json#/Reply"}}}
+    with pytest.raises(DocumentError, match="symlinks"):
+        load_openapi(input_file(tmp_path, document))
