@@ -778,3 +778,29 @@ def test_existing_symlink_reference_target_rejected(tmp_path):
     document["components"] = {"schemas": {"Reply": {"$ref": "linked.json#/Reply"}}}
     with pytest.raises(DocumentError, match="symlinks"):
         load_openapi(input_file(tmp_path, document))
+
+
+@pytest.mark.parametrize("filename", ["openapi-auth.yaml", "token-api.yaml"])
+def test_explicit_main_credential_looking_document_name_is_authorized(tmp_path, filename):
+    document = agent_document()
+    document["components"] = {"schemas": {"Answer": {"type": "string"}, "Ref": {"$ref": "#/components/schemas/Answer"}}}
+    source = tmp_path / filename
+    source.write_text(yaml.safe_dump(document))
+    loaded = load_openapi(source)
+    assert loaded.data["components"]["schemas"]["Ref"] == {"type": "string"}
+    assert loaded.inputs[0]["file"] == filename
+
+
+def test_existing_credential_named_reference_rejected_before_read(tmp_path, monkeypatch):
+    fake = tmp_path / "credentials.json"
+    fake.write_text(json.dumps({"Answer": {"type": "string"}}))
+    document = agent_document()
+    document["components"] = {"schemas": {"Answer": {"$ref": "credentials.json#/Answer"}}}
+    source = input_file(tmp_path, document)
+    original = Path.open
+    def guarded(path, *args, **kwargs):
+        assert path != fake, "credential-named reference was opened"
+        return original(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "open", guarded)
+    with pytest.raises(DocumentError, match="Credential"):
+        load_openapi(source)
