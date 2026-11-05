@@ -514,3 +514,90 @@ def test_case_normalization_collision_produces_gap(tmp_path):
     assert not out.exists()
     gaps = json.loads(out.with_suffix(".gaps.json").read_text())
     assert "parameter_collision" in {gap["code"] for gap in gaps["gaps"]}
+
+
+@pytest.mark.parametrize("name", ["default", "example", "examples"])
+def test_annotation_names_as_request_properties_are_preserved(tmp_path, name):
+    d = agent_document()
+    properties = d["paths"]["/ask"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+    properties[name] = {"type": "string", "default": "DO_NOT_COPY_ANNOTATION",
+                        "example": "DO_NOT_COPY_ANNOTATION"}
+    document = load_openapi(input_file(tmp_path, d))
+    pointer = "/paths/~1ask/post/requestBody/content/application~1json/schema/properties/" + name
+    assert document.source(pointer).pointer == pointer
+    assert document.data["paths"]["/ask"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"][name] == {"type": "string"}
+    result, out = invoke(tmp_path, d)
+    assert result.exit_code == 3, result.output
+    assert out.exists()
+    assert "optional_inputs_unbound" in out.with_suffix(".gaps.json").read_text()
+    assert "DO_NOT_COPY_ANNOTATION" not in out.with_suffix(".provenance.json").read_text()
+
+
+@pytest.mark.parametrize("name", ["default", "example", "examples", "$ref"])
+def test_named_schema_components_preserve_names_and_reference_sources(tmp_path, name):
+    d = agent_document()
+    d["components"] = {"schemas": {name: {"type": "string", "default": "DO_NOT_COPY_ANNOTATION"}}}
+    properties = d["paths"]["/ask"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+    properties["question"] = {"$ref": "#/components/schemas/" + name}
+    document = load_openapi(input_file(tmp_path, d))
+    assert document.data["components"]["schemas"][name] == {"type": "string"}
+    pointer = "/paths/~1ask/post/requestBody/content/application~1json/schema/properties/question"
+    assert document.source(pointer).pointer == "/components/schemas/" + name
+
+
+@pytest.mark.parametrize("name", ["default", "example", "examples"])
+def test_named_authentication_scheme_retains_security_and_redacts_annotations(tmp_path, name):
+    d = agent_document()
+    d["security"] = [{name: []}]
+    d["components"] = {"securitySchemes": {name: {
+        "type": "http", "scheme": "bearer", "default": "DO_NOT_COPY_ANNOTATION",
+        "example": "DO_NOT_COPY_ANNOTATION", "examples": ["DO_NOT_COPY_ANNOTATION"]
+    }}}
+    document = load_openapi(input_file(tmp_path, d))
+    assert document.data["security"] == [{name: []}]
+    assert document.data["components"]["securitySchemes"][name] == {"type": "http", "scheme": "bearer"}
+    result, out = invoke(tmp_path, d)
+    assert result.exit_code == 3, result.output
+    assert json.loads(out.read_text())["transport"]["auth"]["kind"] == "bearer"
+    assert all("DO_NOT_COPY_ANNOTATION" not in p.read_text() for p in tmp_path.glob("target*"))
+
+
+def test_default_response_and_link_names_remain_document_facts(tmp_path):
+    d = agent_document()
+    responses = d["paths"]["/ask"]["post"]["responses"]
+    responses["default"] = {"description": "Other responses"}
+    responses["200"]["links"] = {"default": {"operationId": "ask"}}
+    document = load_openapi(input_file(tmp_path, d))
+    assert document.data["paths"]["/ask"]["post"]["responses"]["default"] == {"description": "Other responses"}
+    assert document.source("/paths/~1ask/post/responses/200/links/default").pointer.endswith("/links/default")
+    result, out = invoke(tmp_path, d)
+    assert result.exit_code == 3, result.output
+    assert not out.exists()
+    assert "links_unsupported" in out.with_suffix(".gaps.json").read_text()
+
+
+def test_additional_operations_are_reported_as_unsupported_gaps(tmp_path):
+    d = agent_document("3.2.0")
+    d["paths"]["/ask"]["additionalOperations"] = {"CUSTOM": copy.deepcopy(d["paths"]["/ask"]["post"])}
+    result, out = invoke(tmp_path, d, "--operation", "ask")
+    assert result.exit_code == 3, result.output
+    assert not out.exists()
+    gap_data = json.loads(out.with_suffix(".gaps.json").read_text())
+    assert gap_data["spec_written"] is False and gap_data["state"] == "needs_input"
+    gap = next(g for g in gap_data["gaps"] if g["code"] == "additional_operations_unsupported")
+    assert gap["kind"] == "unsupported_feature" and gap["blocking"] is True
+    assert gap["source"] == [{"file": "api.json", "pointer": "/paths/~1ask/additionalOperations"}]
+    assert "operation" in gap["why"].lower() and "reference" not in gap["why"].lower()
+
+
+def test_unselected_query_method_still_reports_unsupported_feature(tmp_path):
+    d = agent_document("3.2.0")
+    d["paths"]["/ask"]["query"] = copy.deepcopy(d["paths"]["/ask"]["post"])
+    d["paths"]["/ask"]["query"]["operationId"] = "query_ask"
+    result, out = invoke(tmp_path, d, "--operation", "ask")
+    assert result.exit_code == 3, result.output
+    assert not out.exists()
+    gap_data = json.loads(out.with_suffix(".gaps.json").read_text())
+    gap = next(g for g in gap_data["gaps"] if g["code"] == "http_method_unsupported")
+    assert gap["kind"] == "unsupported_feature"
+    assert gap["source"][0]["pointer"] == "/paths/~1ask/query"
