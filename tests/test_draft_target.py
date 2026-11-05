@@ -850,3 +850,34 @@ def test_output_parent_missing_is_usage_error(tmp_path):
     assert result.exit_code == 2, result.output
     assert "--out" in result.output
     assert not (tmp_path / "missing").exists()
+
+
+@pytest.mark.parametrize("source,canonical", [
+    ("https://example。org", "https://example.org"),
+    ("https://faß.de", "https://xn--fa-hia.de"),
+    ("https://EXAMPLE.org:443/base", "https://example.org/base"),
+    ("http://[::1]:80/base", "http://[::1]/base"),
+])
+def test_generated_server_uses_actual_httpx_ascii_authority(tmp_path, source, canonical):
+    document = agent_document()
+    document["servers"] = [{"url": source}]
+    result, out = invoke(tmp_path, document)
+    assert result.exit_code == 3, result.output
+    spec = json.loads(out.read_text())
+    endpoint = spec["transport"]["request"]["url"]
+    assert endpoint == canonical + "/ask"
+    assert httpx.URL(endpoint).raw_host == httpx.URL(source).raw_host
+    assert endpoint.split("/")[2].encode("ascii")
+    provenance = json.loads(out.with_suffix(".provenance.json").read_text())
+    assert any(s["pointer"] == "/servers/0/url" for s in provenance["fields"]["/transport/request/url"]["source"])
+
+
+@pytest.mark.parametrize("host", ["bad..org", "-bad.org", "bad_.org", "ｅｘａｍｐｌｅ.org", "a＠b.org"])
+def test_invalid_idna_hosts_produce_specific_blocking_server_gap(tmp_path, host):
+    document = agent_document()
+    document["servers"] = [{"url": "https://" + host}]
+    result, out = invoke(tmp_path, document)
+    assert result.exit_code == 3, result.output
+    assert not out.exists()
+    gaps = json.loads(out.with_suffix(".gaps.json").read_text())["gaps"]
+    assert any(g["code"] == "server_invalid" and g["blocking"] for g in gaps)
