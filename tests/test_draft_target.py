@@ -881,3 +881,25 @@ def test_invalid_idna_hosts_produce_specific_blocking_server_gap(tmp_path, host)
     assert not out.exists()
     gaps = json.loads(out.with_suffix(".gaps.json").read_text())["gaps"]
     assert any(g["code"] == "server_invalid" and g["blocking"] for g in gaps)
+
+
+def test_plain_sync_reply_reports_transport_predicate_limitation(tmp_path):
+    document = agent_document()
+    properties = document["paths"]["/ask"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+    properties.pop("status")
+    result, out = invoke(tmp_path, document)
+    assert result.exit_code == 3, result.output
+    assert not out.exists()
+    gap = next(g for g in json.loads(out.with_suffix(".gaps.json").read_text())["gaps"] if g["code"] == "completion_missing")
+    assert gap["blocking"] and gap["kind"] == "unsupported_feature"
+    assert "predicate" in gap["why"] and "nonempty string" in gap["why"]
+    assert gap["source"][0]["pointer"].endswith("/properties/answer")
+    assert "transport" in gap["decision"].lower()
+
+
+@pytest.mark.parametrize("value", [1, True, {}, [], " "])
+def test_exists_and_not_empty_predicate_cannot_prove_nonempty_string(value):
+    from argus_transport.engine import matches_predicate
+    from argus_transport.models import predicate
+    candidate = {"all": [{"path": "$.answer", "exists": True}, {"not": {"path": "$.answer", "equals": ""}}]}
+    assert matches_predicate({"answer": value}, predicate(candidate)) is True
