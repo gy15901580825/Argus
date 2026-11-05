@@ -1,6 +1,6 @@
 import asyncio
 import json
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 import click
 
@@ -19,6 +19,55 @@ from argus_transport import (
     parse_transport_spec,
     with_origin,
 )
+
+
+@dataclass(frozen=True)
+class TransportExecution:
+    result: object
+    requests: dict
+    cleanup: dict | None
+    close_stop: TargetRunStopped | None = None
+
+
+async def execute_transport(transport, *, policy=None, context=None, environ=None, deadline_at=None):
+    with local_transport_mode():
+        run = V2Run(transport, policy=policy or execution_policy(transport), environ=environ)
+        result = None
+        close_stop = None
+        expiry = asyncio.get_running_loop().call_at(deadline_at, run.ledger.trip, 'verification_budget_exceeded') if deadline_at is not None else None
+        try:
+            async with asyncio.timeout_at(deadline_at):
+                try:
+                    result = await run.attempt(context or TransportContextV2(
+                        prompt="ping",
+                        material="Argus validation sample." if material_binding(transport) != "none" else None,
+                    ))
+                except TargetRunStopped as stopped:
+                    result = stopped
+                finally:
+                    try:
+                        await run.close()
+                    except TargetRunStopped as stopped:
+                        close_stop = stopped
+        except TimeoutError:
+            if deadline_at is None:
+                raise
+            run.ledger.trip('verification_budget_exceeded')
+            stopped = TargetRunStopped('verification_budget_exceeded')
+            if result is None:
+                result = stopped
+            else:
+                close_stop = stopped
+        finally:
+            if expiry is not None:
+                expiry.cancel()
+        if not isinstance(result, TargetRunStopped) and result.outcome == TransportOutcome.SUCCEEDED:
+            try:
+                run_log_from_metadata(result.as_dict()["metadata"])
+            except (ValueError, TypeError):
+                result = replace(result, outcome=TransportOutcome.TARGET_ERROR,
+                    response_text=None, reason_code=SafeReasonCode.MAPPING_ERROR)
+        return TransportExecution(result, dict(run.ledger.counts), run.cleanup_report(), close_stop)
 
 
 def validate(
@@ -60,34 +109,9 @@ def validate(
                 click.echo(line)
         return
 
-    async def execute_transport():
-        with local_transport_mode():
-            run = V2Run(transport, policy=execution_policy(transport))
-            try:
-                result = await run.attempt(TransportContextV2(
-                    prompt="ping",
-                    material="Argus validation sample." if material_binding(transport) != "none" else None,
-                ))
-            except TargetRunStopped as stopped:
-                result = stopped
-            finally:
-                try:
-                    await run.close()
-                except TargetRunStopped as stopped:
-                    result = stopped
-            return result, run.ledger.counts, run.cleanup_report()
-
-    result, requests, cleanup = asyncio.run(execute_transport())
-    if not isinstance(result, TargetRunStopped) and result.outcome == TransportOutcome.SUCCEEDED:
-        try:
-            run_log_from_metadata(result.as_dict()["metadata"])
-        except (ValueError, TypeError):
-            result = replace(
-                result,
-                outcome=TransportOutcome.TARGET_ERROR,
-                response_text=None,
-                reason_code=SafeReasonCode.MAPPING_ERROR,
-            )
+    evidence = asyncio.run(execute_transport(transport))
+    result = evidence.close_stop or evidence.result
+    requests, cleanup = evidence.requests, evidence.cleanup
     if isinstance(result, TargetRunStopped):
         cleanup_note = (
             "No further request was sent, cleanup included."

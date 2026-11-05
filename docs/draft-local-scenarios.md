@@ -1,0 +1,71 @@
+# Verify a draft locally
+
+`draft-target --verify-local` executes one transport v2 attempt on a temporary copy. Every configured request origin becomes the same randomly assigned `http://127.0.0.1:PORT`, including provision, setup, polling, abort, undo and confirmation. Authentication is removed. Original secret references and environment values are not resolved. The fake and copy are discarded when verification ends. The delivered target file remains unchanged.
+
+```bash
+argus-probe draft-target --openapi api.json --out target.json \
+  --no-model --verify-local --scenario scenario.json
+```
+
+`--scenario` requires `--verify-local`. Without a scenario, bounded schema samples check supported request and response shapes. The result is `schema_mock_only`, never business success. Unsupported schema constraints are reported, rather than ignored. Format checks include UUID, date, date-time, base64 byte, int32 and int64; multipart binary values are decoded strings. Pattern and unsupported schema keywords require additional validation and produce `schema_mock_unsupported`.
+
+A scenario is an independent oracle prepared from documentation or a reviewed configuration before generating a draft. Neither the model nor the draft creates it. It describes fixed replies, actual request expectations and resource transitions. It never repairs the draft. Local checks cannot prove real service behavior, billing, latency or model safety.
+
+## Version 1
+
+All objects reject unknown fields. The following synchronous example matches a documented `ask` operation whose request accepts `goal` and whose reply contains `status` and `result`.
+
+```json
+{
+  "version": 1,
+  "source": {"document": "api.json", "pointers": ["/paths/~1ask/post"]},
+  "resources": [],
+  "operations": [{
+    "id": "ask", "method": "POST", "path": "/ask", "role": "invoke",
+    "calls": {"min": 1, "max": 1},
+    "request": [{
+      "check": "prompt_bound", "at": {"kind": "json", "pointer": "/goal"},
+      "equals": "ping"
+    }],
+    "replies": [{
+      "status": 200, "body": {"status": "COMPLETED", "result": "done"}, "effects": []
+    }]
+  }],
+  "expect": {"outcome": "succeeded", "reply": "done", "resources": [], "required_gaps": []}
+}
+```
+
+`source` is provenance text. It does not authorize opening or fetching another file. Each operation ID, method and route must agree with the independently supplied OpenAPI catalog. Operation IDs are bounded printable strings and preserve documented spelling. Internal resource IDs use lowercase letters, digits and underscores, starting with a letter, with at most 64 characters. Route parameter names preserve documented case. Paths begin with `/` and may contain `{parameter}` for one segment. Schemes, authorities, query strings, fragments, encoded paths, backslashes and dot segments are rejected in route patterns.
+
+Each operation has one fixed role: `invoke`, `poll`, `upload`, `setup`, `delete`, `confirm` or `pause`. Its `calls` range is independent of the draft. `replies` is a finite ordered list, with at least `max` entries. Each reply contains `status`, a JSON `body` and `effects`. An optional `headers` object accepts only `Location` and `Retry-After`, case-insensitively with no duplicate names. `Location` is a fixed slash-prefixed relative path, optionally with a literal query, without authority, fragment, template or control characters. `Retry-After` is an integer string from `0` to `10`. Absolute destinations cannot be emitted by a scenario.
+
+Each request predicate contains `check`, `at` and scalar literal `equals`. The permitted check names are `prompt_bound`, `material_bound`, `poll_identity` and `resource_identity`. A prompt predicate must expect `ping`; a material predicate must expect `Argus validation sample.`. Every declared material predicate must actually match, including predicates on operations whose minimum call count is zero. Removing the draft's material binding does not remove this independent obligation. Material-bearing transport also cannot pass without an observed matching material predicate. An invoke must have a prompt predicate. An upload must have a material predicate and its invocation must check the independently issued file reference. Every poll path identity needs its own predicate.
+
+Request JSON rejects duplicate object keys, non-finite numbers and nesting beyond sixteen levels. Invalid bodies report `request_body_invalid` before schema or business predicates are evaluated.
+
+Request body checks use the actual media type and bytes. A missing optional body is allowed; a nonempty body with the wrong declared media type is rejected. JSON and multipart request bodies are supported. Other declared body media and non-JSON reply media report `schema_mock_unsupported`. An explicitly invalid null response schema fails validation. Enum and const comparisons use JSON value equality, including nested values. Booleans differ from numbers, while `1` and `1.0` are equal. Nullable extends the base type without bypassing composition or enum constraints. Converted numeric parameters must be finite.
+
+| Selector `at` | Meaning |
+|---|---|
+| `{"kind":"json","pointer":"/question"}` | RFC 6901 field in the actual JSON request body |
+| `{"kind":"query","name":"id"}` | Exactly one query value |
+| `{"kind":"path","name":"runId"}` | The named documented route parameter |
+| `{"kind":"multipart_text","name":"description"}` | One text part without a filename |
+| `{"kind":"multipart_file","name":"file","filename":"sample.txt"}` | One file part with the exact filename and UTF-8 contents |
+| `{"kind":"raw_utf8"}` | Actual UTF-8 request bytes |
+
+Duplicate query values and multipart parts fail instead of selecting the first. The file selector reads uploaded bytes, never a local file path. For an upload flow, declare a literal full resource name such as `files/file-a` in the response body and require that same full name in the invocation predicate. Poll predicates independently check each issued identity across pending and completed replies.
+
+Resources have `id`, `initial` and `cleanup`. States are `absent`, `live` and `paused`; cleanup policies are `delete`, `pause` and `documented_no_delete`. A reply effect has `resource`, `from` and `to`. State preconditions and request predicates must match before an effect applies. A setup that ingests material can create a resource, and an invocation's `live` to `live` precondition can require that independent ingestion without inventing an undocumented invocation field.
+
+`expect.resources` contains exactly one `{ "id": "file", "final": "absent" }` row per resource. A declared delete must end absent. Query DELETE and optional confirmation GET are observed only when the transport sends them. Existing v2 confirmation is a fallback for an unexpected primary cleanup status, not an extra request after every successful DELETE. A pause is an exceptional branch and does not count as completed business or deletion.
+
+For documented lack of deletion, use `cleanup: "documented_no_delete"`, record the expected live residue, and list the independently required gap code in `expect.required_gaps`. Verification requires that code in the draft's existing gap list. It reports `business_only` and incomplete cleanup, and never invents a DELETE. An unrelated transport leftover or undeleted resource with a declared delete fails `cleanup_left_resources`.
+
+## Evidence and limits
+
+Local evidence is stored separately in `target.provenance.json` under `validation.local`. It contains a version, layer, status, business and cleanup booleans, failed check names, final execution counts, resource states and a bounded operation trace. One actual v2 attempt is recorded as `execution.attempts: 1`, even when policy stops it before any HTTP request. A missing or invalid spec has no attempt. The original gap list and readiness state are retained.
+
+Failed checks include `invoke_not_called`, `prompt_not_bound`, `material_not_bound`, `poll_identity_changed`, `terminal_outcome_mismatch`, `reply_mismatch`, `operation_call_count`, `cleanup_left_resources`, `cleanup_gap_missing`, `unsafe_location` and `verification_budget_exceeded`. A response status of 200 or a transport `blocked` result cannot prove business completion.
+
+Limits are 256 KiB scenario input, nesting depth 16, 32 operations, 32 resources, 64 total replies, 32 predicates per operation, 64 dispatched HTTP requests and 64 KiB request/response bodies or literals. The complete fake lifetime has a 30-second deadline with reserved shutdown time; attempt and close share the active deadline. Earlier transport budgets remain in force. No retries, cleanup or other phase can dispatch to another port or host. The strict policy admits only the assigned HTTP origin before DNS.

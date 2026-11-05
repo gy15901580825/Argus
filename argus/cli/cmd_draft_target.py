@@ -1,5 +1,6 @@
 import asyncio
 from pathlib import Path
+from dataclasses import replace
 
 import click
 
@@ -7,6 +8,8 @@ from argus.drafting.draft import DraftState, artifact_destinations, choose_witho
 from argus.drafting.openapi import DocumentError, catalog_operations, load_openapi
 from argus.drafting.proposal import propose_choices
 from argus.cli.validate_transport_v2 import validate
+from argus.cli.verify_local import verify_local as verify_draft_local
+from argus.drafting.scenario import read_scenario
 
 
 @click.command("draft-target")
@@ -16,8 +19,12 @@ from argus.cli.validate_transport_v2 import validate
 @click.option("--server-origin", help="Select one origin declared in root servers.")
 @click.option("--intent", default="Ask an agent a question, optionally with third-party material.", show_default=True)
 @click.option("--no-model", is_flag=True, help="Use only deterministic local document extraction.")
-def cmd_draft_target(input_path, out, operation, server_origin, intent, no_model):
+@click.option("--verify-local", is_flag=True, help="Verify a temporary copy on an isolated loopback fake.")
+@click.option("--scenario", "scenario_path", type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Independent version-one scenario JSON for local semantic checks.")
+def cmd_draft_target(input_path, out, operation, server_origin, intent, no_model, verify_local, scenario_path):
     """Draft a transport v2 target and review gaps from local OpenAPI 3.x."""
+    if scenario_path is not None and not verify_local:
+        raise click.UsageError("--scenario requires --verify-local.")
     if out.suffix.lower() != ".json":
         raise click.UsageError("--out must name a JSON file.")
     if not out.parent.is_dir():
@@ -33,6 +40,8 @@ def cmd_draft_target(input_path, out, operation, server_origin, intent, no_model
         catalog = catalog_operations(document)
         if operation is not None and operation not in {op.id for op in catalog.operations}:
             raise click.UsageError("--operation must select a documented operation ID.")
+        scenario = read_scenario(scenario_path, catalog=catalog) if scenario_path is not None else None
+        local_result = None
         proposal = None
         if no_model:
             choices = choose_without_model(catalog, operation=operation, server_origin=server_origin, intent=intent)
@@ -45,6 +54,10 @@ def cmd_draft_target(input_path, out, operation, server_origin, intent, no_model
         if artifacts.spec is not None:
             validate(artifacts.spec, offline=True, endpoint_override=None)
             artifacts = artifacts.validated()
+        if verify_local:
+            local_result = asyncio.run(verify_draft_local(artifacts.spec, catalog=catalog, scenario=scenario, gaps=artifacts.gaps))
+            artifacts = replace(artifacts, provenance={**artifacts.provenance,
+                "validation": {**artifacts.provenance.get("validation", {}), "local": local_result.as_dict()}})
         written = write_artifacts(artifacts, out)
     except (DocumentError, ValueError, OSError) as exc:
         raise click.ClickException(str(exc)) from None
@@ -54,5 +67,11 @@ def cmd_draft_target(input_path, out, operation, server_origin, intent, no_model
         click.echo(f"model.status: {proposal.disclosure.status}")
     for path in written:
         click.echo(f"written: {path}")
-    if artifacts.state != DraftState.READY:
+    if local_result is not None:
+        click.echo(f"local.status: {local_result.status}")
+        for check in local_result.checks:
+            click.echo(f"local.check: {check}")
+        if local_result.status == "failed":
+            raise click.exceptions.Exit(1)
+    if artifacts.state != DraftState.READY or (local_result is not None and (local_result.status != "verified" or not local_result.cleanup_complete)):
         raise click.exceptions.Exit(3)
