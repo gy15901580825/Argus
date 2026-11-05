@@ -297,7 +297,7 @@ class _Reader:
 
 
 def load_openapi(path: Path) -> ApiDocument:
-    path = Path(path).absolute()
+    path = Path(path).resolve()
     reader = _Reader(path.parent.resolve())
     data = reader.expand(reader.read(path), path, "")
     if not isinstance(data.get("openapi"), str) or not re.fullmatch(r"3\.[012]\.\d+", data["openapi"]):
