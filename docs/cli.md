@@ -321,21 +321,26 @@ For local version 2 runs with undo requests or tracked created resources, [run.j
 
 ## Draft a target from local OpenAPI
 
-`draft-target` prepares a transport v2 draft and a review checklist from a local OpenAPI 3.0, 3.1 or 3.2 JSON/YAML file. This first version requires `--no-model`. It makes no model or target requests and does not resolve credentials or environment bindings.
+`draft-target` prepares a transport v2 draft and review checklist from a local OpenAPI 3.0, 3.1 or 3.2 JSON/YAML file. The default mode uses your existing text-model configuration for one bounded proposal. `--no-model` uses only deterministic extraction and selection. Neither mode sends a target request or resolves target credentials and environment bindings. **No target request does not mean no model request.** Use `--no-model` for fully offline drafting.
 
 ```bash
+argus-probe draft-target --openapi api.yaml --out target.json
 argus-probe draft-target --openapi api.yaml --out target.json --no-model
-argus-probe draft-target --openapi api.yaml --out target.json --no-model --operation ask --server-origin http://127.0.0.1:8123
+argus-probe draft-target --openapi api.yaml --out target.json --operation ask --server-origin http://127.0.0.1:8123
 argus-probe validate-target --target target.json --offline
 ```
 
-The command writes `target.gaps.json` and `target.provenance.json`. It writes `target.json` only after the selected fields compile into a valid target and that exact spec passes the existing offline validator. It refuses to overwrite any of these files. Missing invoke, server, prompt, answer or terminal-state choices leave `spec_written: false` and `needs_input`. Schema and name-based choices remain proposals with `needs_review`; a valid draft does not prove real-agent compatibility or authorize execution.
+The model can select only documented operation IDs and field pointers. It cannot supply URLs, authentication, constants, code or a target spec. Every business selection remains a proposal with a source pointer and requires review. With no usable text configuration, a failed call or an invalid response, the command retains deterministic selections and adds an explicit gap. It never repairs the output with another call.
 
-The first version supports simple synchronous JSON POST operations. Polling, streaming, multipart, complex schemas and ambiguous authentication produce gaps. No cleanup endpoint or business constant is invented. Review omitted optional fields, cleanup requirements and credential bindings before using a draft. Examples and defaults are omitted from the catalog; policy timeouts and budgets are recorded separately in provenance.
+The proposal has a 64 KiB input bound, 16 KiB response bound, 2048 output-token limit and $0.50 generation run cap. Descriptions are bounded to 2048 bytes; oversized reference catalogs skip the call rather than silently omit candidates. These limits are tool policies. Provenance records configuration, actual model, available usage, costs and fallback status. One application completion can include provider fallback or SDK retries. The cost meter records completed usage, so a completed call can already have exceeded the cap; unreported attempt costs remain unknown.
 
-Only local inputs are accepted. Internal references and bounded adjacent JSON/YAML files within the input directory are supported. Network references, symlinks, directory escapes, known credential filenames and YAML aliases are rejected. The loader enforces byte, depth and node limits. Filename checks do not establish that an arbitrary file is safe; provide only authorized document files.
+The command writes `target.gaps.json` and `target.provenance.json`. It writes `target.json` only after the selected fields compile into a valid target and that exact spec passes the existing offline validator. It checks destinations before a model call and refuses to overwrite any artifact. Missing invoke, server, prompt or answer choices leave `spec_written: false` and `needs_input`. A valid draft does not prove real-agent compatibility or authorize execution.
 
-Exit code `0` means ready after offline validation. `1` means a read, parse, compile, validation or write error; `2` means invalid command usage; `3` means review or input is needed. In this no-model command, inferred bindings require review. There is no `--execute`, `--verify-local` or `--docs` option.
+Supported operations are simple synchronous JSON POST requests. If a declared successful response has the chosen string reply field, both modes can propose a status-plus-reply-presence completion rule with strict string mapping. Empty, missing and non-string replies become target errors. A chosen documented singleton terminal state keeps its conditional state rule. Completion proposals remain review gaps. Polling, streaming, multipart, complex schemas and ambiguous authentication produce gaps. No cleanup endpoint or business constant is invented. Review omitted optional fields, cleanup requirements and credential bindings before using a draft.
+
+Only local document inputs are accepted. Internal references and bounded adjacent JSON/YAML files within the input directory are supported. Referenced symlinks, directory escapes, known credential filenames, network references and YAML aliases are rejected. The main input path is resolved, including directory symlinks; the credential filename filter applies only to references. The loader enforces byte, depth and node limits. Filename checks do not establish that an arbitrary file is safe; provide only authorized document files. Examples and defaults are omitted from the model catalog. Policy timeouts and budgets have separate provenance.
+
+Exit code `0` means ready after offline validation. `1` means a read, parse, compile, validation or write error; `2` means invalid command usage; `3` means review or input is needed. Inferred bindings in either mode require review. There is no `--execute`, `--verify-local` or `--docs` option.
 
 ## Repeated trials
 

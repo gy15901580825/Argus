@@ -341,13 +341,7 @@ def _choose(catalog, *, operation, server_origin, intent, selection=None):
         for binding, field, missing in ((reply, "/transport/response/text", "reply_binding_missing"),
                                          (completion, "/transport/outcome", "completion_missing")):
             if binding is None:
-                if missing == "completion_missing" and reply is not None:
-                    gaps.append(Gap(field,
-                                    "Transport outcome predicates cannot express a generic nonempty string reply without a documented terminal state.",
-                                    "Select a documented terminal-success state or review a transport predicate enhancement before compiling this synchronous response.",
-                                    missing, "unsupported_feature", True, (doc.source(reply.pointer),)))
-                else:
-                    gaps.append(_gap(catalog, field, missing, "No unique documented reply or terminal state can be proposed.", pointer=pointer))
+                gaps.append(_gap(catalog, field, missing, "No unique documented reply or terminal state can be proposed.", pointer=pointer))
     return DraftChoices(chosen.id if chosen else None, server, prompt, reply, completion, tuple(gaps), intent)
 
 
@@ -436,9 +430,10 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                     raise ValueError("Reply presence requires a selected reply field")
                 _binding_schema(catalog, operation, choices.reply, "reply")
                 provenance["fields"][field] = {"source": [catalog.document.source(choices.reply.pointer).to_dict()], "basis": "proposal", "strategy": "reply_presence_and_strict_mapping"}
-                gaps.append(_gap(catalog, field, code,
-                                 "Reply presence with strict string mapping is a proposed synchronous completion rule.",
-                                 pointer=choices.reply.pointer, kind="proposal", blocking=False))
+                gaps.append(Gap(field,
+                                "Reply presence with strict string mapping is a proposed synchronous completion rule.",
+                                "Confirm that the synchronous reply rule matches the documented API's completion semantics.",
+                                code, "proposal", False, (catalog.document.source(choices.reply.pointer),)))
             elif binding:
                 _binding_schema(catalog, operation, binding, role)
                 source = catalog.document.source(binding.pointer)
