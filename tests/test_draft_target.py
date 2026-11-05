@@ -258,18 +258,20 @@ def test_missing_cleanup_is_visible_and_no_delete_is_invented(tmp_path):
     assert any(g["code"] == "cleanup_mapping_missing" and not g["blocking"] for g in gaps)
 
 
-def test_loader_enforces_depth_and_total_size(tmp_path):
+def test_loader_enforces_depth_and_total_size(tmp_path, monkeypatch):
+    from argus.drafting import openapi
+
     d = agent_document()
-    nested = {}
-    d["x-nested"] = nested
-    for _ in range(80):
-        nested["next"] = {}; nested = nested["next"]
-    with pytest.raises(DocumentError):
+    d["x-nested"] = {"next": {"next": {}}}
+    monkeypatch.setattr(openapi, "MAX_DEPTH", 2)
+    with pytest.raises(DocumentError, match=r"Expanded document depth limit exceeded .*MAX_DEPTH=2, observed=3"):
         load_openapi(input_file(tmp_path, d))
-    d = agent_document()
-    d["info"]["description"] = "a" * (2 * 1024 * 1024)
-    with pytest.raises(DocumentError):
-        load_openapi(input_file(tmp_path, d))
+    monkeypatch.setattr(openapi, "MAX_DEPTH", 128)
+    path = input_file(tmp_path, agent_document())
+    size = path.stat().st_size
+    monkeypatch.setattr(openapi, "MAX_BYTES", size - 1)
+    with pytest.raises(DocumentError, match=rf"Document byte limit exceeded .*MAX_BYTES={size - 1}, observed={size}"):
+        load_openapi(path)
 
 
 def test_non_agent_public_shape_needs_input(tmp_path):
