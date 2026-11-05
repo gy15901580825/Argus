@@ -1,4 +1,6 @@
 import json
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -217,3 +219,32 @@ def test_load_rejects_response_fields_mapping_instead_of_assertions_list(tmp_pat
     spec = {'equals': {'$.value': 'expected'}}
     with pytest.raises(ValueError, match='response_fields'):
         load_probe(write_probe(tmp_path, spec, assertions={'response_fields': spec}))
+
+
+def test_invalid_response_fields_load_error_names_probe_file(tmp_path):
+    path = write_probe(tmp_path, {'equalz': {'$.route.text': 'review'}})
+    with pytest.raises(ValueError) as error:
+        load_probe(path)
+    assert path.name in str(error.value)
+    assert 'response_fields' in str(error.value)
+
+
+@pytest.mark.parametrize('blocked, operation', [
+    ('httpx', "from argus.probe import load_all_probes; assert len(list(load_all_probes(Path('argus/probes')))) > 100"),
+    ('jsonpath_ng', "from argus.assertions import evaluate_assertions; assert evaluate_assertions(({'max_tool_calls': 1},), {}, '')[0].passed"),
+])
+def test_existing_checks_and_probe_loading_do_not_require_response_field_dependencies(blocked, operation):
+    script = f"""
+import builtins
+from pathlib import Path
+real_import = builtins.__import__
+def without_dependency(name, *args, **kwargs):
+    if name.split('.')[0] == {blocked!r}:
+        raise ModuleNotFoundError(name)
+    return real_import(name, *args, **kwargs)
+builtins.__import__ = without_dependency
+{operation}
+"""
+    process = subprocess.run([sys.executable, '-c', script], cwd=Path(__file__).resolve().parents[1],
+                             capture_output=True, text=True)
+    assert process.returncode == 0, process.stderr
