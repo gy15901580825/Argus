@@ -208,7 +208,9 @@ def test_bearer_examples_are_not_emitted_or_resolved(tmp_path, monkeypatch):
     result, out = invoke(tmp_path, d)
     assert result.exit_code == 3, result.output
     spec = json.loads(out.read_text())
-    assert spec["transport"]["auth"] == {"kind": "bearer", "secret": {"source": "env", "name": "TARGET_API_KEY"}}
+    assert spec["transport"]["auth"]["kind"] == "bearer"
+    assert spec["transport"]["auth"]["secret"]["source"] == "env"
+    assert spec["transport"]["auth"]["secret"]["name"] == "TARGET_API_KEY"
     assert "PRIVATE_EXAMPLE_DO_NOT_COPY" not in result.output
     assert all("PRIVATE_EXAMPLE_DO_NOT_COPY" not in p.read_text() for p in tmp_path.glob("target*"))
 
@@ -262,6 +264,133 @@ def test_non_agent_public_shape_needs_input(tmp_path):
             "schema": {"type": "array", "items": {"type": "object"}}
         }}}
     }}}}
+    result, out = invoke(tmp_path, d)
+    assert result.exit_code == 3, result.output
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("security", [None, "bearer", [None], [{"auth": "bad"}], [{}, None]])
+def test_malformed_security_is_not_anonymous(tmp_path, security):
+    d = agent_document(); d["security"] = security
+    result, out = invoke(tmp_path, d)
+    assert result.exit_code == 3, result.output
+    assert not out.exists()
+    assert "authentication_unsupported" in out.with_suffix(".gaps.json").read_text()
+
+
+def test_duplicate_operation_ids_are_loading_errors(tmp_path):
+    d = agent_document(); d["paths"]["/other"] = copy.deepcopy(d["paths"]["/ask"])
+    with pytest.raises(DocumentError):
+        catalog_operations(load_openapi(input_file(tmp_path, d)))
+
+
+def test_cycles_remain_bounded_and_block_drafting(tmp_path):
+    d = agent_document()
+    d["components"] = {"schemas": {"A": {"$ref": "#/components/schemas/A"}}}
+    result, out = invoke(tmp_path, d)
+    assert result.exit_code == 3, result.output
+    assert not out.exists()
+    assert "reference_cycle" in out.with_suffix(".gaps.json").read_text()
+
+
+@pytest.mark.parametrize("ref", ["#/components/~2bad", "#/paths/missing", "#/list/-1"])
+def test_malformed_or_missing_reference_pointers_fail(tmp_path, ref):
+    d = agent_document(); d["list"] = [{}]
+    d["components"] = {"schemas": {"A": {"$ref": ref}}}
+    with pytest.raises(DocumentError):
+        load_openapi(input_file(tmp_path, d))
+
+
+def test_async_response_and_links_are_not_downgraded_to_sync(tmp_path):
+    d = agent_document()
+    op = d["paths"]["/ask"]["post"]
+    op["responses"]["202"] = op["responses"].pop("200")
+    op["responses"]["202"]["links"] = {"next": {"operationId": "poll"}}
+    result, out = invoke(tmp_path, d)
+    assert result.exit_code == 3, result.output
+    assert not out.exists()
+    assert "delivery_unsupported" in out.with_suffix(".gaps.json").read_text()
+
+
+def test_required_business_flag_is_not_filled_from_example(tmp_path):
+    d = agent_document()
+    schema = d["paths"]["/ask"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+    schema["required"].append("publish")
+    schema["properties"]["publish"] = {"type": "boolean", "default": True}
+    result, out = invoke(tmp_path, d)
+    assert result.exit_code == 3, result.output
+    assert not out.exists()
+    assert "business_input_missing" in out.with_suffix(".gaps.json").read_text()
+
+
+def test_write_error_rolls_back_all_new_artifacts(tmp_path, monkeypatch):
+    import os
+    real = os.link
+    calls = []
+    def fail_second(source, destination):
+        calls.append(destination)
+        if len(calls) == 2:
+            raise OSError("simulated disk error")
+        return real(source, destination)
+    monkeypatch.setattr(os, "link", fail_second)
+    result, out = invoke(tmp_path)
+    assert result.exit_code == 1
+    assert not list(tmp_path.glob("target*"))
+    assert not list(tmp_path.glob(".argus-draft-*"))
+
+
+def test_dangling_artifact_symlink_is_preserved(tmp_path):
+    occupied = tmp_path / "target.gaps.json"
+    occupied.symlink_to(tmp_path / "missing")
+    result, out = invoke(tmp_path)
+    assert result.exit_code == 1
+    assert occupied.is_symlink()
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("number", ["NaN", "Infinity", "-Infinity"])
+def test_non_json_numbers_are_rejected(tmp_path, number):
+    p = tmp_path / "api.json"
+    p.write_text(json.dumps(agent_document())[:-1] + ',"x-number":' + number + '}')
+    with pytest.raises(DocumentError):
+        load_openapi(p)
+
+
+def test_reference_siblings_cannot_overwrite_referenced_type(tmp_path):
+    d = agent_document()
+    d["components"] = {"schemas": {"String": {"type": "string"}, "Conflict": {
+        "$ref": "#/components/schemas/String", "type": "integer"
+    }}}
+    result, out = invoke(tmp_path, d)
+    assert result.exit_code == 3, result.output
+    assert not out.exists()
+    assert "reference_siblings_unsupported" in out.with_suffix(".gaps.json").read_text()
+
+
+def test_query_method_is_explicitly_unsupported(tmp_path):
+    d = agent_document("3.2.0")
+    d["paths"]["/ask"]["query"] = d["paths"]["/ask"].pop("post")
+    result, out = invoke(tmp_path, d)
+    assert result.exit_code == 3
+    assert not out.exists()
+    assert "operation_unsupported" in out.with_suffix(".gaps.json").read_text()
+
+
+@pytest.mark.parametrize("constraint", [{"const": "fixed"}, {"pattern": "^fixed$"},
+                                        {"maxLength": 3}, {"contentEncoding": "base64"}])
+def test_unimplemented_schema_constraints_block_compilation(tmp_path, constraint):
+    d = agent_document()
+    question = d["paths"]["/ask"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["question"]
+    question.update(constraint)
+    result, out = invoke(tmp_path, d)
+    assert result.exit_code == 3, result.output
+    assert not out.exists()
+    assert "operation_unsupported" in out.with_suffix(".gaps.json").read_text()
+
+
+def test_prompt_enum_is_not_used_as_arbitrary_prompt_binding(tmp_path):
+    d = agent_document()
+    d["paths"]["/ask"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["question"]["enum"] = ["fixed"]
     result, out = invoke(tmp_path, d)
     assert result.exit_code == 3, result.output
     assert not out.exists()
