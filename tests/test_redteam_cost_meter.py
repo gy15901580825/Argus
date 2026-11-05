@@ -281,7 +281,7 @@ def test_run_scope_resumes_from_spent_usd():
     with m.run_scope("r", spent_usd=0.05):
         with pytest.raises(CostExceededError, match=r"spent \$0\.1000"):
             m.record("claude-haiku-4-5-20251001", 0, 10_000)
-    assert m._spent_in_run is None
+    assert m._run_state.get() is None
 
 
 def test_run_scope_resume_skips_the_deep_budget_check():
