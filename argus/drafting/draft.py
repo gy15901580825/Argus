@@ -120,6 +120,10 @@ class DraftArtifacts:
     def validated(self):
         return replace(self, provenance={**self.provenance, "validation": {"offline": "passed"}})
 
+    def with_proposal(self, disclosure):
+        return replace(self, provenance={**self.provenance, "model_proposal": disclosure,
+                       "selection": {**self.provenance["selection"], "mode": disclosure["effective_mode"]}})
+
 
 def _gap(catalog, field, code, why, *, pointer="", kind="documentation_gap", blocking=True):
     return Gap(field, why, DECISIONS.get(code, "Provide a supported documented representation for this field before compiling the flow."),
@@ -546,13 +550,19 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
     return DraftArtifacts(state, spec, gaps, provenance)
 
 
-def write_artifacts(artifacts: DraftArtifacts, out: Path) -> tuple[Path, ...]:
+def artifact_destinations(out: Path) -> tuple[Path, ...]:
     out = Path(out)
     destinations = (out, out.with_suffix(".gaps.json"), out.with_suffix(".provenance.json"))
     if any(os.path.lexists(path) for path in destinations):
         raise FileExistsError("A draft artifact already exists; choose a new output path")
     if len(set(destinations)) != 3 or not out.parent.is_dir():
         raise ValueError("Output requires distinct JSON artifacts in an existing directory")
+    return destinations
+
+
+def write_artifacts(artifacts: DraftArtifacts, out: Path) -> tuple[Path, ...]:
+    out = Path(out)
+    destinations = artifact_destinations(out)
     gap_data = {"schema_version": 1, "state": artifacts.state.value,
                 "spec_written": artifacts.spec is not None, "gaps": [gap.to_dict() for gap in artifacts.gaps]}
     payloads = [(destinations[1], gap_data), (destinations[2], artifacts.provenance)]
