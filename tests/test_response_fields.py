@@ -211,3 +211,9 @@ async def test_invalid_json_is_runner_error(tmp_path):
     assert len(findings) == 1
     assert findings[0].verdict == 'error'
     assert 'response_fields_not_json' in findings[0].reasoning
+
+
+def test_load_rejects_response_fields_mapping_instead_of_assertions_list(tmp_path):
+    spec = {'equals': {'$.value': 'expected'}}
+    with pytest.raises(ValueError, match='response_fields'):
+        load_probe(write_probe(tmp_path, spec, assertions={'response_fields': spec}))
