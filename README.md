@@ -34,6 +34,17 @@ uploaded to GitHub Code Scanning.
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](pyproject.toml)
 
+## Try it in one minute
+
+```bash
+pip install argus-probe
+argus-probe quickstart
+```
+
+`quickstart` tests a built-in vulnerable MCP demo agent with no API key or target and writes `argus-quickstart.html`.
+
+![Quickstart report with finding details hidden: 12 probes, 7 fail, 5 pass, and 0 error.](docs/assets/quickstart-report.png)
+
 ---
 
 ## Motivation
@@ -267,7 +278,7 @@ a container or on another machine, set `trap_host`, `trap_port` and
 agent can't reach your machine at all, submit the run with `--api-url` and
 `--token` to a compatible hosted service instead.
 
-To see a report first with no key and no target, run `argus-probe quickstart`. It tests a built-in vulnerable MCP demo agent and writes `argus-quickstart.html`.
+To see a report first, follow [Try it in one minute](#try-it-in-one-minute).
 
 Without `--local`, the CLI is a client of a server implementing the
 `/api/v1/redteam` API: it submits the run, polls until it finishes, and
