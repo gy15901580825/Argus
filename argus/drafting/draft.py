@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import ipaddress
 import os
 import re
 import tempfile
@@ -8,6 +9,9 @@ from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
+
+import httpx
+import idna
 
 from argus_transport import TransportSpecV2
 from argus_transport.models import AuthSpec
@@ -122,9 +126,14 @@ def _server(url):
     decoded = unquote(parsed.path)
     if decoded != parsed.path or "//" in decoded or ".." in decoded.split("/"):
         raise ValueError("Invalid server path")
-    host = parsed.hostname.lower()
-    if ":" in host:
-        host = "[" + host + "]"
+    try:
+        host = httpx.URL(url).raw_host.decode("ascii")
+        if ":" in host:
+            host = "[" + str(ipaddress.IPv6Address(host)) + "]"
+        else:
+            host = idna.encode(host, std3_rules=True).decode("ascii").lower()
+    except (httpx.InvalidURL, UnicodeError, ValueError):
+        raise ValueError("Invalid server host") from None
     port = parsed.port
     origin = parsed.scheme.lower() + "://" + host
     if port is not None and port != {"http": 80, "https": 443}[parsed.scheme]:
