@@ -65,19 +65,26 @@ def test_control_must_override_exactly_one_payload_key(tmp_path):
             load(tmp_path, scenario={**BASE["scenario"], "control": control})
 
 
-def test_sessions_or_trials_without_control_is_rejected(tmp_path):
+def test_sessions_without_control_is_rejected(tmp_path):
     scenario = {k: v for k, v in BASE["scenario"].items() if k != "control"}
     with pytest.raises(ValueError):
         load(tmp_path, scenario=scenario)
+
+
+@pytest.mark.parametrize("with_scenario", [False, True])
+@pytest.mark.parametrize("trials", [1, 4, 20])
+def test_prompts_without_control_accepts_trials(tmp_path, with_scenario, trials):
     data = copy.deepcopy(BASE)
     data.pop("sessions")
     data["prompts"] = ["x"]
-    data["scenario"] = scenario
-    data["trials"] = 1
+    if with_scenario:
+        data["scenario"].pop("control")
+    else:
+        data.pop("scenario")
+    data["trials"] = trials
     path = tmp_path / "probe.yaml"
     path.write_text(yaml.safe_dump(data))
-    with pytest.raises(ValueError):
-        load_probe(path)
+    assert load_probe(path).trials == trials
 
 
 def test_phased_probe_requires_assertions_and_decision_point_and_no_judge(tmp_path):

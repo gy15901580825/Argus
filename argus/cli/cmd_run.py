@@ -33,6 +33,7 @@ EXIT_COST_CAP = 4
 @click.option("--out", "out_file", type=click.Path(), required=True, help="Output report file path.")
 @click.option("--token", envvar="ARGUS_API_TOKEN", default=None, help="API token for --api-url (or env ARGUS_API_TOKEN). Not used with --local.")
 @click.option("--api-url", envvar="ARGUS_API_URL", default=None, help="Base URL of a server implementing the /api/v1/redteam API (or env ARGUS_API_URL). Not used with --local.")
+@click.option("--trials", type=click.IntRange(1, 20), default=None, help="Repeat each whole static probe 1-20 times, replacing its YAML trials count.")
 @click.option("--max-wait", type=float, default=1800.0, help="Max seconds to wait for run completion. Ignored with --local.")
 @click.option("--per-run-cap", "per_run_cap", type=float, default=None, help="Maximum USD judge/attacker spend for this run. A run whose estimate is above it does not start; the run also stops when a completed call takes spend past it. Default: $0.50.")
 @click.option("--fail-on", "fail_on", type=click.Choice(SEVERITY_ORDER), default=None,
@@ -47,7 +48,7 @@ EXIT_COST_CAP = 4
 @click.option("--compare-to", "compare_to", default=None,
               help="Base branch: report and gate only on failures that are new relative to the latest run on it. Needs run history on a server implementing the /api/v1/redteam API.")
 @judge_options
-def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, token: str | None, api_url: str | None, max_wait: float, per_run_cap: float | None, fail_on: str | None, local: bool, compare_to: str | None, skip_judged: bool = False):
+def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, token: str | None, api_url: str | None, max_wait: float, per_run_cap: float | None, fail_on: str | None, local: bool, compare_to: str | None, skip_judged: bool = False, trials: int | None = None):
     """Submit a red-team run and write the report to disk."""
     try:
         spec, secret_values = load_target_spec_with_secrets(target)
@@ -81,7 +82,7 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
         ]
         if typed:
             raise click.UsageError(f"--local runs in this process; do not pass {' or '.join(typed)}")
-        _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, secret_values, skip_judged)
+        _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, secret_values, skip_judged, trials)
         return
     if _uses_python(spec):
         raise click.UsageError("a python target runs a local function; it needs --local")
@@ -113,6 +114,8 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
 
     click.echo(f"Submitting run to {api_url}/api/v1/redteam/runs ...")
     try:
+        if trials is not None:
+            body["trials"] = trials
         resp = api_client.post_run(api_url, token, body=body)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 402:
@@ -253,13 +256,13 @@ def _write_report(out_file: str, report: str, encoding: str | None = None, echo=
 
 
 def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, secret_values=(),
-                 skip_judged=False) -> None:
+                 skip_judged=False, trials=None) -> None:
     from argus_transport.runtime_v2 import TargetRunStopped
 
     click.echo(f"Running {('all probes that fit this target' if not tokens else f'{len(tokens)} probe(s)')} locally ...")
     try:
         result = run_local_and_render(spec, tokens, per_run_cap, report_format, secret_values, fail_on,
-                                      skip_judged=skip_judged)
+                                      skip_judged=skip_judged, **({"trials": trials} if trials is not None else {}))
     except StopSignalReceived as e:
         click.echo(f"{STOP_MESSAGES[e.signum]}: the run was stopped before it finished; no report was written.", file=sys.stderr)
         if e.target_cleanup is not None:

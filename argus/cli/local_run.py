@@ -64,6 +64,7 @@ def run_local_and_render(
     secret_values: Iterable[str] = (),
     fail_on: str | None = None,
     skip_judged: bool = False,
+    trials: int | None = None,
 ) -> LocalRunResult:
     """Run the probes, print one line per finding, return the rendered report and findings.
 
@@ -77,7 +78,7 @@ def run_local_and_render(
         from argus.local import check_run
 
         # A run the engine would refuse (bad spec, no key, over the cap) must not start a testbed.
-        check_run(spec, probe_ids, per_run_cap_usd=per_run_cap, skip_judged=skip_judged)
+        check_run(spec, probe_ids, per_run_cap_usd=per_run_cap, skip_judged=skip_judged, **({"trials": trials} if trials is not None else {}))
         env, testbed = servers.local_environment(spec), servers.local_testbed(spec)
     else:
         # Nothing to start, so the demo servers stay unimported.
@@ -100,6 +101,7 @@ def run_local_and_render(
             secret_values,
             fail_on,
             skip_judged,
+            trials,
         )
 
 
@@ -111,6 +113,7 @@ def _run_and_render(
     secret_values: Iterable[str],
     fail_on: str | None,
     skip_judged: bool,
+    trials: int | None = None,
 ) -> LocalRunResult:
     from argus.local import LocalRunError, run_local
     from argus_transport.runtime_v2 import TargetRunStopped
@@ -125,7 +128,7 @@ def _run_and_render(
         nonlocal coverage, judge, target_cleanup
         try:
             async for event in run_local(
-                spec, probe_ids, per_run_cap_usd=per_run_cap, skip_judged=skip_judged
+                spec, probe_ids, per_run_cap_usd=per_run_cap, skip_judged=skip_judged, **({"trials": trials} if trials is not None else {})
             ):
                 if event.get("type") == "target_cleanup":
                     target_cleanup = event["target_cleanup"]

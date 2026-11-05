@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from argus.trials import TrialRecord
 from argus.world_assertions import (
     CHECKS,
     AssertionSkipped,
@@ -67,14 +68,10 @@ class TrialResult:
     attack: PhaseRun | None
 
     def as_dict(self) -> dict:
-        return {
-            "trial": self.trial,
-            "verdict": self.verdict,
-            "reason_code": self.reason_code,
-            "reason": self.reason,
-            "clean": self.clean.evidence,
-            "attack": self.attack.evidence if self.attack else None,
-        }
+        return TrialRecord(self.trial, self.verdict, self.reason_code, self.reason,
+                           self.clean.evidence,
+                           self.attack.evidence if self.attack else None).as_dict()
+
 
 
 def _incomplete(

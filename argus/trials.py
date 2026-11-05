@@ -4,6 +4,55 @@ import datetime
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import TYPE_CHECKING, TypeAlias, Union
+from uuid import UUID
+
+if TYPE_CHECKING:
+    from argus.runner import Finding
+
+JSONValue: TypeAlias = Union[None, bool, int, float, str, list["JSONValue"], dict[str, "JSONValue"]]
+
+
+def snapshot(value: object) -> JSONValue:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, (datetime.datetime, datetime.date, UUID)):
+        return str(value) if isinstance(value, UUID) else value.isoformat()
+    if isinstance(value, (list, tuple)):
+        return [snapshot(item) for item in value]
+    if isinstance(value, Mapping):
+        if any(not isinstance(key, str) for key in value):
+            raise TypeError("trial evidence requires string dictionary keys")
+        return {key: snapshot(item) for key, item in value.items()}
+    raise TypeError(f"unsupported trial evidence value: {type(value).__name__}")
+
+
+@dataclass(frozen=True)
+class TrialRecord:
+    trial: int
+    verdict: str
+    reason_code: str | None
+    reason: str
+    clean: JSONValue
+    attack: JSONValue
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "clean", snapshot(self.clean))
+        object.__setattr__(self, "attack", snapshot(self.attack))
+
+    def as_dict(self) -> dict[str, JSONValue]:
+        return {"trial": self.trial, "verdict": self.verdict,
+                "reason_code": self.reason_code, "reason": self.reason,
+                "clean": snapshot(self.clean), "attack": snapshot(self.attack)}
+
+
+def snapshot_finding(finding: "Finding") -> dict[str, JSONValue]:
+    return {"attack_prompt": finding.attack_prompt,
+            "target_response": finding.target_response,
+            "verdict": finding.verdict, "reasoning": finding.reasoning,
+            "target_latency_ms": finding.target_latency_ms,
+            "evidence": snapshot(finding.evidence)}
+
 
 COUNT_KEYS = (
     "attempted",

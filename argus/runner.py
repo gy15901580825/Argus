@@ -20,7 +20,8 @@ from argus.a2a.events import events_from_trials
 from argus.cost_meter import CostExceededError
 from argus.events import Event
 from argus.phases import PhaseRun, clean_failure, judge_trial
-from argus.trials import aggregate_trials, pass_wording
+from argus.trials import TrialRecord, aggregate_trials, pass_wording, snapshot_finding
+from argus_transport.runtime_v2 import TargetRunStopped
 from argus.world_assertions import report_from_reply
 from argus.probe import Probe
 from argus.targets._base import ProbeNotApplicable
@@ -442,6 +443,16 @@ class Runner:
                 yield finding
             return
 
+        self._sends_ok = self._sends_failed = 0
+        if not getattr(probe, "iterative", False) and probe.trials > 1:
+            inner = self._run_static_trials(probe, rubric_text)
+        else:
+            inner = self._run_once(probe, rubric_text)
+        async for finding in inner:
+            yield finding
+        self._check_breaker()
+
+    async def _run_once(self, probe, rubric_text) -> AsyncIterator[Finding]:
         # The probe is going to run: tell a stateful adapter where the previous
         # probe ended. Deliberately after both skip decisions — a skipped probe
         # must not open a session — and before any exchange, so nothing the
@@ -496,15 +507,13 @@ class Runner:
                     reasoning=f"target could not set up this probe: {_short(e)}",
                     evidence=None,
                 )
-                self._sends_ok, self._sends_failed = 0, 1
+                self._sends_failed += 1
                 self._last_send_failure = (
                     f"target could not set up this probe: {_short(e)}"
                 )
-                self._check_breaker()
                 return
 
         self._evidence_failed = False
-        self._sends_ok = self._sends_failed = 0
 
         # Dispatch on iterative flag
         if getattr(probe, "iterative", False):
@@ -569,7 +578,55 @@ class Runner:
                 f = replace(f, evidence={**f.evidence, "transport": metadata},
                             reasoning="target API refused the request; scenario was not exercised")
             yield f
-        self._check_breaker()
+
+    async def _run_static_trials(self, probe, rubric_text) -> AsyncIterator[Finding]:
+        records = []
+        template = None
+        severity = "info"
+        latency = 0.0
+        stop = None
+        ranks = {name: rank for rank, name in enumerate(("info", "low", "medium", "high", "critical"))}
+        for trial in range(1, probe.trials + 1):
+            observations = []
+            try:
+                async for finding in self._run_once(probe, rubric_text):
+                    observations.append(snapshot_finding(finding))
+                    if template is None:
+                        template = finding
+                    if ranks[finding.severity] > ranks[severity]:
+                        severity = finding.severity
+                    latency += finding.target_latency_ms
+            except (CostExceededError, TargetRunStopped) as exc:
+                stop = exc
+            summary = aggregate_trials([item["verdict"] for item in observations])
+            verdict = summary.verdict
+            reason_code = summary.reason_code
+            reason = " ".join(item["reasoning"] for item in observations)
+            if stop is not None:
+                if verdict not in (VERDICT_FAIL, VERDICT_WARN):
+                    verdict = VERDICT_ABORTED if isinstance(stop, CostExceededError) else VERDICT_ERROR
+                reason_code = "cost_cap" if isinstance(stop, CostExceededError) else stop.reason
+                reason = f"trial interrupted: {_named(stop)}"
+            elif not observations:
+                reason = "trial produced no observations"
+            records.append(TrialRecord(trial, verdict, reason_code, reason, None,
+                                       {"observations": observations}))
+            if stop is not None:
+                break
+        summary = aggregate_trials([row.verdict for row in records],
+                                   stopped_at_cost_cap=isinstance(stop, CostExceededError))
+        probed_at = template.probed_at if template is not None else datetime.now(timezone.utc)
+        wording = pass_wording(probe.trials, probed_at.date()) if summary.verdict == VERDICT_PASS else summary.sentence()
+        reasons = " ".join(f"Trial {row.trial}: {row.verdict}: {row.reason}" for row in records)
+        reasoning = f"{wording} {summary.counts_line()} {reasons}"
+        evidence = {"trial_summary": summary.as_dict(), "trials": [row.as_dict() for row in records]}
+        if template is None:
+            template = self._finding(probe, "", "", 0.0, probed_at, verdict=summary.verdict,
+                                     severity="info", confidence=1.0, reasoning=reasoning, evidence=evidence)
+        yield replace(template, verdict=summary.verdict, severity=severity,
+                      target_latency_ms=latency, reasoning=reasoning, evidence=evidence)
+        if stop is not None:
+            raise stop
 
     def _note_send(self, failure_reason: str | None) -> None:
         """Count one send for the breaker; a block is an answer, so pass None for it."""

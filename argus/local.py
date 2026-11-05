@@ -52,14 +52,15 @@ def check_run(
     per_run_cap_usd: float | None = None,
     env: Mapping[str, str] | None = None,
     skip_judged: bool = False,
+    trials: int | None = None,
 ) -> None:
     """Raise LocalRunError when run_local would refuse to start (target, probe ids, key, cost).
 
     Calls nothing over the network, so a caller can run it before starting anything for the run."""
-    _prepare(target, probe_ids, mode=mode, per_run_cap_usd=per_run_cap_usd, env=env, skip_judged=skip_judged)
+    _prepare(target, probe_ids, mode=mode, per_run_cap_usd=per_run_cap_usd, env=env, skip_judged=skip_judged, trials=trials)
 
 
-def _prepare(target, probe_ids, *, mode, per_run_cap_usd, env, skip_judged) -> _Plan:
+def _prepare(target, probe_ids, *, mode, per_run_cap_usd, env, skip_judged, trials=None) -> _Plan:
     env = os.environ if env is None else env
 
     # Same credential rule as POST /redteam/run: the configured provider decides
@@ -83,7 +84,7 @@ def _prepare(target, probe_ids, *, mode, per_run_cap_usd, env, skip_judged) -> _
 
     try:
         req = api.RunRequest(
-            target=target, probe_ids=probe_ids, mode=mode, per_run_cap_usd=per_run_cap_usd
+            target=target, probe_ids=probe_ids, mode=mode, per_run_cap_usd=per_run_cap_usd, trials=trials
         )
     except ValueError as e:  # pydantic ValidationError is a ValueError subclass
         raise LocalRunError(str(e), code="input") from e
@@ -128,6 +129,7 @@ def _prepare(target, probe_ids, *, mode, per_run_cap_usd, env, skip_judged) -> _
     req = req.model_copy(update={"probe_ids": requested})
 
     try:
+        api._check_trials_mode(req)
         api._COST_METER.check_or_abort_pre_run(
             probe_ids=requested,
             target_kind=api._resolve_target_kind(target),
@@ -139,6 +141,8 @@ def _prepare(target, probe_ids, *, mode, per_run_cap_usd, env, skip_judged) -> _
         )
     except CostExceededError as e:
         raise LocalRunError(_cost_message(e), code="cost") from e
+    except HTTPException as e:
+        raise LocalRunError(str(e.detail), code="input") from e
 
     return _Plan(req, cfg, anthropic_api_key, skipped, warnings, judged)
 
@@ -151,6 +155,7 @@ async def run_local(
     per_run_cap_usd: float | None = None,
     env: Mapping[str, str] | None = None,
     skip_judged: bool = False,
+    trials: int | None = None,
 ) -> AsyncIterator[dict]:
     """Yield events and finding dicts, then one {"type": "coverage", "coverage": dict, "summary": dict} event.
 
@@ -161,7 +166,7 @@ async def run_local(
     skipped and run the rest, instead of refusing the run.
     """
     req, cfg, anthropic_api_key, skipped, warnings, judged = _prepare(
-        target, probe_ids, mode=mode, per_run_cap_usd=per_run_cap_usd, env=env, skip_judged=skip_judged)
+        target, probe_ids, mode=mode, per_run_cap_usd=per_run_cap_usd, env=env, skip_judged=skip_judged, trials=trials)
 
     if judged:
         yield {"type": "judge", "judge": llm.describe(cfg), "record": llm.judge_record(cfg),
