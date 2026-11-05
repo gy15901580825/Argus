@@ -327,6 +327,16 @@ errors (for example a 401 or a timeout from your agent):
 
 `argus-probe init --workflow` writes a complete workflow file that uses it.
 
+## Draft a target from OpenAPI
+
+Create a transport v2 draft from a local OpenAPI 3.x JSON/YAML file without model or target requests.
+
+```bash
+argus-probe draft-target --openapi api.yaml --out target.json --no-model
+```
+
+The command writes a gap checklist and provenance. It writes the target spec only when its bindings can compile and pass offline validation. Inferred prompt, answer and completion mappings require review; missing mappings produce `needs_input` without a spec. The first version supports simple synchronous JSON POST operations. It does not prove real-agent compatibility or invent cleanup. See [the CLI guide](docs/cli.md#draft-a-target-from-local-openapi) for supported inputs, limitations and exit codes.
+
 ## Check a skill before you install it
 
 ```bash
