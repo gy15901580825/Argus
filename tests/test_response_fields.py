@@ -248,3 +248,11 @@ builtins.__import__ = without_dependency
     process = subprocess.run([sys.executable, '-c', script], cwd=Path(__file__).resolve().parents[1],
                              capture_output=True, text=True)
     assert process.returncode == 0, process.stderr
+
+
+def test_response_fields_mapping_load_error_names_probe_file(tmp_path):
+    spec = {'equals': {'$.route.text': 'review'}}
+    path = write_probe(tmp_path, spec, assertions={'response_fields': spec})
+    with pytest.raises(ValueError) as error:
+        load_probe(path)
+    assert path.name in str(error.value)
