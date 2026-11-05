@@ -829,3 +829,24 @@ def test_reserved_authentication_headers_are_unsupported_gap(tmp_path, name):
     assert not out.exists()
     gaps = json.loads(out.with_suffix(".gaps.json").read_text())["gaps"]
     assert any(g["code"] == "authentication_unsupported" and g["blocking"] for g in gaps)
+
+
+@pytest.mark.parametrize("options,option", [
+    (["--operation", "missing"], "--operation"),
+    (["--server-origin", "http://127.0.0.1:8123/base"], "--server-origin"),
+    (["--server-origin", "http://user@127.0.0.1:8123"], "--server-origin"),
+])
+def test_invalid_cli_choices_are_usage_errors(tmp_path, options, option):
+    result, out = invoke(tmp_path, None, *options)
+    assert result.exit_code == 2, result.output
+    assert option in result.output
+    assert "input document" not in result.output
+    assert not list(tmp_path.glob("target*"))
+
+
+def test_output_parent_missing_is_usage_error(tmp_path):
+    source = input_file(tmp_path)
+    result = CliRunner().invoke(main, ["draft-target", "--openapi", str(source), "--out", str(tmp_path / "missing" / "target.json"), "--no-model"])
+    assert result.exit_code == 2, result.output
+    assert "--out" in result.output
+    assert not (tmp_path / "missing").exists()
