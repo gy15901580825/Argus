@@ -319,6 +319,24 @@ In 0.6.0 and earlier, a probe that hit a 5xx, a timeout or a connection error st
 
 For local version 2 runs with undo requests or tracked created resources, [run.json](run-json.md#target-cleanup) includes `target_cleanup`. Unfinished cleanup makes the report incomplete and exits 1 unless the cost cap takes priority. The console lists unresolved intents and redacted full resource names for manual cleanup. Informational `leftover` names alone keep the run completed and the exit code unchanged. Unconfirmed cleanup keeps the run incomplete. SIGINT and SIGTERM write no report, even if cleanup is incomplete. A second signal may interrupt cleanup; the first signal still determines the exit code. SIGKILL and crashes cannot run the in-memory undo stack.
 
+## Draft a target from local OpenAPI
+
+`draft-target` prepares a transport v2 draft and a review checklist from a local OpenAPI 3.0, 3.1 or 3.2 JSON/YAML file. This first version requires `--no-model`. It makes no model or target requests and does not resolve credentials or environment bindings.
+
+```bash
+argus-probe draft-target --openapi api.yaml --out target.json --no-model
+argus-probe draft-target --openapi api.yaml --out target.json --no-model --operation ask --server-origin http://127.0.0.1:8123
+argus-probe validate-target --target target.json --offline
+```
+
+The command writes `target.gaps.json` and `target.provenance.json`. It writes `target.json` only after the selected fields compile into a valid target and that exact spec passes the existing offline validator. It refuses to overwrite any of these files. Missing invoke, server, prompt, answer or terminal-state choices leave `spec_written: false` and `needs_input`. Schema and name-based choices remain proposals with `needs_review`; a valid draft does not prove real-agent compatibility or authorize execution.
+
+The first version supports simple synchronous JSON POST operations. Polling, streaming, multipart, complex schemas and ambiguous authentication produce gaps. No cleanup endpoint or business constant is invented. Review omitted optional fields, cleanup requirements and credential bindings before using a draft. Examples and defaults are omitted from the catalog; policy timeouts and budgets are recorded separately in provenance.
+
+Only local inputs are accepted. Internal references and bounded adjacent JSON/YAML files within the input directory are supported. Network references, symlinks, directory escapes, known credential filenames and YAML aliases are rejected. The loader enforces byte, depth and node limits. Filename checks do not establish that an arbitrary file is safe; provide only authorized document files.
+
+Exit code `0` means ready after offline validation. `1` means a read, parse, compile, validation or write error; `2` means invalid command usage; `3` means review or input is needed. In this no-model command, inferred bindings require review. There is no `--execute`, `--verify-local` or `--docs` option.
+
 ## Repeated trials
 
 ```bash

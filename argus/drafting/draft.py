@@ -1,0 +1,488 @@
+from __future__ import annotations
+
+import json
+import os
+import re
+import tempfile
+from dataclasses import dataclass, replace
+from enum import Enum
+from pathlib import Path
+from urllib.parse import unquote, urlsplit
+
+from argus_transport import TransportSpecV2
+
+from .openapi import OperationCatalog, Source, pointer_child
+
+
+DECISIONS = {
+    "operation_ambiguous": "Select the documented invoke operation with --operation.",
+    "invoke_proposed": "Confirm that the selected operation is the agent invocation.",
+    "server_missing": "Provide an OpenAPI file that declares the intended server.",
+    "server_ambiguous": "Select one declared origin with --server-origin.",
+    "server_invalid": "Correct unsafe server URLs or unresolved variables in the input document.",
+    "prompt_binding_missing": "Identify the documented prompt property before compiling a target.",
+    "reply_binding_missing": "Identify the documented answer property in a successful response.",
+    "completion_missing": "Provide the documented terminal-success state instead of relying on HTTP status alone.",
+    "prompt_binding_proposed": "Confirm that this request property carries the question.",
+    "reply_binding_proposed": "Confirm that this response property carries the agent answer.",
+    "completion_proposed": "Confirm that this enum value means the agent completed successfully.",
+    "authentication_binding_required": "Bind TARGET_API_KEY to the required credential outside the generated files.",
+    "authentication_unsupported": "Select an unambiguous supported authentication scheme or supply its missing declaration.",
+    "cleanup_endpoint_missing": "Decide whether invocation creates persistent resources and supply cleanup documentation if needed.",
+    "cleanup_mapping_missing": "Select the documented cleanup relation; no cleanup request is generated yet.",
+    "business_input_missing": "Provide an explicit binding for the required business field; examples are not production values.",
+    "parameter_binding_required": "Supply the non-secret parameter through the generated TARGET_INPUT environment binding.",
+    "optional_inputs_unbound": "Decide whether the omitted optional fields or material are required for your use case.",
+}
+
+
+class DraftState(str, Enum):
+    READY = "ready"
+    NEEDS_REVIEW = "needs_review"
+    NEEDS_INPUT = "needs_input"
+    INVALID = "invalid"
+
+
+@dataclass(frozen=True)
+class Gap:
+    field: str
+    why: str
+    decision: str
+    code: str
+    kind: str
+    blocking: bool
+    source: tuple[Source, ...]
+
+    def to_dict(self):
+        return {"field": self.field, "why": self.why, "decision": self.decision,
+                "code": self.code, "kind": self.kind, "blocking": self.blocking,
+                "source": [source.to_dict() for source in self.source]}
+
+
+@dataclass(frozen=True)
+class Binding:
+    name: str
+    pointer: str
+    basis: str = "proposal"
+    value: str | None = None
+
+
+@dataclass(frozen=True)
+class DraftChoices:
+    operation: str | None
+    server: str | None
+    prompt: Binding | None
+    reply: Binding | None
+    completion: Binding | None
+    gaps: tuple[Gap, ...]
+    intent: str
+
+
+@dataclass(frozen=True)
+class DraftArtifacts:
+    state: DraftState
+    spec: dict | None
+    gaps: tuple[Gap, ...]
+    provenance: dict
+
+    def validated(self):
+        return replace(self, provenance={**self.provenance, "validation": {"offline": "passed"}})
+
+
+def _gap(catalog, field, code, why, *, pointer="", kind="documentation_gap", blocking=True):
+    return Gap(field, why, DECISIONS.get(code, "Provide a supported documented representation for this field before compiling the flow."),
+               code, kind, blocking, (catalog.document.source(pointer),))
+
+
+def _server(url):
+    if not isinstance(url, str) or any(char in url for char in "\\{}\r\n\t"):
+        raise ValueError("Invalid server URL")
+    parsed = urlsplit(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username is not None:
+        raise ValueError("Invalid server URL")
+    if parsed.password is not None or parsed.query or parsed.fragment or "%" in parsed.netloc:
+        raise ValueError("Invalid server URL")
+    if parsed.port is not None and not 1 <= parsed.port <= 65535:
+        raise ValueError("Invalid server port")
+    decoded = unquote(parsed.path)
+    if decoded != parsed.path or "//" in decoded or ".." in decoded.split("/"):
+        raise ValueError("Invalid server path")
+    host = parsed.hostname.lower()
+    if ":" in host:
+        host = "[" + host + "]"
+    port = parsed.port
+    origin = parsed.scheme.lower() + "://" + host
+    if port is not None and port != {"http": 80, "https": 443}[parsed.scheme]:
+        origin += ":" + str(port)
+    return origin, origin + parsed.path.rstrip("/")
+
+
+def _object_schema(content):
+    if not isinstance(content, dict) or set(content) != {"application/json"}:
+        return None
+    media = content["application/json"]
+    schema = media.get("schema") if isinstance(media, dict) else None
+    if not isinstance(schema, dict) or schema.get("type") != "object" or not isinstance(schema.get("properties"), dict):
+        return None
+    return schema
+
+
+def _type(schema):
+    value = schema.get("type") if isinstance(schema, dict) else None
+    if isinstance(value, list) and len(value) == 2 and "null" in value:
+        return next(item for item in value if item != "null")
+    if isinstance(value, list):
+        return None
+    return value
+
+
+def _schema_supported(schema):
+    fields = {"type", "properties", "required", "items", "enum", "nullable",
+              "additionalProperties", "description", "title", "deprecated", "readOnly", "writeOnly"}
+    if not isinstance(schema, dict) or set(schema) - fields:
+        return False
+    if _type(schema) not in {"object", "array", "string", "integer", "number", "boolean", "null"}:
+        return False
+    properties = schema.get("properties", {})
+    if not isinstance(properties, dict) or any(not _schema_supported(item) for item in properties.values()):
+        return False
+    if "items" in schema and not _schema_supported(schema["items"]):
+        return False
+    if "additionalProperties" in schema and not isinstance(schema["additionalProperties"], bool):
+        return False
+    return True
+
+
+def _unsupported(value):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key == "schema":
+                if not _schema_supported(item):
+                    return True
+            elif key == "content" and isinstance(item, dict):
+                if any(isinstance(media, dict) and "encoding" in media for media in item.values()):
+                    return True
+                if _unsupported(item):
+                    return True
+            elif _unsupported(item):
+                return True
+        return False
+    if isinstance(value, list):
+        return any(_unsupported(item) for item in value)
+    return False
+
+
+def choose_without_model(catalog: OperationCatalog, *, operation=None, server_origin=None,
+                         intent="Ask an agent a question, optionally with third-party material.") -> DraftChoices:
+    doc = catalog.document
+    gaps = []
+    chosen = None
+    candidates = [op for op in catalog.operations if op.id == operation] if operation else list(catalog.operations)
+    if len(candidates) == 1:
+        chosen = candidates[0]
+        if operation is None:
+            gaps.append(_gap(catalog, "/transport/request", "invoke_proposed",
+                             "The only operation was selected; its agent role remains a proposal.",
+                             pointer=chosen.pointer, kind="proposal", blocking=False))
+    else:
+        gaps.append(_gap(catalog, "/transport/request", "operation_ambiguous",
+                         "No unique documented invoke operation is selected.", kind="ambiguous_choice"))
+    servers = doc.data.get("servers", [])
+    server = None
+    if not isinstance(servers, list) or not servers:
+        gaps.append(_gap(catalog, "/transport/request/url", "server_missing", "No server is declared."))
+    else:
+        valid = []
+        try:
+            for entry in servers:
+                if not isinstance(entry, dict) or "variables" in entry:
+                    raise ValueError("Unresolved server variables")
+                valid.append(_server(entry.get("url")))
+            selected = [item for item in valid if item[0] == _server(server_origin)[0]] if server_origin else valid
+            if server_origin and _server(server_origin)[0] != _server(server_origin)[1]:
+                raise ValueError("Override must be an origin")
+            if len(selected) == 1:
+                server = selected[0][1]
+            else:
+                gaps.append(_gap(catalog, "/transport/request/url", "server_ambiguous",
+                                 "Choose one declared server origin.", kind="ambiguous_choice"))
+        except (ValueError, TypeError):
+            gaps.append(_gap(catalog, "/transport/request/url", "server_invalid",
+                             "A server URL or origin override is unsafe or unresolved.", kind="unsupported_feature"))
+    prompt = reply = completion = None
+    for issue in doc.issues:
+        why = "A reference cycle is not expanded." if issue.code == "reference_cycle" else "Reference siblings cannot replace or add schema constraints in this command."
+        gaps.append(Gap("/transport", why, "Provide a bounded schema without unsupported reference relations.",
+                        issue.code, "unsupported_feature", True, (issue.source,)))
+    if doc.data.get("webhooks"):
+        gaps.append(_gap(catalog, "/transport", "webhooks_unsupported", "Webhook flows are not compiled.", kind="unsupported_feature"))
+    if chosen:
+        op = chosen.data
+        pointer = chosen.pointer
+        overrides = chosen.path_data.get("servers", []) or op.get("servers", [])
+        if overrides:
+            gaps.append(_gap(catalog, "/transport/request/url", "server_override_unsupported",
+                             "Path or operation server overrides require an explicit flow decision.",
+                             pointer=pointer, kind="unsupported_feature"))
+        if chosen.method != "POST" or _unsupported(op) or op.get("callbacks"):
+            gaps.append(_gap(catalog, "/transport/request", "operation_unsupported",
+                             "This skeleton supports simple synchronous JSON POST operations.",
+                             pointer=pointer, kind="unsupported_feature"))
+        request = op.get("requestBody", {})
+        request_schema = _object_schema(request.get("content")) if isinstance(request, dict) else None
+        request_pointer = pointer + "/requestBody/content/application~1json/schema/properties"
+        if request_schema:
+            fields = [(name, schema) for name, schema in request_schema["properties"].items()
+                      if name.lower() in {"question", "prompt", "message", "goal"} and _type(schema) == "string"
+                      and not schema.get("enum") and not schema.get("readOnly")]
+            if len(fields) == 1:
+                name, _ = fields[0]
+                prompt = Binding(name, pointer_child(request_pointer, name))
+        if prompt is None:
+            gaps.append(_gap(catalog, "/transport/request/body", "prompt_binding_missing",
+                             "No unique prompt field can be proposed from the JSON schema.", pointer=pointer))
+        responses = op.get("responses", {})
+        response_schema = None
+        response_pointer = ""
+        if not isinstance(responses, dict):
+            gaps.append(_gap(catalog, "/transport/response", "response_invalid", "Responses must be an object.", pointer=pointer))
+        else:
+            successes = [(str(status), response) for status, response in responses.items()
+                         if re.fullmatch(r"2\d\d", str(status))]
+            if any(status == "202" for status, _ in successes):
+                gaps.append(_gap(catalog, "/transport/delivery", "delivery_unsupported",
+                                 "Accepted asynchronous responses require explicit poll/identity choices.",
+                                 pointer=pointer, kind="unsupported_feature"))
+            if len(successes) == 1 and isinstance(successes[0][1], dict):
+                status, response = successes[0]
+                response_schema = _object_schema(response.get("content"))
+                response_pointer = pointer + "/responses/" + status + "/content/application~1json/schema/properties"
+                if response.get("links"):
+                    gaps.append(_gap(catalog, "/transport/delivery", "links_unsupported",
+                                     "Response links need an explicit flow choice.", pointer=pointer, kind="unsupported_feature"))
+        if response_schema:
+            texts = [(name, schema) for name, schema in response_schema["properties"].items()
+                     if name.lower() in {"answer", "reply", "output", "result"} and _type(schema) == "string" and not schema.get("writeOnly")]
+            states = [(name, schema) for name, schema in response_schema["properties"].items()
+                      if name.lower() in {"status", "state"} and isinstance(schema, dict)
+                      and _type(schema) == "string"
+                      and not schema.get("writeOnly")
+                      and schema.get("enum") in [["completed"], ["COMPLETED"], ["succeeded"], ["success"]]]
+            if len(texts) == 1:
+                reply = Binding(texts[0][0], pointer_child(response_pointer, texts[0][0]))
+            if len(states) == 1:
+                completion = Binding(states[0][0], pointer_child(response_pointer, states[0][0]), value=states[0][1]["enum"][0])
+        for binding, field, missing in ((reply, "/transport/response/text", "reply_binding_missing"),
+                                         (completion, "/transport/outcome", "completion_missing")):
+            if binding is None:
+                gaps.append(_gap(catalog, field, missing, "No unique documented reply or terminal state can be proposed.", pointer=pointer))
+    return DraftChoices(chosen.id if chosen else None, server, prompt, reply, completion, tuple(gaps), intent)
+
+
+def _auth(catalog, operation):
+    security = operation.data.get("security", catalog.document.data.get("security", []))
+    if security == []:
+        return {"kind": "none"}
+    if not isinstance(security, list) or len(security) != 1 or not isinstance(security[0], dict):
+        raise ValueError("Authentication alternatives are unsupported")
+    requirement = security[0]
+    if not requirement:
+        return {"kind": "none"}
+    if len(requirement) != 1 or any(not isinstance(scopes, list) or scopes for scopes in requirement.values()):
+        raise ValueError("Composite authentication is unsupported")
+    schemes = catalog.document.data.get("components", {}).get("securitySchemes", {})
+    scheme = schemes.get(next(iter(requirement))) if isinstance(schemes, dict) else None
+    if not isinstance(scheme, dict):
+        raise ValueError("Authentication scheme is missing")
+    secret = {"source": "env", "name": "TARGET_API_KEY"}
+    if scheme.get("type") == "http" and scheme.get("scheme", "").lower() == "bearer":
+        return {"kind": "bearer", "secret": secret}
+    if scheme.get("type") == "apiKey" and scheme.get("in") == "header" and isinstance(scheme.get("name"), str):
+        return {"kind": "headers", "headers": [{"name": scheme["name"], "secret": secret}]}
+    raise ValueError("Authentication scheme is unsupported")
+
+
+def _field_path(name):
+    return "$." + name
+
+
+def _binding_schema(catalog, operation, binding, role):
+    prefix = operation.pointer + ("/requestBody/" if role == "prompt" else "/responses/")
+    if (binding.pointer not in catalog.document.sources or not binding.pointer.startswith(prefix)
+            or not binding.pointer.endswith("/properties/" + binding.name.replace("~", "~0").replace("/", "~1"))
+            or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", binding.name)
+            or binding.basis not in {"proposal", "document_fact", "user_selection"}):
+        raise ValueError("Choice references an unknown or unsupported operation field")
+    value = catalog.document.data
+    for key in binding.pointer.split("/")[1:]:
+        value = value[key.replace("~1", "/").replace("~0", "~")]
+    if _type(value) != "string" or value.get("readOnly") and role == "prompt" or value.get("writeOnly") and role == "reply":
+        raise ValueError("Choice field has an incompatible schema")
+    if role == "completion" and (binding.value is None or binding.value not in value.get("enum", [])):
+        raise ValueError("Choice terminal value is not documented")
+    return value
+
+
+def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArtifacts:
+    gaps = list(choices.gaps)
+    provenance = {"schema_version": 1, "openapi_version": catalog.document.data["openapi"],
+                  "inputs": list(catalog.document.inputs), "fields": {}, "policy_defaults": {},
+                  "selection": {"operation": choices.operation, "intent": choices.intent, "mode": "no-model"},
+                  "document_policy": {"examples_and_defaults": "omitted", "network_refs": "denied"},
+                  "validation": {"offline": "not_run"}}
+    operation = next((op for op in catalog.operations if op.id == choices.operation), None)
+    auth = None
+    if operation:
+        try:
+            auth = _auth(catalog, operation)
+            security_pointer = operation.pointer + "/security" if "security" in operation.data else "/security" if "security" in catalog.document.data else ""
+            sources = [catalog.document.source(security_pointer).to_dict()]
+            requirement = operation.data.get("security", catalog.document.data.get("security", []))
+            if requirement and isinstance(requirement[0], dict) and requirement[0]:
+                scheme_pointer = pointer_child("/components/securitySchemes", next(iter(requirement[0])))
+                sources.append(catalog.document.source(scheme_pointer).to_dict())
+            provenance["fields"]["/transport/auth"] = {"source": sources, "basis": "document_security_or_openapi_default"}
+        except (ValueError, TypeError, AttributeError):
+            gaps.append(_gap(catalog, "/transport/auth", "authentication_unsupported",
+                             "Authentication is malformed, ambiguous or not supported.", pointer=operation.pointer, kind="unsupported_feature"))
+        for binding, role, field, code in ((choices.prompt, "prompt", "/transport/request/body", "prompt_binding_proposed"),
+                                           (choices.reply, "reply", "/transport/response/text", "reply_binding_proposed"),
+                                           (choices.completion, "completion", "/transport/outcome/rules/0", "completion_proposed")):
+            if binding:
+                _binding_schema(catalog, operation, binding, role)
+                source = catalog.document.source(binding.pointer)
+                provenance["fields"][field] = {"source": [source.to_dict()], "basis": binding.basis}
+                if binding.basis == "proposal":
+                    gaps.append(_gap(catalog, field, code, "This field's business role is a name/schema-based proposal.",
+                                     pointer=binding.pointer, kind="proposal", blocking=False))
+        if auth and auth["kind"] != "none":
+            gaps.append(_gap(catalog, "/transport/auth", "authentication_binding_required",
+                             "Bind the documented authentication scheme to TARGET_API_KEY before execution.",
+                             pointer=operation.pointer, blocking=False))
+        cleanup = any(op.method == "DELETE" or re.search(r"cancel|pause", op.id, re.I) for op in catalog.operations)
+        gaps.append(_gap(catalog, "/transport/lifecycle", "cleanup_mapping_missing" if cleanup else "cleanup_endpoint_missing",
+                         "No cleanup relation is selected." if cleanup else "No cleanup endpoint is documented; decide whether this operation requires cleanup.",
+                         pointer=operation.pointer, blocking=False))
+    spec = None
+    if not any(gap.blocking for gap in gaps) and operation and choices.server and choices.prompt and choices.reply and choices.completion:
+        _, server = _server(choices.server)
+        declared = [_server(entry.get("url"))[1] for entry in catalog.document.data.get("servers", [])
+                    if isinstance(entry, dict) and not entry.get("variables")]
+        if server not in declared:
+            raise ValueError("Choice server is not a declared root server")
+        path = operation.path
+        if path.startswith("//") or "\\" in path or unquote(path) != path or ".." in path.split("/") or "?" in path or "#" in path:
+            gaps.append(_gap(catalog, "/transport/request/url", "path_unsafe", "Operation path cannot be safely compiled.", pointer=operation.pointer, kind="unsupported_feature"))
+        else:
+            request_schema = _object_schema(operation.data["requestBody"]["content"])
+            body = {choices.prompt.name: {"context": "prompt"}}
+            declarations = {}
+            query = {}
+            path_parameters = operation.path_data.get("parameters", [])
+            operation_parameters = operation.data.get("parameters", [])
+            if not isinstance(path_parameters, list) or not isinstance(operation_parameters, list):
+                raise ValueError("Malformed parameter list")
+            parameters = [(parameter, pointer_child(operation.pointer.rsplit("/", 1)[0] + "/parameters", index))
+                          for index, parameter in enumerate(path_parameters)]
+            parameters += [(parameter, pointer_child(operation.pointer + "/parameters", index))
+                           for index, parameter in enumerate(operation_parameters)]
+            required = request_schema.get("required", [])
+            if not isinstance(parameters, list) or not isinstance(required, list):
+                raise ValueError("Malformed required fields or parameters")
+            for parameter, parameter_pointer in parameters:
+                if not isinstance(parameter, dict):
+                    raise ValueError("Malformed parameter")
+                if not parameter.get("required") and parameter.get("in") != "path":
+                    continue
+                name = parameter.get("name")
+                place = parameter.get("in")
+                if (not isinstance(name, str) or place not in {"path", "query"}
+                        or _type(parameter.get("schema")) not in {"string", "integer", "number", "boolean"}
+                        or parameter.get("style", "simple" if place == "path" else "form") != ("simple" if place == "path" else "form")
+                        or "explode" in parameter and not isinstance(parameter["explode"], bool)
+                        or "content" in parameter or parameter.get("allowReserved")):
+                    gaps.append(_gap(catalog, "/transport/request", "parameter_unsupported", "A required parameter needs an explicit supported binding.", pointer=parameter_pointer, kind="unsupported_feature"))
+                    continue
+                variable = "input_" + re.sub(r"[^a-zA-Z0-9_]", "_", name)
+                if re.search(r"key|token|password|secret|auth", name, re.I):
+                    gaps.append(_gap(catalog, "/transport/request", "credential_parameter_unsupported", "Credential parameters must use a supported authentication scheme.", pointer=parameter_pointer, kind="unsupported_feature"))
+                    continue
+                if variable in declarations:
+                    gaps.append(_gap(catalog, "/transport/request", "parameter_collision", "Required parameter bindings collide; select explicit names.", pointer=operation.pointer, kind="ambiguous_choice"))
+                    continue
+                declarations[variable] = {"env": "TARGET_" + variable.upper()}
+                if place == "query":
+                    query[name] = {"var": variable}
+                else:
+                    path = path.replace("{" + name + "}", "{" + variable + "}")
+                binding_field = "/transport/let/run/" + variable
+                provenance["fields"][binding_field] = {"source": [catalog.document.source(parameter_pointer).to_dict()], "basis": "non_secret_binding_required", "environment_name_basis": "policy_default"}
+                gaps.append(_gap(catalog, binding_field, "parameter_binding_required", "Supply the documented non-secret parameter through its environment binding.", pointer=parameter_pointer, blocking=False))
+            for name in required:
+                if name != choices.prompt.name:
+                    field_pointer = operation.pointer + "/requestBody/content/application~1json/schema/properties"
+                    gaps.append(_gap(catalog, "/transport/request/body", "business_input_missing", "A required business field has no documented value binding.", pointer=pointer_child(field_pointer, name) if name in request_schema["properties"] else operation.pointer))
+            if any(name != choices.prompt.name and name not in required for name in request_schema["properties"]):
+                gaps.append(_gap(catalog, "/transport/request/body", "optional_inputs_unbound", "Optional request fields are omitted; this draft binds only the proposed prompt.", pointer=operation.pointer, blocking=False))
+            if re.search(r"\{[^}]*\}", path) and not declarations:
+                gaps.append(_gap(catalog, "/transport/request/url", "path_binding_missing", "Path parameters are not declared.", pointer=operation.pointer))
+            if not any(gap.blocking for gap in gaps):
+                transport = {
+                    "version": 2,
+                    "request": {"method": operation.method, "url": server + path,
+                                "headers": {"Accept": "application/json"}, "query": query, "body": {"json": body}},
+                    "auth": auth,
+                    "response": {"format": "json", "text": {"paths": [_field_path(choices.reply.name)], "cast": "string", "empty": "error"}, "metadata": {}},
+                    "outcome": {"kind": "rules", "unmatched": "target_error", "rules": [{"id": "completed", "priority": 10,
+                        "http_status": [int(next(key for key in operation.data["responses"] if re.fullmatch(r"2\d\d", str(key))))],
+                        "when": {"path": _field_path(choices.completion.name), "equals": choices.completion.value}, "outcome": "succeeded"}]},
+                    "delivery": {"kind": "sync"}, "let": {"run": declarations},
+                    "timeout": {"total_deadline_s": 120, "read_s": 120, "cleanup_s": 60},
+                    "session": {"mode": "none"},
+                    "limits": {"response_bytes": 8388608, "event_bytes": 1048576, "max_events": 1024, "max_rules": 32},
+                    "budget": {"max_requests": 1, "cleanup_reserve": 0},
+                }
+                spec = {"kind": "custom_http", "transport": TransportSpecV2.from_dict(transport).to_dict()}
+                server_index = next(index for index, entry in enumerate(catalog.document.data["servers"]) if _server(entry["url"])[1] == server)
+                provenance["fields"]["/transport/request/url"] = {"source": [catalog.document.source(operation.pointer).to_dict(), catalog.document.source(f"/servers/{server_index}/url").to_dict()], "basis": "document_path_and_selected_server"}
+                provenance["policy_defaults"] = {key: {"value": transport[key], "basis": "policy_default"} for key in ("timeout", "limits", "budget", "session")}
+                provenance["policy_defaults"]["request.headers"] = {"value": transport["request"]["headers"], "basis": "policy_default"}
+    gaps = tuple(sorted(set(gaps), key=lambda gap: (gap.field, gap.code)))
+    state = DraftState.NEEDS_INPUT if spec is None else DraftState.NEEDS_REVIEW if gaps else DraftState.READY
+    return DraftArtifacts(state, spec, gaps, provenance)
+
+
+def write_artifacts(artifacts: DraftArtifacts, out: Path) -> tuple[Path, ...]:
+    out = Path(out)
+    destinations = (out, out.with_suffix(".gaps.json"), out.with_suffix(".provenance.json"))
+    if any(os.path.lexists(path) for path in destinations):
+        raise FileExistsError("A draft artifact already exists; choose a new output path")
+    if len(set(destinations)) != 3 or not out.parent.is_dir():
+        raise ValueError("Output requires distinct JSON artifacts in an existing directory")
+    gap_data = {"schema_version": 1, "state": artifacts.state.value,
+                "spec_written": artifacts.spec is not None, "gaps": [gap.to_dict() for gap in artifacts.gaps]}
+    payloads = [(destinations[1], gap_data), (destinations[2], artifacts.provenance)]
+    if artifacts.spec is not None:
+        payloads.insert(0, (out, artifacts.spec))
+    staged = []
+    created = []
+    try:
+        for path, data in payloads:
+            descriptor, name = tempfile.mkstemp(prefix=".argus-draft-", dir=out.parent)
+            temporary = Path(name)
+            staged.append(temporary)
+            with os.fdopen(descriptor, "w") as handle:
+                json.dump(data, handle, indent=2, allow_nan=False)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.link(temporary, path)
+            created.append(path)
+    except Exception:
+        for path in created:
+            path.unlink()
+        raise
+    finally:
+        for temporary in staged:
+            temporary.unlink(missing_ok=True)
+    return tuple(created)

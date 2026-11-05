@@ -394,3 +394,34 @@ def test_prompt_enum_is_not_used_as_arbitrary_prompt_binding(tmp_path):
     result, out = invoke(tmp_path, d)
     assert result.exit_code == 3, result.output
     assert not out.exists()
+
+
+@pytest.mark.parametrize("field,keyword", [("question", "readOnly"), ("status", "writeOnly"), ("answer", "writeOnly")])
+def test_schema_access_direction_blocks_invalid_binding(tmp_path, field, keyword):
+    d = agent_document(); op = d["paths"]["/ask"]["post"]
+    schema = (op["requestBody"]["content"]["application/json"]["schema"] if field == "question"
+              else op["responses"]["200"]["content"]["application/json"]["schema"])
+    schema["properties"][field][keyword] = True
+    result, out = invoke(tmp_path, d)
+    assert result.exit_code == 3, result.output
+    assert not out.exists()
+
+
+def test_nondefault_path_serialization_is_not_silently_changed(tmp_path):
+    d = agent_document(); item = d["paths"].pop("/ask"); d["paths"]["/ask/{id}"] = item
+    item["parameters"] = [{"name": "id", "in": "path", "required": True,
+                           "style": "label", "schema": {"type": "string"}}]
+    result, out = invoke(tmp_path, d)
+    assert result.exit_code == 3, result.output
+    assert not out.exists()
+    assert "parameter_unsupported" in out.with_suffix(".gaps.json").read_text()
+
+
+def test_schema_keyword_names_are_valid_property_names(tmp_path):
+    d = agent_document()
+    schema = d["paths"]["/ask"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+    schema["properties"]["not"] = {"type": "string"}
+    schema["properties"]["pattern"] = {"type": "string"}
+    result, out = invoke(tmp_path, d)
+    assert result.exit_code == 3, result.output
+    assert out.exists()
