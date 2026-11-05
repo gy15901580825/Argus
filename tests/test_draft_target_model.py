@@ -42,7 +42,7 @@ async def test_no_model_sync_reply_combination_real_loopback(tmp_path, payload, 
         artifacts = compile_draft(catalog, choose_without_model(catalog))
         assert artifacts.spec is not None
         spec = TransportSpecV2.from_dict(artifacts.spec["transport"])
-        run = V2Run(spec, policy=ExecutionPolicy.local(spec), env={})
+        run = V2Run(spec, policy=ExecutionPolicy.local(spec), environ={})
         try:
             result = await run.attempt(TransportContext(prompt="test question"))
             assert result.outcome.value == expected

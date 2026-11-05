@@ -404,7 +404,7 @@ def test_prompt_enum_is_not_used_as_arbitrary_prompt_binding(tmp_path):
     assert not out.exists()
 
 
-@pytest.mark.parametrize("field,keyword", [("question", "readOnly"), ("status", "writeOnly"), ("answer", "writeOnly")])
+@pytest.mark.parametrize("field,keyword", [("question", "readOnly"), ("answer", "writeOnly")])
 def test_schema_access_direction_blocks_invalid_binding(tmp_path, field, keyword):
     d = agent_document(); op = d["paths"]["/ask"]["post"]
     schema = (op["requestBody"]["content"]["application/json"]["schema"] if field == "question"
@@ -963,3 +963,12 @@ def test_single_terminal_enum_guard_does_not_choose_first_status(tmp_path):
     rule = json.loads(out.read_text())["transport"]["outcome"]["rules"][0]
     assert rule["when"] == {"path": "$.answer", "exists": True}
     assert "completed" not in json.dumps(rule["when"])
+
+
+def test_write_only_terminal_field_is_ignored_for_valid_reply_presence(tmp_path):
+    d = agent_document()
+    d["paths"]["/ask"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]["status"]["writeOnly"] = True
+    result, out = invoke(tmp_path, d)
+    assert result.exit_code == 3, result.output
+    rule = json.loads(out.read_text())["transport"]["outcome"]["rules"][0]
+    assert rule["when"] == {"path": "$.answer", "exists": True}

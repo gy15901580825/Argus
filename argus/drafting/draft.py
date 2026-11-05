@@ -87,12 +87,17 @@ class Binding:
 
 
 @dataclass(frozen=True)
+class ReplyPresence:
+    pass
+
+
+@dataclass(frozen=True)
 class DraftChoices:
     operation: str | None
     server: str | None
     prompt: Binding | None
     reply: Binding | None
-    completion: Binding | None
+    completion: Binding | ReplyPresence | None
     gaps: tuple[Gap, ...]
     intent: str
 
@@ -303,6 +308,8 @@ def choose_without_model(catalog: OperationCatalog, *, operation=None, server_or
                 reply = Binding(texts[0][0], pointer_child(response_pointer, texts[0][0]))
             if len(states) == 1:
                 completion = Binding(states[0][0], pointer_child(response_pointer, states[0][0]), value=states[0][1]["enum"][0])
+            elif reply is not None:
+                completion = ReplyPresence()
         for binding, field, missing in ((reply, "/transport/response/text", "reply_binding_missing"),
                                          (completion, "/transport/outcome", "completion_missing")):
             if binding is None:
@@ -396,7 +403,15 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
         for binding, role, field, code in ((choices.prompt, "prompt", "/transport/request/body", "prompt_binding_proposed"),
                                            (choices.reply, "reply", "/transport/response/text", "reply_binding_proposed"),
                                            (choices.completion, "completion", "/transport/outcome/rules/0", "completion_proposed")):
-            if binding:
+            if isinstance(binding, ReplyPresence):
+                if choices.reply is None:
+                    raise ValueError("Reply presence requires a selected reply field")
+                _binding_schema(catalog, operation, choices.reply, "reply")
+                provenance["fields"][field] = {"source": [catalog.document.source(choices.reply.pointer).to_dict()], "basis": "proposal", "strategy": "reply_presence_and_strict_mapping"}
+                gaps.append(_gap(catalog, field, code,
+                                 "Reply presence with strict string mapping is a proposed synchronous completion rule.",
+                                 pointer=choices.reply.pointer, kind="proposal", blocking=False))
+            elif binding:
                 _binding_schema(catalog, operation, binding, role)
                 source = catalog.document.source(binding.pointer)
                 provenance["fields"][field] = {"source": [source.to_dict()], "basis": binding.basis}
@@ -488,7 +503,9 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                     "response": {"format": "json", "text": {"paths": [_field_path(choices.reply.name)], "cast": "string", "empty": "error"}, "metadata": {}},
                     "outcome": {"kind": "rules", "unmatched": "target_error", "rules": [{"id": "completed", "priority": 10,
                         "http_status": [int(next(key for key in operation.data["responses"] if re.fullmatch(r"2\d\d", str(key))))],
-                        "when": {"path": _field_path(choices.completion.name), "equals": choices.completion.value}, "outcome": "succeeded"}]},
+                        "when": ({"path": _field_path(choices.reply.name), "exists": True}
+                                 if isinstance(choices.completion, ReplyPresence)
+                                 else {"path": _field_path(choices.completion.name), "equals": choices.completion.value}), "outcome": "succeeded"}]},
                     "delivery": {"kind": "sync"}, "let": {"run": declarations},
                     "timeout": {"total_deadline_s": 120, "read_s": 120, "cleanup_s": 60},
                     "session": {"mode": "none"},
