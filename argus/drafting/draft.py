@@ -10,6 +10,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from argus_transport import TransportSpecV2
+from argus_transport.models import AuthSpec
 from argus_transport.spec_v2 import NAME_RE, SECRET_WORDS
 
 from .openapi import OperationCatalog, Source, pointer_child
@@ -312,7 +313,9 @@ def _auth(catalog, operation):
     if scheme.get("type") == "http" and scheme.get("scheme", "").lower() == "bearer":
         return {"kind": "bearer", "secret": secret}
     if scheme.get("type") == "apiKey" and scheme.get("in") == "header" and isinstance(scheme.get("name"), str):
-        return {"kind": "headers", "headers": [{"name": scheme["name"], "secret": secret}]}
+        auth = {"kind": "headers", "headers": [{"name": scheme["name"], "secret": secret}]}
+        AuthSpec.from_dict(auth)
+        return auth
     raise ValueError("Authentication scheme is unsupported")
 
 
@@ -400,6 +403,7 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
             request_schema = _object_schema(operation.data["requestBody"]["content"])
             body = {choices.prompt.name: {"context": "prompt"}}
             declarations = {}
+            unbound_path = path
             query = {}
             path_parameters = operation.path_data.get("parameters", [])
             operation_parameters = operation.data.get("parameters", [])
@@ -440,6 +444,7 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                 if place == "query":
                     query[name] = {"var": variable}
                 else:
+                    unbound_path = unbound_path.replace("{" + name + "}", "")
                     path = path.replace("{" + name + "}", "{" + variable + "}")
                 binding_field = "/transport/let/run/" + variable
                 provenance["fields"][binding_field] = {"source": [catalog.document.source(parameter_pointer).to_dict()], "basis": "non_secret_binding_required", "environment_name_basis": "policy_default"}
@@ -450,7 +455,7 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                     gaps.append(_gap(catalog, "/transport/request/body", "business_input_missing", "A required business field has no documented value binding.", pointer=pointer_child(field_pointer, name) if name in request_schema["properties"] else operation.pointer))
             if any(name != choices.prompt.name and name not in required for name in request_schema["properties"]):
                 gaps.append(_gap(catalog, "/transport/request/body", "optional_inputs_unbound", "Optional request fields are omitted; this draft binds only the proposed prompt.", pointer=operation.pointer, blocking=False))
-            if re.search(r"\{[^}]*\}", path) and not declarations:
+            if "{" in unbound_path:
                 gaps.append(_gap(catalog, "/transport/request/url", "path_binding_missing", "Path parameters are not declared.", pointer=operation.pointer))
             if not any(gap.blocking for gap in gaps):
                 transport = {
