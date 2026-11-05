@@ -78,6 +78,7 @@ def invoke(tmp_path, probe, *, trials=None):
 
 def normalized(text):
     text = re.sub(r'("(?:id|run_id)"\s*:\s*")[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(")', lambda m: m.group(1) + '<id>' + m.group(2), text)
+    text = re.sub(r'("argus_version"\s*:\s*")[^"\n]*(")', r'\1<version>\2', text)
     return re.sub(r'("(?:started_at|finished_at|probed_at|created_at)"\s*:\s*")[^"\n]*(")', r'\1<timestamp>\2', text)
 
 
