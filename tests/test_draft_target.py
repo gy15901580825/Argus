@@ -713,3 +713,40 @@ def test_unknown_subtrees_are_inert_data_not_reference_authority(tmp_path, locat
         assert not out.exists()
         gaps = json.loads(out.with_suffix(".gaps.json").read_text())
         assert any(gap["kind"] == "unsupported_feature" and gap["blocking"] for gap in gaps["gaps"])
+
+
+def test_yaml_integer_response_and_numeric_version_normalize_with_raw_hash(tmp_path):
+    import hashlib
+    document = agent_document()
+    document["info"]["version"] = 1.5
+    responses = document["paths"]["/ask"]["post"]["responses"]
+    responses[200] = responses.pop("200")
+    source = input_file(tmp_path, document, ".yaml")
+    loaded = load_openapi(source)
+    assert loaded.data["info"]["version"] == "1.5"
+    assert list(loaded.data["paths"]["/ask"]["post"]["responses"]) == ["200"]
+    assert loaded.inputs[0]["sha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
+    assert compile_draft(catalog_operations(loaded), choose_without_model(catalog_operations(loaded))).spec
+
+
+@pytest.mark.parametrize("keys", ["200: {}\n      '200': {}", "true: {}", "1.5: {}"])
+def test_yaml_invalid_response_keys_and_canonical_duplicates_rejected(tmp_path, keys):
+    source = tmp_path / "api.yaml"
+    source.write_text("openapi: 3.0.3\ninfo: {title: Test, version: '1'}\npaths:\n  /ask:\n    post:\n      responses:\n      " + keys + "\n")
+    with pytest.raises(DocumentError):
+        load_openapi(source)
+
+
+@pytest.mark.parametrize("version", [True, None, [], {}])
+def test_info_version_rejects_non_numeric_non_string_values(tmp_path, version):
+    document = agent_document()
+    document["info"]["version"] = version
+    with pytest.raises(DocumentError):
+        load_openapi(input_file(tmp_path, document))
+
+
+def test_yaml_integer_non_response_key_rejected(tmp_path):
+    document = agent_document()
+    document["paths"][1] = {}
+    with pytest.raises(DocumentError):
+        load_openapi(input_file(tmp_path, document, ".yaml"))
