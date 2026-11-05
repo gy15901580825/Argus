@@ -441,8 +441,21 @@ async def run(req: RunRequest):
 
     async def _sse() -> AsyncIterator[bytes]:
         emitted: list[dict] = []
+        probes = _run_probes(req, anthropic_api_key)
+        spent, started = 0.0, False
         try:
-            async for finding_dict in _run_probes(req, anthropic_api_key):
+            while True:
+                with _COST_METER.run_scope(
+                    "server", deep=req.mode == "deep", per_run_cap_usd=req.per_run_cap_usd,
+                    spent_usd=spent, resume=started,
+                ):
+                    started = True
+                    try:
+                        finding_dict = await probes.__anext__()
+                    except StopAsyncIteration:
+                        break
+                    finally:
+                        spent = _COST_METER.spent_in_current_run()
                 if finding_dict.get("type") == "target_cleanup":
                     continue
                 emitted.append(finding_dict)
@@ -457,6 +470,8 @@ async def run(req: RunRequest):
         except Exception as exc:
             payload = json.dumps({"detail": str(exc), "type": type(exc).__name__})
             yield f"event: error\ndata: {payload}\n\n".encode()
+        finally:
+            await probes.aclose()
 
     return StreamingResponse(_sse(), media_type="text/event-stream")
 

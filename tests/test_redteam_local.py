@@ -472,7 +472,7 @@ def _spend(usd_tokens: int):
 
 
 def _scope_closed() -> bool:
-    return api._COST_METER._spent_in_run is None
+    return api._COST_METER._run_state.get() is None
 
 
 async def test_spend_past_the_per_run_cap_stops_the_run(library):
@@ -626,7 +626,7 @@ async def test_a_deep_run_that_drains_the_deep_slice_still_reports_later_threads
     with patch("argus.api._run_probes", _deep):
         events = await _collect(run_local(TARGET, ["chat_j1"], mode="deep", env=KEY))
     assert [e.get("probe_id") for e in events if e.get("verdict")] == ["t1", "t2"]
-    assert meter._spent_in_run is None
+    assert meter._run_state.get() is None
 
 
 async def test_a_deep_run_is_refused_at_its_first_step_when_the_deep_slice_is_spent(library, monkeypatch):
@@ -647,7 +647,7 @@ async def test_a_deep_run_is_refused_at_its_first_step_when_the_deep_slice_is_sp
         with pytest.raises(LocalRunError):
             await _collect(run_local(TARGET, ["chat_j1"], mode="deep", env=KEY))
     assert started == []
-    assert meter._spent_in_run is None
+    assert meter._run_state.get() is None
 
 
 async def test_skipped_findings_carry_the_probe_remediation(library):

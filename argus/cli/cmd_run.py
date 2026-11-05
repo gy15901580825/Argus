@@ -34,7 +34,7 @@ EXIT_COST_CAP = 4
 @click.option("--token", envvar="ARGUS_API_TOKEN", default=None, help="API token for --api-url (or env ARGUS_API_TOKEN). Not used with --local.")
 @click.option("--api-url", envvar="ARGUS_API_URL", default=None, help="Base URL of a server implementing the /api/v1/redteam API (or env ARGUS_API_URL). Not used with --local.")
 @click.option("--max-wait", type=float, default=1800.0, help="Max seconds to wait for run completion. Ignored with --local.")
-@click.option("--per-run-cap", "per_run_cap", type=float, default=None, help="Maximum USD judge/attacker spend for this run. A run whose estimate is above it does not start; with --local, the run also stops when spend reaches it. Default: $0.50.")
+@click.option("--per-run-cap", "per_run_cap", type=float, default=None, help="Maximum USD judge/attacker spend for this run. A run whose estimate is above it does not start; the run also stops when a completed call takes spend past it. Default: $0.50.")
 @click.option("--fail-on", "fail_on", type=click.Choice(SEVERITY_ORDER), default=None,
               help="Exit 3 when any finding has verdict=fail and severity at or above this level.")
 @click.option("--local", "local", is_flag=True, default=False,
