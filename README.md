@@ -37,7 +37,7 @@ uploaded to GitHub Code Scanning.
 ## Try it in one minute
 
 ```bash
-pip install argus-probe==1.1.1
+pip install argus-probe
 argus-probe quickstart
 ```
 
