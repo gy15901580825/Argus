@@ -60,7 +60,7 @@ _CHILD_ROLES = {
     _Role.SCHEMA: {"properties": _NamedMap(_Role.SCHEMA), "patternProperties": _NamedMap(_Role.SCHEMA),
                   "$defs": _NamedMap(_Role.SCHEMA), "definitions": _NamedMap(_Role.SCHEMA),
                   "dependentSchemas": _NamedMap(_Role.SCHEMA),
-                  "dependentRequired": _NamedMap(_Role.DATA), "enum": _Role.DATA,
+                  "dependentRequired": _NamedMap(_Role.DATA), "enum": _Role.DATA, "const": _Role.DATA,
                   "discriminator": _Role.DISCRIMINATOR,
                   **{key: _Role.SCHEMA for key in ("items", "additionalProperties", "not", "allOf",
                                                  "anyOf", "oneOf", "if", "then", "else", "prefixItems")}},
@@ -70,7 +70,7 @@ _CHILD_ROLES = {
                      "links": _NamedMap(_Role.LINK)},
     _Role.MEDIA: {"schema": _Role.SCHEMA, "encoding": _NamedMap(_Role.ENCODING)},
     _Role.SERVER: {"variables": _NamedMap(_Role.PLAIN)},
-    _Role.LINK: {"parameters": _NamedMap(_Role.DATA), "server": _Role.SERVER},
+    _Role.LINK: {"parameters": _NamedMap(_Role.DATA), "requestBody": _Role.DATA, "server": _Role.SERVER},
     _Role.ENCODING: {"headers": _NamedMap(_Role.PARAMETER)},
     _Role.DISCRIMINATOR: {"mapping": _NamedMap(_Role.DATA)},
 }
@@ -259,7 +259,7 @@ class _Reader:
                         else:
                             result[name] = self.expand(item, file, pointer_child(source_pointer, name),
                                                        pointer_child(output_pointer, name), stack, depth + 1,
-                                                       _CHILD_ROLES.get(role, {}).get(name, _Role.PLAIN))
+                                                       _CHILD_ROLES.get(role, {}).get(name, _Role.DATA))
                 return result
             result = {}
             for name, item in value.items():
@@ -274,7 +274,7 @@ class _Reader:
                     self.issues.append(DocumentIssue("http_method_unsupported",
                                                      Source(source.file, pointer_child(source_pointer, name))))
                 child_role = (role.child if isinstance(role, _NamedMap) else _Role.DATA if role == _Role.DATA
-                              else _CHILD_ROLES.get(role, {}).get(name, _Role.PLAIN))
+                              else _CHILD_ROLES.get(role, {}).get(name, _Role.DATA))
                 result[name] = self.expand(item, file, pointer_child(source_pointer, name),
                                            pointer_child(output_pointer, name), stack, depth + 1, child_role)
             return result

@@ -633,3 +633,83 @@ def test_schema_enum_object_values_are_data_not_annotation_objects(tmp_path):
     ]}}}
     document = load_openapi(input_file(tmp_path, d))
     assert document.data["components"]["schemas"]["Values"]["enum"] == d["components"]["schemas"]["Values"]["enum"]
+
+
+def test_schema_const_object_is_literal_data_and_reports_unsupported_gap(tmp_path, monkeypatch):
+    d = agent_document("3.1.0")
+    constant = {"$ref": "literal data", "default": "value", "examples": ["allowed"]}
+    properties = d["paths"]["/ask"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+    properties["config"] = {"type": "object", "const": constant}
+    source = input_file(tmp_path, d)
+    original_open = Path.open
+
+    def only_document(self, *args, **kwargs):
+        assert self == source, "literal const data triggered another file read"
+        return original_open(self, *args, **kwargs)
+
+    def no_request(*args, **kwargs):
+        raise AssertionError("literal const data triggered a network request")
+
+    monkeypatch.setattr(httpx.Client, "send", no_request)
+    monkeypatch.setattr(httpx.AsyncClient, "send", no_request)
+    with monkeypatch.context() as guarded:
+        guarded.setattr(Path, "open", only_document)
+        document = load_openapi(source)
+    pointer = "/paths/~1ask/post/requestBody/content/application~1json/schema/properties/config/const"
+    actual = document.data["paths"]["/ask"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["config"]["const"]
+    assert actual == constant
+    assert document.source(pointer + "/default").pointer == pointer + "/default"
+    result, out = invoke(tmp_path, d)
+    assert result.exit_code == 3, result.output
+    assert not out.exists()
+    gaps = json.loads(out.with_suffix(".gaps.json").read_text())
+    assert gaps["state"] == "needs_input" and gaps["spec_written"] is False
+    assert any(gap["kind"] == "unsupported_feature" and gap["blocking"] for gap in gaps["gaps"])
+
+
+def test_link_request_body_is_literal_data_and_reports_unsupported_gap(tmp_path):
+    d = agent_document("3.1.0")
+    body = {"$ref": "literal data", "default": "value"}
+    response = d["paths"]["/ask"]["post"]["responses"]["200"]
+    response["links"] = {"next": {"operationId": "ask", "requestBody": body}}
+    document = load_openapi(input_file(tmp_path, d))
+    actual = document.data["paths"]["/ask"]["post"]["responses"]["200"]["links"]["next"]["requestBody"]
+    assert actual == body
+    result, out = invoke(tmp_path, d)
+    assert result.exit_code == 3, result.output
+    assert not out.exists()
+    gaps = json.loads(out.with_suffix(".gaps.json").read_text())
+    assert any(gap["code"] == "links_unsupported" and gap["blocking"] for gap in gaps["gaps"])
+
+
+@pytest.mark.parametrize("location", ["extension", "unsupported_schema"])
+def test_unknown_subtrees_are_inert_data_not_reference_authority(tmp_path, location, monkeypatch):
+    d = agent_document("3.1.0")
+    literal = {"$ref": "literal data", "default": "value"}
+    if location == "extension":
+        d["x-document-data"] = literal
+        pointer = "/x-document-data"
+    else:
+        schema = d["paths"]["/ask"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+        schema["contains"] = {"const": literal}
+        pointer = "/paths/~1ask/post/requestBody/content/application~1json/schema/contains/const"
+    source = input_file(tmp_path, d)
+    original_open = Path.open
+
+    def only_document(self, *args, **kwargs):
+        assert self == source, "unknown data triggered another file read"
+        return original_open(self, *args, **kwargs)
+
+    with monkeypatch.context() as guarded:
+        guarded.setattr(Path, "open", only_document)
+        document = load_openapi(source)
+    assert document.source(pointer + "/default").pointer == pointer + "/default"
+    result, out = invoke(tmp_path, d)
+    assert result.exit_code == 3, result.output
+    if location == "extension":
+        assert document.data["x-document-data"] == literal
+        assert out.exists()
+    else:
+        assert not out.exists()
+        gaps = json.loads(out.with_suffix(".gaps.json").read_text())
+        assert any(gap["kind"] == "unsupported_feature" and gap["blocking"] for gap in gaps["gaps"])
