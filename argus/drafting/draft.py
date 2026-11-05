@@ -10,6 +10,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from argus_transport import TransportSpecV2
+from argus_transport.spec_v2 import NAME_RE, SECRET_WORDS
 
 from .openapi import OperationCatalog, Source, pointer_child
 
@@ -307,16 +308,23 @@ def _field_path(name):
 
 
 def _binding_schema(catalog, operation, binding, role):
-    prefix = operation.pointer + ("/requestBody/" if role == "prompt" else "/responses/")
-    if (binding.pointer not in catalog.document.sources or not binding.pointer.startswith(prefix)
-            or not binding.pointer.endswith("/properties/" + binding.name.replace("~", "~0").replace("/", "~1"))
+    if role == "prompt":
+        prefix = operation.pointer + "/requestBody/content/application~1json/schema/properties"
+    else:
+        successes = [status for status in operation.data.get("responses", {})
+                     if re.fullmatch(r"2\d\d", str(status))]
+        if len(successes) != 1:
+            raise ValueError("Choice references an unknown or unsupported operation field")
+        prefix = operation.pointer + "/responses/" + str(successes[0]) + "/content/application~1json/schema/properties"
+    if (binding.pointer not in catalog.document.sources
+            or binding.pointer != pointer_child(prefix, binding.name)
             or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", binding.name)
             or binding.basis not in {"proposal", "document_fact", "user_selection"}):
         raise ValueError("Choice references an unknown or unsupported operation field")
     value = catalog.document.data
     for key in binding.pointer.split("/")[1:]:
         value = value[key.replace("~1", "/").replace("~0", "~")]
-    if _type(value) != "string" or value.get("readOnly") and role == "prompt" or value.get("writeOnly") and role == "reply":
+    if _type(value) != "string" or value.get("readOnly") and role == "prompt" or value.get("writeOnly") and role != "prompt":
         raise ValueError("Choice field has an incompatible schema")
     if role == "completion" and (binding.value is None or binding.value not in value.get("enum", [])):
         raise ValueError("Choice terminal value is not documented")
@@ -403,9 +411,12 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                         or "content" in parameter or parameter.get("allowReserved")):
                     gaps.append(_gap(catalog, "/transport/request", "parameter_unsupported", "A required parameter needs an explicit supported binding.", pointer=parameter_pointer, kind="unsupported_feature"))
                     continue
-                variable = "input_" + re.sub(r"[^a-zA-Z0-9_]", "_", name)
+                variable = "input_" + re.sub(r"[^a-zA-Z0-9_]", "_", name).lower()
                 if re.search(r"key|token|password|secret|auth", name, re.I):
                     gaps.append(_gap(catalog, "/transport/request", "credential_parameter_unsupported", "Credential parameters must use a supported authentication scheme.", pointer=parameter_pointer, kind="unsupported_feature"))
+                    continue
+                if not NAME_RE.fullmatch(variable) or any(word in variable for word in SECRET_WORDS):
+                    gaps.append(_gap(catalog, "/transport/request", "parameter_unsupported", "This parameter cannot use a supported transport variable name.", pointer=parameter_pointer, kind="unsupported_feature"))
                     continue
                 if variable in declarations:
                     gaps.append(_gap(catalog, "/transport/request", "parameter_collision", "Required parameter bindings collide; select explicit names.", pointer=operation.pointer, kind="ambiguous_choice"))
