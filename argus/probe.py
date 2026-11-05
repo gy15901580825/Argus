@@ -279,11 +279,13 @@ def load_probe(path: Path) -> Probe:
                 raise ValueError(
                     f"control must change an existing payload key in {path}"
                 )
-        if (has_sessions or "trials" in raw) and not scenario_control:
-            raise ValueError(f"sessions and trials require scenario.control in {path}")
+        if has_sessions and not scenario_control:
+            raise ValueError(f"sessions require scenario.control in {path}")
         trials = raw.get("trials", 1)
         if type(trials) is not int or not 1 <= trials <= 20:
             raise ValueError(f"trials must be an integer from 1 to 20 in {path}")
+        if raw.get("iterative") and trials > 1:
+            raise ValueError(f"iterative probes cannot repeat trials in {path}")
         capabilities = raw.get("requires_capabilities", [])
         if scenario_kind == "a2a_world":
             if (

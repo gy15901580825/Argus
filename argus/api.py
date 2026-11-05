@@ -13,13 +13,13 @@ import functools
 import json
 import os
 import re
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, AsyncIterator
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from argus import llm, remediation
 from argus.coverage import build_coverage, build_summary
@@ -60,6 +60,7 @@ class RunRequest(BaseModel):
     # requires an explicit probe selection (see _resolve_request_probe_ids).
     mode: str = "static"
     deep_pairs: int = DEFAULT_DEEP_PAIRS
+    trials: int | None = Field(default=None, strict=True, ge=1, le=20)
     # Caller-supplied per-run cost cap (overrides singleton default when present).
     per_run_cap_usd: float | None = None
 
@@ -186,6 +187,17 @@ def _resolve_request_probe_ids(req: RunRequest, target_obj: Any = None) -> list[
     return ids
 
 
+def _check_trials_mode(req: RunRequest) -> None:
+    if req.mode == "deep" and req.trials is not None and req.trials > 1:
+        raise HTTPException(422, "trials above one are unsupported in deep mode")
+
+
+def _with_trials(probe, req: RunRequest):
+    if req.mode != "static" or req.trials is None or getattr(probe, "iterative", False):
+        return probe
+    return replace(probe, trials=req.trials)
+
+
 def _estimate_exchanges(req: RunRequest, probe_ids: list[str]) -> int:
     """Worst-case attack exchanges (one prompt sent + judged) the run will make.
 
@@ -200,7 +212,7 @@ def _estimate_exchanges(req: RunRequest, probe_ids: list[str]) -> int:
     """
     if req.mode == "deep":
         return len(probe_ids) * max(1, req.deep_pairs) * DEFAULT_MAX_ROUNDS
-    by_id = {p.id: p for p in load_probe_library(PROBES_DIR)}
+    by_id = {p.id: _with_trials(p, req) for p in load_probe_library(PROBES_DIR)}
     # An id the library doesn't know runs nothing, but counting it as one
     # exchange keeps the estimate conservative rather than optimistic.
     return sum(
@@ -222,7 +234,7 @@ def _judged_exchanges(req: RunRequest, probe_ids: list[str]) -> int:
     """
     if req.mode == "deep":
         return _estimate_exchanges(req, probe_ids)
-    by_id = {p.id: p for p in load_probe_library(PROBES_DIR)}
+    by_id = {p.id: _with_trials(p, req) for p in load_probe_library(PROBES_DIR)}
     return sum(
         (
             getattr(by_id[pid], "exchange_count", len(by_id[pid].prompts))
@@ -255,7 +267,8 @@ async def _run_probes(
         runner = Runner(target=target, judge=judge, rubrics_dir=RUBRICS_DIR)
 
         requested = set(_resolve_request_probe_ids(req, target))
-        selected = [p for p in load_probe_library(PROBES_DIR) if p.id in requested]
+        _check_trials_mode(req)
+        selected = [_with_trials(p, req) for p in load_probe_library(PROBES_DIR) if p.id in requested]
 
         if req.mode == "deep":
             personas, strategies = default_personas(), default_strategies()
@@ -368,6 +381,7 @@ async def preflight(req: RunRequest):
     requested = _resolve_request_probe_ids(req, target_obj)
     if unknown := unknown_probe_ids(requested):
         raise HTTPException(status_code=422, detail=unknown)
+    _check_trials_mode(req)
 
     try:
         from argus.cost_meter import CostExceededError
@@ -422,6 +436,7 @@ async def run(req: RunRequest):
 
     # 422s on suite/probe_ids conflict or unknown suite id, before SSE streaming starts.
     requested = _resolve_request_probe_ids(req, target_obj)
+    _check_trials_mode(req)
 
     # Pre-run cost check (Plan 4 T7) — happens before SSE streaming starts.
     try:

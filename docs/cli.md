@@ -319,6 +319,19 @@ In 0.6.0 and earlier, a probe that hit a 5xx, a timeout or a connection error st
 
 For local version 2 runs with undo requests or tracked created resources, [run.json](run-json.md#target-cleanup) includes `target_cleanup`. Unfinished cleanup makes the report incomplete and exits 1 unless the cost cap takes priority. The console lists unresolved intents and redacted full resource names for manual cleanup. Informational `leftover` names alone keep the run completed and the exit code unchanged. Unconfirmed cleanup keeps the run incomplete. SIGINT and SIGTERM write no report, even if cleanup is incomplete. A second signal may interrupt cleanup; the first signal still determines the exit code. SIGKILL and crashes cannot run the in-memory undo stack.
 
+## Repeated trials
+
+```bash
+argus-probe run --local --target target.json --probes fixed_probe \
+  --trials 4 --format json --out run.json
+```
+
+`--trials N` accepts integers from 1 to 20 and replaces each selected probe's YAML `trials` value for this run. The matching API field is `RunRequest.trials`. With no override, the YAML value applies and defaults to 1. A static-mode override does not apply to iterative probes, which run once as before. Deep mode rejects a run-level count above 1 after its existing configuration checks.
+
+A static trial runs the whole probe, including every prompt. Conversation history starts fresh in each trial. Above 1, the report contains one finding per probe with a trial summary and the individual trial observations. Any failing prompt makes its trial fail; any failing trial makes the probe fail. The valid denominator counts whole-probe trials with `pass`, `fail` or `warn`, not prompts or attempts. All-pass wording states that the behavior was not observed and that a pass is weak evidence. With a count of 1, static findings retain their existing format and have no added trial evidence.
+
+Paired probes still run a clean control followed by an attack in each trial. Transport v2 retains one run-wide request budget. Cleanup remains per actual send, so a multi-prompt trial can have multiple attempt undo requests. A cost or request-budget stop preserves the started trial observations, marks the run incomplete, and does not invent remaining trials. See [trial evidence](run-json.md#trial-evidence).
+
 ## Cost controls
 
 ```bash
