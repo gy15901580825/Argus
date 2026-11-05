@@ -911,6 +911,7 @@ def test_plain_sync_reply_uses_proposed_presence_and_strict_mapping(tmp_path):
     assert spec["transport"]["response"]["text"] == {"paths": ["$.answer"], "cast": "string", "empty": "error"}
     gap = next(g for g in json.loads(out.with_suffix(".gaps.json").read_text())["gaps"] if g["code"] == "completion_proposed")
     assert not gap["blocking"] and gap["kind"] == "proposal"
+    assert "synchronous" in gap["decision"] and "enum" not in gap["decision"]
     assert gap["source"][0]["pointer"].endswith("/properties/answer")
 
 

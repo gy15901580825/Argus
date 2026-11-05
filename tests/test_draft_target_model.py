@@ -376,22 +376,28 @@ def test_cli_existing_outputs_are_checked_before_config_or_call(tmp_path, stub_m
     from click.testing import CliRunner
     from argus.cli.__main__ import main
     source=input_file(tmp_path);out=tmp_path/"target.json";out.write_text("original")
-    def forbidden(): raise AssertionError("config was consulted before output guard")
+    configured=[]
+    def forbidden():
+        configured.append(True)
+        raise AssertionError("config was consulted before output guard")
     monkeypatch.setattr(llm,"text_config",forbidden)
     result=CliRunner().invoke(main,["draft-target","--openapi",str(source),"--out",str(out)])
     assert result.exit_code == 1 and "already exists" in result.output
-    assert out.read_text()=="original" and stub_model[0]==[]
+    assert out.read_text()=="original" and stub_model[0]==[] and configured==[]
 
 
 def test_no_model_never_consults_model_config(tmp_path, monkeypatch):
     from argus import llm
     from click.testing import CliRunner
     from argus.cli.__main__ import main
-    def forbidden(): raise AssertionError("no-model consulted config")
+    configured=[]
+    def forbidden():
+        configured.append(True)
+        raise AssertionError("no-model consulted config")
     monkeypatch.setattr(llm,"text_config",forbidden)
     source=input_file(tmp_path,sync_document());out=tmp_path/"target.json"
     result=CliRunner().invoke(main,["draft-target","--openapi",str(source),"--out",str(out),"--no-model"])
-    assert result.exit_code==3 and out.exists(),result.output
+    assert result.exit_code==3 and out.exists() and configured==[],result.output
 
 
 @pytest.mark.parametrize("text", ["\ud800", '{"operation":"ask","prompt":"\ud800","reply":"none","completion":null}'])
@@ -486,3 +492,40 @@ async def test_invalid_unicode_model_output_falls_back_with_matching_gap(tmp_pat
     assert len(calls) == 1
     assert any(g.code == "model_output_invalid" for g in result.choices.gaps)
     assert compile_draft(catalog, result.choices).spec == compile_draft(catalog, choose_without_model(catalog)).spec
+
+
+def test_valid_complete_json_duplicate_keys_are_rejected_at_boundary(tmp_path):
+    from argus.drafting.proposal import parse_proposal, ProposalError
+    catalog=catalog_operations(load_openapi(input_file(tmp_path,proposed_document())))
+    text=json.dumps(proposal_document_choices()).replace('"operation": "ask"','"operation": "ask", "operation": "ask"')
+    with pytest.raises(ProposalError) as error:parse_proposal(text,catalog)
+    assert error.value.code=="model_output_invalid"
+
+
+def test_valid_complete_json_padding_is_rejected_by_output_byte_limit(tmp_path):
+    from argus.drafting.proposal import parse_proposal, ProposalError
+    catalog=catalog_operations(load_openapi(input_file(tmp_path,proposed_document())))
+    text=json.dumps(proposal_document_choices())+" "*16384
+    with pytest.raises(ProposalError) as error:parse_proposal(text,catalog)
+    assert error.value.code=="model_output_invalid"
+
+
+@pytest.mark.parametrize("alter", ["credential", "get", "async", "callback"])
+def test_reference_index_does_not_offer_credential_or_unsupported_roles(tmp_path,alter):
+    from argus.drafting.proposal import parse_proposal, ProposalError
+    doc=proposed_document();choice=proposal_document_choices();op=doc["paths"]["/ask"]["post"]
+    if alter=="credential":
+        request=op["requestBody"]["content"]["application/json"]["schema"]
+        request["properties"]["password"]={"type":"string"}
+        choice["prompt"]=choice["prompt"].rsplit("/",1)[0]+"/password"
+    elif alter=="get":
+        doc["paths"]["/ask"]["get"]=doc["paths"]["/ask"].pop("post")
+        choice["prompt"]=choice["prompt"].replace("/post/","/get/")
+        choice["reply"]=choice["reply"].replace("/post/","/get/")
+    elif alter=="async":
+        op["responses"]["202"]=op["responses"].pop("200")
+        choice["reply"]=choice["reply"].replace("/200/","/202/")
+    else:op["callbacks"]={"event":{"{$request.body#/callback}":{}}}
+    catalog=catalog_operations(load_openapi(input_file(tmp_path,doc)))
+    with pytest.raises(ProposalError) as error:parse_proposal(json.dumps(choice),catalog)
+    assert error.value.code=="model_field_unknown"
