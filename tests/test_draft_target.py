@@ -804,3 +804,28 @@ def test_existing_credential_named_reference_rejected_before_read(tmp_path, monk
     monkeypatch.setattr(Path, "open", guarded)
     with pytest.raises(DocumentError, match="Credential"):
         load_openapi(source)
+
+
+@pytest.mark.parametrize("declared_place", ["path", "query"])
+def test_unbound_path_placeholder_with_other_declarations_is_gap(tmp_path, declared_place):
+    document = agent_document()
+    operation = document["paths"].pop("/ask")
+    document["paths"]["/ask/{known}/{missing}"] = operation
+    operation["post"]["parameters"] = [{"name": "known", "in": declared_place, "required": True, "schema": {"type": "string"}}]
+    result, out = invoke(tmp_path, document)
+    assert result.exit_code == 3, result.output
+    assert not out.exists()
+    gaps = json.loads(out.with_suffix(".gaps.json").read_text())["gaps"]
+    assert any(g["code"] == "path_binding_missing" and g["blocking"] for g in gaps)
+
+
+@pytest.mark.parametrize("name", ["Host", "Content-Length", "Connection"])
+def test_reserved_authentication_headers_are_unsupported_gap(tmp_path, name):
+    document = agent_document()
+    document["security"] = [{"header_auth": []}]
+    document["components"] = {"securitySchemes": {"header_auth": {"type": "apiKey", "in": "header", "name": name}}}
+    result, out = invoke(tmp_path, document)
+    assert result.exit_code == 3, result.output
+    assert not out.exists()
+    gaps = json.loads(out.with_suffix(".gaps.json").read_text())["gaps"]
+    assert any(g["code"] == "authentication_unsupported" and g["blocking"] for g in gaps)
