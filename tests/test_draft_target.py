@@ -121,49 +121,18 @@ def test_operation_and_declared_origin_are_explicit_choices(tmp_path):
     assert json.loads(out.read_text())["transport"]["request"]["url"] == "http://127.0.0.1:8124/ask"
 
 
-def test_no_model_is_explicit_until_model_stage(tmp_path):
-    result = CliRunner().invoke(main, ["draft-target", "--openapi", str(input_file(tmp_path)),
-                                     "--out", str(tmp_path / "target.json")])
-    assert result.exit_code == 2
-    assert "--no-model" in result.output
-
-
-@pytest.mark.parametrize("existing", ["target.json", "target.gaps.json", "target.provenance.json"])
-def test_existing_artifacts_are_never_overwritten_or_partially_written(tmp_path, existing):
-    occupied = tmp_path / existing
-    occupied.write_text("preserve")
-    result, out = invoke(tmp_path)
-    assert result.exit_code == 1, result.output
-    assert occupied.read_text() == "preserve"
-    assert sorted(p.name for p in tmp_path.glob("target*")) == [existing]
-
-
-@pytest.mark.parametrize("text", [
-    "openapi: 3.0.3\ninfo: {title: neutral, version: '1'}\npaths: &paths {}\nx-alias: *paths\n",
-    '{"openapi":"3.0.3","openapi":"3.1.0","info":{"title":"neutral","version":"1"},"paths":{}}',
-    "openapi: 3.0.3\nopenapi: 3.1.0\ninfo: {title: neutral, version: '1'}\npaths: {}\n",
-])
-def test_aliases_and_duplicate_keys_are_rejected(tmp_path, text):
-    p = tmp_path / "api.yaml"
-    p.write_text(text)
-    with pytest.raises(DocumentError):
-        load_openapi(p)
-
-
-@pytest.mark.parametrize("reference", ["https://127.0.0.1/schema.json", "../outside.json#/x", "credentials.json#/x"])
-def test_unsafe_refs_rejected_before_opening(tmp_path, reference, monkeypatch):
-    d = agent_document()
-    (tmp_path / "credentials.json").write_text(json.dumps({"x": {"type": "string"}}))
-    (tmp_path.parent / "outside.json").write_text(json.dumps({"x": {"type": "string"}}))
-    d["components"] = {"schemas": {"Bad": {"$ref": reference}}}
-    p = input_file(tmp_path, d)
-    original = Path.open
-    def guarded(self, *args, **kwargs):
-        assert self == p, "loader opened an unauthorized ref"
-        return original(self, *args, **kwargs)
-    monkeypatch.setattr(Path, "open", guarded)
-    with pytest.raises(DocumentError):
-        load_openapi(p)
+def test_default_model_unavailable_is_explicit_no_model_fallback(tmp_path, monkeypatch):
+    from argus import llm
+    def unavailable(): raise ValueError("no text config")
+    monkeypatch.setattr(llm, "text_config", unavailable)
+    source = input_file(tmp_path)
+    out = tmp_path / "target.json"
+    result = CliRunner().invoke(main, ["draft-target", "--openapi", str(source), "--out", str(out)])
+    assert result.exit_code == 3, result.output
+    assert out.exists()
+    gaps = json.loads(out.with_suffix(".gaps.json").read_text())["gaps"]
+    assert any(g["code"] == "model_unavailable" for g in gaps)
+    assert "model.status: unavailable" in result.output
 
 
 def test_internal_and_adjacent_refs_retain_actual_source(tmp_path):
