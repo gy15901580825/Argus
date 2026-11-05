@@ -160,12 +160,12 @@ class _Reader:
         self.sources = {}
         self.issues = []
 
-    def read(self, file):
+    def read(self, file, *, main_input=False):
         if file in self.documents:
             return self.documents[file]
         if file.suffix.lower() not in {".json", ".yaml", ".yml"}:
             raise DocumentError("Only local JSON/YAML document files are allowed")
-        if re.search(r"(^|[-_.])(key|keys|token|tokens|secret|secrets|credential|credentials|password|auth|apikey)([-_.]|$)", file.stem, re.I):
+        if not main_input and re.search(r"(^|[-_.])(key|keys|token|tokens|secret|secrets|credential|credentials|password|auth|apikey)([-_.]|$)", file.stem, re.I):
             raise DocumentError("Credential files are not document inputs")
         try:
             relative = file.relative_to(self.root)
@@ -299,7 +299,7 @@ class _Reader:
 def load_openapi(path: Path) -> ApiDocument:
     path = Path(path).resolve()
     reader = _Reader(path.parent.resolve())
-    data = reader.expand(reader.read(path), path, "")
+    data = reader.expand(reader.read(path, main_input=True), path, "")
     if not isinstance(data.get("openapi"), str) or not re.fullmatch(r"3\.[012]\.\d+", data["openapi"]):
         raise DocumentError("OpenAPI 3.0, 3.1 or 3.2 is required")
     if not isinstance(data.get("info"), dict) or not isinstance(data.get("paths"), dict):
