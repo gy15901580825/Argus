@@ -559,6 +559,9 @@ def test_named_authentication_scheme_retains_security_and_redacts_annotations(tm
     result, out = invoke(tmp_path, d)
     assert result.exit_code == 3, result.output
     assert json.loads(out.read_text())["transport"]["auth"]["kind"] == "bearer"
+    provenance = json.loads(out.with_suffix(".provenance.json").read_text())
+    assert provenance["fields"]["/transport/auth"]["basis"] == "document_security_or_openapi_default"
+    assert provenance["fields"]["/transport/auth"]["environment_name_basis"] == "policy_default"
     assert all("DO_NOT_COPY_ANNOTATION" not in p.read_text() for p in tmp_path.glob("target*"))
 
 
@@ -601,3 +604,32 @@ def test_unselected_query_method_still_reports_unsupported_feature(tmp_path):
     gap = next(g for g in gap_data["gaps"] if g["code"] == "http_method_unsupported")
     assert gap["kind"] == "unsupported_feature"
     assert gap["source"][0]["pointer"] == "/paths/~1ask/query"
+
+
+def test_nested_named_maps_reset_annotation_context(tmp_path):
+    d = agent_document()
+    properties = d["paths"]["/ask"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+    properties["properties"] = {"type": "object", "default": "DO_NOT_COPY_ANNOTATION",
+        "properties": {"default": {"type": "string", "example": "DO_NOT_COPY_ANNOTATION"}}}
+    document = load_openapi(input_file(tmp_path, d))
+    nested = document.data["paths"]["/ask"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["properties"]
+    assert nested == {"type": "object", "properties": {"default": {"type": "string"}}}
+
+
+def test_callback_maps_preserve_named_response_fields(tmp_path):
+    d = agent_document()
+    d["components"] = {"callbacks": {"default": {"{$request.query.callbackUrl}": {
+        "post": {"responses": {"default": {"description": "Callback response"}}}
+    }}}}
+    document = load_openapi(input_file(tmp_path, d))
+    callback = document.data["components"]["callbacks"]["default"]["{$request.query.callbackUrl}"]
+    assert callback["post"]["responses"]["default"] == {"description": "Callback response"}
+
+
+def test_schema_enum_object_values_are_data_not_annotation_objects(tmp_path):
+    d = agent_document()
+    d["components"] = {"schemas": {"Values": {"type": "object", "enum": [
+        {"default": "allowed", "$ref": "literal data", "example": "allowed"}
+    ]}}}
+    document = load_openapi(input_file(tmp_path, d))
+    assert document.data["components"]["schemas"]["Values"]["enum"] == d["components"]["schemas"]["Values"]["enum"]
