@@ -139,9 +139,9 @@ def test_existing_artifacts_are_never_overwritten_or_partially_written(tmp_path,
 
 
 @pytest.mark.parametrize("text", [
-    'openapi: 3.0.3\ninfo: &a {title: neutral}\npaths: *a\n',
-    '{"openapi":"3.0.3","openapi":"3.1.0","paths":{}}',
-    'openapi: 3.0.3\nopenapi: 3.1.0\npaths: {}\n',
+    "openapi: 3.0.3\ninfo: {title: neutral, version: '1'}\npaths: &paths {}\nx-alias: *paths\n",
+    '{"openapi":"3.0.3","openapi":"3.1.0","info":{"title":"neutral","version":"1"},"paths":{}}',
+    "openapi: 3.0.3\nopenapi: 3.1.0\ninfo: {title: neutral, version: '1'}\npaths: {}\n",
 ])
 def test_aliases_and_duplicate_keys_are_rejected(tmp_path, text):
     p = tmp_path / "api.yaml"
@@ -153,6 +153,8 @@ def test_aliases_and_duplicate_keys_are_rejected(tmp_path, text):
 @pytest.mark.parametrize("reference", ["https://127.0.0.1/schema.json", "../outside.json#/x", "credentials.json#/x"])
 def test_unsafe_refs_rejected_before_opening(tmp_path, reference, monkeypatch):
     d = agent_document()
+    (tmp_path / "credentials.json").write_text(json.dumps({"x": {"type": "string"}}))
+    (tmp_path.parent / "outside.json").write_text(json.dumps({"x": {"type": "string"}}))
     d["components"] = {"schemas": {"Bad": {"$ref": reference}}}
     p = input_file(tmp_path, d)
     original = Path.open
@@ -178,10 +180,11 @@ def test_internal_and_adjacent_refs_retain_actual_source(tmp_path):
 
 
 def test_ref_symlink_is_rejected(tmp_path):
-    (tmp_path / "link.json").symlink_to(tmp_path / "missing.json")
+    (tmp_path / "schema.json").write_text(json.dumps({"x": {"type": "string"}}))
+    (tmp_path / "link.json").symlink_to(tmp_path / "schema.json")
     d = agent_document()
     d["components"] = {"schemas": {"Bad": {"$ref": "link.json#/x"}}}
-    with pytest.raises(DocumentError):
+    with pytest.raises(DocumentError, match="symlinks"):
         load_openapi(input_file(tmp_path, d))
 
 
@@ -222,6 +225,8 @@ def test_unsafe_origins_do_not_compile(tmp_path, url):
     result, out = invoke(tmp_path, d)
     assert result.exit_code == 3, result.output
     assert not out.exists()
+    gaps = json.loads(out.with_suffix(".gaps.json").read_text())["gaps"]
+    assert any(g["code"] == "server_invalid" and g["blocking"] for g in gaps)
 
 
 def test_cross_origin_override_and_description_instructions_cannot_redirect(tmp_path):
@@ -236,11 +241,14 @@ def test_cross_origin_override_and_description_instructions_cannot_redirect(tmp_
 
 
 def test_missing_cleanup_is_visible_and_no_delete_is_invented(tmp_path):
-    result, out = invoke(tmp_path)
+    document = agent_document()
+    document["paths"]["/resource"] = {"delete": {"operationId": "delete_resource", "responses": {"204": {"description": "Deleted"}}}}
+    result, out = invoke(tmp_path, document, "--operation", "ask")
     assert result.exit_code == 3
     spec = json.loads(out.read_text())
     assert "DELETE" not in json.dumps(spec)
-    assert "cleanup_endpoint_missing" in out.with_suffix(".gaps.json").read_text()
+    gaps = json.loads(out.with_suffix(".gaps.json").read_text())["gaps"]
+    assert any(g["code"] == "cleanup_mapping_missing" and not g["blocking"] for g in gaps)
 
 
 def test_loader_enforces_depth_and_total_size(tmp_path):
@@ -664,7 +672,7 @@ def test_schema_const_object_is_literal_data_and_reports_unsupported_gap(tmp_pat
     assert not out.exists()
     gaps = json.loads(out.with_suffix(".gaps.json").read_text())
     assert gaps["state"] == "needs_input" and gaps["spec_written"] is False
-    assert any(gap["kind"] == "unsupported_feature" and gap["blocking"] for gap in gaps["gaps"])
+    assert any(gap["code"] == "operation_unsupported" and gap["kind"] == "unsupported_feature" and gap["blocking"] for gap in gaps["gaps"])
 
 
 def test_link_request_body_is_literal_data_and_reports_unsupported_gap(tmp_path):
@@ -712,7 +720,7 @@ def test_unknown_subtrees_are_inert_data_not_reference_authority(tmp_path, locat
     else:
         assert not out.exists()
         gaps = json.loads(out.with_suffix(".gaps.json").read_text())
-        assert any(gap["kind"] == "unsupported_feature" and gap["blocking"] for gap in gaps["gaps"])
+        assert any(gap["code"] == "operation_unsupported" and gap["kind"] == "unsupported_feature" and gap["blocking"] for gap in gaps["gaps"])
 
 
 def test_yaml_integer_response_and_numeric_version_normalize_with_raw_hash(tmp_path):
@@ -729,10 +737,10 @@ def test_yaml_integer_response_and_numeric_version_normalize_with_raw_hash(tmp_p
     assert compile_draft(catalog_operations(loaded), choose_without_model(catalog_operations(loaded))).spec
 
 
-@pytest.mark.parametrize("keys", ["200: {}\n      '200': {}", "true: {}", "1.5: {}"])
+@pytest.mark.parametrize("keys", ["200: {}\n        '200': {}", "true: {}", "1.5: {}"])
 def test_yaml_invalid_response_keys_and_canonical_duplicates_rejected(tmp_path, keys):
     source = tmp_path / "api.yaml"
-    source.write_text("openapi: 3.0.3\ninfo: {title: Test, version: '1'}\npaths:\n  /ask:\n    post:\n      responses:\n      " + keys + "\n")
+    source.write_text("openapi: 3.0.3\ninfo: {title: Test, version: '1'}\npaths:\n  /ask:\n    post:\n      responses:\n        " + keys + "\n")
     with pytest.raises(DocumentError):
         load_openapi(source)
 
@@ -903,3 +911,53 @@ def test_exists_and_not_empty_predicate_cannot_prove_nonempty_string(value):
     from argus_transport.models import predicate
     candidate = {"all": [{"path": "$.answer", "exists": True}, {"not": {"path": "$.answer", "equals": ""}}]}
     assert matches_predicate({"answer": value}, predicate(candidate)) is True
+
+
+def test_path_unsafe_guard_reports_specific_gap_with_otherwise_valid_bindings(tmp_path):
+    document = agent_document()
+    document["paths"]["/ask/../escape"] = document["paths"].pop("/ask")
+    result, out = invoke(tmp_path, document)
+    assert result.exit_code == 3, result.output
+    assert not out.exists()
+    gaps = json.loads(out.with_suffix(".gaps.json").read_text())["gaps"]
+    assert any(g["code"] == "path_unsafe" and g["blocking"] for g in gaps)
+
+
+def test_declared_server_recheck_rejects_forged_compiler_choice(tmp_path):
+    from dataclasses import replace
+    catalog = catalog_operations(load_openapi(input_file(tmp_path)))
+    choices = replace(choose_without_model(catalog), server="http://127.0.0.1:9999")
+    with pytest.raises(ValueError, match="declared root server"):
+        compile_draft(catalog, choices)
+
+
+def test_server_variables_guard_rejects_even_literal_url_and_empty_variables(tmp_path):
+    document = agent_document()
+    document["servers"][0]["variables"] = {}
+    result, out = invoke(tmp_path, document)
+    assert result.exit_code == 3, result.output
+    assert not out.exists()
+    gaps = json.loads(out.with_suffix(".gaps.json").read_text())["gaps"]
+    assert any(g["code"] == "server_invalid" and g["blocking"] for g in gaps)
+
+
+def test_single_success_response_guard_does_not_choose_first_status(tmp_path):
+    document = agent_document()
+    responses = document["paths"]["/ask"]["post"]["responses"]
+    responses["201"] = copy.deepcopy(responses["200"])
+    result, out = invoke(tmp_path, document)
+    assert result.exit_code == 3, result.output
+    assert not out.exists()
+    gaps = json.loads(out.with_suffix(".gaps.json").read_text())["gaps"]
+    assert any(g["code"] == "reply_binding_missing" and g["blocking"] for g in gaps)
+
+
+def test_single_terminal_enum_guard_does_not_choose_first_status(tmp_path):
+    document = agent_document()
+    properties = document["paths"]["/ask"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+    properties["status"]["enum"] = ["completed", "failed"]
+    result, out = invoke(tmp_path, document)
+    assert result.exit_code == 3, result.output
+    assert not out.exists()
+    gaps = json.loads(out.with_suffix(".gaps.json").read_text())["gaps"]
+    assert any(g["code"] == "completion_missing" and g["blocking"] for g in gaps)
