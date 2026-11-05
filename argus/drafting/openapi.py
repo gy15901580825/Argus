@@ -128,9 +128,12 @@ def pointer_child(pointer, key):
 
 def _unique(pairs):
     result = {}
+    canonical_keys = set()
     for key, value in pairs:
-        if not isinstance(key, str) or key in result:
+        canonical = str(key) if type(key) is int else key
+        if not isinstance(canonical, str) or canonical in canonical_keys:
             raise DocumentError("Document keys must be unique strings")
+        canonical_keys.add(canonical)
         result[key] = value
     return result
 
@@ -263,6 +266,10 @@ class _Reader:
                 return result
             result = {}
             for name, item in value.items():
+                if type(name) is int and role == _NamedMap(_Role.RESPONSE):
+                    name = str(name)
+                if not isinstance(name, str):
+                    raise DocumentError("Document keys must be unique strings")
                 if role != _Role.DATA and not isinstance(role, _NamedMap) and name in {"example", "examples", "default"}:
                     continue
                 if role == _Role.PATH_ITEM and name == "additionalOperations":
@@ -297,6 +304,9 @@ def load_openapi(path: Path) -> ApiDocument:
         raise DocumentError("OpenAPI 3.0, 3.1 or 3.2 is required")
     if not isinstance(data.get("info"), dict) or not isinstance(data.get("paths"), dict):
         raise DocumentError("OpenAPI info and paths must be objects")
+    version = data["info"].get("version")
+    if type(version) in {int, float}:
+        data["info"]["version"] = str(version)
     if any(not isinstance(data["info"].get(key), str) or not data["info"][key] for key in ("title", "version")):
         raise DocumentError("OpenAPI info requires title and version strings")
     return ApiDocument(data, reader.sources, tuple(reader.inputs), tuple(reader.issues))
