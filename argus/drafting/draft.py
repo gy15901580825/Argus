@@ -36,6 +36,19 @@ DECISIONS = {
     "optional_inputs_unbound": "Decide whether the omitted optional fields or material are required for your use case.",
 }
 
+DOCUMENT_ISSUE_TEXT = {
+    "reference_cycle": ("A reference cycle is not expanded.", "Provide a bounded schema without cyclic references."),
+    "reference_siblings_unsupported": (
+        "Reference siblings cannot replace or add schema constraints in this command.",
+        "Provide a schema without unsupported reference siblings."),
+    "additional_operations_unsupported": (
+        "Additional OpenAPI operations cannot be compiled by this command.",
+        "Use documented supported HTTP operations or review the unsupported operation flow."),
+    "http_method_unsupported": (
+        "This HTTP method cannot be compiled by this command.",
+        "Use a documented supported HTTP method or review the unsupported operation flow."),
+}
+
 
 class DraftState(str, Enum):
     READY = "ready"
@@ -212,8 +225,8 @@ def choose_without_model(catalog: OperationCatalog, *, operation=None, server_or
                              "A server URL or origin override is unsafe or unresolved.", kind="unsupported_feature"))
     prompt = reply = completion = None
     for issue in doc.issues:
-        why = "A reference cycle is not expanded." if issue.code == "reference_cycle" else "Reference siblings cannot replace or add schema constraints in this command."
-        gaps.append(Gap("/transport", why, "Provide a bounded schema without unsupported reference relations.",
+        why, decision = DOCUMENT_ISSUE_TEXT[issue.code]
+        gaps.append(Gap("/transport", why, decision,
                         issue.code, "unsupported_feature", True, (issue.source,)))
     if doc.data.get("webhooks"):
         gaps.append(_gap(catalog, "/transport", "webhooks_unsupported", "Webhook flows are not compiled.", kind="unsupported_feature"))
@@ -350,6 +363,8 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                 scheme_pointer = pointer_child("/components/securitySchemes", next(iter(requirement[0])))
                 sources.append(catalog.document.source(scheme_pointer).to_dict())
             provenance["fields"]["/transport/auth"] = {"source": sources, "basis": "document_security_or_openapi_default"}
+            if auth["kind"] != "none":
+                provenance["fields"]["/transport/auth"]["environment_name_basis"] = "policy_default"
         except (ValueError, TypeError, AttributeError):
             gaps.append(_gap(catalog, "/transport/auth", "authentication_unsupported",
                              "Authentication is malformed, ambiguous or not supported.", pointer=operation.pointer, kind="unsupported_feature"))
