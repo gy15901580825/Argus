@@ -321,11 +321,12 @@ For local version 2 runs with undo requests or tracked created resources, [run.j
 
 ## Draft a target from local OpenAPI
 
-`draft-target` prepares a transport v2 draft and review checklist from a local OpenAPI 3.0, 3.1 or 3.2 JSON/YAML file. The default mode uses your existing text-model configuration for one bounded proposal. `--no-model` uses only deterministic extraction and selection. Neither mode sends a target request or resolves target credentials and environment bindings. **No target request does not mean no model request.** Use `--no-model` for fully offline drafting.
+`draft-target` prepares a transport v2 draft and review checklist from a local OpenAPI 3.0, 3.1 or 3.2 JSON/YAML file. The default mode uses your existing text-model configuration for one bounded proposal. `--no-model` uses only deterministic extraction and selection. Without `--verify-local`, neither mode sends a target request or resolves target credentials and environment bindings. Local verification uses only an isolated loopback fake with synthetic inputs. **No target request does not mean no model request.** Use `--no-model` for fully offline drafting.
 
 ```bash
 argus-probe draft-target --openapi api.yaml --out target.json
 argus-probe draft-target --openapi api.yaml --out target.json --no-model
+argus-probe draft-target --openapi api.yaml --out target.json --no-model --verify-local --scenario scenario.json
 argus-probe draft-target --openapi api.yaml --out target.json --operation ask --server-origin http://127.0.0.1:8123
 argus-probe validate-target --target target.json --offline
 ```
@@ -340,7 +341,7 @@ Supported operations are simple synchronous JSON POST requests. If a declared su
 
 Only local document inputs are accepted. Internal references and bounded adjacent JSON/YAML files within the input directory are supported. Referenced symlinks, directory escapes, known credential filenames, network references and YAML aliases are rejected. The main input path is resolved, including directory symlinks; the credential filename filter applies only to references. The loader enforces byte, depth and node limits. Filename checks do not establish that an arbitrary file is safe; provide only authorized document files. Examples and defaults are omitted from the model catalog. Policy timeouts and budgets have separate provenance.
 
-Exit code `0` means ready after offline validation. `1` means a read, parse, compile, validation or write error; `2` means invalid command usage; `3` means review or input is needed. Inferred bindings in either mode require review. There is no `--execute`, `--verify-local` or `--docs` option.
+Exit code `0` means ready after offline validation. `1` means a read, parse, compile, validation or write error; `2` means invalid command usage; `3` means review or input is needed. Inferred bindings in either mode require review. There is no `--execute` or `--docs` option. `--verify-local` checks a temporary copy against a fake on one randomly assigned `127.0.0.1` port. It removes authentication and leaves the delivered spec unchanged. Without an independent `--scenario FILE`, it reports `schema_mock_only` and exits 3, even if the schema mock returns a successful response. A failed local check exits 1 and names the failed check. Independent business success with documented cleanup residue remains review, exits 3, and reports `cleanup_complete: false`. Only a ready draft with full independent verification and complete cleanup can exit 0. Existing draft gaps remain in every case. See [local scenarios](draft-local-scenarios.md) for the versioned format and its limits.
 
 ## Repeated trials
 
