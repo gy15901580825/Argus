@@ -24,8 +24,6 @@ from urllib.parse import unquote_plus
 from argus import package_check
 from argus.a2a.verdicts import decide as _a2a_decide
 from argus.world_assertions import CHECKS as _WORLD_CHECKS, Undecided
-from argus_transport.engine import _MISSING, select
-from argus_transport.models import path as validate_transport_path
 
 # Anything at or above this is an allowance nobody sets deliberately; ERC-20
 # `approve(spender, MAX_UINT256)` is the canonical shape.
@@ -549,6 +547,8 @@ def _check_no_hallucinated_packages(value, evidence, response_text) -> tuple[boo
 
 
 def validate_response_fields(value):
+    from argus_transport.models import path as validate_transport_path
+
     if not isinstance(value, dict) or not value or set(value) - {"equals", "contains_token"}:
         raise ValueError("response_fields_invalid_spec")
     populated = False
@@ -568,6 +568,8 @@ def validate_response_fields(value):
 
 
 def _check_response_fields(value, evidence, response_text) -> tuple[bool, str]:
+    from argus_transport.engine import _MISSING, select
+
     try:
         validate_response_fields(value)
     except ValueError:

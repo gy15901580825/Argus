@@ -18,7 +18,6 @@ from argus.a2a.world import (
 )
 from argus.agentic import VALID_OWASP_AGENTIC_IDS
 from argus.remediation import parse_actions
-from argus.assertions import validate_response_fields
 
 logger = logging.getLogger(__name__)
 
@@ -216,10 +215,15 @@ def load_probe(path: Path) -> Probe:
                 )
         assertions = raw.get("assertions", ()) or ()
         if isinstance(assertions, dict) and "response_fields" in assertions:
-            raise ValueError("response_fields requires an assertions list")
+            raise ValueError(f"response_fields requires an assertions list in {path}")
         for entry in assertions:
             if isinstance(entry, dict) and "response_fields" in entry:
-                validate_response_fields(entry["response_fields"])
+                from argus.assertions import validate_response_fields
+
+                try:
+                    validate_response_fields(entry["response_fields"])
+                except ValueError:
+                    raise ValueError(f"invalid response_fields spec in {path}") from None
         scenario_kind = None
         scenario_payload = ""
         if "scenario" in raw:
