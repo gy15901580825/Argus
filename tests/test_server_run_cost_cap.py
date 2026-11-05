@@ -148,3 +148,58 @@ async def test_concurrent_server_runs_have_independent_caps_and_shared_daily_spe
     assert meter.spent_today() == pytest.approx(0.15)
     assert meter.spent_today_deep() == 0
     assert sorted(closed) == ["a", "b"]
+
+
+async def test_closing_the_server_stream_releases_target_and_scope(server_run, monkeypatch):
+    _, started, closed = server_run
+    meter = CostMeter(daily_cap_usd=100, per_run_cap_usd=0.20)
+    monkeypatch.setattr(api, "_COST_METER", meter)
+    response = await api.run(api.RunRequest(
+        target={"kind": "test", "label": "cancel"}, probe_ids=["probe_1", "probe_2", "probe_3"],
+    ))
+    stream = response.body_iterator
+    first = await stream.__anext__()
+    assert b'"verdict": "pass"' in first
+    with meter.run_scope("unrelated"):
+        assert meter.spent_in_current_run() == 0
+    await stream.aclose()
+    assert started == [("cancel", "attack_1")]
+    assert closed == ["cancel"]
+    assert meter.spent_today() == pytest.approx(0.03)
+
+
+async def test_child_task_and_thread_charge_the_parent_scope(monkeypatch):
+    monkeypatch.setitem(cost_meter._PRICES_PER_M_TOKENS, "test-model", {"input": 1.0, "output": 0.0})
+    meter = CostMeter(daily_cap_usd=100, per_run_cap_usd=0.20)
+
+    async def charge():
+        meter.record("test-model", 30_000, 0)
+
+    with meter.run_scope("parent"):
+        await asyncio.create_task(charge())
+        await asyncio.to_thread(meter.record, "test-model", 30_000, 0)
+        assert meter.spent_in_current_run() == pytest.approx(0.06)
+    assert meter.spent_in_current_run() == 0
+    assert meter.spent_today() == pytest.approx(0.06)
+
+
+async def test_independent_tasks_can_overlap_meter_scopes(monkeypatch):
+    monkeypatch.setitem(cost_meter._PRICES_PER_M_TOKENS, "test-model", {"input": 1.0, "output": 0.0})
+    meter = CostMeter(daily_cap_usd=100, per_run_cap_usd=0.20)
+    active = set()
+    both_active = asyncio.Event()
+
+    async def charge(label, tokens):
+        with meter.run_scope(label):
+            active.add(label)
+            if len(active) == 2:
+                both_active.set()
+            await both_active.wait()
+            meter.record("test-model", tokens, 0)
+            return meter.spent_in_current_run()
+
+    a, b = await asyncio.wait_for(asyncio.gather(charge("a", 30_000), charge("b", 60_000)), timeout=5)
+    assert a == pytest.approx(0.03)
+    assert b == pytest.approx(0.06)
+    assert meter.spent_today() == pytest.approx(0.09)
+    assert meter.spent_in_current_run() == 0
