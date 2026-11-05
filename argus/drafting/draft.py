@@ -306,7 +306,13 @@ def choose_without_model(catalog: OperationCatalog, *, operation=None, server_or
         for binding, field, missing in ((reply, "/transport/response/text", "reply_binding_missing"),
                                          (completion, "/transport/outcome", "completion_missing")):
             if binding is None:
-                gaps.append(_gap(catalog, field, missing, "No unique documented reply or terminal state can be proposed.", pointer=pointer))
+                if missing == "completion_missing" and reply is not None:
+                    gaps.append(Gap(field,
+                                    "Transport outcome predicates cannot express a generic nonempty string reply without a documented terminal state.",
+                                    "Select a documented terminal-success state or review a transport predicate enhancement before compiling this synchronous response.",
+                                    missing, "unsupported_feature", True, (doc.source(reply.pointer),)))
+                else:
+                    gaps.append(_gap(catalog, field, missing, "No unique documented reply or terminal state can be proposed.", pointer=pointer))
     return DraftChoices(chosen.id if chosen else None, server, prompt, reply, completion, tuple(gaps), intent)
 
 
