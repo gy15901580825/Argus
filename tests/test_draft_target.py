@@ -425,3 +425,92 @@ def test_schema_keyword_names_are_valid_property_names(tmp_path):
     result, out = invoke(tmp_path, d)
     assert result.exit_code == 3, result.output
     assert out.exists()
+
+
+@pytest.mark.parametrize("role,name,value", [("reply", "answer", None),
+                                            ("completion", "status", "completed")])
+def test_compiler_rejects_nested_response_choices(tmp_path, role, name, value):
+    from dataclasses import replace
+    from argus.drafting.draft import Binding
+
+    d = agent_document()
+    schema = d["paths"]["/ask"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
+    schema["properties"]["nested"] = {"type": "object", "properties": {
+        name: copy.deepcopy(schema["properties"][name])
+    }}
+    catalog = catalog_operations(load_openapi(input_file(tmp_path, d)))
+    choices = choose_without_model(catalog)
+    pointer = "/paths/~1ask/post/responses/200/content/application~1json/schema/properties/nested/properties/" + name
+    choices = replace(choices, **{role: Binding(name, pointer, value=value)})
+    with pytest.raises(ValueError, match="unknown or unsupported operation field"):
+        compile_draft(catalog, choices)
+
+
+@pytest.mark.parametrize("role,name,value", [("reply", "answer", None),
+                                            ("completion", "status", "completed")])
+def test_compiler_rejects_failure_response_choices(tmp_path, role, name, value):
+    from dataclasses import replace
+    from argus.drafting.draft import Binding
+
+    d = agent_document()
+    responses = d["paths"]["/ask"]["post"]["responses"]
+    responses["500"] = copy.deepcopy(responses["200"])
+    catalog = catalog_operations(load_openapi(input_file(tmp_path, d)))
+    pointer = "/paths/~1ask/post/responses/500/content/application~1json/schema/properties/" + name
+    choices = replace(choose_without_model(catalog), **{role: Binding(name, pointer, value=value)})
+    with pytest.raises(ValueError, match="unknown or unsupported operation field"):
+        compile_draft(catalog, choices)
+
+
+def test_compiler_rejects_write_only_completion_choice(tmp_path):
+    from dataclasses import replace
+    from argus.drafting.draft import Binding
+
+    d = agent_document()
+    d["paths"]["/ask"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]["status"]["writeOnly"] = True
+    catalog = catalog_operations(load_openapi(input_file(tmp_path, d)))
+    pointer = "/paths/~1ask/post/responses/200/content/application~1json/schema/properties/status"
+    choices = replace(choose_without_model(catalog), completion=Binding("status", pointer, value="completed"))
+    with pytest.raises(ValueError, match="incompatible schema"):
+        compile_draft(catalog, choices)
+
+
+def test_camel_case_path_parameter_uses_valid_transport_binding(tmp_path):
+    d = agent_document()
+    item = d["paths"].pop("/ask")
+    d["paths"]["/ask/{recordId}"] = item
+    item["parameters"] = [{"name": "recordId", "in": "path", "required": True,
+                           "schema": {"type": "string"}}]
+    result, out = invoke(tmp_path, d)
+    assert result.exit_code == 3, result.output
+    spec = json.loads(out.read_text())
+    assert spec["transport"]["request"]["url"] == "http://127.0.0.1:8123/ask/{input_recordid}"
+    assert spec["transport"]["let"]["run"] == {"input_recordid": {"env": "TARGET_INPUT_RECORDID"}}
+    gaps = json.loads(out.with_suffix(".gaps.json").read_text())
+    assert "parameter_binding_required" in {gap["code"] for gap in gaps["gaps"]}
+
+
+@pytest.mark.parametrize("name", ["record_identifier_that_is_too_long", "header_id"])
+def test_unsupported_parameter_binding_names_produce_gap(tmp_path, name):
+    d = agent_document()
+    item = d["paths"]["/ask"]
+    item["parameters"] = [{"name": name, "in": "query", "required": True,
+                           "schema": {"type": "string"}}]
+    result, out = invoke(tmp_path, d)
+    assert result.exit_code == 3, result.output
+    assert not out.exists()
+    gaps = json.loads(out.with_suffix(".gaps.json").read_text())
+    assert "parameter_unsupported" in {gap["code"] for gap in gaps["gaps"]}
+
+
+def test_case_normalization_collision_produces_gap(tmp_path):
+    d = agent_document()
+    d["paths"]["/ask"]["parameters"] = [
+        {"name": name, "in": "query", "required": True, "schema": {"type": "string"}}
+        for name in ["recordId", "recordid"]
+    ]
+    result, out = invoke(tmp_path, d)
+    assert result.exit_code == 3, result.output
+    assert not out.exists()
+    gaps = json.loads(out.with_suffix(".gaps.json").read_text())
+    assert "parameter_collision" in {gap["code"] for gap in gaps["gaps"]}
