@@ -392,3 +392,97 @@ def test_no_model_never_consults_model_config(tmp_path, monkeypatch):
     source=input_file(tmp_path,sync_document());out=tmp_path/"target.json"
     result=CliRunner().invoke(main,["draft-target","--openapi",str(source),"--out",str(out),"--no-model"])
     assert result.exit_code==3 and out.exists(),result.output
+
+
+@pytest.mark.parametrize("text", ["\ud800", '{"operation":"ask","prompt":"\ud800","reply":"none","completion":null}'])
+def test_invalid_unicode_model_reply_is_rejected_without_exception_leak(tmp_path, text):
+    from argus.drafting.proposal import parse_proposal, ProposalError
+    catalog = catalog_operations(load_openapi(input_file(tmp_path, proposed_document())))
+    with pytest.raises(ProposalError) as error: parse_proposal(text, catalog)
+    assert error.value.code == "model_output_invalid"
+
+
+async def test_invalid_unicode_model_input_has_explicit_no_call_fallback(tmp_path, stub_model):
+    from argus.drafting.proposal import propose_choices
+    calls, _, _ = stub_model
+    catalog = catalog_operations(load_openapi(input_file(tmp_path, proposed_document())))
+    result = await propose_choices(catalog, intent="\ud800")
+    assert calls == []
+    assert any(g.code == "model_input_invalid" for g in result.choices.gaps)
+
+
+async def test_explicit_operation_cannot_be_overridden_by_valid_model_references(tmp_path, stub_model):
+    import copy
+    from argus.drafting.proposal import propose_choices
+    calls, output, _ = stub_model
+    doc = proposed_document()
+    doc["paths"]["/other"] = copy.deepcopy(doc["paths"]["/ask"])
+    doc["paths"]["/other"]["post"]["operationId"] = "other"
+    selection = proposal_document_choices()
+    selection["operation"] = "other"
+    selection["prompt"] = selection["prompt"].replace("~1ask", "~1other")
+    selection["reply"] = selection["reply"].replace("~1ask", "~1other")
+    output["text"] = json.dumps(selection)
+    catalog = catalog_operations(load_openapi(input_file(tmp_path, doc)))
+    result = await propose_choices(catalog, operation="ask")
+    assert len(calls) == 1 and result.choices.operation == "ask"
+    assert any(g.code == "model_operation_conflict" for g in result.choices.gaps)
+
+
+async def test_business_input_gap_remains_after_accepted_model_selection(tmp_path, stub_model):
+    from argus.drafting.proposal import propose_choices
+    doc = proposed_document()
+    request = doc["paths"]["/ask"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+    request["properties"]["organization"] = {"type": "string"}
+    request["required"].append("organization")
+    catalog = catalog_operations(load_openapi(input_file(tmp_path, doc)))
+    result = await propose_choices(catalog)
+    artifacts = compile_draft(catalog, result.choices)
+    assert artifacts.spec is None
+    assert any(g.code == "business_input_missing" and g.blocking for g in artifacts.gaps)
+
+
+async def test_conservative_estimate_includes_configured_fallback(tmp_path, monkeypatch):
+    from argus import llm
+    from argus.drafting import proposal
+    cfg = llm.LLMConfig("azure", "gpt-5.4-mini", "gpt-5.4-mini", True, None)
+    monkeypatch.setattr(llm,"text_config",lambda:cfg)
+    monkeypatch.setattr(llm,"missing_text",lambda c:None)
+    estimated=[]
+    def price(model,*args): estimated.append(model);return 0.3
+    monkeypatch.setattr(proposal,"estimate_call_usd",price)
+    async def forbidden(*args,**kwargs): raise AssertionError("fallback-inclusive cap was ignored")
+    monkeypatch.setattr(llm,"complete",forbidden)
+    catalog=catalog_operations(load_openapi(input_file(tmp_path,proposed_document())))
+    result=await proposal.propose_choices(catalog)
+    assert len(estimated)==2
+    assert result.disclosure.application_calls==0
+    assert result.disclosure.estimated_usd==pytest.approx(0.6)
+    assert any(g.code=="model_cost_exceeded" for g in result.choices.gaps)
+
+
+async def test_full_reference_catalog_bound_does_not_drop_late_operations(tmp_path, stub_model):
+    import copy
+    from argus.drafting.proposal import propose_choices
+    doc = proposed_document()
+    original = doc["paths"].pop("/ask")
+    for i in range(120):
+        path=copy.deepcopy(original)
+        path["post"]["operationId"]="operation_"+str(i)
+        path["post"]["description"]="description "*100
+        doc["paths"]["/operation_"+str(i)]=path
+    catalog=catalog_operations(load_openapi(input_file(tmp_path,doc)))
+    result=await propose_choices(catalog)
+    assert stub_model[0]==[]
+    assert any(g.code=="model_input_too_large" for g in result.choices.gaps)
+
+
+async def test_invalid_unicode_model_output_falls_back_with_matching_gap(tmp_path, stub_model):
+    from argus.drafting.proposal import propose_choices
+    calls, output, _ = stub_model
+    output["text"] = "\ud800"
+    catalog = catalog_operations(load_openapi(input_file(tmp_path, sync_document())))
+    result = await propose_choices(catalog)
+    assert len(calls) == 1
+    assert any(g.code == "model_output_invalid" for g in result.choices.gaps)
+    assert compile_draft(catalog, result.choices).spec == compile_draft(catalog, choose_without_model(catalog)).spec
