@@ -27,12 +27,13 @@ _PRICES_PER_M_TOKENS = {
     "claude-haiku-4-5-20251001": {"input": 1.0, "output": 5.0},
     "claude-sonnet-4-6": {"input": 3.0, "output": 15.0},
     "claude-opus-4-7": {"input": 15.0, "output": 75.0},
-    # Azure OpenAI deployments (see redteam/llm.py).
+    # Former Azure default, kept so configs that still name it price the same.
     "gpt-5.4-mini": {"input": 1.0, "output": 5.0},
     # Azure OpenAI retail list price, long-context GlobalStandard row (eastus2), read 2026-11-04, chosen so the cap errs high.
     "gpt-6.1-sol": {"input": 4.00, "output": 15.00},
     "azure/gpt-6.1-sol": {"input": 4.00, "output": 15.00},
-    # OpenAI judge defaults.
+    # OpenAI judge defaults. gpt-5.6-luna is also the Azure default; litellm's cost map
+    # lists azure/gpt-5.6-luna (global) at the same rate.
     "gpt-5.6-luna": {"input": 0.20, "output": 1.20},
     "gpt-5.6-terra": {"input": 2.00, "output": 12.00},
     # TypeSafe Jev: $0.042 per 1M input tokens, output tokens free (docs.typesafe.ai/models, read 2026-10-30).

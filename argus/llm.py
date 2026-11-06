@@ -79,10 +79,9 @@ NEEDS_TEXT_MODEL = ("the jev judge writes no text, so deep mode's attacker needs
 # defaults must not change behaviour for an operator who sets nothing.
 _DEFAULTS = {
     PROVIDER_ANTHROPIC: {"fast": "claude-haiku-4-5-20251001", "strong": "claude-sonnet-4-6"},
-    # Azure exposes a single chat deployment in this project's subscription, so
-    # both roles land on it unless the operator configures a second one. See
-    # `escalation_is_meaningful`.
-    PROVIDER_AZURE: {"fast": "gpt-5.4-mini", "strong": "gpt-5.4-mini"},
+    # Both roles default to one deployment unless the operator configures a
+    # second one. See `escalation_is_meaningful`.
+    PROVIDER_AZURE: {"fast": "gpt-5.6-luna", "strong": "gpt-5.6-luna"},
     PROVIDER_OPENAI: {"fast": "gpt-5.6-luna", "strong": "gpt-5.6-terra"},
     # One model, no escalation: Jev is a single judge.
     PROVIDER_JEV: {"fast": "jev-latest", "strong": "jev-latest"},
@@ -491,7 +490,7 @@ async def _call_anthropic(cfg: LLMConfig, model: str, system: str, user: str, ma
 
 
 async def _call_azure(cfg: LLMConfig, model: str, system: str, user: str, max_tokens: int) -> Completion:
-    # No `temperature`: gpt-5.4-mini rejects the parameter outright.
+    # No `temperature`: newer Azure OpenAI models reject it.
     resp = await _acompletion(
         model=f"azure/{model}",
         messages=[

@@ -160,7 +160,7 @@ async def test_run_local_azure_provider_needs_no_anthropic_key(monkeypatch):
                 env={"REDTEAM_MODEL_PROVIDER": "azure"},
             )
         )
-    assert events[0]["judge"].startswith("azure, fast gpt-5.4-mini")
+    assert events[0]["judge"].startswith("azure, fast gpt-5.6-luna")
     assert events[1] == FAKE_FINDING
     assert events[-1]["type"] == "coverage"
 
