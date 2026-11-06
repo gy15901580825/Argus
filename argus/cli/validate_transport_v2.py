@@ -7,6 +7,7 @@ import click
 from argus.targets import build_target
 from argus.targets.custom_http import run_log_from_metadata
 from argus.cli.local_run import cleanup_lines
+from argus.cli.run_json import mask_text
 from argus_transport.runtime_v2 import TargetRunStopped
 from argus_transport.spec_v2 import TransportContextV2, material_binding, provision_checklist
 from argus_transport import (
@@ -71,7 +72,7 @@ async def execute_transport(transport, *, policy=None, context=None, environ=Non
 
 
 def validate(
-    spec: dict, *, offline: bool, endpoint_override: str | None
+    spec: dict, *, offline: bool, endpoint_override: str | None, secrets=()
 ) -> None:
     try:
         transport = build_target(spec).spec.transport
@@ -79,7 +80,7 @@ def validate(
             raise ValueError("version 2 transport required")
     except Exception as exc:
         raise click.ClickException(
-            f"target spec invalid: {type(exc).__name__}"
+            mask_text(f"target spec invalid: {type(exc).__name__}: {exc}", secrets)
         ) from exc
     if endpoint_override:
         try:

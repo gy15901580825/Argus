@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 
 from argus.drafting.draft import STATUS_WORDS
 from argus.drafting.openapi import OperationCatalog
+from argus_transport.models import path as transport_path
 from argus_transport.spec_v2 import ENV_NAME_RE, SECRET_WORDS
 
 
@@ -162,10 +163,14 @@ def path_pattern(path):
     for part in parts:
         if part.startswith('{') and part.endswith('}'):
             name = part[1:-1]
-            if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,127}', name) or name in names:
+            # One rule with transport bracket paths, so a poll ID field a draft reads can name its route parameter.
+            try:
+                transport_path(f"$['{name}']")
+            except ValueError:
                 invalid('invalid path parameter')
+            if name in names: invalid('invalid path parameter')
             names.append(name)
-            expression += f'(?P<{name}>[^/]+)'
+            expression += '([^/]+)'
         else:
             if '{' in part or '}' in part: invalid('invalid path template')
             expression += re.escape(part)

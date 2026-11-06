@@ -240,8 +240,8 @@ class LocalFake:
             for index, check in enumerate(op.request) if check.check == 'material_bound') if scenario else frozenset()
         self.material_required = bool(self.material_predicates)
         self.material_observed = set()
-        self.routes = [(op, path_pattern(op.path)[0]) for op in scenario.operations] if scenario else []
-        self.catalog_routes = [(op, path_pattern(op.path)[0]) for op in catalog.operations] if catalog else []
+        self.routes = [(op, *path_pattern(op.path)) for op in scenario.operations] if scenario else []
+        self.catalog_routes = [(op, *path_pattern(op.path)) for op in catalog.operations] if catalog else []
         self.shutdown_s = shutdown_s
         self.runner = None
         self.origin = None
@@ -298,9 +298,9 @@ class LocalFake:
         return content
 
     def _catalog_operation(self, request):
-        for op, pattern in self.catalog_routes:
+        for op, pattern, names in self.catalog_routes:
             match = pattern.fullmatch(request.path)
-            if op.method.upper() == request.method and match: return op, match.groupdict()
+            if op.method.upper() == request.method and match: return op, dict(zip(names, match.groups()))
         return None, {}
 
     def _schema_request(self, op, body, query, path, multipart, headers, cookies, *, raw, media_type):
@@ -374,11 +374,11 @@ class LocalFake:
                 self.fail('schema_mock_unsupported')
                 return web.json_response({'error': 'unsupported schema'}, status=400)
         selected = None
-        for candidate, pattern in self.routes:
+        for candidate, pattern, names in self.routes:
             match = pattern.fullmatch(request.path)
             if candidate.method == request.method and match:
                 selected = candidate
-                path = {key: unquote(value) for key, value in match.groupdict().items()}
+                path = {key: unquote(value) for key, value in zip(names, match.groups())}
                 break
         self.trace.append({'operation': selected.id if selected else None, 'role': selected.role if selected else 'unknown', 'method': request.method, 'path': request.path})
         if selected is None:

@@ -131,7 +131,8 @@ def cmd_validate_target(
         if sample_response or with_scenario or scenario_url:
             raise click.UsageError("this option supports version 1 transports only")
         return validate(
-            spec, offline=offline or not execute, endpoint_override=endpoint_override
+            spec, offline=offline or not execute, endpoint_override=endpoint_override,
+            secrets=run_json.run_secrets(spec, substituted),
         )
     if "transport" in spec or kind == "browser_use":
         return _validate_transport(
