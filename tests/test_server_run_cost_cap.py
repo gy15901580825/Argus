@@ -203,3 +203,31 @@ async def test_independent_tasks_can_overlap_meter_scopes(monkeypatch):
     assert b == pytest.approx(0.06)
     assert meter.spent_today() == pytest.approx(0.09)
     assert meter.spent_in_current_run() == 0
+
+
+@pytest.mark.parametrize(("mode", "override", "expected_cap"), [
+    ("static", None, 0.20), ("static", 0.15, 0.15), ("deep", None, 10.0), ("deep", 0.12, 0.12),
+])
+async def test_coverage_event_reports_spend_and_the_cap_in_force(server_run, mode, override, expected_cap):
+    run, _, _ = server_run
+    meter = CostMeter(daily_cap_usd=100, per_run_cap_usd=0.20, deep_per_run_cap_usd=10.0)
+    text, events = await run(meter, mode=mode, cap=override)
+    assert findings(events) == [("probe_1", "pass"), ("probe_2", "pass"), ("probe_3", "pass")]
+    assert events[3]["type"] == "coverage"
+    assert events[4:] == [{}]
+    assert text.endswith("event: end\ndata: {}\n\n")
+    assert events[3]["cost"] == {"spent_usd": 0.09, "per_run_cap_usd": expected_cap}
+
+
+async def test_cap_hit_error_event_reports_spend_past_the_cap(server_run):
+    run, _, _ = server_run
+    meter = CostMeter(daily_cap_usd=100, per_run_cap_usd=0.20)
+    text, events = await run(meter, cap=0.05)
+    assert findings(events) == [
+        ("probe_1", "pass"), ("probe_2", "aborted_cost"), ("probe_3", "aborted_cost"),
+    ]
+    assert not any(event.get("type") == "coverage" for event in events)
+    assert "event: error" in text
+    assert events[-1]["type"] == "CostExceededError"
+    assert events[-1]["cost"] == {"spent_usd": 0.06, "per_run_cap_usd": 0.05}
+    assert events[-1]["cost"]["spent_usd"] >= events[-1]["cost"]["per_run_cap_usd"]
