@@ -185,3 +185,11 @@ def test_main_binds_configured_host_with_both_secrets(monkeypatch):
     started = _fake_uvicorn(monkeypatch)
     server.main()
     assert started[0]["host"] == "0.0.0.0"
+
+
+def test_healthz_needs_no_token(client, monkeypatch):
+    monkeypatch.setenv("ARGUS_SERVER_TOKEN", "right-token")
+    assert client.get("/redteam/probes").status_code == 401
+    resp = client.get("/healthz")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"

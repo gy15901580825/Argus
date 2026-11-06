@@ -38,19 +38,19 @@ def test_stated_target_kind_counts_match_the_builders():
 
 def test_cli_md_shape_table_lists_every_kind():
     table = _section(CLI_MD.read_text(), "## Supported agent shapes")
-    listed = set(re.findall(r"^\| `([a-z0-9_]+)` \|", table, re.MULTILINE))
-    assert listed == set(_BUILDERS)
+    listed = re.findall(r"^\| `([a-z0-9_]+)` \|", table, re.MULTILINE)
+    assert sorted(listed) == sorted(_BUILDERS)
 
 
 def test_quickstart_lists_every_kind():
     line = next(l for l in QUICKSTART.read_text().splitlines() if "supported `kind` values" in l)
-    assert set(re.findall(r"`([a-z0-9_]+)`", line)) - {"kind"} == set(_BUILDERS)
+    assert sorted(k for k in re.findall(r"`([a-z0-9_]+)`", line) if k != "kind") == sorted(_BUILDERS)
 
 
 def test_cli_md_lists_every_subcommand():
     block = _section(CLI_MD.read_text(), "## Subcommands")
-    listed = set(re.findall(r"^argus-probe ([a-z-]+)", block, re.MULTILINE))
-    assert listed == set(cli_main.commands)
+    listed = re.findall(r"^argus-probe ([a-z-]+)", block, re.MULTILINE)
+    assert sorted(listed) == sorted(cli_main.commands)
 
 
 def test_cli_md_links_work_on_pypi():

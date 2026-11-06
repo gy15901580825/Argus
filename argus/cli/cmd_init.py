@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
@@ -142,6 +143,26 @@ _KIND_QUESTIONS: dict[str, list[tuple[str, str, str | None]]] = {
     ],
 }
 
+# One line per kind for the prompt that bare `init` shows, in the order shown.
+_KIND_DESCRIPTIONS: dict[str, str] = {
+    "openai_compat": "An HTTP endpoint that speaks the OpenAI Chat Completions protocol",
+    "anthropic_native": "The Anthropic Messages API",
+    "custom_http": "An agent behind its own HTTP request and response shape",
+    "web_chat": "An agent reachable only through a web chat page",
+    "python": "An agent you can call as a Python function",
+    "grpc": "A gRPC service with server reflection enabled",
+    "browser_use": "A browser-using agent",
+    "http_upload": "A file upload endpoint that renders what it stores",
+    "mcp_agent": "An agent that uses MCP tools, run against a hostile MCP testbed",
+    "payment_agent": "An agent that spends money, run against a payment testbed",
+    "a2a_agent": "An agent that talks to A2A peers, run against an A2A peer testbed",
+    "testbed_agent": "The general form of mcp_agent, payment_agent and a2a_agent",
+    "mcp_server": "An MCP server you run over HTTP (tests the server, not an agent)",
+    "a2a_server": "An A2A server (tests the server, not an agent)",
+    "vllm_server": "A vLLM model server (tests the server, not an agent)",
+}
+_DEFAULT_KIND = "openai_compat"
+
 # Chat kinds get a small judged set. Every other kind gets `all`, because the chat probes do not
 # apply to it and would be skipped, leaving a job that tests nothing. Assumes `all` fits the target (PR5a).
 _CHAT_PROBES = "owasp_01_prompt_injection_basic,syscard_crescendo"
@@ -194,12 +215,35 @@ def _installed_version() -> str | None:
         return None
 
 
+def _stdin_is_tty() -> bool:
+    return sys.stdin.isatty()
+
+
+def _ask_kind() -> str:
+    if not _stdin_is_tty():
+        raise click.UsageError(
+            "Missing option '--kind'. stdin is not a terminal, so init cannot ask for it. "
+            f"Choose one of: {', '.join(_KIND_DESCRIPTIONS)}. "
+            f"Example: argus-probe init --kind {_DEFAULT_KIND}"
+        )
+    width = max(map(len, _KIND_DESCRIPTIONS))
+    click.echo("Which kind of target do you want to test?")
+    for name, description in _KIND_DESCRIPTIONS.items():
+        click.echo(f"  {name.ljust(width)}  {description}")
+    return click.prompt(
+        "Target kind",
+        type=click.Choice(list(_KIND_DESCRIPTIONS)),
+        default=_DEFAULT_KIND,
+        show_choices=False,
+    )
+
+
 @click.command("init")
 @click.option(
     "--kind",
-    required=True,
+    default=None,
     type=click.Choice(sorted(_KNOWN_KINDS)),
-    help="Target adapter kind",
+    help="Target adapter kind. Asked for when omitted on a terminal.",
 )
 @click.option(
     "--output",
@@ -212,9 +256,11 @@ def _installed_version() -> str | None:
     default=None,
     help="Generate .github/workflows/argus-probe.yml (prompts if neither flag given)",
 )
-def init_command(kind: str, output: str, workflow: bool | None) -> None:
+def init_command(kind: str | None, output: str, workflow: bool | None) -> None:
     """Generate a target.json (and optional GitHub Action workflow) for Argus."""
     click.echo(f"Argus target initializer")
+    if kind is None:
+        kind = _ask_kind()
     click.echo(f"Target kind: {kind}")
     questions = _KIND_QUESTIONS[kind]
 

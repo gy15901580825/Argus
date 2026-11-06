@@ -51,6 +51,7 @@ DECISIONS = {
     "poll_status_unclassified": "Confirm that these documented values should end the run as target errors.",
     "async_shape_unsupported": "Review the asynchronous flow; this command drafts only a documented GET poll with a top-level string status enum.",
     "success_conditions_minimal": "Confirm which fields a successful response must carry; add exists checks to the success rule if the API guarantees them.",
+    "required_fields_unchecked": "Decide whether a successful response must carry these fields; the success rule does not check them.",
 }
 
 # Fixed word table for no-model status classification; every result is still a proposal.
@@ -648,6 +649,7 @@ def _field_path(name):
 def _success_when(catalog, op, primary, field, gaps):
     """The success predicate on op's 2xx body: the success signal plus every documented required field.
 
+    Required fields the rule cannot check go into one non-blocking review gap that names them.
     Returns the predicate and the `required` pointer it read, or None after adding a review gap when no list is usable."""
     schema, pointer = _body_schema(op)
     required = schema.get("required")
@@ -656,8 +658,18 @@ def _success_when(catalog, op, primary, field, gaps):
                          "The response schema documents no required fields, so success checks only the success signal and the reply.",
                          pointer=pointer, blocking=False))
         return primary, None
-    present = [{"path": _field_path(name), "exists": True} for name in dict.fromkeys(required)
-               if name in schema["properties"] and _field_path(name) != primary["path"]]
+    names = [name for name in dict.fromkeys(required) if name in schema["properties"] and _field_path(name) != primary["path"]]
+    # Bracket paths have no escapes and jsonpath_ng reads a backslash as one; `all` holds the signal plus 31 checks.
+    checked = [name for name in names if re.fullmatch(r"[^'\\\r\n]+", name)]
+    groups = (([name for name in names if name not in checked], "no rule path can name them"),
+              (checked[31:], "a rule holds at most 31 field checks"))
+    unchecked = [name for group, _ in groups for name in group]
+    if unchecked:
+        why = "; ".join(f"{', '.join(map(json.dumps, group))} ({reason})" for group, reason in groups if group)
+        gaps.append(Gap(field, f"Success does not check these required fields: {why}.", DECISIONS["required_fields_unchecked"],
+                        "required_fields_unchecked", "documentation_gap", False,
+                        tuple(catalog.document.source(f"{pointer}/required/{required.index(name)}") for name in unchecked)))
+    present = [{"path": _field_path(name), "exists": True} for name in checked[:31]]
     return ({"all": [primary, *present]} if present else primary), pointer + "/required"
 
 
