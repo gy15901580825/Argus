@@ -50,6 +50,7 @@ DECISIONS = {
     "poll_status_proposed": "Confirm the success value and the values that mean the job is still running.",
     "poll_status_unclassified": "Confirm that these documented values should end the run as target errors.",
     "async_shape_unsupported": "Review the asynchronous flow; this command drafts only a documented GET poll with a top-level string status enum.",
+    "success_conditions_minimal": "Confirm which fields a successful response must carry; add exists checks to the success rule if the API guarantees them.",
 }
 
 # Fixed word table for no-model status classification; every result is still a proposal.
@@ -326,13 +327,19 @@ def _success(op):
     return tuple((status, responses[status]) for status in statuses)
 
 
-def _response_fields(op):
-    """The properties of the 2xx JSON object body and their pointer prefix under the lowest 2xx status."""
+def _body_schema(op):
+    """The 2xx JSON object body schema and its pointer under the lowest 2xx status, or (None, "")."""
     success = _success(op)
     schema = _object_schema(success[0][1].get("content")) if success else None
     if schema is None:
         return None, ""
-    return schema["properties"], op.pointer + "/responses/" + success[0][0] + "/content/application~1json/schema/properties"
+    return schema, op.pointer + "/responses/" + success[0][0] + "/content/application~1json/schema"
+
+
+def _response_fields(op):
+    """The properties of the 2xx JSON object body and their pointer prefix under the lowest 2xx status."""
+    schema, pointer = _body_schema(op)
+    return (schema["properties"], pointer + "/properties") if schema else (None, "")
 
 
 def _id_variable(name):
@@ -361,9 +368,11 @@ def _parameters(op):
 
 
 def _poll_parameters(op):
-    """Required path parameters of a same-origin GET with one 2xx JSON object response, or None if it cannot be a poll."""
+    """Required path parameters of a same-origin GET with one 2xx JSON object response, or None if it cannot be a poll.
+
+    A GET that documents only 202 never reports a finished job, so it cannot be the poll."""
     if (op.method != "GET" or op.path_data.get("servers") or op.data.get("servers") or op.data.get("callbacks")
-            or _response_fields(op)[0] is None):
+            or _response_fields(op)[0] is None or [status for status, _ in _success(op)] == ["202"]):
         return None
     parameters = _parameters(op)
     if parameters is None or any(not isinstance(parameter, dict) for parameter, _ in parameters):
@@ -397,8 +406,10 @@ def _status_field(op):
     enums = [(name, schema) for name, schema in fields.items()
              if isinstance(schema, dict) and _type(schema) == "string" and not schema.get("writeOnly") and not _metadata(name, schema)
              and isinstance(schema.get("enum"), list) and len(schema["enum"]) >= 2 and all(isinstance(value, str) for value in schema["enum"])]
-    other_state = any(name.lower() in {"status", "state"} for name in fields) and not enums
-    return (enums[0] if len(enums) == 1 else None), other_state, prefix
+    # A field named status or state is the run state; an unrelated enum beside it must not stand in for it.
+    named = {name for name in fields if name.lower() in {"status", "state"}}
+    other_state = bool(named) and not any(name in named for name, _ in enums)
+    return (enums[0] if len(enums) == 1 and not other_state else None), other_state, prefix
 
 
 def _classify(values):
@@ -631,7 +642,36 @@ def _auth(catalog, operation):
 
 
 def _field_path(name):
-    return "$." + name
+    return "$." + name if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) else "$['" + name + "']"
+
+
+def _success_when(catalog, op, primary, field, gaps):
+    """The success predicate on op's 2xx body: the success signal plus every documented required field.
+
+    Returns the predicate and the `required` pointer it read, or None after adding a review gap when no list is usable."""
+    schema, pointer = _body_schema(op)
+    required = schema.get("required")
+    if not isinstance(required, list) or not required or not all(isinstance(name, str) for name in required):
+        gaps.append(_gap(catalog, field, "success_conditions_minimal",
+                         "The response schema documents no required fields, so success checks only the success signal and the reply.",
+                         pointer=pointer, blocking=False))
+        return primary, None
+    present = [{"path": _field_path(name), "exists": True} for name in dict.fromkeys(required)
+               if name in schema["properties"] and _field_path(name) != primary["path"]]
+    return ({"all": [primary, *present]} if present else primary), pointer + "/required"
+
+
+def _status_rules(catalog, op, status, statuses, field, gaps):
+    """Success and failure rules for a status map read on op's 2xx body.
+
+    202 means accepted and not finished (RFC 9110, 15.3.3), so it never matches success; a documented failure on any 2xx ends the run."""
+    when, required = _success_when(catalog, op, {"path": _field_path(status.field.name), "equals": status.field.value}, field, gaps)
+    finished = [code for code in statuses if code != 202]
+    rules = [{"id": "completed", "priority": 10, "http_status": finished, "when": when, "outcome": "succeeded"}] if finished else []
+    if status.failed:
+        rules.append({"id": "failed", "priority": 5, "http_status": statuses,
+                      "when": {"path": _field_path(status.field.name), "one_of": list(status.failed)}, "outcome": "target_error"})
+    return rules, required
 
 
 def _binding_schema(catalog, operation, binding, role, kinds=("string",)):
@@ -882,27 +922,25 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                                    else {"interval_s": POLL_INTERVAL_S}),
                                 "max_polls": MAX_POLLS, "submit_http_status": [int(code) for code, _ in _success(operation)],
                                 "submit_outcome": {"kind": "rules", "unmatched": "accepted", "rules": []}}
-                    rules = [{"id": "completed", "priority": 10, "http_status": result_statuses,
-                              "when": {"path": _field_path(status.field.name), "equals": status.field.value}, "outcome": "succeeded"}]
-                    if status.failed:
-                        rules.append({"id": "failed", "priority": 5, "http_status": result_statuses,
-                                      "when": {"path": _field_path(status.field.name), "one_of": list(status.failed)}, "outcome": "target_error"})
+                    rules, required = _status_rules(catalog, result, status, result_statuses, "/transport/outcome", gaps)
                     # A submit that documents the poll's state and answer can end the run itself; otherwise every accepted submit is polled.
                     submitted, submitted_prefix = _response_fields(operation)
                     polled = _response_fields(result)[0]
                     if all(submitted.get(name) == polled[name] for name in (status.field.name, choices.reply.name)):
-                        delivery["submit_outcome"]["rules"] = [{**rule, "http_status": delivery["submit_http_status"]} for rule in rules]
+                        delivery["submit_outcome"]["rules"], submit_required = _status_rules(
+                            catalog, operation, status, delivery["submit_http_status"], "/transport/delivery/submit_outcome", gaps)
+                        sources = [pointer_child(submitted_prefix, name) for name in (status.field.name, choices.reply.name)]
                         provenance["fields"]["/transport/delivery/submit_outcome"] = {
-                            "source": [catalog.document.source(pointer_child(submitted_prefix, name)).to_dict()
-                                       for name in (status.field.name, choices.reply.name)],
+                            "source": [catalog.document.source(pointer).to_dict() for pointer in sources + ([submit_required] if submit_required else [])],
                             "basis": "proposal", "strategy": "submit_documents_poll_state_and_reply"}
                 else:
                     delivery = {"kind": "sync"}
-                    rules = [{"id": "completed", "priority": 10, "http_status": result_statuses,
-                              "when": ({"path": _field_path(choices.reply.name), "exists": True}
-                                       if isinstance(choices.completion, ReplyPresence)
-                                       else {"path": _field_path(choices.completion.name), "equals": choices.completion.value}),
-                              "outcome": "succeeded"}]
+                    primary = ({"path": _field_path(choices.reply.name), "exists": True} if isinstance(choices.completion, ReplyPresence)
+                               else {"path": _field_path(choices.completion.name), "equals": choices.completion.value})
+                    when, required = _success_when(catalog, result, primary, "/transport/outcome", gaps)
+                    rules = [{"id": "completed", "priority": 10, "http_status": result_statuses, "when": when, "outcome": "succeeded"}]
+                if required:
+                    provenance["fields"]["/transport/outcome/rules/0"]["source"].append(catalog.document.source(required).to_dict())
                 cast = "string_or_json" if _type(_schema_at(catalog, choices.reply.pointer)) == "object" else "string"
                 transport = {
                     "version": 2,
