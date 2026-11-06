@@ -310,7 +310,57 @@ def test_cycles_remain_bounded_and_block_drafting(tmp_path):
     assert "reference_cycle" in out.with_suffix(".gaps.json").read_text()
 
 
-@pytest.mark.parametrize("ref", ["#/components/~2bad", "#/paths/missing", "#/list/-1"])
+def cycle_gaps(tmp_path, schemas):
+    tmp_path.mkdir(exist_ok=True)
+    d = agent_document()
+    d["components"] = {"schemas": schemas}
+    result, out = invoke(tmp_path, d)
+    gaps = json.loads(out.with_suffix(".gaps.json").read_text())
+    return result, gaps, [g for g in gaps["gaps"] if g["code"] == "reference_cycle"]
+
+
+def test_document_without_cycles_has_no_cycle_gap(tmp_path):
+    _, _, cycles = cycle_gaps(tmp_path, {"A": {"type": "string"}})
+    assert cycles == []
+
+
+def test_single_cycle_is_one_gap_with_one_source(tmp_path):
+    _, _, cycles = cycle_gaps(tmp_path, {"A": {"$ref": "#/components/schemas/A"}})
+    assert cycles == [{"field": "/transport", "why": "1 reference cycle is not expanded.",
+                       "decision": "Provide a bounded schema without cyclic references.",
+                       "code": "reference_cycle", "kind": "unsupported_feature", "blocking": True,
+                       "source": [{"file": "api.json", "pointer": "/components/schemas/A"}]}]
+
+
+def test_many_cycles_collapse_into_one_gap_listing_every_location(tmp_path):
+    _, _, cycles = cycle_gaps(tmp_path, {
+        "Node": {"type": "object", "properties": {"child": {"$ref": "#/components/schemas/Node"},
+                                                  "peer": {"$ref": "#/components/schemas/Peer"}}},
+        "Peer": {"type": "object", "properties": {"back": {"$ref": "#/components/schemas/Node"}}},
+        "Loop": {"$ref": "#/components/schemas/Loop"},
+    })
+    assert len(cycles) == 1
+    assert cycles[0]["why"] == "4 reference cycles are not expanded."
+    assert cycles[0]["kind"] == "unsupported_feature" and cycles[0]["blocking"] is True
+    assert cycles[0]["source"] == [{"file": "api.json", "pointer": pointer} for pointer in (
+        "/components/schemas/Loop",
+        "/components/schemas/Node/properties/child",
+        "/components/schemas/Node/properties/peer",
+        "/components/schemas/Peer/properties/back",
+    )]
+
+
+def test_cycle_gap_still_blocks_an_otherwise_compilable_draft(tmp_path):
+    result, gaps, _ = cycle_gaps(tmp_path / "cyclic", {"A": {"$ref": "#/components/schemas/B"},
+                                                       "B": {"$ref": "#/components/schemas/A"}})
+    assert result.exit_code == 3, result.output
+    assert gaps["state"] == "needs_input" and gaps["spec_written"] is False
+    assert [g["code"] for g in gaps["gaps"] if g["blocking"]] == ["reference_cycle"]
+    _, bounded, _ = cycle_gaps(tmp_path / "bounded", {"A": {"type": "string"}})
+    assert bounded["state"] == "needs_review" and bounded["spec_written"] is True
+
+
+@pytest.mark.parametrize("ref",["#/components/~2bad", "#/paths/missing", "#/list/-1"])
 def test_malformed_or_missing_reference_pointers_fail(tmp_path, ref):
     d = agent_document(); d["list"] = [{}]
     d["components"] = {"schemas": {"A": {"$ref": ref}}}
