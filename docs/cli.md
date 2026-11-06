@@ -387,6 +387,20 @@ Each path is a JSON pointer into the request body (`prompt`, `values`) or into t
 
 The command then checks each entry against the document. The prompt must be a writable string without a value set. The reply must be a string, or an object when the draft polls. It cannot be write-only, an identifier, a timestamp, a state or a field with a documented value set. When the draft polls, the reply path is read in the poll response, and a reply named while no poll operation can be paired with the submit blocks. A value must match the field's type and, if the field documents a value set, be one of those values as a literal. A value cannot be sent at the prompt's path or into a read-only field. An object the draft sends through a path must have every required field bound. An entry that fails gets a blocking `binding_unresolved` gap that points at the entry in the file, and the draft writes no spec. An entry that passes is recorded with basis `user_selection`, with sources from both the document and the file. It also gets a non-blocking `binding_user_supplied` gap, unless it names the field the draft would have proposed anyway. With a valid reply and no documented terminal state, a synchronous draft succeeds when the reply is present. The file's SHA-256 is recorded in `provenance.inputs`.
 
+The poll can reuse required string or integer path parameters from the submit request when their names and types match. It uses the same `TARGET_INPUT_*` run variables. At least one poll parameter must still come from a submit response ID. Up to four response IDs are supported; carried path parameters do not count toward that limit. If poll and submit path names differ, select the relation in the file:
+
+```json
+{
+  "version": 1,
+  "poll": {"operation": "get_run", "parameters": {"organization": "org"}},
+  "ids": {"run_id": {"last_segment": true, "origin": "API guide, section 4"}}
+}
+```
+
+`poll` can also be an operation ID string. Its choice must agree with `--poll-operation`. `parameters` maps poll path names to submit path names, and `ids` names submit response fields with a boolean `last_segment` override. Structural mistakes exit 2. Unknown or incompatible document mappings create blocking `binding_unresolved` gaps with the file entry as their source.
+
+A poll response `name` field can document `Format: collections/{collection}/runs/{run}`. When that format matches the poll path tail, the draft proposes last-segment extraction for the submit ID and adds an exact poll identity check with a prefix built from the carried values. The extraction remains a proposal because the poll format does not prove the submit ID's shape. A wrong poll prefix or changed ID ends as a target error before success. Ambiguous or unusable formats block. A file flag overrides extraction; it never supplies a raw prefix. Ordinary IDs keep slash characters percent-encoded as one URL segment. If the document names no verifiable poll identity field, `poll_identity_unchecked` records that limit. Use an independent scenario with `--verify-local` to check resource-name relationships; schema mocks cannot prove them. Presence-style completion remains unsupported.
+
 Some agents answer only after prerequisite calls, for example a source created once and a document added to it before each question. The document lists those operations but cannot say the ask needs them, so `steps` names them in order:
 
 ```json

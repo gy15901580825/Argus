@@ -1,0 +1,497 @@
+import copy
+import json
+
+import pytest
+from aiohttp import web
+from click.testing import CliRunner
+
+from argus.cli.__main__ import main
+from argus_transport import ExecutionPolicy, TransportContext, TransportSpecV2, V2Run, with_origin
+from test_draft_bindings import artifacts, codes, draft
+from transport_v2_fakes import RecordingApp, serve
+
+SUBMIT = '/orgs/{o}/ws/{w}/autos/{a}:invoke'
+POLL = '/orgs/{o}/ws/{w}/autos/{a}/runs/{r}'
+FORMAT = 'orgs/{organization}/ws/{workspace}/autos/{automation}/runs/{run}'
+NAME = 'orgs/org-1/ws/ws-1/autos/auto-1/runs/run-1'
+
+
+def parameter(name, kind='string'):
+    return {'name': name, 'in': 'path', 'required': True, 'schema': {'type': kind}}
+
+
+def document(*, resource=True, extra=False):
+    submit, poll = SUBMIT, POLL
+    names = ['o', 'w', 'a']
+    if extra:
+        submit, poll = '/regions/{region}' + submit, '/regions/{region}' + poll
+        names = ['region', *names]
+    def response(fields, status='200'):
+        return {status: {'description': 'Result', 'content': {'application/json': {'schema': {
+            'type': 'object', 'properties': fields}}}}}
+    fields = {'status': {'type': 'string', 'enum': ['PENDING', 'COMPLETED', 'FAILED']},
+              'result': {'type': 'string'}}
+    if resource:
+        fields['name'] = {'type': 'string', 'description': 'Format: ' + ('regions/{region}/' if extra else '') + FORMAT}
+    else:
+        fields['r'] = {'type': 'string'}
+    return {'openapi': '3.0.3', 'info': {'title': 'Neutral path runner', 'version': '1'},
+            'servers': [{'url': 'http://127.0.0.1:8123'}], 'paths': {
+                submit: {'post': {'operationId': 'invoke', 'parameters': [parameter(n) for n in names],
+                    'requestBody': {'required': True, 'content': {'application/json': {'schema': {
+                        'type': 'object', 'required': ['question'], 'properties': {'question': {'type': 'string'}}}}}},
+                    'responses': response({'r': {'type': 'string'}}, '202')}},
+                poll: {'get': {'operationId': 'get_run', 'parameters': [parameter(n) for n in [*names, 'r']],
+                              'responses': response(fields)}}}}
+
+
+def poll_fields(doc):
+    op = next(v['get'] for v in doc['paths'].values() if 'get' in v)
+    return op['responses']['200']['content']['application/json']['schema']['properties']
+
+
+def run(tmp_path, doc=None, bindings=None, *opts):
+    return draft(tmp_path, doc or document(), bindings, '--operation', 'invoke', '--poll-operation', 'get_run', *opts)
+
+
+def test_same_name_submit_path_values_and_resource_id_compile(tmp_path):
+    result, out = run(tmp_path)
+    assert result.exit_code == 3, result.output
+    spec, report, provenance = artifacts(out)
+    assert spec is not None and not codes(report, True)
+    transport = spec['transport']
+    assert transport['request']['url'].endswith('/orgs/{input_o}/ws/{input_w}/autos/{input_a}:invoke')
+    assert transport['delivery']['request']['url'].endswith('/orgs/{input_o}/ws/{input_w}/autos/{input_a}/runs/{r}')
+    selector = transport['delivery']['ids']['r']
+    assert selector['last_segment'] is True
+    assert selector['poll'] == {'path': '$.name', 'last_segment': True, 'expect_prefix': {'concat': [
+        {'literal': 'orgs/'}, {'var': 'input_o'}, {'literal': '/ws/'}, {'var': 'input_w'},
+        {'literal': '/autos/'}, {'var': 'input_a'}, {'literal': '/runs/'}]}}
+    assert provenance['fields']['/transport/delivery/ids/r/poll']['basis'] == 'document_fact'
+    assert provenance['fields']['/transport/delivery/ids/r/last_segment']['basis'] == 'proposal'
+    assert 'poll_id_extraction_proposed' in codes(report)
+    assert len(transport['delivery']['ids']) == 1
+
+
+def test_more_than_four_total_parameters_with_one_response_id(tmp_path):
+    result, out = run(tmp_path, document(extra=True))
+    assert result.exit_code == 3, result.output
+    spec, report, _ = artifacts(out)
+    assert spec is not None and codes(report, True) == []
+    assert list(spec['transport']['delivery']['ids']) == ['r']
+    assert '{input_region}' in spec['transport']['delivery']['request']['url']
+
+
+def renamed(doc):
+    op = doc['paths'].pop(POLL)['get']
+    for p in op['parameters']:
+        if p['name'] == 'o': p['name'] = 'organization'
+    doc['paths'][POLL.replace('{o}', '{organization}')] = {'get': op}
+    return doc
+
+
+def test_explicit_mapping_and_extraction_have_file_provenance(tmp_path):
+    bindings = {'poll': {'operation': 'get_run', 'parameters': {'organization': 'o'}},
+                'ids': {'r': {'last_segment': True, 'origin': 'gold_derived'}}}
+    result, out = run(tmp_path, renamed(document()), bindings)
+    assert result.exit_code == 3, result.output
+    spec, report, provenance = artifacts(out)
+    assert spec is not None and codes(report, True) == []
+    assert '{input_o}' in spec['transport']['delivery']['request']['url']
+    records = provenance['fields']
+    assert records['/transport/delivery/ids/r/last_segment']['origin'] == 'gold_derived'
+    assert records['/transport/delivery/request/url/organization']['basis'] == 'user_selection'
+    assert {'file': 'bindings.json', 'pointer': '/poll/parameters/organization'} in records['/transport/delivery/request/url/organization']['source']
+
+
+def test_file_poll_string_selects_the_operation(tmp_path):
+    result, out = draft(tmp_path, document(), {'poll': 'get_run'}, '--operation', 'invoke')
+    assert result.exit_code == 3, result.output
+    spec, report, _ = artifacts(out)
+    assert spec is not None and 'poll_proposed' not in codes(report)
+
+
+@pytest.mark.parametrize('bindings,pointer', [
+    ({'poll': None}, '/poll'), ({'poll': ''}, '/poll'), ({'poll': '  '}, '/poll'), ({'poll': {}}, '/poll'),
+    ({'poll': {'operation': 1}}, '/poll'),
+    ({'poll': {'operation': 'get_run', 'parameters': {'': 'o'}}}, '/poll/parameters/'),
+    ({'poll': {'operation': 'get_run', 'parameters': {'o': ''}}}, '/poll/parameters/o'),
+    ({'ids': {'': {'last_segment': True}}}, '/ids/'),
+    ({'poll': {'operation': 'get_run', 'parameters': None}}, '/poll/parameters'),
+    ({'poll': {'operation': 'get_run', 'parameters': {'o': 1}}}, '/poll/parameters/o'),
+    ({'poll': {'operation': 'get_run', 'parameters': {'token': 'o'}}}, '/poll/parameters/token'),
+    ({'poll': {'operation': 'get_run', 'parameters': {'o': 'secret'}}}, '/poll/parameters/o'),
+    ({'poll': {'operation': 'get_run', 'extra': True}}, '/poll'),
+    ({'ids': None}, '/ids'), ({'ids': {'r': None}}, '/ids/r'),
+    ({'ids': {'r': {'last_segment': 1}}}, '/ids/r'),
+    ({'ids': {'r': {'last_segment': None}}}, '/ids/r'),
+    ({'ids': {'r': {}}}, '/ids/r'),
+    ({'ids': {'r': {'last_segment': True, 'origin': 1}}}, '/ids/r'),
+    ({'ids': {'r': {'last_segment': True, 'prefix': 'x'}}}, '/ids/r'),
+    ({'ids': {'token': {'last_segment': True}}}, '/ids/token'),
+])
+def test_malformed_new_binding_entries_are_usage_errors(tmp_path, bindings, pointer):
+    result, out = run(tmp_path, bindings=bindings)
+    assert result.exit_code == 2
+    assert pointer in result.output and 'only version' not in result.output
+    assert not out.exists() and not out.with_suffix('.gaps.json').exists()
+
+
+@pytest.mark.parametrize('bindings,pointer', [
+    ({'poll': 'missing'}, '/poll'),
+    ({'poll': {'operation': 'get_run', 'parameters': {'o': 'missing'}}}, '/poll/parameters/o'),
+    ({'poll': {'operation': 'get_run', 'parameters': {'missing': 'o'}}}, '/poll/parameters/missing'),
+    ({'ids': {'missing': {'last_segment': True}}}, '/ids/missing'),
+    ({'poll': 'another'}, '/poll'),
+])
+def test_document_relative_bindings_block_with_file_pointer(tmp_path, bindings, pointer):
+    result, out = run(tmp_path, bindings=bindings)
+    assert result.exit_code == 3, result.output
+    spec, report, _ = artifacts(out)
+    assert spec is None and 'binding_unresolved' in codes(report, True)
+    assert any({'file': 'bindings.json', 'pointer': pointer} in gap['source'] for gap in report['gaps'] if gap['blocking'])
+
+
+def test_incompatible_same_named_path_does_not_fall_back_to_response(tmp_path):
+    doc = document(resource=False)
+    doc['paths'][SUBMIT]['post']['responses']['202']['content']['application/json']['schema']['properties']['o'] = {'type': 'string'}
+    doc['paths'][SUBMIT]['post']['parameters'][0]['schema']['type'] = 'integer'
+    result, out = run(tmp_path, doc)
+    assert result.exit_code == 3, result.output
+    assert artifacts(out)[0] is None and 'poll_id_binding_missing' in codes(artifacts(out)[1], True)
+
+
+def test_unmappable_poll_parameter_blocks(tmp_path):
+    result, out = run(tmp_path, renamed(document()))
+    assert result.exit_code == 3
+    assert artifacts(out)[0] is None and 'poll_id_binding_missing' in codes(artifacts(out)[1], True)
+
+
+def test_all_carried_get_cannot_identify_submitted_job(tmp_path):
+    doc = document(resource=False)
+    op = doc['paths'].pop(POLL)['get']
+    op['parameters'].pop()
+    doc['paths']['/orgs/{o}/ws/{w}/autos/{a}'] = {'get': op}
+    result, out = run(tmp_path, doc)
+    assert result.exit_code == 3
+    assert artifacts(out)[0] is None and 'poll_id_binding_missing' in codes(artifacts(out)[1], True)
+
+
+@pytest.mark.parametrize('fmt', ['foreign/{o}/runs/{r}', 'orgs/{o}/ws/{w}/autos/{a}/runs/{r}/extra',
+                                 'orgs/{o}/ws/{w}/autos/{a}/runs/', 'orgs/{o}/ws/{w}/autos/{a}/runs/{r',
+                                 'https://127.0.0.1/orgs/{o}/ws/{w}/autos/{a}/runs/{r}',
+                                 '../orgs/{o}/ws/{w}/autos/{a}/runs/{r}', ''])
+def test_a_claimed_but_unusable_resource_format_blocks(tmp_path, fmt):
+    doc = document()
+    poll_fields(doc)['name']['description'] = 'Format: ' + fmt
+    result, out = run(tmp_path, doc)
+    assert result.exit_code == 3, result.output
+    assert artifacts(out)[0] is None and 'poll_resource_format_unsupported' in codes(artifacts(out)[1], True)
+
+
+def test_conflicting_documented_resource_formats_block(tmp_path):
+    doc = document()
+    poll_fields(doc)['name']['title'] = 'Format: ws/{w}/autos/{a}/runs/{r}'
+    result, out = run(tmp_path, doc)
+    assert result.exit_code == 3
+    assert artifacts(out)[0] is None and 'poll_resource_format_unsupported' in codes(artifacts(out)[1], True)
+
+
+def test_integer_id_cannot_use_resource_extraction(tmp_path):
+    doc = document()
+    doc['paths'][SUBMIT]['post']['responses']['202']['content']['application/json']['schema']['properties']['r']['type'] = 'integer'
+    doc['paths'][POLL]['get']['parameters'][-1]['schema']['type'] = 'integer'
+    result, out = run(tmp_path, doc, {'ids': {'r': {'last_segment': True}}})
+    assert result.exit_code == 3
+    assert artifacts(out)[0] is None and 'binding_unresolved' in codes(artifacts(out)[1], True)
+
+
+def test_ordinary_ids_do_not_gain_last_segment_and_unchecked_identity_is_reported(tmp_path):
+    doc = document(resource=False)
+    del poll_fields(doc)['r']
+    result, out = run(tmp_path, doc)
+    assert result.exit_code == 3
+    spec, report, _ = artifacts(out)
+    assert spec is not None and spec['transport']['delivery']['ids']['r'] == {'path': '$.r'}
+    assert 'poll_identity_unchecked' in codes(report, False)
+
+
+def test_explicit_false_preserves_raw_capture_and_documented_identity(tmp_path):
+    result, out = run(tmp_path, bindings={'ids': {'r': {'last_segment': False}}})
+    assert result.exit_code == 3, result.output
+    selector = artifacts(out)[0]['transport']['delivery']['ids']['r']
+    assert not selector.get('last_segment', False) and selector['poll']['last_segment'] is False
+
+
+def test_presence_completion_remains_the_only_blocker_after_pairing(tmp_path):
+    doc = document()
+    fields = poll_fields(doc)
+    del fields['status']; del fields['result']
+    fields['state'] = {'type': 'object', 'properties': {'completed': {'type': 'object', 'properties': {'outputs': {'type': 'string'}}}}}
+    result, out = run(tmp_path, doc, {'reply': {'path': '/state/completed/outputs'}})
+    assert result.exit_code == 3, result.output
+    spec, report, provenance = artifacts(out)
+    assert spec is None and codes(report, True) == ['async_shape_unsupported']
+    assert provenance['fields']['/transport/response/text']['basis'] == 'user_selection'
+
+
+def scenario():
+    checks = [{'check': 'poll_identity', 'at': {'kind': 'path', 'name': name}, 'equals': value}
+              for name, value in [('o', 'org-1'), ('w', 'ws-1'), ('a', 'auto-1'), ('r', 'run-1')]]
+    return {'version': 2, 'environment': {'TARGET_INPUT_O': 'org-1', 'TARGET_INPUT_W': 'ws-1', 'TARGET_INPUT_A': 'auto-1'},
+            'source': {'document': 'Independent neutral scenario', 'pointers': ['/paths']}, 'resources': [],
+            'operations': [
+                {'id': 'invoke', 'method': 'POST', 'path': SUBMIT, 'role': 'invoke', 'calls': {'min': 1, 'max': 1},
+                 'request': [{'check': 'prompt_bound', 'at': {'kind': 'json', 'pointer': '/question'}, 'equals': 'ping'}],
+                 'replies': [{'status': 202, 'body': {'r': NAME}, 'effects': []}]},
+                {'id': 'get_run', 'method': 'GET', 'path': POLL, 'role': 'poll', 'calls': {'min': 1, 'max': 1}, 'request': checks,
+                 'replies': [{'status': 200, 'body': {'name': NAME, 'status': 'COMPLETED', 'result': 'pong'}, 'effects': []}]}],
+            'expect': {'outcome': 'succeeded', 'reply': 'pong', 'resources': [], 'required_gaps': []}}
+
+
+def test_verify_local_with_scenario_exercises_resource_identity(tmp_path):
+    p = tmp_path / 'scenario.json'; p.write_text(json.dumps(scenario()))
+    result, out = run(tmp_path, None, None, '--verify-local', '--scenario', str(p))
+    assert result.exit_code == 3, result.output
+    local = artifacts(out)[2]['validation']['local']
+    assert local['semantic_success'] is True and local['status'] == 'verified'
+    assert local['execution']['requests']['poll'] == 1
+
+
+@pytest.mark.parametrize('resource,value,poll_name,outcome,reason,tail', [
+    (True, NAME, NAME, 'succeeded', '', '/runs/run-1'),
+    (True, NAME, NAME.replace('org-1', 'foreign'), 'target_error', 'poll_identity_changed', '/runs/run-1'),
+    (True, NAME, NAME.replace('run-1', 'run-2'), 'target_error', 'poll_identity_changed', '/runs/run-1'),
+    (False, 'run/part', 'run/part', 'succeeded', '', '/runs/run%2Fpart'),
+])
+async def test_runtime_identity_and_encoded_id(tmp_path, resource, value, poll_name, outcome, reason, tail):
+    result, out = run(tmp_path, document(resource=resource))
+    assert result.exit_code == 3, result.output
+    spec = artifacts(out)[0]
+    assert spec is not None
+    seen = []
+    app = RecordingApp()
+    async def submitted(request): return web.json_response({'r': value}, status=202)
+    async def polled(request):
+        seen.append(request.raw_path)
+        return web.json_response({'name' if resource else 'r': poll_name, 'status': 'COMPLETED', 'result': 'pong'})
+    app.route('POST', '/{tail:.*}', submitted); app.route('GET', '/{tail:.*}', polled)
+    async with serve(app) as origin:
+        data = with_origin(copy.deepcopy(spec['transport']), origin)
+        parsed = TransportSpecV2.from_dict(data)
+        runtime = V2Run(parsed, policy=ExecutionPolicy.local(parsed), environ=scenario()['environment'])
+        try:
+            response = await runtime.attempt(TransportContext(prompt='ping'))
+        finally:
+            await runtime.close()
+    assert response.outcome == outcome
+    if reason: assert response.reason_code.value == reason
+    assert seen == ['/orgs/org-1/ws/ws-1/autos/auto-1' + tail]
+
+
+def test_unconsumed_id_entry_on_a_synchronous_document_blocks(tmp_path):
+    doc = document(resource=False)
+    del doc['paths'][POLL]
+    body = doc['paths'][SUBMIT]['post']['responses']
+    body['200'] = body.pop('202')
+    body['200']['content']['application/json']['schema']['properties']['result'] = {'type': 'string'}
+    result, out = draft(tmp_path, doc, {'ids': {'r': {'last_segment': True}}}, '--operation', 'invoke')
+    assert result.exit_code == 3
+    assert artifacts(out)[0] is None and 'binding_unresolved' in codes(artifacts(out)[1], True)
+
+
+@pytest.mark.parametrize('change', ['read_only_name', 'object_name', 'prefix_uses_response', 'five_response_ids', 'duplicate_response_id'])
+def test_identity_and_capture_guards_block_unsupported_shapes(tmp_path, change):
+    doc = document()
+    submit = doc['paths'][SUBMIT]['post']
+    poll = doc['paths'][POLL]['get']
+    fields = poll_fields(doc)
+    if change == 'read_only_name': fields['name']['writeOnly'] = True
+    if change == 'object_name': fields['name']['type'] = 'object'
+    if change == 'prefix_uses_response':
+        submit['parameters'].pop(1)
+        submit['responses']['202']['content']['application/json']['schema']['properties']['w'] = {'type': 'string'}
+        doc['paths'][SUBMIT.replace('/ws/{w}', '/ws')] = doc['paths'].pop(SUBMIT)
+    if change == 'five_response_ids':
+        fields.pop('name')
+        original = doc['paths'].pop(POLL)
+        path = POLL
+        for index in range(4):
+            name = 'job' + str(index)
+            path += '/{' + name + '}'
+            poll['parameters'].append(parameter(name))
+            submit['responses']['202']['content']['application/json']['schema']['properties'][name] = {'type': 'string'}
+        doc['paths'][path] = original
+    if change == 'duplicate_response_id':
+        fields.pop('name')
+        original = doc['paths'].pop(POLL)
+        poll['parameters'][-1]['name'] = 'id'
+        poll['parameters'].append(parameter('job_id'))
+        submit['responses']['202']['content']['application/json']['schema']['properties'] = {'job_id': {'type': 'string'}}
+        doc['paths'][POLL.replace('{r}', '{id}') + '/{job_id}'] = original
+    result, out = run(tmp_path, doc)
+    assert result.exit_code == 3, result.output
+    assert artifacts(out)[0] is None
+    assert set(codes(artifacts(out)[1], True)) & {'poll_resource_format_unsupported', 'poll_id_binding_missing'}
+
+
+def test_name_based_carry_precedes_a_same_named_response_field(tmp_path):
+    doc = document(resource=False)
+    doc['paths'][SUBMIT]['post']['responses']['202']['content']['application/json']['schema']['properties']['o'] = {'type': 'string'}
+    result, out = run(tmp_path, doc)
+    assert result.exit_code == 3
+    spec = artifacts(out)[0]
+    assert spec is not None and list(spec['transport']['delivery']['ids']) == ['r']
+    assert '/orgs/{input_o}/' in spec['transport']['delivery']['request']['url']
+
+
+def test_renamed_id_placeholder_is_not_rewritten_as_a_carried_placeholder(tmp_path):
+    doc = document(resource=False)
+    submit = doc['paths'].pop(SUBMIT)['post']
+    submit['parameters'].append(parameter('run_id'))
+    submit['responses']['202']['content']['application/json']['schema']['properties'] = {'job_id': {'type': 'string'}}
+    doc['paths'][SUBMIT + '/{run_id}'] = {'post': submit}
+    poll = doc['paths'].pop(POLL)['get']
+    poll['parameters'][-1]['name'] = 'id'
+    poll['parameters'].append(parameter('job_id'))
+    submit['parameters'][-1]['name'] = 'job_id'
+    doc['paths'][SUBMIT + '/{job_id}'] = doc['paths'].pop(SUBMIT + '/{run_id}')
+    doc['paths'][POLL.replace('{r}', '{id}') + '/{job_id}'] = {'get': poll}
+    result, out = run(tmp_path, doc)
+    assert result.exit_code == 3, result.output
+    spec = artifacts(out)[0]
+    assert spec is not None
+    assert spec['transport']['delivery']['request']['url'].endswith('/runs/{job_id}/{input_job_id}')
+
+
+def test_compile_rejects_a_forged_carried_binding(tmp_path):
+    from dataclasses import replace
+    from argus.drafting.draft import choose_without_model, compile_draft
+    from test_draft_async import catalog_for
+    catalog = catalog_for(tmp_path, document())
+    choices = choose_without_model(catalog, operation='invoke', poll_operation='get_run')
+    carry = choices.delivery.carried
+    broken = replace(carry[0], submit_parameter='w')
+    with pytest.raises(ValueError, match='Carried poll parameter'):
+        compile_draft(catalog, replace(choices, delivery=replace(choices.delivery, carried=(broken, *carry[1:]))))
+
+
+def test_an_unsupported_identity_schema_is_in_the_read_set(tmp_path):
+    doc = document()
+    poll_fields(doc)['name']['not'] = {'const': 'foreign'}
+    result, out = run(tmp_path, doc)
+    assert result.exit_code == 3
+    spec, report, _ = artifacts(out)
+    assert spec is None and 'operation_unsupported' in codes(report, True)
+
+
+def test_two_presence_style_polls_remain_ambiguous(tmp_path):
+    doc = document()
+    fields = poll_fields(doc)
+    fields.pop('status');fields['state'] = {'type': 'object'}
+    other = copy.deepcopy(doc['paths'][POLL]);other['get']['operationId'] = 'get_other'
+    doc['paths'][POLL + '/detail'] = other
+    result, out = draft(tmp_path, doc, {'reply': {'path': '/result'}}, '--operation', 'invoke')
+    assert result.exit_code == 3
+    assert artifacts(out)[0] is None and 'poll_ambiguous' in codes(artifacts(out)[1], True)
+
+
+def test_response_capture_type_mismatch_blocks(tmp_path):
+    doc = document(resource=False)
+    doc['paths'][POLL]['get']['parameters'][-1]['schema']['type'] = 'integer'
+    result, out = run(tmp_path, doc)
+    assert result.exit_code == 3
+    assert artifacts(out)[0] is None and 'poll_id_binding_missing' in codes(artifacts(out)[1], True)
+
+
+def test_unknown_file_poll_without_cli_selection_blocks_at_file(tmp_path):
+    result, out = draft(tmp_path, document(), {'poll': 'missing'}, '--operation', 'invoke')
+    assert result.exit_code == 3
+    spec, report, _ = artifacts(out)
+    assert spec is None and 'binding_unresolved' in codes(report, True)
+    assert any(gap['source'] == [{'file': 'bindings.json', 'pointer': '/poll'}] for gap in report['gaps'] if gap['code'] == 'binding_unresolved')
+
+
+def test_conflicting_file_and_cli_polls_are_both_documented(tmp_path):
+    doc = document(resource=False)
+    other = copy.deepcopy(doc['paths'][POLL]);other['get']['operationId'] = 'get_other'
+    doc['paths'][POLL + '/detail'] = other
+    result, out = run(tmp_path, doc, {'poll': 'get_other'})
+    assert result.exit_code == 3
+    spec, report, _ = artifacts(out)
+    assert spec is None and 'binding_unresolved' in codes(report, True)
+    assert any(gap['source'] == [{'file': 'bindings.json', 'pointer': '/poll'}] for gap in report['gaps'] if gap['code'] == 'binding_unresolved')
+
+
+def test_unsafe_literal_resource_segment_is_rejected_before_compiling(tmp_path):
+    doc = document()
+    poll = doc['paths'].pop(POLL)
+    poll['get']['responses']['200']['content']['application/json']['schema']['properties']['name']['description'] = 'Format: @' + FORMAT
+    doc['paths']['/@' + POLL.lstrip('/')] = poll
+    result, out = run(tmp_path, doc)
+    assert result.exit_code == 3
+    assert artifacts(out)[0] is None and 'poll_resource_format_unsupported' in codes(artifacts(out)[1], True)
+
+
+def test_submit_and_poll_keep_distinct_shadowed_path_variables(tmp_path):
+    doc = document(resource=False)
+    submit = doc['paths'].pop(SUBMIT)
+    submit['post']['parameters'].append(parameter('input_o'))
+    doc['paths'][SUBMIT.replace('/orgs/{o}', '/orgs/{o}/shadows/{input_o}')] = submit
+    poll = doc['paths'].pop(POLL)
+    poll['get']['parameters'].append(parameter('input_o'))
+    doc['paths'][POLL.replace('/orgs/{o}', '/orgs/{o}/shadows/{input_o}')] = poll
+    result, out = run(tmp_path, doc)
+    assert result.exit_code == 3
+    spec, report, _ = artifacts(out)
+    assert spec is not None and codes(report, True) == []
+    prefix = 'http://127.0.0.1:8123/orgs/{input_o}/shadows/{input_input_o}/ws/{input_w}/autos/{input_a}'
+    assert spec['transport']['request']['url'] == prefix + ':invoke'
+    assert spec['transport']['delivery']['request']['url'] == prefix + '/runs/{r}'
+
+
+def test_enum_and_presence_style_polls_remain_ambiguous(tmp_path):
+    doc = document()
+    other = copy.deepcopy(doc['paths'][POLL])
+    other['get']['operationId'] = 'get_other'
+    fields = other['get']['responses']['200']['content']['application/json']['schema']['properties']
+    fields.pop('status')
+    fields['state'] = {'type': 'object'}
+    doc['paths'][POLL + '/detail'] = other
+    result, out = draft(tmp_path, doc, {'reply': {'path': '/result'}}, '--operation', 'invoke')
+    assert result.exit_code == 3
+    spec, report, _ = artifacts(out)
+    assert spec is None and 'poll_ambiguous' in codes(report, True)
+
+
+@pytest.mark.parametrize('schema', [
+    {'type': 'string', 'writeOnly': True},
+    {'type': 'object'},
+    {'type': 'integer'},
+])
+def test_incompatible_same_field_identity_is_reported_unchecked(tmp_path, schema):
+    doc = document(resource=False)
+    poll_fields(doc)['r'] = schema
+    result, out = run(tmp_path, doc)
+    assert result.exit_code == 3
+    spec, report, _ = artifacts(out)
+    assert spec is not None and codes(report, True) == []
+    assert 'poll_identity_unchecked' in codes(report)
+
+
+def test_unsupported_same_field_identity_schema_blocks(tmp_path):
+    doc = document(resource=False)
+    poll_fields(doc)['r']['not'] = {'const': 'foreign'}
+    result, out = run(tmp_path, doc)
+    assert result.exit_code == 3
+    spec, report, _ = artifacts(out)
+    assert spec is None and 'operation_unsupported' in codes(report, True)
+
+
+def test_resource_format_without_prefix_blocks_with_named_gap(tmp_path):
+    doc = document()
+    poll_fields(doc)['name']['description'] = 'Format: {r}'
+    result, out = run(tmp_path, doc)
+    assert result.exit_code == 3, result.output
+    spec, report, _ = artifacts(out)
+    assert spec is None and 'poll_resource_format_unsupported' in codes(report, True)
