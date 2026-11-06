@@ -52,7 +52,7 @@ async def _call_planner_llm(system_prompt: str, user_prompt: str) -> str:
 class TAPProbe(IterativeProbe):
     seed_goal: str = ""
     max_rounds: int = 5
-    id: str = "tap_default"
+    id: str = "seeded_iterative_refine"
     name: str = "Iterative jailbreak named after TAP (one prompt per round, no tree search or pruning)"
     target_class: tuple[str, ...] = ("http-chat",)
     attack_class: tuple[str, ...] = ("jailbreak", "iterative")

@@ -56,7 +56,7 @@ class GCGProbe(IterativeProbe):
     suffix_tokens: int = 8
     max_rounds: int = 10
     seed: int = 42  # deterministic for tests; production callers should pass run-specific seed
-    id: str = "gcg_default"
+    id: str = "random_suffix_search"
     name: str = "Random adversarial suffix named after GCG (no gradient, no revert to best suffix)"
     target_class: tuple[str, ...] = ("http-chat",)
     attack_class: tuple[str, ...] = ("jailbreak", "iterative", "adversarial-suffix")

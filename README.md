@@ -7,8 +7,10 @@
 
 # Argus
 
-**Red-team an AI agent by what it does, not by what it says.** Argus attacks
-an agent through the things it trusts, then checks what the agent actually did.
+**Attack your AI agent before someone else does.** Argus runs 261 red-team
+probes against an agent through the tools it calls, the content it reads and
+the requests it gets, then shows which attacks got through. Try it in about a
+minute, no API key needed: `pip install argus-probe && argus-probe quickstart`.
 
 - **Hostile MCP servers.** A testbed serves poisoned tool descriptions,
   look-alike tools, a tool list that turns hostile after the agent has trusted
