@@ -293,21 +293,27 @@ def _unsupported_gap(catalog, pointer, keywords):
 
 
 def _success(op):
-    """The status and response of an operation's only 2xx response, or None."""
+    """An operation's (status, response) 2xx pairs, lowest status first, or None.
+
+    Several 2xx responses count as one result only when they include 202 and document the same body;
+    otherwise which response carries the IDs or the answer would be a guess."""
     responses = op.data.get("responses", {})
-    successes = [str(status) for status in responses if re.fullmatch(r"2\d\d", str(status))] if isinstance(responses, dict) else []
-    if len(successes) != 1 or not isinstance(responses[successes[0]], dict):
+    statuses = sorted(str(status) for status in responses if re.fullmatch(r"2\d\d", str(status))) if isinstance(responses, dict) else []
+    if not statuses or any(not isinstance(responses[status], dict) for status in statuses):
         return None
-    return successes[0], responses[successes[0]]
+    content = responses[statuses[0]].get("content")
+    if len(statuses) > 1 and ("202" not in statuses or any(responses[status].get("content") != content for status in statuses)):
+        return None
+    return tuple((status, responses[status]) for status in statuses)
 
 
 def _response_fields(op):
-    """The properties of the only 2xx JSON object response and their pointer prefix."""
+    """The properties of the 2xx JSON object body and their pointer prefix under the lowest 2xx status."""
     success = _success(op)
-    schema = _object_schema(success[1].get("content")) if success else None
+    schema = _object_schema(success[0][1].get("content")) if success else None
     if schema is None:
         return None, ""
-    return schema["properties"], op.pointer + "/responses/" + success[0] + "/content/application~1json/schema/properties"
+    return schema["properties"], op.pointer + "/responses/" + success[0][0] + "/content/application~1json/schema/properties"
 
 
 def _id_variable(name):
@@ -536,17 +542,17 @@ def _choose(catalog, *, operation, server_origin, intent, poll_operation=None, s
         else:
             successes = [(str(status), response) for status, response in responses.items()
                          if re.fullmatch(r"2\d\d", str(status))]
-            if len(successes) > 1 and any(status == "202" for status, _ in successes):
+            if len(successes) > 1 and any(status == "202" for status, _ in successes) and _success(chosen) is None:
                 gaps.append(_gap(catalog, "/transport/delivery", "async_shape_unsupported",
-                                 "Several successful responses including 202 need an explicit delivery flow.",
+                                 "Several successful responses including 202 document different bodies.",
                                  pointer=pointer, kind="unsupported_feature"))
+            if any(isinstance(response, dict) and response.get("links") for _, response in successes):
+                gaps.append(_gap(catalog, "/transport/delivery", "links_unsupported",
+                                 "Response links need an explicit flow choice.", pointer=pointer, kind="unsupported_feature"))
             if len(successes) == 1 and isinstance(successes[0][1], dict):
                 status, response = successes[0]
                 response_schema = _object_schema(response.get("content"))
                 response_pointer = pointer + "/responses/" + status + "/content/application~1json/schema/properties"
-                if response.get("links"):
-                    gaps.append(_gap(catalog, "/transport/delivery", "links_unsupported",
-                                     "Response links need an explicit flow choice.", pointer=pointer, kind="unsupported_feature"))
         if response_schema:
             texts = [(name, schema) for name, schema in response_schema["properties"].items()
                      if name.lower() in {"answer", "reply", "output", "result"} and _type(schema) == "string" and not schema.get("writeOnly")
@@ -565,7 +571,7 @@ def _choose(catalog, *, operation, server_origin, intent, poll_operation=None, s
         if selection is not None:
             reply, completion = selection.reply, selection.completion
         success = _success(chosen)
-        required = success is not None and success[0] == "202" or poll_operation is not None
+        required = success is not None and any(status == "202" for status, _ in success) or poll_operation is not None
         # A documented answer keeps the call synchronous unless the API or the user says otherwise.
         polled = (_poll_choice(catalog, chosen, poll_operation=poll_operation, required=required, gaps=gaps)
                   if success and (reply is None or required) else None)
@@ -613,11 +619,10 @@ def _binding_schema(catalog, operation, binding, role, kinds=("string",)):
     if role == "prompt":
         prefix = operation.pointer + "/requestBody/content/application~1json/schema/properties"
     else:
-        successes = [status for status in operation.data.get("responses", {})
-                     if re.fullmatch(r"2\d\d", str(status))]
-        if len(successes) != 1:
+        success = _success(operation)
+        if success is None:
             raise ValueError("Choice references an unknown or unsupported operation field")
-        prefix = operation.pointer + "/responses/" + str(successes[0]) + "/content/application~1json/schema/properties"
+        prefix = operation.pointer + "/responses/" + success[0][0] + "/content/application~1json/schema/properties"
     if (binding.pointer not in catalog.document.sources
             or binding.pointer != pointer_child(prefix, binding.name)
             or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", binding.name)
@@ -842,29 +847,39 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
             if choices.delivery and any(item.name in declarations for item in choices.delivery.ids):
                 gaps.append(_gap(catalog, "/transport/delivery/ids", "parameter_collision", "Poll IDs collide with input bindings; select explicit names.", pointer=result.pointer, kind="ambiguous_choice"))
             if not any(gap.blocking for gap in gaps):
-                result_status = int(_success(result)[0])
+                result_statuses = [int(code) for code, _ in _success(result)]
                 if choices.delivery:
                     status = choices.completion
                     poll_path = result.path
                     for item in choices.delivery.ids:
                         poll_path = poll_path.replace("{" + item.parameter + "}", "{" + item.name + "}")
-                    headers = _success(result)[1].get("headers")
-                    retry_after = isinstance(headers, dict) and any(str(name).lower() == "retry-after" for name in headers)
+                    retry_after = any(isinstance(response.get("headers"), dict)
+                                      and any(str(name).lower() == "retry-after" for name in response["headers"])
+                                      for _, response in _success(result))
                     delivery = {"kind": "poll", "ids": {item.name: {"path": _field_path(item.submit.name)} for item in choices.delivery.ids},
                                 "request": {"method": "GET", "url": server + poll_path, "headers": {"Accept": "application/json"}, "body": {"none": True}},
                                 "pending": {"path": _field_path(status.field.name), "one_of": list(status.pending)},
                                 **({"wait": {"from": "Retry-After", "default_s": POLL_INTERVAL_S, "max_s": RETRY_AFTER_MAX_S}} if retry_after
                                    else {"interval_s": POLL_INTERVAL_S}),
-                                "max_polls": MAX_POLLS, "submit_http_status": [int(_success(operation)[0])],
+                                "max_polls": MAX_POLLS, "submit_http_status": [int(code) for code, _ in _success(operation)],
                                 "submit_outcome": {"kind": "rules", "unmatched": "accepted", "rules": []}}
-                    rules = [{"id": "completed", "priority": 10, "http_status": [result_status],
+                    rules = [{"id": "completed", "priority": 10, "http_status": result_statuses,
                               "when": {"path": _field_path(status.field.name), "equals": status.field.value}, "outcome": "succeeded"}]
                     if status.failed:
-                        rules.append({"id": "failed", "priority": 5, "http_status": [result_status],
+                        rules.append({"id": "failed", "priority": 5, "http_status": result_statuses,
                                       "when": {"path": _field_path(status.field.name), "one_of": list(status.failed)}, "outcome": "target_error"})
+                    # A submit that documents the poll's state and answer can end the run itself; otherwise every accepted submit is polled.
+                    submitted, submitted_prefix = _response_fields(operation)
+                    polled = _response_fields(result)[0]
+                    if all(submitted.get(name) == polled[name] for name in (status.field.name, choices.reply.name)):
+                        delivery["submit_outcome"]["rules"] = [{**rule, "http_status": delivery["submit_http_status"]} for rule in rules]
+                        provenance["fields"]["/transport/delivery/submit_outcome"] = {
+                            "source": [catalog.document.source(pointer_child(submitted_prefix, name)).to_dict()
+                                       for name in (status.field.name, choices.reply.name)],
+                            "basis": "proposal", "strategy": "submit_documents_poll_state_and_reply"}
                 else:
                     delivery = {"kind": "sync"}
-                    rules = [{"id": "completed", "priority": 10, "http_status": [result_status],
+                    rules = [{"id": "completed", "priority": 10, "http_status": result_statuses,
                               "when": ({"path": _field_path(choices.reply.name), "exists": True}
                                        if isinstance(choices.completion, ReplyPresence)
                                        else {"path": _field_path(choices.completion.name), "equals": choices.completion.value}),

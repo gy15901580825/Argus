@@ -299,6 +299,7 @@ def test_unsupported_async_shapes_block(tmp_path, alter):
     else:
         responses = document["paths"]["/jobs"]["post"]["responses"]
         responses["200"] = copy.deepcopy(responses["202"])
+        responses["200"]["content"]["application/json"]["schema"]["properties"] = {"task_id": {"type": "string"}}
     result, out = run(tmp_path, document)
     assert result.exit_code == 3, result.output
     assert not out.exists()
