@@ -759,7 +759,7 @@ Primary DELETE accepts 200 or 204. An unexpected status permits one metadata GET
 
 ## Map replies and outcomes
 
-JSON paths support the root, fields, and array indexes. Wildcards, filters, and recursive descent are rejected. The first existing answer path wins. Only a missing path tries the next path. A wrong type or an empty value is a mapping error.
+JSON paths support the root, fields, and array indexes, written as `$.name`, `$[0]` or `$['name']`. Use the bracket form for a field name that the dot form cannot express, such as `job state` or the reserved word `where`. A bracket name cannot be empty or contain a quote, a backslash or a line break. A quote would end the name, and the path evaluator reads a backslash as an escape, so `$['a\b']` would read the field `ab` instead. Wildcards, filters, and recursive descent are rejected. The first existing answer path wins. Only a missing path tries the next path. A wrong type or an empty value is a mapping error.
 
 Rule IDs and priorities must be unique. The highest matching priority wins. A refusal or failed business status is classified before answer extraction. An unknown status is an error. Explicit refusal rules can allow HTTP 400 or 403. Authentication, configuration, rate-limit, and server errors cannot be changed into a success by a body rule.
 

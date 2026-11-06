@@ -67,7 +67,22 @@ def test_a_hand_written_spec_with_a_backslash_field_name_does_not_validate(tmp_p
         TransportSpecV2.from_dict(spec["transport"])
     result = validate_target(tmp_path, spec)
     assert result.exit_code != 0
-    assert "target spec invalid" in result.output
+    assert ("target spec invalid: ValueError: Unsupported transport JSONPath: use $.name, $[0] or $['name'], "
+            "where a bracket name is not empty and has no quote, backslash or line break") in result.output
+
+
+def test_validate_target_masks_header_values_in_the_validator_message(tmp_path, monkeypatch):
+    spec = hand_written("$['back\\slash']")
+    spec["transport"]["request"]["headers"] = {"X-Trace": "trace-value-7"}
+
+    def rejects(_spec):
+        raise ValueError("Invalid header trace-value-7")
+
+    monkeypatch.setattr("argus.cli.validate_transport_v2.build_target", rejects)
+    result = validate_target(tmp_path, spec)
+    assert result.exit_code != 0
+    assert "target spec invalid: ValueError: Invalid header ***" in result.output
+    assert "trace-value-7" not in result.output
 
 
 def test_the_same_spec_with_a_plain_bracket_name_validates(tmp_path):

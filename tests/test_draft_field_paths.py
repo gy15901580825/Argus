@@ -4,6 +4,7 @@ import pytest
 from click.testing import CliRunner
 
 from argus.cli.__main__ import main
+from argus.drafting.scenario import path_pattern
 from argus.drafting.draft import Binding, OperationSelection, ReplyPresence, choices_from_selection, compile_draft
 from test_draft_async import POLL_FIELDS, SUBMIT, async_document, catalog_for, gaps, poll_schema, run, scenario
 from test_draft_target import agent_document
@@ -169,7 +170,8 @@ def renamed_scenario(tmp_path, status="status", job_id=None):
     (lambda: poll_status("where"), {"status": "where"}),
     (lambda: poll_status("job state"), {"status": "job state"}),
     (lambda: poll_id("where"), {"job_id": "where"}),
-], ids=["status_reserved_word", "status_space", "id_reserved_word"])
+    (lambda: poll_id("job state"), {"job_id": "job state"}),
+], ids=["status_reserved_word", "status_space", "id_reserved_word", "id_space"])
 def test_bracket_paths_match_a_real_poll_run(tmp_path, document, names):
     built = document()
     poll_schema(built, next(path for path in built["paths"] if path != "/jobs"))["properties"]["result"] = {"type": "string"}
@@ -178,3 +180,16 @@ def test_bracket_paths_match_a_real_poll_run(tmp_path, document, names):
     local = json.loads(out.with_suffix(".provenance.json").read_text())["validation"]["local"]
     assert local["status"] == "verified" and local["semantic_success"] is True
     assert local["execution"]["requests"]["poll"] == 2 and local["execution"]["reply"] == "pong"
+
+
+@pytest.mark.parametrize("name", [*BRACKET_ONLY.values(), "job-id"])
+def test_a_route_parameter_a_bracket_path_can_name_is_a_scenario_route_parameter(name):
+    pattern, names = path_pattern("/jobs/{" + name + "}/steps/{step}")
+    match = pattern.fullmatch("/jobs/job%207/steps/2")
+    assert names == (name, "step") and dict(zip(names, match.groups())) == {name: "job%207", "step": "2"}
+
+
+@pytest.mark.parametrize("name", UNWRITABLE.values(), ids=UNWRITABLE.keys())
+def test_a_route_parameter_no_bracket_path_can_name_is_rejected(name):
+    with pytest.raises(ValueError, match="scenario_invalid"):
+        path_pattern("/jobs/{" + name + "}")
