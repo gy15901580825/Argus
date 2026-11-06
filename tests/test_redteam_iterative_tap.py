@@ -10,7 +10,7 @@ from argus.iterative_tap import TAPProbe
 
 @pytest.mark.asyncio
 async def test_tap_round0_uses_seed_prompt():
-    probe = TAPProbe(seed_goal="Make the model output PWNED.", branching_factor=2, max_rounds=3)
+    probe = TAPProbe(seed_goal="Make the model output PWNED.", max_rounds=3)
     with patch("argus.iterative_tap._call_planner_llm", AsyncMock(return_value="Generated round-0 prompt about PWNED")):
         ctx = IterationContext(round_n=0)
         p = await probe.next_prompt(ctx)
@@ -20,7 +20,7 @@ async def test_tap_round0_uses_seed_prompt():
 @pytest.mark.asyncio
 async def test_tap_round1_mutates_based_on_prior_warn():
     """Given a 'warn' verdict on round 0, round 1 should mutate the prompt — not return identical."""
-    probe = TAPProbe(seed_goal="Make the model output PWNED.", branching_factor=2, max_rounds=3)
+    probe = TAPProbe(seed_goal="Make the model output PWNED.", max_rounds=3)
     with patch("argus.iterative_tap._call_planner_llm", AsyncMock(return_value="mutated prompt with stronger framing")):
         ctx = IterationContext(
             round_n=1,
@@ -35,7 +35,7 @@ async def test_tap_round1_mutates_based_on_prior_warn():
 
 @pytest.mark.asyncio
 async def test_tap_halts_on_fail():
-    probe = TAPProbe(seed_goal="x", branching_factor=2, max_rounds=10)
+    probe = TAPProbe(seed_goal="x", max_rounds=10)
     ctx = IterationContext(
         round_n=2,
         prior_verdicts=(
@@ -64,7 +64,7 @@ async def test_tap_planner_llm_records_to_cost_meter(monkeypatch):
             MockAnth.return_value = fake_client
 
             with meter.run_scope("test-run"):
-                probe = TAPProbe(seed_goal="test goal", branching_factor=2, max_rounds=3)
+                probe = TAPProbe(seed_goal="test goal", max_rounds=3)
                 ctx = IterationContext(round_n=0)
                 await probe.next_prompt(ctx)
                 assert meter.spent_in_current_run() > 0
