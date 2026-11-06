@@ -44,7 +44,10 @@ def setup_document():
                     "id": {"type": "string"}, "name": {"type": "string"}, "secret_note": {"type": "string", "writeOnly": True}}})}},
             "/sources/{sourceId}": {"delete": {
                 "operationId": "delete_source",
-                "parameters": [{"name": "sourceId", "in": "path", "required": True, "schema": {"type": "string"}}],
+                "parameters": [{"name": "sourceId", "in": "path", "required": True, "schema": {"type": "string"}},
+                               {"name": "version", "in": "query", "schema": {"type": "integer"}},
+                               {"name": "mode", "in": "query", "schema": {"type": "string", "enum": ["soft", "hard"]}},
+                               {"name": "trace", "in": "query", "content": {"application/json": {"schema": {"type": "string"}}}}],
                 "responses": reply("200", status)}},
             "/notes": {
                 "post": {
@@ -386,6 +389,12 @@ def test_a_required_step_field_without_a_value_blocks(tmp_path):
      "/steps/0/undo/parameters/force"),
     ({"operation": "get_note", "parameters": {"noteId": {"var": "source_id"}}}, "/steps/0/undo/operation"),
     ({"operation": "remove_source", "parameters": {}}, "/steps/0/undo/operation"),
+    ({"operation": "delete_source", "parameters": {"sourceId": {"var": "source_id"}, "version": {"literal": "two"}}},
+     "/steps/0/undo/parameters/version"),
+    ({"operation": "delete_source", "parameters": {"sourceId": {"var": "source_id"}, "mode": {"literal": "gone"}}},
+     "/steps/0/undo/parameters/mode"),
+    ({"operation": "delete_source", "parameters": {"sourceId": {"var": "source_id"}, "trace": {"literal": "x"}}},
+     "/steps/0/undo/parameters/trace"),
 ])
 def test_an_undo_the_document_cannot_express_blocks(tmp_path, undo, pointer):
     _, out = run_draft(tmp_path, steps(source_step(undo=undo), note_step()))
@@ -432,6 +441,37 @@ def test_an_undo_is_proposed_for_the_delete_on_the_created_path(tmp_path):
     assert spec["transport"]["budget"]["cleanup_reserve"] == 2
 
 
+def _created(document):
+    return document["paths"]["/sources"]["post"]["responses"]["201"]["content"]["application/json"]["schema"]
+
+
+@pytest.mark.parametrize("change", [
+    lambda document: document["paths"]["/sources/{sourceId}"]["delete"]["parameters"].append(
+        {"name": "force", "in": "query", "required": True, "schema": {"type": "string"}}),
+    lambda document: document["paths"]["/sources/{sourceId}"]["delete"].update(security=[{"other": []}]),
+    lambda document: document["paths"].update({"/sources/{slug}": {"delete": {
+        "operationId": "delete_source_by_slug", "responses": reply("200", {"type": "object"}),
+        "parameters": [{"name": "slug", "in": "path", "required": True, "schema": {"type": "string"}}]}}}),
+    lambda document: _created(document).update(required=["id", "ownerId"], properties={
+        **_created(document)["properties"], "ownerId": {"type": "string"}}),
+    lambda document: _created(document)["properties"].pop("id"),
+    lambda document: _created(document).update(required=["tokenId"], properties={"tokenId": {"type": "string"}}),
+])
+def test_an_undo_is_not_proposed_when_the_document_does_not_pin_one(tmp_path, change):
+    document = setup_document()
+    document["components"] = {"securitySchemes": {"other": {"type": "http", "scheme": "bearer"}}}
+    change(document)
+    proposed = {key: value for key, value in source_step().items() if key not in {"capture", "undo"}}
+    note = note_step(values={**note_step()["values"], "/sourceId": {"literal": "src-1"}},
+                     undo={"operation": "delete_note", "parameters": {"externalId": {"literal": "note-1"}, "sourceId": {"literal": "src-1"}}})
+    _, out = draft(tmp_path, document, steps(proposed, note), "--operation", "ask")
+    spec, report, _ = artifacts(out)
+    assert blocking(report) == []
+    assert "setup_undo_proposed" not in codes(report)
+    assert {"capture", "undo"}.isdisjoint(spec["transport"]["lifecycle"]["run"][0])
+    assert "/transport/lifecycle/run/0/undo" in [gap["field"] for gap in report["gaps"] if gap["code"] == "cleanup_mapping_missing"]
+
+
 def test_a_delete_with_query_parameters_is_not_proposed_and_the_step_is_listed(tmp_path):
     note = {key: value for key, value in note_step().items() if key != "undo"}
     _, out = run_draft(tmp_path, steps(source_step(), note))
@@ -460,7 +500,7 @@ def test_the_bindings_file_steps_are_hashed_into_provenance(tmp_path):
     {"steps": [source_step(id="api_token")]},
     {"steps": [source_step(), note_step(id="source")]},
     {"steps": [source_step(capture={"source": "/id"})]},
-    {"steps": [note_step(), source_step()]},
+    {"steps": [{key: value for key, value in note_step().items() if key not in {"values", "undo"}}, source_step()]},
     {"steps": [source_step(), note_step(values={"/sourceId": {"var": "nothing"}})]},
     {"steps": [source_step(values={"/name": {"context": "prompt"}})]},
     {"steps": [source_step(values={"/name": {"env": "TARGET_INPUT_API_KEY"}})]},

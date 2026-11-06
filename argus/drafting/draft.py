@@ -708,36 +708,35 @@ def _parameter_values(catalog, operation, entries, captured, block, source):
     return tuple(values)
 
 
-def _proposed_undo(catalog, operation, entry, auth, captures, captured, taken):
+def _proposed_undo(catalog, operation, entry, auth, captures, captured):
     """The only DELETE on the created resource's own path, fed by the step's one capture, or None when the document does not pin one."""
-    deletes = [other for other in catalog.operations if other.method == "DELETE"
-               and re.fullmatch(re.escape(operation.path) + r"/\{[^{}/]+\}", other.path)]
-    if len(deletes) != 1 or _sendable(catalog, deletes[0], auth, {"DELETE"}) or len(_missing_parameters(deletes[0], ())) != 1:
+    deletes = [(other, match.group(1)) for other in catalog.operations if other.method == "DELETE"
+               and (match := re.fullmatch(re.escape(operation.path) + r"/\{([^{}/]+)\}", other.path))]
+    if len(deletes) != 1 or _sendable(catalog, deletes[0][0], auth, {"DELETE"}):
         return None
+    (target, parameter), = deletes
     if entry.capture is None:
         schema = _body_schema(operation)[0] or {}
         names = [name for name in schema.get("required") or () if isinstance(name, str) and ID_NAME.fullmatch(name)]
         if len(names) != 1:
             return None
-        variable = f"{entry.id}_{_id_variable(names[0]) or ''}"
         chain, why = _resolve(catalog, operation, (names[0],), "capture", ("string", "integer"))
-        if not NAME_RE.fullmatch(variable) or variable in taken or why:
+        if why or _id_variable(names[0]) is None:
             return None
-        captures = (StepCapture(variable, (names[0],), chain[-1], None),)
-        captured = {**captured, variable: _capture_kinds(catalog, captures[0])}
+        captures = (StepCapture(f"{entry.id}_{_id_variable(names[0])}", (names[0],), chain[-1], None),)
+        captured = {**captured, captures[0].name: _capture_kinds(catalog, captures[0])}
     if len(captures) != 1:
         return None
     blocked = []
-    values = _parameter_values(catalog, deletes[0], [UserField((_missing_parameters(deletes[0], ())[0],), None, None, {"var": captures[0].name})],
-                          captured, lambda source, why: blocked.append(why), None)
-    return None if blocked else (StepUndo(deletes[0].id, values, None), captures)
+    values = _parameter_values(catalog, target, [UserField((parameter,), None, None, {"var": captures[0].name})], captured,
+                               lambda source, why: blocked.append(why), None)
+    return None if blocked else (StepUndo(target.id, values, None), captures)
 
 
 def _setup_steps(catalog, invoke, inputs, gaps):
     """Check each bindings file step against the document; a step that fails adds blocking gaps and is left out."""
     auth = _auth_or_none(catalog, invoke)
     operations = {op.id: op for op in catalog.operations}
-    taken = {step.id for step in inputs.steps} | {capture.name for step in inputs.steps for capture in step.capture or ()}
     captured, steps, counts = {}, [], {"run": 0, "attempt": 0}
     for entry in inputs.steps:
         field = f"/transport/lifecycle/{entry.scope}/{counts[entry.scope]}"
@@ -791,7 +790,7 @@ def _setup_steps(catalog, invoke, inputs, gaps):
             else:
                 undo = StepUndo(target.id, _parameter_values(catalog, target, entry.undo.parameters, own, block, entry.undo.source), entry.undo.source)
         elif entry.undo is None and not any(gap.blocking for gap in found):
-            proposed = _proposed_undo(catalog, op, entry, auth, tuple(captures), own, taken)
+            proposed = _proposed_undo(catalog, op, entry, auth, tuple(captures), own)
             if proposed:
                 undo, proposal = proposed
                 captures = list(proposal)

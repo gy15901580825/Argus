@@ -136,14 +136,15 @@ def _step_expression(data, where, visible, top=True):
         raise ValueError(f"{where}/env must name a non-secret TARGET_INPUT_<NAME> variable")
     if kind == "context" and item != "material":
         raise ValueError(f"{where}/context can only be material; the prompt goes to the ask")
-    if kind == "var" and item not in visible:
-        raise ValueError(f"{where}/var must name a capture of an earlier step")
     if kind == "literal" and item is None:
         raise ValueError(f"{where}/literal cannot be null")
     if kind == "concat" and isinstance(item, list):
         for index, part in enumerate(item):
             _step_expression(part, f"{where}/concat/{index}", visible, top=False)
-    value_expr_v2(data, visible=frozenset(visible))
+    try:
+        value_expr_v2(data, visible=frozenset(visible))
+    except ValueError as exc:
+        raise ValueError(f"{where}: {exc}; a var names a capture of an earlier step") from None
     return data
 
 

@@ -387,6 +387,29 @@ Each path is a JSON pointer into the request body (`prompt`, `values`) or into t
 
 The command then checks each entry against the document. The prompt must be a writable string without a value set. The reply must be a string, or an object when the draft polls. It cannot be write-only, an identifier, a timestamp, a state or a field with a documented value set. When the draft polls, the reply path is read in the poll response, and a reply named while no poll operation can be paired with the submit blocks. A value must match the field's type and, if the field documents a value set, be one of those values as a literal. A value cannot be sent at the prompt's path or into a read-only field. An object the draft sends through a path must have every required field bound. An entry that fails gets a blocking `binding_unresolved` gap that points at the entry in the file, and the draft writes no spec. An entry that passes is recorded with basis `user_selection`, with sources from both the document and the file. It also gets a non-blocking `binding_user_supplied` gap, unless it names the field the draft would have proposed anyway. With a valid reply and no documented terminal state, a synchronous draft succeeds when the reply is present. The file's SHA-256 is recorded in `provenance.inputs`.
 
+Some agents answer only after prerequisite calls, for example a source created once and a document added to it before each question. The document lists those operations but cannot say the ask needs them, so `steps` names them in order:
+
+```json
+{
+  "version": 1,
+  "steps": [
+    {"id": "source", "operation": "create_source", "scope": "run",
+     "values": {"/name": {"concat": [{"literal": "argus-"}, {"generate": "uuid4"}]}},
+     "capture": {"source_id": "/id"},
+     "undo": {"operation": "delete_source", "parameters": {"sourceId": {"var": "source_id"}}}},
+    {"id": "note", "operation": "add_note", "scope": "attempt",
+     "values": {"/sourceId": {"var": "source_id"}, "/externalId": {"literal": "note-1"}, "/text": {"context": "material"},
+                "/createdAt": {"generate": "now_iso8601"}, "/tags": {"literal": [{"name": "test"}]}},
+     "undo": {"operation": "delete_note",
+              "parameters": {"sourceId": {"var": "source_id"}, "externalId": {"literal": "note-1"}}}}
+  ]
+}
+```
+
+A `run` step runs once before the first question and an `attempt` step before every question; run steps come first. `values` are JSON pointers into the step's request body and `parameters` are its path and query parameters. A value is a `literal` (any JSON value except null), an `env` name `TARGET_INPUT_<NAME>`, a `var` captured by an earlier step, a `generate` value, a `concat` of literals, vars and generated values, or `{"context": "material"}`. `capture` maps a variable name to a JSON pointer into the step's successful response. An `undo` names a documented DELETE and its parameters; it can read the step's own captures. Step IDs and capture names are lowercase transport names that do not start with `input_`. A malformed step exits 2 like any other entry.
+
+The command checks every step against the document. The operation must be a documented POST, PUT or PATCH with the same authentication and server as the ask, and the undo a documented DELETE. Each value must fit its field's type and value set; a field documented as a union takes the one branch the value fits. Every required body field and parameter needs a value, a path parameter takes only a `var` or `env`, material can only go to an `attempt` step, and each capture must name a returned string or integer field. A step that fails gets a blocking `binding_unresolved` gap that points at the step entry. A step that passes compiles into `lifecycle.run` or `lifecycle.attempt`; one that sends material runs only when the question has material. When a step has no undo and the document has exactly one DELETE on the created path, for example `DELETE /sources/{sourceId}` after `POST /sources`, the draft proposes it, fed by the response's one required identifier, and adds a `setup_undo_proposed` review gap. A step left without an undo gets a non-blocking `cleanup_mapping_missing` gap that names it. The request budget counts every step, the question and its polls, and the cleanup reserve holds one request per undo. Both are sized for one question, so a run with several questions needs a larger budget. `--verify-local` with a scenario checks the steps through its resource states and request checks. Without a scenario it lists each step as `setup_step:<id>` under `local.unverified`.
+
 ## Repeated trials
 
 ```bash
