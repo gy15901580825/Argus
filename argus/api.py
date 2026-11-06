@@ -81,10 +81,15 @@ class RunRequest(BaseModel):
     # probe in persona x strategy multi-turn threads — far more expensive, so it
     # requires an explicit probe selection (see _resolve_request_probe_ids).
     mode: str = "static"
-    deep_pairs: int = DEFAULT_DEEP_PAIRS
+    # Below one, build_deep_probes samples zero threads (0, which reads as a
+    # clean run that executed nothing) or raises mid-stream (negative). The
+    # preflight estimate clamps with max(1, ...), so it cannot catch either.
+    deep_pairs: int = Field(default=DEFAULT_DEEP_PAIRS, strict=True, ge=1)
     trials: int | None = Field(default=None, strict=True, ge=1, le=20)
     # Caller-supplied per-run cost cap (overrides singleton default when present).
-    per_run_cap_usd: float | None = None
+    # A NaN cap compares false against every estimate and spend, silently
+    # disabling the per-run cap, so require a finite, non-negative amount.
+    per_run_cap_usd: float | None = Field(default=None, ge=0.0, allow_inf_nan=False)
 
 
 def _resolve_target_kind(target: Any) -> str:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
@@ -23,6 +24,19 @@ from argus.cli.target_loader import load_target_spec_with_secrets, TargetLoadErr
 EXIT_COST_CAP = 4
 
 
+def _finite_cap(_ctx: click.Context, _param: click.Parameter, value: float | None) -> float | None:
+    """Reject values ``float()`` accepts but the cost gate cannot compare against.
+
+    ``nan`` makes every ``estimated > cap`` and ``spent > cap`` test false, so
+    it silently disables the per-run cap instead of enforcing one.
+    """
+    if value is not None and not math.isfinite(value):
+        raise click.BadParameter("must be a finite USD amount")
+    if value is not None and value < 0:
+        raise click.BadParameter("must not be negative")
+    return value
+
+
 @click.command()
 @click.option("--target", required=True, help="Target spec: JSON object (inline) or path to JSON file.")
 @click.option("--probes", "probe_ids", required=True,
@@ -35,7 +49,7 @@ EXIT_COST_CAP = 4
 @click.option("--api-url", envvar="ARGUS_API_URL", default=None, help="Base URL of a server implementing the /api/v1/redteam API (or env ARGUS_API_URL). Not used with --local.")
 @click.option("--trials", type=click.IntRange(1, 20), default=None, help="Repeat each whole static probe 1-20 times, replacing its YAML trials count.")
 @click.option("--max-wait", type=float, default=1800.0, help="Max seconds to wait for run completion. Ignored with --local.")
-@click.option("--per-run-cap", "per_run_cap", type=float, default=None, help="Maximum USD judge/attacker spend for this run. A run whose estimate is above it does not start; the run also stops when a completed call takes spend past it. Default: $0.50.")
+@click.option("--per-run-cap", "per_run_cap", type=float, callback=_finite_cap, default=None, help="Maximum USD judge/attacker spend for this run. A run whose estimate is above it does not start; the run also stops when a completed call takes spend past it. Default: $0.50.")
 @click.option("--fail-on", "fail_on", type=click.Choice(SEVERITY_ORDER), default=None,
               help="Exit 3 when any finding has verdict=fail and severity at or above this level.")
 @click.option("--local", "local", is_flag=True, default=False,

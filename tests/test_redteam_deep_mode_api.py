@@ -7,6 +7,7 @@ leaving a partial report that reads as a broken product rather than a budget lim
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from argus.api import RunRequest, _resolve_request_probe_ids
 
@@ -76,3 +77,30 @@ def test_deep_and_both_selections_is_still_mutually_exclusive():
 
 def test_deep_pairs_defaults_to_three():
     assert RunRequest(target=TARGET).deep_pairs == 3
+
+
+@pytest.mark.parametrize("value", [0, -1])
+def test_deep_pairs_below_one_is_rejected_at_the_request(value):
+    """Zero would sample no threads and stream a clean result; negative raises."""
+    with pytest.raises(ValidationError) as failure:
+        RunRequest(target=TARGET, mode="deep", probe_ids=["x"], deep_pairs=value)
+    assert "deep_pairs" in str(failure.value)
+
+
+def test_deep_pairs_above_the_pairing_space_is_still_accepted():
+    """build_deep_probes clamps to the available pairs, so a large value is valid."""
+    req = RunRequest(target=TARGET, mode="deep", probe_ids=["x"], deep_pairs=99)
+    assert req.deep_pairs == 99
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf"), -0.01])
+def test_per_run_cap_must_be_a_finite_non_negative_amount(value):
+    """NaN compares false against every estimate and spend, disabling the cap."""
+    with pytest.raises(ValidationError) as failure:
+        RunRequest(target=TARGET, per_run_cap_usd=value)
+    assert "per_run_cap_usd" in str(failure.value)
+
+
+def test_zero_per_run_cap_is_allowed():
+    """Zero is the documented "spend nothing" override; only the default is absent."""
+    assert RunRequest(target=TARGET, per_run_cap_usd=0).per_run_cap_usd == 0.0
