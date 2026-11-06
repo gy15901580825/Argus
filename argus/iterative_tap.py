@@ -1,12 +1,10 @@
-"""TAP — Tree of Attacks with Pruning.
+"""TAP-named iterative attacker: one prompt per round, no tree search or pruning.
 
-Reference: Mehrotra et al. 2024 (arXiv:2312.02119). Black-box adaptation:
-a planner LLM (Anthropic Haiku) generates candidate prompts; the judge scores
-them; survivors propagate to the next round.
-
-This implementation is single-branch (we yield one Finding per round, not K).
-The branching_factor is preserved internally for prompt diversity but only
-the highest-scored candidate is sent to the target.
+Named after Tree of Attacks with Pruning (Mehrotra et al. 2024, arXiv:2312.02119).
+Round 0 asks the configured text model (fast role) to turn seed_goal into a
+first prompt. Each later round asks it for one refined prompt from the previous
+prompt, the target's response and the judge's verdict. The attack stops after a
+fail verdict or max_rounds. branching_factor is accepted but never read.
 """
 
 from __future__ import annotations

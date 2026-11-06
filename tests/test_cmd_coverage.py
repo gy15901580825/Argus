@@ -1,8 +1,8 @@
 """Tests for `argus-probe coverage`.
 
-The point of this command is that it is free and offline: a prospect must be
-able to ask "what do you actually cover?" without paying for a scan. It must
-never quietly omit the cells we do not cover.
+The point of this command is that it runs no probes and costs nothing: a
+prospect must be able to ask "what do you actually cover?" without paying for
+a scan. It must never quietly omit the cells we do not cover.
 """
 
 import json
@@ -165,3 +165,10 @@ def test_explicit_unavailable_standard_has_friendly_error(monkeypatch, as_json):
     assert result.exit_code == 1
     assert "owasp-agentic-top10" in result.output and "not reported by server" in result.output
     assert isinstance(result.exception, SystemExit)
+
+
+def test_help_says_the_command_asks_the_server():
+    result = CliRunner().invoke(cmd_coverage, ["--help"])
+    assert result.exit_code == 0, result.output
+    assert "asks the server" in result.output
+    assert "offline" not in result.output

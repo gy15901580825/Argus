@@ -22,7 +22,7 @@ STANDARDS = ["owasp-llm-top10", "owasp-agentic-top10", "mitre-atlas", "nist-ai-r
               help="Show only this standard (default: all).")
 @click.option("--json", "as_json", is_flag=True, help="Emit the raw coverage manifest as JSON.")
 def cmd_coverage(token: str, api_url: str, standard: str, as_json: bool):
-    """Show what the probe library covers, offline — no probes run."""
+    """Show what the probe library covers; asks the server, runs no probes."""
     coverage = api_client.get_coverage(api_url, token)
     standards = coverage["standards"]
     if standard and standard not in standards:
