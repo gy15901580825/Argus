@@ -492,3 +492,12 @@ def test_nullable_run_id_on_a_200_submit_pairs_with_an_id_parameter(tmp_path):
     assert delivery["ids"] == {"run_id": {"path": "$.run_id"}}
     assert delivery["request"]["url"] == "http://127.0.0.1:8123/jobs/{run_id}"
     assert delivery["submit_http_status"] == [200]
+
+
+def test_status_enum_with_a_non_string_value_is_not_a_status(tmp_path):
+    document = async_document()
+    poll_schema(document)["properties"]["status"] = {"type": "string", "nullable": True, "enum": ["PENDING", "COMPLETED", None]}
+    result, out = run(tmp_path, document)
+    assert result.exit_code == 3, result.output
+    assert not out.exists()
+    assert blocking(out) & {"async_shape_unsupported", "completion_missing"}

@@ -511,7 +511,7 @@ def _choose(catalog, *, operation, server_origin, intent, poll_operation=None, s
                              pointer=pointer, kind="unsupported_feature"))
         if chosen.method != "POST" or op.get("callbacks"):
             gaps.append(_gap(catalog, "/transport/request", "operation_unsupported",
-                             "This skeleton supports simple synchronous JSON POST operations.",
+                             "This skeleton supports JSON POST invoke operations.",
                              pointer=pointer, kind="unsupported_feature"))
         request = op.get("requestBody", {})
         request_schema = _object_schema(request.get("content")) if isinstance(request, dict) else None
