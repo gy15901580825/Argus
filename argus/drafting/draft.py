@@ -297,7 +297,7 @@ def _choose(catalog, *, operation, server_origin, intent, selection=None):
             gaps.append(_gap(catalog, "/transport/request/url", "server_invalid",
                              "A server URL or origin override is unsafe or unresolved.", kind="unsupported_feature"))
     prompt = reply = completion = None
-    # One review row per document: large vendor schemas serialize dozens of cycles.
+    # One review row per document, because large vendor schemas serialize dozens of cycles.
     cycles = sorted({issue.source for issue in doc.issues if issue.code == "reference_cycle"},
                     key=lambda source: (source.file, source.pointer))
     if cycles:
