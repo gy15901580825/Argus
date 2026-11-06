@@ -170,8 +170,6 @@ python client_agent.py --orchestrator-url ws://<orchestrator-host>:8080 --agent-
 
 Anyone who can reach the orchestrator's `/agent/connect` can pose as an agent and receive probe payloads. Set `AGENT_CONNECT_SECRET` on both sides. The orchestrator listens on `127.0.0.1` by default; for a client agent on another machine, start it with `ARGUS_SERVER_HOST=0.0.0.0`, `AGENT_CONNECT_SECRET` and a different `ARGUS_SERVER_TOKEN` for `/redteam/*` callers. Off loopback it refuses to start without both ([services.md](../reference/services.md#orchestrator-python--m-argusserver-port-8080)).
 
-We provide a thin reference adapter you can drop into your agent harness; ask in the design-partner channel for the latest version.
-
 ### Running browser probes locally
 
 `argus-probe run --local` runs browser probes on your machine with no server and no client_agent. For each probe the CLI serves the trap page itself and sends your agent its URL. Most browser probes still use the judge for the part the sink cannot see, so set a judge key:
@@ -204,7 +202,7 @@ With `0.0.0.0`, anyone on your network can open the trap page while the run last
 
 Server mode accepts the same three options. There the client agent serves the trap page, so `trap_host` is an address on the client agent's machine, and your agent must be able to open `trap_public_url` from where it runs. If the client agent runs in Docker, set `trap_host` to `0.0.0.0` and publish `trap_port` from its container. An older client agent ignores these options, and each browser probe then ends as an `error` finding that asks you to upgrade it.
 
-If your agent can't reach your machine at all, submit the run with `--api-url` and `--token` to a compatible hosted service instead.
+If your agent cannot reach your machine at all, use hosted pages, described next.
 
 ### Use hosted pages with a local scan
 
@@ -387,7 +385,7 @@ ARGUS_TESTBED_PORT=8090 argus-probe run --local --target payment-target.json --p
 **What's on the other end:** `inner` is a nested target spec (any kind above — here, `openai_compat`) for the transport that actually talks to your agent. `"testbed_url": "local"` makes `run --local` start the bundled hostile MCP server (tool poisoning, rug pull, shadowing, confused deputy and credential lure scenarios) on 127.0.0.1 for the run; your agent must be able to reach that address. To run the testbed yourself, see "The bundled testbed for MCP and payment agents" in `docs/cli.md`, or `mcp_testbed/README.md` for the standalone service and `demo_agent/`, the vulnerable reference MCP client. `argus-probe quickstart` runs that demo agent against the bundled testbed in one command.
 
 **Notes:**
-- `mcp_agent` only runs probes whose `target_class` includes `mcp_agent` (the ones under `argus/probes/mcp/`). Point an ordinary chat probe at an `mcp_agent` target and it's skipped, not run; point an MCP probe at a `custom_http`/`openai_compat` target and it's skipped too — the two families only match each other.
+- `mcp_agent` only runs probes whose `target_class` includes `mcp_agent` (the 28 under `argus/probes/mcp/`, `argus/probes/mcp_world/` and `argus/probes/mcp_protocol/`). Point an ordinary chat probe at an `mcp_agent` target and it's skipped, not run; point an MCP probe at a `custom_http`/`openai_compat` target and it's skipped too. The two families only match each other.
 - `script` is an optional fallback scenario (`{"scenario": "tool_poisoning"}` etc.) used only when a probe declares no `scenario.payload` of its own — each probe's own payload takes precedence.
 
 ---

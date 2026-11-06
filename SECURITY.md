@@ -55,7 +55,7 @@ mitigation within 30 days, depending on severity.
 
 ### Supported versions
 
-Argus is pre-1.0. Security fixes land on the default branch. There is no
+Argus is at 1.x. Security fixes land on the default branch. There is no
 backport channel for older commits.
 
 ---

@@ -1,6 +1,6 @@
 # Argus quickstart
 
-Point Argus at any AI agent endpoint and get a SARIF report. Local mode (step 3a) needs only a judge API key (`argus-probe quickstart` needs none). Server mode (steps 3 to 5) needs a server implementing the `/api/v1/redteam` API; this repo does not ship one (see step 3).
+Point Argus at your AI agent's endpoint and get a SARIF report. Local mode (step 3a) needs only a judge API key (`argus-probe quickstart` needs none). Server mode (steps 3 to 5) needs a server implementing the `/api/v1/redteam` API; this repo does not ship one (see step 3).
 
 ## 1. Install the CLI
 
@@ -32,7 +32,7 @@ Interactive prompts walk you through:
 - `Model name` — e.g. `gpt-4o-mini`, `claude-sonnet-4-6`, your own model id
 - `API key env var` — name of the env var holding your agent API key (e.g. `OPENAI_API_KEY`); the value is resolved at run time so the secret is never persisted in `target.json`
 
-The 13 supported `kind` values: `openai_compat`, `anthropic_native`, `custom_http`, `grpc`, `http_upload`, `browser_use`, `payment_agent`, `mcp_agent`, `testbed_agent`, `mcp_server`, `vllm_server`, `web_chat`, `a2a_server`. See [target-spec-cookbook.md](./target-spec-cookbook.md) for non-OpenAI shapes.
+The 15 supported `kind` values: `openai_compat`, `anthropic_native`, `custom_http`, `grpc`, `http_upload`, `browser_use`, `payment_agent`, `mcp_agent`, `testbed_agent`, `mcp_server`, `vllm_server`, `web_chat`, `a2a_server`, `a2a_agent`, `python`. See [target-spec-cookbook.md](./target-spec-cookbook.md) for non-OpenAI shapes.
 
 Output: `argus-target.json`, plus `.github/workflows/argus-probe.yml` if you say yes to the workflow prompt.
 
@@ -47,7 +47,7 @@ argus-probe run --local --target argus-target.json --probes owasp_07_system_prom
 
 The judge uses `ANTHROPIC_API_KEY` by default, or `OPENAI_API_KEY` when that is the only key set. For a local model, set `REDTEAM_MODEL_PROVIDER=litellm` and `REDTEAM_FAST_MODEL=ollama/qwen2.5:32b` (add `REDTEAM_LLM_API_BASE` for a non-default host). Small models miss many jailbreaks, so the CLI prints a warning and a clean report from one is weak evidence. `REDTEAM_MODEL_PROVIDER=azure` runs the judge on Azure OpenAI; its default content filter blocks judge calls because the judge reads attack text, so use a custom filter policy with jailbreak detection turned off for that deployment (the same applies to `OPENAI_API_KEY` with `REDTEAM_LLM_API_BASE` pointed at Azure). If `OPENAI_API_KEY` is paired with `REDTEAM_LLM_API_BASE` pointing at Azure, set `REDTEAM_FAST_MODEL` and `REDTEAM_STRONG_MODEL` to your deployment names, because the default strong model `gpt-5.6-terra` is usually not deployed. Local models other than Ollama (vLLM or LM Studio via `openai/...` with `REDTEAM_LLM_API_BASE`) are billed at the most expensive known rate, so pass `--per-run-cap`.
 
-`browser_use` targets run locally too. The CLI serves each probe's trap page from your machine, so your agent must be able to open that URL. The default address is `127.0.0.1`, which works when the agent runs on the same machine. For an agent in a container or on another machine, set `trap_host`, `trap_port` and `trap_public_url` in the target spec; see the [browser_use section of the cookbook](./target-spec-cookbook.md#browser_use). If your agent can't reach your machine at all, submit the run with `--api-url` and `--token` to a compatible hosted service instead.
+`browser_use` targets run locally too. The CLI serves each probe's trap page from your machine, so your agent must be able to open that URL. The default address is `127.0.0.1`, which works when the agent runs on the same machine. For an agent in a container or on another machine, set `trap_host`, `trap_port` and `trap_public_url` in the target spec; see the [browser_use section of the cookbook](./target-spec-cookbook.md#browser_use). If your agent cannot reach your machine at all, set `"trap_mode": "hosted"` to serve the trap pages from a hosted trap service you deploy from [`hosted_testbed/`](../../hosted_testbed/README.md). See [Use hosted pages with a local scan](./target-spec-cookbook.md#use-hosted-pages-with-a-local-scan).
 
 Optional: `REDTEAM_DECIDER=jev` plus `TYPESAFE_API_KEY` lets a third-party model settle conflicting judge verdicts. It sends probe text to TypeSafe; see `docs/operations/judge-decider.md`.
 
@@ -90,7 +90,7 @@ The CLI submits the run to that server, polls for completion (typically ~10–30
 
 Add `--per-run-cap 0.50` to limit what Argus spends on judge calls. A run whose estimate is above the cap does not start, in both modes; with `--local` the run also stops when spend reaches the cap. Either way the command exits 4.
 
-The pre-run estimate counts a fast and a strong judge call for every prompt of every selected probe that needs the judge (and, in deep mode, which the CLI and API do not expose yet, every persona × strategy thread at its full round budget). Requests to your agent are not counted. On 2026-10-29, `--probes all` against a chat target was estimated at $5.32 with the default Anthropic judge, so it needs `--per-run-cap 5.32`; when a run is over the cap, the error names a cap at or above the estimate. Most verdicts do not escalate to the strong model, so a run usually costs well under its estimate.
+The pre-run estimate counts a fast and a strong judge call for every prompt of every selected probe that needs the judge (and, in deep mode, every persona × strategy thread at its full round budget; the CLI has no deep-mode flag, and the engine server's `POST /redteam/run` takes `"mode": "deep"`). Requests to your agent are not counted. On 2026-10-29, `--probes all` against a chat target was estimated at $5.32 with the default Anthropic judge, so it needs `--per-run-cap 5.32`; when a run is over the cap, the error names a cap at or above the estimate. Most verdicts do not escalate to the strong model, so a run usually costs well under its estimate.
 
 ## 6. Read the report
 
@@ -141,17 +141,7 @@ argus-probe scan-skill --sample key-grab
 
 ## CLI reference
 
-```
-argus-probe quickstart                Run the MCP probes against a built-in demo agent, no key
-argus-probe init [--kind <X>]         Interactive target.json generator; asks for the kind if omitted
-argus-probe validate-target           Send one prompt to a chat target and check it answers
-argus-probe list-probes               List probe ids (local library, or a server with --api-url); --target / --target-class filter them
-argus-probe run                       Submit a run + write the report
-argus-probe report                    Re-render an existing run's report
-argus-probe coverage                  Show what the probe library covers, offline
-```
-
-Each command's `--help` lists its flags. The most common flags on `run`:
+Every subcommand is listed in [the CLI guide](../cli.md#subcommands), and each command's `--help` lists its flags. The most common flags on `run`:
 
 | Flag | Purpose |
 |---|---|

@@ -12,9 +12,9 @@ an agent through the things it trusts, then checks what the agent actually did.
 
 - **Hostile MCP servers.** A testbed serves poisoned tool descriptions,
   look-alike tools, a tool list that turns hostile after the agent has trusted
-  it, and tools that fish for credentials. Argus records every tool call the
-  agent makes and decides the verdict from those calls, not from a model's
-  reading of the reply. `argus-probe mcp-trap` runs the same five scenarios
+  it, and tools that fish for credentials. Argus records every call the agent
+  makes to the testbed's tools and decides the verdict from those calls, not
+  from a model's reading of the reply. `argus-probe mcp-trap` runs the same five scenarios
   against an agent you start yourself.
 - **Payment agents.** A mock x402 merchant tests whether a buying agent pays a
   swapped payee, splits a payment to stay under an approval limit, pays twice
@@ -49,7 +49,7 @@ argus-probe quickstart
 
 ## Motivation
 
-LLM eval frameworks score single prompt-response pairs. **That's not what
+Many LLM evals score single prompt-response pairs. **That's not what
 ships.** What ships is an *agent* — a system that plans, calls tools,
 recovers from errors, reads documents, opens browsers, holds state across
 turns. The failure surface of that system is dominated by **adversarial
@@ -58,10 +58,9 @@ docs, tool-call confusion, sleeper triggers, indirect injection via
 visited URLs, jailbreaks that compose across turns.
 
 Argus tests the agent the way an attacker would: as a black box, over the
-wire, against the production endpoint, without source access. It picks up
-where unit tests and LLM-evals leave off, and it produces reports your
-security team can map to **OWASP LLM Top 10**, **MITRE ATLAS** and **NIST
-AI RMF** controls without translation.
+wire, without source access. It picks up where unit tests and LLM evals leave
+off. Each finding carries its **OWASP LLM Top 10**, **MITRE ATLAS** and **NIST
+AI RMF** IDs, so your security team can trace it to those frameworks.
 
 ## Scope
 
@@ -76,13 +75,14 @@ What Argus does:
   MCP server itself, against `mcp_server`; 11 checks of an MCP server's tools
   for `argus-probe scan-mcp`), 16
   Semia-mapped agent-skill detectors (missing human gate, encoded payload,
-  install-time exec, shadow credentials), 4 agent-autonomy probes (AGENTS.md
+  install-time exec, shadow credentials; Semia is
+  [arXiv:2605.00314](https://arxiv.org/abs/2605.00314)), 4 agent-autonomy probes (AGENTS.md
   install, credential grab, guardrail log noise with its control),
   6 A2A server checks (against `a2a_server`), 9 A2A peer probes (against `a2a_agent`), 1 vLLM version check (against `vllm_server`), 1 custom unicode-smuggling probe
   (see RESULTS.md), and 99 [garak](https://github.com/NVIDIA/garak)
   wrappers for NVIDIA's existing catalog. Exact per-standard counts are
   generated, not hand-maintained — see [`docs/probe-mapping.md`](docs/probe-mapping.md).
-- **14 target adapters**: `openai_compat`, `anthropic_native`, `custom_http`
+- **15 target adapters**: `openai_compat`, `anthropic_native`, `custom_http`
   (Jinja2 + JSONPath), `grpc` (with reflection auto-discovery), `http_upload`
   (file-upload-and-render sinks), `browser_use` (Playwright-driven
   full-browser flows), `web_chat` (an agent reachable only through its chat
@@ -93,8 +93,9 @@ What Argus does:
   foreign Origin, missing auth, env/shell/file tools, versions with a published
   advisory; it lists tools and never
   calls one), `a2a_agent` (outbound A2A handling and observed cascades in a testbed), `a2a_server` (A2A 1.0 authentication and declared task or callback boundaries), `vllm_server` (reads a vLLM server's `/version` and matches it
-  against vLLM advisories), and `testbed_agent` (generic form of the three
-  testbed adapters; `environment` picks the testbed).
+  against vLLM advisories), `testbed_agent` (generic form of the three
+  testbed adapters; `environment` picks the testbed), and `python` (an agent
+  you call as a Python function in your repo; `run --local` only).
 - **`argus-probe mcp-trap`**: your agent connects to a hostile MCP server that
   Argus runs on your machine, and the report says what it did with five
   attacks (tool poisoning, rug pull, shadowing, confused deputy, credential
@@ -108,9 +109,10 @@ What Argus does:
   capped by `--per-run-cap` decides text that only looks aimed at a model. In
   this release a stdio server runs on your machine and needs `--on-host`. See
   [`docs/cli.md`](docs/cli.md#scan-an-mcp-servers-tools).
-- **Scan suites** — pass `suite` instead of enumerating `probe_ids` on
-  `POST /api/v1/redteam/runs`: `owasp-llm-top10`, `owasp-agentic-top10`, `mitre-atlas`,
-  `nist-ai-rmf`, `eu-ai-act`, `payments`, `mcp`.
+- **Scan suites**: the engine server's `POST /redteam/run` (`python -m
+  argus.server`) takes a `suite` field instead of `probe_ids`. The suites are
+  `owasp-llm-top10`, `owasp-agentic-top10`, `mitre-atlas`, `nist-ai-rmf`,
+  `eu-ai-act`, `payments` and `mcp`. The CLI has no suite option.
 - **LLM-judge harness** with per-probe rubrics in
   `argus/rubrics/`. A fast model judges every
   response (Anthropic Haiku 4.5 by default); a strong model (Sonnet 4.6)
@@ -138,8 +140,9 @@ What Argus does:
   untrusted, and a judge verdict outside `pass` / `warn` / `fail` becomes an
   `error` finding, never a pass. How accurate the judge is on our fixtures:
   [docs/judge-accuracy.md](docs/judge-accuracy.md).
-  Probes that carry `assertions` (payment, MCP, and the garak data-replay and
-  package-hallucination wrappers) are decided by deterministic checks and skip
+  The `mcp_agent` probes, the payment probes other than the four
+  `pay_wallet_key_exfil*` probes, and the garak data-replay and
+  package-hallucination wrappers are decided by deterministic checks and skip
   the judge. The package-hallucination probes look each imported or installed
   package up on its public registry (PyPI, npm, RubyGems, crates.io, MetaCPAN,
   the Raku zef index, pub.dev), so they need outbound network access; if a
@@ -172,22 +175,27 @@ What Argus does **not** do:
 
 - It does not train new models, score benchmark accuracy, or replace your
   LLM-evals harness.
-- It does not need source access. It does not patch the target. It does
-  not run inside the target's runtime.
+- It does not patch the target. It reaches the agent through the agent's own
+  interface and needs no source access, with two exceptions. A `python` target
+  imports your agent's function into the Argus process, and `scan-skill`
+  installs the skill in a throwaway container.
 - It does not protect production — it *attacks* it. Guardrails (incl. our
   `PromptGuard` integration) are for **defense control experiments**, not
   for putting Argus inline as a runtime gate.
 
 ## In the engine, not yet exposed
 
-These exist in `argus/` with tests, but no CLI flag or API field
-starts them yet:
+These exist in `argus/` with tests, but no CLI flag starts them yet:
 
-- **Iterative attackers**: TAP, PAIR and black-box GCG
-  (`iterative_tap.py`, `iterative_pair.py`, `iterative_gcg.py`).
+- **Iterative attacker sketches**: simplified attackers named after PAIR,
+  TAP and GCG (`iterative_pair.py`, `iterative_tap.py`,
+  `iterative_gcg.py`). The TAP one sends one prompt per round with no tree
+  search. The GCG one mutates a random suffix with no gradient and never
+  reverts to its best suffix. Only tests construct them, and no API field
+  starts them.
 - **Deep mode**: each probe re-run as persona × strategy multi-turn
-  threads (`persona_strategy.py`). Reachable only by calling the
-  orchestrator's `/redteam/run` directly with `"mode": "deep"`.
+  threads (`persona_strategy.py`). The engine server's `POST /redteam/run`
+  takes `"mode": "deep"`.
 
 ## Quick start (no API keys required)
 
@@ -243,7 +251,7 @@ writes a starter one. `${VAR}` references are expanded from the environment:
 
 Other `kind` values: `anthropic_native`, `custom_http` (with Jinja2 body
 templates and JSONPath response extractors), `grpc`, `http_upload`,
-`browser_use`, `web_chat`, `payment_agent`, `mcp_agent`, `testbed_agent`, `vllm_server`, `a2a_server`, `a2a_agent`. Full target-spec cookbook in
+`browser_use`, `web_chat`, `payment_agent`, `mcp_agent`, `mcp_server`, `testbed_agent`, `vllm_server`, `a2a_server`, `a2a_agent`, `python`. Full target-spec cookbook in
 [`docs/onboarding/target-spec-cookbook.md`](docs/onboarding/target-spec-cookbook.md).
 
 Install the `argus-probe` CLI from PyPI (Python 3.11+). The package
@@ -275,8 +283,10 @@ default, which works when the agent runs on the same machine. For an agent in
 a container or on another machine, set `trap_host`, `trap_port` and
 `trap_public_url` in the target spec (see the
 [cookbook](docs/onboarding/target-spec-cookbook.md#browser_use)). If your
-agent can't reach your machine at all, submit the run with `--api-url` and
-`--token` to a compatible hosted service instead.
+agent cannot reach your machine at all, set `"trap_mode": "hosted"` to serve
+the trap pages from a hosted trap service you deploy from
+[`hosted_testbed/`](hosted_testbed/README.md). See
+[Use hosted pages with a local scan](docs/onboarding/target-spec-cookbook.md#use-hosted-pages-with-a-local-scan).
 
 To see a report first, follow [Try it in one minute](#try-it-in-one-minute).
 
@@ -336,7 +346,7 @@ argus-probe draft-target --openapi api.yaml --out target.json
 argus-probe draft-target --openapi api.yaml --out target.json --no-model
 ```
 
-The command writes a gap checklist and provenance. It writes the target spec only when its bindings can compile and pass offline validation. Inferred prompt, answer and completion mappings require review; missing mappings produce `needs_input` without a spec. The first version supports simple synchronous JSON POST operations. It does not prove real-agent compatibility or invent cleanup. See [the CLI guide](docs/cli.md#draft-a-target-from-local-openapi) for supported inputs, limitations and exit codes.
+The command writes a gap checklist and provenance. It writes the target spec only when its bindings can compile and pass offline validation. Inferred prompt, answer and completion mappings require review; missing mappings produce `needs_input` without a spec. It supports JSON POST operations that answer in the response, and submit-then-poll operations with a documented GET to poll. It does not prove real-agent compatibility or invent cleanup. See [the CLI guide](docs/cli.md#draft-a-target-from-local-openapi) for supported inputs, limitations and exit codes.
 
 ## Check a skill before you install it
 
@@ -366,16 +376,19 @@ argus-probe scan-skill --sample key-grab
 │              probes       │                           strong model on   │
 │                           │                           high/critical,    │
 │                  ┌────────┴─────────┐                 confidence ≥ 0.7  │
-│                  │  openai_compat   │                 (Anthropic or     │
-│                  │  anthropic_native│                  Azure OpenAI);   │
-│                  │  custom_http     │                 assertion probes  │
-│                  │  grpc            │                 skip the judge    │
-│                  │  http_upload     │                                   │
-│                  │  payment_agent   │                                   │
+│                  │  openai_compat   │                 (Anthropic,       │
+│                  │  anthropic_native│                  OpenAI, Azure,   │
+│                  │  custom_http     │                  litellm or Jev); │
+│                  │  grpc            │                 most assertion    │
+│                  │  http_upload     │                 probes skip the   │
+│                  │  payment_agent   │                 judge             │
 │                  │  mcp_agent       │                                   │
+│                  │  mcp_server      │                                   │
 │                  │  testbed_agent   │                                   │
+│                  │  a2a_agent       │                                   │
 │                  │  a2a_server      │                                   │
 │                  │  vllm_server     │                                   │
+│                  │  python          │                                   │
 │                  │  web_chat ───────┼──▶ your chat page in Chromium     │
 │                  │  browser_use ────┼──▶ local trap page, or            │
 │                  │                  │    client_agent in server mode    │
@@ -392,8 +405,8 @@ argus-probe scan-skill --sample key-grab
 
 | Sub-project | Role |
 |---|---|
-| [`argus/`](argus/) | The `argus-probe` package: probe library, judge harness, 14 target adapters, guardrail wrappers (used by the local demo runner) and the CLI in `argus/cli/`. Install it from this repo with `pip install .`. |
-| [`client_agent/`](client_agent/) | Edge agent (browser-use + Playwright) for browser-driven probes. |
+| [`argus/`](argus/) | The `argus-probe` package: probe library, judge harness, 15 target adapters, guardrail wrappers (used by the local demo runner) and the CLI in `argus/cli/`. Install it from this repo with `pip install .`. |
+| [`client_agent/`](client_agent/) | Edge agent (Playwright) for `browser_use` probes in server mode. |
 | [`demo_target/`](demo_target/) | Deliberately-vulnerable FastAPI chatbot for offline demos. |
 | [`payment_testbed/`](payment_testbed/) | Mock x402 payment world + insecure demo agent, for `payment_agent` probes. |
 | [`mcp_testbed/`](mcp_testbed/) | Hostile MCP tool server + insecure demo agent, for `mcp_agent` probes. |
@@ -410,9 +423,7 @@ The three legacy `testing_*` services moved to separate repositories:
 - `testing_web_ui_service` (+ vendored `browser-use`) →
   [`gy15901580825/argus-web-ui-testing`](https://github.com/gy15901580825/argus-web-ui-testing)
 
-The orchestrator still references them over HTTP via `run_api_test` and
-`run_web_ui_cloud` planner tools — deploy from those repos if you need
-the in-cluster services.
+The orchestrator no longer calls them.
 
 ## Probe library structure
 
@@ -524,7 +535,7 @@ document the one bypass + 12 false positives in detail.
 
 ## Status
 
-Pre-1.0. The CLI, probe library, judge harness, and report formats are
+Version 1.x, published on PyPI as `argus-probe`. The CLI, probe library, judge harness, and report formats are
 stable interfaces; the orchestrator's internal probe-dispatch contract may
 still change.
 
@@ -533,10 +544,12 @@ still change.
 Apache 2.0 — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE) for third-party
 attribution.
 
-Argus does not vendor third-party source. [browser-use](https://github.com/browser-use/browser-use)
-(MIT) and [garak](https://github.com/NVIDIA/garak) (Apache-2.0) are ordinary
-package dependencies; the `probes/garak/` wrappers reference garak's catalogue
-rather than redistributing it.
+Argus does not vendor third-party source. [garak](https://github.com/NVIDIA/garak)
+(Apache-2.0) is not a dependency. The wrappers in `argus/probes/garak/` restate
+attack prompts from garak's probe classes in the Argus probe schema, and each
+records the garak class it came from; [`NOTICE`](NOTICE) has the attribution.
+Argus does not use the browser-use package. The `browser_use` target kind
+drives your own browser agent.
 
 ## Contributing
 

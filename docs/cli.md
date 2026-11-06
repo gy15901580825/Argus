@@ -2,17 +2,23 @@
 
 Open-source CLI for [Argus](https://github.com/gy15901580825/Argus), black-box red-team testing for AI agents.
 
-Point `argus-probe` at any AI agent endpoint — chat APIs, custom HTTP services, gRPC, or browser-using agents — and get a report mapped to MITRE ATLAS, OWASP LLM Top 10, NIST AI RMF, and the EU AI Act.
+Point `argus-probe` at your AI agent's endpoint (a chat API, a custom HTTP service, gRPC, an MCP or A2A server, or a browser-using agent) and get a report mapped to MITRE ATLAS, OWASP LLM Top 10, NIST AI RMF, and the EU AI Act.
+
+`argus-probe quickstart` needs no API key and no target. It tests a built-in, deliberately insecure MCP demo agent on 127.0.0.1:
 
 ```
-$ argus-probe run --target argus-target.json --probes owasp_07_system_prompt_leakage --format html --out report.html
-Submitting run to https://<your-server>/api/v1/redteam/runs ...
-  run_id: abc123
-Polling until completion...
-  status: completed, findings: 1
-Fetching html report...
-Wrote report to report.html
+$ argus-probe quickstart
+Starting the demo MCP agent and a hostile MCP testbed on 127.0.0.1 (no API key needed) ...
+  ...
+  fail               critical  mcp_credential_lure_api_key
+  ...
+  pass               info      mcp_rugpull_after_relist
+  ...
+Wrote report to argus-quickstart.html
+7 of 12 probes caught the demo agent doing something unsafe.
 ```
+
+To test your own agent, see [Quickstart](#quickstart) below.
 
 ## Install
 
@@ -80,7 +86,7 @@ argus-probe run --local --target browser-target.json \
   --probes browser_dom_inject_html_comment --format html --out report.html
 ```
 
-The trap page listens on `127.0.0.1` by default, which works when the agent runs on the same machine. For an agent in a container or on another machine, set `trap_host`, `trap_port` and `trap_public_url` in the target spec; the [target spec cookbook](https://github.com/gy15901580825/Argus/blob/main/docs/onboarding/target-spec-cookbook.md#browser_use) explains them. Server mode accepts the same fields. There the client agent serves the trap page, so set them for the client agent's machine. If your agent can't reach your machine at all, submit the run with `--api-url` and `--token` to a compatible hosted service instead.
+The trap page listens on `127.0.0.1` by default, which works when the agent runs on the same machine. For an agent in a container or on another machine, set `trap_host`, `trap_port` and `trap_public_url` in the target spec; the [target spec cookbook](https://github.com/gy15901580825/Argus/blob/main/docs/onboarding/target-spec-cookbook.md#browser_use) explains them. Server mode accepts the same fields. There the client agent serves the trap page, so set them for the client agent's machine. If your agent cannot reach your machine at all, set `"trap_mode": "hosted"` to serve the trap pages from a hosted trap service you deploy from [`hosted_testbed/`](https://github.com/gy15901580825/Argus/tree/main/hosted_testbed). See [Use hosted pages with a local scan](https://github.com/gy15901580825/Argus/blob/main/docs/onboarding/target-spec-cookbook.md#use-hosted-pages-with-a-local-scan).
 
 The local judge uses `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY` when that is the only key set. To use another provider or model, see [Choosing a judge](#choosing-a-judge).
 
@@ -149,7 +155,7 @@ argus-probe run --local --judge-provider litellm --judge-model ollama/qwen2.5:32
 
 **Where your data goes.** The judge reads each attack prompt and your agent's reply. With a cloud provider, those go to that provider, and the console says which one before the first probe, for example `Target replies, attack prompts and rubrics are sent to Google Gemini for judging.` When the [Jev decider](https://github.com/gy15901580825/Argus/blob/main/docs/operations/judge-decider.md) is on, the line adds that conflicting verdicts also go to TypeSafe. With Ollama or your own server, they stay on machines you run. `anthropic` and `azure` fall back to each other by default: when a judge call fails and the other provider's credentials are set, the same text goes to the second vendor. The `Judge:` line says so with `(falls back to ...)`. Set `REDTEAM_LLM_FALLBACK=off` to keep the judge on one vendor. A content filter block falls back only when you set `REDTEAM_LLM_FALLBACK=on`, and the `Judge:` line then adds `content-filter blocks included`. `openai` and `litellm` never fall back.
 
-**Small judges.** Small local models miss many jailbreaks (in JailbreakBench, a 7B judge missed 61%), so `run` prints a warning when the judge is a `litellm` model, and a clean report from a small judge is weak evidence. Azure's default content filter blocks judge calls, because the judge reads attack text. Use a custom filter policy with jailbreak detection turned off for the judge deployment (also when `OPENAI_API_KEY` is paired with `--judge-api-base` pointing at Azure, where you also need to set both models to your deployment names).
+**Small judges.** Small local models miss many jailbreaks (in [JailbreakBench](https://arxiv.org/abs/2404.01318), Table 1, the 7B Llama Guard judge missed 60.9% of jailbreaks), so `run` prints a warning when the judge is a `litellm` model, and a clean report from a small judge is weak evidence. Azure's default content filter blocks judge calls, because the judge reads attack text. Use a custom filter policy with jailbreak detection turned off for the judge deployment (also when `OPENAI_API_KEY` is paired with `--judge-api-base` pointing at Azure, where you also need to set both models to your deployment names).
 
 **Content filter blocks.** When the judge provider's content filter refuses a judge prompt, the run stops with `JudgeBlockedError`, which names the provider, the model or deployment and the filter categories that fired. `run --local` writes an `incomplete` report and exits 1, and the server stream ends with `event: error` whose `judge_blocked` object holds the same fields. Use a content filter policy that allows red-team text for the judge deployment; on Azure, the jailbreak prompt shield is the one that fires.
 
@@ -283,9 +289,9 @@ A probe that cannot reach a verdict gets an `error` finding that names the cause
 - a reply with no text: an HTTP 200 error object, a message with no content, a `response_jsonpath` that matches nothing, or a match that is `null`, `[]`, `{}` or only whitespace. The reason names the field: `target returned no text; check response_jsonpath or the endpoint` for `custom_http`, `target returned no text; the endpoint returned no message content` for `openai_compat` and `anthropic_native`. Such a reply is never sent to the judge;
 - a judged probe whose rubric file is missing (`rubric file not found: <path>`). Nothing is sent for it and no attacker model is called.
 
-Local version 2 transports have [stop triggers](transport-spec.md#stop-triggers). HTTP 429 and credential echoes stop the entire run by default, even without a `budget` object. Configured alert headers and unsafe verified Location headers can also stop it. After a stop trigger, no further request is sent, including cleanup. The CLI writes an incomplete report, exits 1, preserves earlier findings, and leaves probes without findings out of the report. A stop on the first request still writes a report with zero findings. The console prints `Target stopped the run: <reason>. No further request was sent, cleanup included.` followed by remaining GET or DELETE requests with redacted URLs for manual cleanup. Set `budget.stop_on.http_status` to `[]` or `credential_echo` to `false` to disable those triggers.
+Local version 2 transports have [stop triggers](https://github.com/gy15901580825/Argus/blob/main/docs/transport-spec.md#stop-triggers). HTTP 429 and credential echoes stop the entire run by default, even without a `budget` object. Configured alert headers and unsafe verified Location headers can also stop it. After a stop trigger, no further request is sent, including cleanup. The CLI writes an incomplete report, exits 1, preserves earlier findings, and leaves probes without findings out of the report. A stop on the first request still writes a report with zero findings. The console prints `Target stopped the run: <reason>. No further request was sent, cleanup included.` followed by remaining GET or DELETE requests with redacted URLs for manual cleanup. Set `budget.stop_on.http_status` to `[]` or `credential_echo` to `false` to disable those triggers.
 
-For a required version 2 material channel, probes without `indirect` are skipped before provision or setup. The reasoning names `requires material` and `indirect`. Optional material channels run prompt-only probes. See [task and material bindings](transport-spec.md#bind-task-and-material-separately) for guards, UTF-8 base64, and multipart upload configuration. Budget and startup stops keep configured cleanup enabled. Status, alert, unsafe Location, and credential-echo stops suppress all further requests, including cleanup.
+For a required version 2 material channel, probes without `indirect` are skipped before provision or setup. The reasoning names `requires material` and `indirect`. Optional material channels run prompt-only probes. See [task and material bindings](https://github.com/gy15901580825/Argus/blob/main/docs/transport-spec.md#bind-task-and-material-separately) for guards, UTF-8 base64, and multipart upload configuration. Budget and startup stops keep configured cleanup enabled. Status, alert, unsafe Location, and credential-echo stops suppress all further requests, including cleanup.
 
 Request-budget exhaustion and setup failures leave configured cleanup enabled. For these stops, the console prints `Target stopped the run: <reason>. Configured cleanup remained enabled.` Undo requests still use their separate reserve.
 
@@ -323,7 +329,7 @@ Exit codes:
 
 In 0.6.0 and earlier, a probe that hit a 5xx, a timeout or a connection error stopped the whole run and lost its findings, while 401, 404, 422 and 429 were reported as `blocked_by_target` and the run exited 0. An unknown probe id ran nothing and exited 0. A CI job that passed because of those errors now exits 1 or 2.
 
-For local version 2 runs with undo requests or tracked created resources, [run.json](run-json.md#target-cleanup) includes `target_cleanup`. Unfinished cleanup makes the report incomplete and exits 1 unless the cost cap takes priority. The console lists unresolved intents and redacted full resource names for manual cleanup. Informational `leftover` names alone keep the run completed and the exit code unchanged. Unconfirmed cleanup keeps the run incomplete. SIGINT and SIGTERM write no report, even if cleanup is incomplete. A second signal may interrupt cleanup; the first signal still determines the exit code. SIGKILL and crashes cannot run the in-memory undo stack.
+For local version 2 runs with undo requests or tracked created resources, [run.json](https://github.com/gy15901580825/Argus/blob/main/docs/run-json.md#target-cleanup) includes `target_cleanup`. Unfinished cleanup makes the report incomplete and exits 1 unless the cost cap takes priority. The console lists unresolved intents and redacted full resource names for manual cleanup. Informational `leftover` names alone keep the run completed and the exit code unchanged. Unconfirmed cleanup keeps the run incomplete. SIGINT and SIGTERM write no report, even if cleanup is incomplete. A second signal may interrupt cleanup; the first signal still determines the exit code. SIGKILL and crashes cannot run the in-memory undo stack.
 
 ## Draft a target from local OpenAPI
 
@@ -358,7 +364,7 @@ Only schemas the draft binds are checked: the request and response objects, the 
 
 Only local document inputs are accepted. Internal references and bounded adjacent JSON/YAML files within the input directory are supported. Referenced symlinks, directory escapes, known credential filenames, network references and YAML aliases are rejected. The main input path is resolved, including directory symlinks; the credential filename filter applies only to references. The loader enforces byte, depth and node limits. Filename checks do not establish that an arbitrary file is safe; provide only authorized document files. Examples and defaults are omitted from the model catalog. Policy timeouts and budgets have separate provenance.
 
-Exit code `0` means ready after offline validation. `1` means a read, parse, compile, validation or write error; `2` means invalid command usage; `3` means review or input is needed. Inferred bindings in either mode require review. There is no `--execute` or `--docs` option. `--verify-local` checks a temporary copy against a fake on one randomly assigned `127.0.0.1` port. It removes authentication and leaves the delivered spec unchanged. Without an independent `--scenario FILE`, it reports `schema_mock_only` and exits 3, even if the schema mock returns a successful response. A failed local check exits 1 and names the failed check. Independent business success with documented cleanup residue remains review, exits 3, and reports `cleanup_complete: false`. Only a ready draft with full independent verification and complete cleanup can exit 0. Existing draft gaps remain in every case. A version 2 scenario can supply synthetic values for `TARGET_INPUT_*` bindings so such drafts can pass. With a scenario, local verification also runs a failure or pending case for each other value of the poll's documented status enum and fails if a failure status ends as success or a pending status is not polled again. It prints the aspects it cannot check, such as authentication and the server origin, as `local.unverified:` lines. See [local scenarios](draft-local-scenarios.md) for the versioned format and its limits.
+Exit code `0` means ready after offline validation. `1` means a read, parse, compile, validation or write error; `2` means invalid command usage; `3` means review or input is needed. Inferred bindings in either mode require review. There is no `--execute` or `--docs` option. `--verify-local` checks a temporary copy against a fake on one randomly assigned `127.0.0.1` port. It removes authentication and leaves the delivered spec unchanged. Without an independent `--scenario FILE`, it reports `schema_mock_only` and exits 3, even if the schema mock returns a successful response. A failed local check exits 1 and names the failed check. Independent business success with documented cleanup residue remains review, exits 3, and reports `cleanup_complete: false`. Only a ready draft with full independent verification and complete cleanup can exit 0. Existing draft gaps remain in every case. A version 2 scenario can supply synthetic values for `TARGET_INPUT_*` bindings so such drafts can pass. With a scenario, local verification also runs a failure or pending case for each other value of the poll's documented status enum and fails if a failure status ends as success or a pending status is not polled again. It prints the aspects it cannot check, such as authentication and the server origin, as `local.unverified:` lines. See [local scenarios](https://github.com/gy15901580825/Argus/blob/main/docs/draft-local-scenarios.md) for the versioned format and its limits.
 
 ## Repeated trials
 
@@ -371,7 +377,7 @@ argus-probe run --local --target target.json --probes fixed_probe \
 
 A static trial runs the whole probe, including every prompt. Conversation history starts fresh in each trial. Above 1, the report contains one finding per probe with a trial summary and the individual trial observations. Any failing prompt makes its trial fail; any failing trial makes the probe fail. The valid denominator counts whole-probe trials with `pass`, `fail` or `warn`, not prompts or attempts. All-pass wording states that the behavior was not observed and that a pass is weak evidence. With a count of 1, static findings retain their existing format and have no added trial evidence.
 
-Paired probes still run a clean control followed by an attack in each trial. Transport v2 retains one run-wide request budget. Cleanup remains per actual send, so a multi-prompt trial can have multiple attempt undo requests. A cost or request-budget stop preserves the started trial observations, marks the run incomplete, and does not invent remaining trials. See [trial evidence](run-json.md#trial-evidence).
+Paired probes still run a clean control followed by an attack in each trial. Transport v2 retains one run-wide request budget. Cleanup remains per actual send, so a multi-prompt trial can have multiple attempt undo requests. A cost or request-budget stop preserves the started trial observations, marks the run incomplete, and does not invent remaining trials. See [trial evidence](https://github.com/gy15901580825/Argus/blob/main/docs/run-json.md#trial-evidence).
 
 ## Cost controls
 
@@ -383,7 +389,7 @@ argus-probe run --target ... --per-run-cap 0.50
 
 Before the run, Argus estimates that spend and does not start a run whose estimate is above the cap (exit 4, in server and local mode). The estimate assumes one fast judge call and one strong judge call for every prompt of every probe that needs the judge, as if every verdict escalated to the stronger model, plus the attacker in deep mode. Probes decided by deterministic checks cost nothing. When the estimate is above the cap, the error names a cap at or above it, for example `estimated cost $5.3196 > per_run_cap $0.50; rerun with --per-run-cap 5.32 or select fewer probes`. On 2026-10-29, `--probes all` against a chat target had 403 judged prompts and was estimated at $5.32 with the default Anthropic judge (Claude Haiku 4.5 fast, Claude Sonnet 4.6 strong) and $3.46 with the default OpenAI judge (gpt-5.6-luna fast, gpt-5.6-terra strong). Most verdicts do not escalate, so a run usually costs well under its estimate.
 
-The cap also holds during the run in local and server mode. The judge or attacker call that takes the run's spend past the cap stops the run. The probe it was judging (or the deep-mode thread it belonged to) is reported as `aborted_cost`, and so is every probe not yet started (reason `not started: the run had stopped at the cost cap (...)`), without another paid call. In local mode, the report is written with the findings so far and marked incomplete, and the command exits 4. That last call has already been paid for and is counted, together with any refused attempt of the same judge call, so spend can pass the cap by one call (about one cent at the default models). A local run that crosses the daily cap stops the same way. Server runs use the supplied cap or the server's default, keep concurrent runs' spend separate, and end the stream with a cost error after the available findings. The error event and, on a run that finishes, the coverage event report the run's spend and the cap in force as `cost` (see [the stream format](reference/services.md#post-redteamrun-stream)). Daily totals and the deep budget partition remain shared by the server.
+The cap also holds during the run in local and server mode. The judge or attacker call that takes the run's spend past the cap stops the run. The probe it was judging (or the deep-mode thread it belonged to) is reported as `aborted_cost`, and so is every probe not yet started (reason `not started: the run had stopped at the cost cap (...)`), without another paid call. In local mode, the report is written with the findings so far and marked incomplete, and the command exits 4. That last call has already been paid for and is counted, together with any refused attempt of the same judge call, so spend can pass the cap by one call (about one cent at the default models). A local run that crosses the daily cap stops the same way. Server runs use the supplied cap or the server's default, keep concurrent runs' spend separate, and end the stream with a cost error after the available findings. The error event and, on a run that finishes, the coverage event report the run's spend and the cap in force as `cost` (see [the stream format](https://github.com/gy15901580825/Argus/blob/main/docs/reference/services.md#stream-contract-post-redteamrun)). Daily totals and the deep budget partition remain shared by the server.
 
 ## Check a skill before you install it
 
@@ -486,7 +492,7 @@ Read these warnings before the first scan:
 - An HTTP scan sends injection payloads to the server. Scan only servers you own or are authorised to test.
 - Scrubbing is pattern-based. Treat the report as sensitive.
 
-The scan runs eleven checks of the server's tools. Their probe ids are in the [cheatsheet](onboarding/probe-id-cheatsheet.md#mcp-server-scan-checks).
+The scan runs eleven checks of the server's tools. Their probe ids are in the [cheatsheet](https://github.com/gy15901580825/Argus/blob/main/docs/onboarding/probe-id-cheatsheet.md#mcp-server-scan-checks).
 
 - On the first `tools/list`, it looks for instruction text in tool names, descriptions, annotations and schema strings, and for hidden characters.
 - On each tool it calls, it looks for a shell command built from the input (a computed arithmetic marker comes back), a path that reads `/etc/passwd`, a secret-shaped value in a result, instruction text in a result, a canary from the first session that shows up in a second session, and a tool that returns the payload unchanged.
@@ -578,13 +584,14 @@ argus-probe mcp-trap            Point your agent at a hostile MCP server and rep
 argus-probe scan-mcp            Call an MCP server's tools with inert payloads and report what came back
 argus-probe judge-check         Measure the chosen judge on Argus's labelled rubric cases
 argus-probe web-login           Log in to a chat page by hand and save the session for a web_chat target
+argus-probe draft-target        Draft a target spec and review checklist from a local OpenAPI file
 ```
 
 Each command's `--help` lists its flags.
 
 ## License
 
-Apache-2.0. See [LICENSE](https://github.com/gy15901580825/Argus/blob/main/LICENSE). Copyright © 2026 Veyon Solutions.
+Apache-2.0. See [LICENSE](https://github.com/gy15901580825/Argus/blob/main/LICENSE). Copyright 2026 Argus contributors; see [NOTICE](https://github.com/gy15901580825/Argus/blob/main/NOTICE).
 
 ## Security
 
@@ -610,19 +617,19 @@ Remote testbeds require `TESTBED_CONTROL_TOKEN` on the service and `"control_tok
 
 ### Local A2A peer worlds
 
-Use `argus-probe init --kind a2a_agent` to create a sandboxed target, then run its nine probes with `argus-probe run --local`. No judge key is needed for these assertion-backed probes. Declare only capabilities your integration exposes; see [the target cookbook](onboarding/target-spec-cookbook.md#a2a_agent).
+Use `argus-probe init --kind a2a_agent` to create a sandboxed target, then run its nine probes with `argus-probe run --local`. No judge key is needed for these assertion-backed probes. Declare only capabilities your integration exposes; see [the target cookbook](https://github.com/gy15901580825/Argus/blob/main/docs/onboarding/target-spec-cookbook.md#a2a_agent).
 
 `testbed_url: "local"` starts two listeners: a private controller on a free loopback port and the agent-visible peer service. `ARGUS_TESTBED_PORT` pins only the peer listener. The CLI prints both addresses. Remote deployments expose the peer service through HTTPS and reach control through a private channel forwarded to this host's loopback. Control tokens are mandatory; unset control tokens fail closed. Use one testbed instance per concurrent run and stop old traffic before handing static endpoints to the next phase.
 
 ### Declarative HTTP validation
 
-Use a `transport` object in a `custom_http` target to configure request fields, secret references, answer paths, outcome rules, and deadlines. See [the transport specification](transport-spec.md) for a complete JSON example.
+Use a `transport` object in a `custom_http` target to configure request fields, secret references, answer paths, outcome rules, and deadlines. See [the transport specification](https://github.com/gy15901580825/Argus/blob/main/docs/transport-spec.md) for a complete JSON example.
 
 `argus-probe validate-target --target target.json --offline` sends no requests and does not resolve secrets. Add `--sample-response sample.json` to check a local response. `--execute` sends a benign request and reports status, selected rules, mapping failures, and request counts. `--endpoint-override` directs that execution to a controlled fake endpoint. Execute mode can incur model costs and use target tools.
 
 New transport files default to offline validation. Existing target files keep their single-prompt validation behavior. Version 1 synchronous execution sends exactly one request without retries. Version 2 may also send configured setup and undo requests. Diagnostics omit secret values and returned answer text.
 
-For local `custom_http` targets, [version 2](transport-spec.md#use-version-2) adds variables, generated references, and URL and query bindings. Offline validation lists binding names without rendering a body or reading environment values. Execute mode closes the target and reports HTTP status, selected outcome, and request counts. Configured lifecycle steps add `requests.setup=N requests.cleanup=N` after the submission, poll, and retry counts. Provision adds `requests.provision=N`. Counts are final after run close and include confirmation GETs. A configured material channel receives `Argus validation sample.`. Offline provision validation prints a manual and derived preparation checklist with zero requests. Execute mode performs provision, run setup, one attempt, and cleanup. A `not_provisioned` stop prints the same checklist and sends no business requests. Its `--endpoint-override` takes an origin and retains every configured request path, including lifecycle and undo paths. `--sample-response`, `--with-scenario`, and `--scenario-url` support version 1 transports only. Browser targets and remote clients remain on version 1.
+For local `custom_http` targets, [version 2](https://github.com/gy15901580825/Argus/blob/main/docs/transport-spec.md#use-version-2) adds variables, generated references, and URL and query bindings. Offline validation lists binding names without rendering a body or reading environment values. Execute mode closes the target and reports HTTP status, selected outcome, and request counts. Configured lifecycle steps add `requests.setup=N requests.cleanup=N` after the submission, poll, and retry counts. Provision adds `requests.provision=N`. Counts are final after run close and include confirmation GETs. A configured material channel receives `Argus validation sample.`. Offline provision validation prints a manual and derived preparation checklist with zero requests. Execute mode performs provision, run setup, one attempt, and cleanup. A `not_provisioned` stop prints the same checklist and sends no business requests. Its `--endpoint-override` takes an origin and retains every configured request path, including lifecycle and undo paths. `--sample-response`, `--with-scenario`, and `--scenario-url` support version 1 transports only. Browser targets and remote clients remain on version 1.
 
 
 ### Browser transport validation
@@ -631,10 +638,10 @@ A `browser_use` target can use the same declarative `transport` object. Bind `sc
 
 `validate-target --target browser.json --offline` uses a placeholder page URL without starting a server or resolving secret references. For a benign execution, use `--execute --with-scenario` to serve a neutral page, or `--execute --scenario-url http://127.0.0.1:8080/neutral` to provide one. These options cannot be combined. A browser execution requires one of them.
 
-The operation uses its configured total deadline plus a bounded cleanup grace period. Remote browser execution requires a connected client that advertises transport version 1 and authorizes the configured origins and secret references. See [the transport specification](transport-spec.md#browser-agents).
+The operation uses its configured total deadline plus a bounded cleanup grace period. Remote browser execution requires a connected client that advertises transport version 1 and authorizes the configured origins and secret references. See [the transport specification](https://github.com/gy15901580825/Argus/blob/main/docs/transport-spec.md#browser-agents).
 
 ### Asynchronous transport validation
 
 A transport with `delivery.kind: "poll"` submits once, then polls a fixed same-origin GET path with an encoded job ID. `validate-target --execute` prints the exact `requests.submit`, `requests.poll`, and `requests.retry` counts. `--offline` remains request-free; `--endpoint-override` changes both request origins and keeps the poll path.
 
-Submission refusal and failure stop before polling. Configured pending states wait until an explicit terminal reply, the poll limit, or the total deadline. The deadline covers submission, waits, and response reads together. No POST or GET is retried. Local cancellation closes resources and records a detached hosted job. Version 2 also executes configured GET or DELETE undo requests; these stop a remote job only when the service documents that behavior. SSE is not supported. See [poll configuration](transport-spec.md#poll-asynchronous-jobs).
+Submission refusal and failure stop before polling. Configured pending states wait until an explicit terminal reply, the poll limit, or the total deadline. The deadline covers submission, waits, and response reads together. No POST or GET is retried. Local cancellation closes resources and records a detached hosted job. Version 2 also executes configured GET or DELETE undo requests; these stop a remote job only when the service documents that behavior. SSE is not supported. See [poll configuration](https://github.com/gy15901580825/Argus/blob/main/docs/transport-spec.md#poll-asynchronous-jobs).
