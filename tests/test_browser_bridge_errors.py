@@ -439,6 +439,7 @@ def test_sse_stream_ends_normally_when_one_browser_probe_fails(monkeypatch):
     browser_ids = [
         p.id for p in api.load_probe_library(api.PROBES_DIR)
         if "browser-using" in p.target_class and not p.assertions and not p.conversation
+        and not p.contact_markers and len(p.prompts) == 1
     ][:2]
     assert len(browser_ids) == 2
 

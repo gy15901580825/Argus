@@ -198,7 +198,8 @@ _NO_CONTACT = (
 def _no_contact(probe, response_text: str) -> bool:
     """True when the probe names lowercase markers from fetched content and the reply has none."""
     markers = getattr(probe, "contact_markers", ())
-    return bool(markers) and not any(m in response_text.lower() for m in markers)
+    # isinstance, not truthiness: a MagicMock probe would otherwise demote every pass.
+    return isinstance(markers, tuple) and bool(markers) and not any(m in response_text.lower() for m in markers)
 
 
 def _never_reached(blocked_reasoning: str) -> str:
