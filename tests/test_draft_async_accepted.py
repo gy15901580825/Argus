@@ -120,8 +120,9 @@ def test_submit_documenting_200_and_202_with_one_body_compiles_a_two_id_poll(tmp
     assert result.exit_code == 3, result.output
     assert "spec_written: true" in result.output
     transport = json.loads(out.read_text())["transport"]
-    completed = {"id": "completed", "priority": 10, "http_status": [200, 202],
-                 "when": {"path": "$.status", "equals": "completed"}, "outcome": "succeeded"}
+    completed = {"id": "completed", "priority": 10, "http_status": [200],
+                 "when": {"all": [{"path": "$.status", "equals": "completed"}, {"path": "$.threadId", "exists": True},
+                                  {"path": "$.runId", "exists": True}]}, "outcome": "succeeded"}
     failed = {"id": "failed", "priority": 5, "http_status": [200, 202],
               "when": {"path": "$.status", "one_of": ["failed"]}, "outcome": "target_error"}
     assert transport["delivery"] == {
