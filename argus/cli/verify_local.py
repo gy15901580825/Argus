@@ -8,14 +8,14 @@ from datetime import date, datetime
 import json
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from aiohttp import web
 
 from argus.cli.validate_transport_v2 import execute_transport
 from argus.drafting.draft import CONSTRAINT_KEYWORDS
-from argus.drafting.scenario import CHECKS, MAX_BODY_BYTES, MAX_DEPTH, MAX_REQUESTS, ScenarioV1, path_pattern
+from argus.drafting.scenario import CHECKS, MAX_BODY_BYTES, MAX_DEPTH, MAX_REQUESTS, ScenarioV1, document_cases, path_pattern
 from argus.targets import build_target
 from argus_transport import ExecutionPolicy, TransportSpecV2, with_origin
 from argus_transport.runtime_v2 import TargetRunStopped
@@ -96,13 +96,15 @@ class VerificationResult:
     resources: tuple[dict, ...]
     required_gaps: tuple[str, ...]
     trace: tuple[dict, ...]
+    cases: tuple[dict, ...] = ()
+    unverified: tuple[str, ...] = ()
 
     def as_dict(self):
-        return {'version': 1, 'layer': self.layer, 'status': self.status,
+        return {'version': 2, 'layer': self.layer, 'status': self.status,
                 'semantic_success': self.semantic_success, 'cleanup_complete': self.cleanup_complete,
                 'checks': list(self.checks), 'execution': self.execution,
                 'resources': list(self.resources), 'required_gaps': list(self.required_gaps),
-                'trace': list(self.trace)}
+                'trace': list(self.trace), 'cases': list(self.cases), 'unverified': list(self.unverified)}
 
 
 def _pointer(data, pointer):
@@ -473,9 +475,7 @@ def _assess(fake, execution, gaps):
                               resources, scene.required_gaps, tuple(fake.trace))
 
 
-async def verify_local(spec, *, catalog=None, scenario: ScenarioV1 | None = None, gaps=()):
-    if spec is None:
-        return VerificationResult('not_run', 'not_run', False, False, (), {}, (), (), ())
+async def _attempt(spec, catalog, scenario):
     copied = copy.deepcopy(spec)
     copied['transport']['auth'] = {'kind': 'none'}
     loop = asyncio.get_running_loop()
@@ -511,4 +511,42 @@ async def verify_local(spec, *, catalog=None, scenario: ScenarioV1 | None = None
                     await fake.__aexit__(None, None, None)
             except TimeoutError:
                 fake.fail('verification_budget_exceeded')
-    return _assess(fake, execution, gaps)
+    return fake, execution
+
+
+def _case_row(case, result):
+    row = {'name': case.name, 'origin': case.origin, 'status': case.status, 'class': case.status_class,
+           'expected': None, 'outcome': None, 'passed': None, 'checks': [], 'requests': {}}
+    if result is None: return row
+    requests = result.execution.get('requests') or {}
+    return {**row, 'expected': case.scenario.outcome, 'outcome': result.execution.get('outcome'), 'passed': not result.checks,
+            'checks': list(result.checks), 'requests': {key: requests[key] for key in ('submit', 'poll') if key in requests}}
+
+
+def _case_check(case, result):
+    if case.origin == 'scenario': return 'scenario_case_failed'
+    if case.status_class == 'pending': return 'pending_status_unrecognised'
+    return 'failure_status_succeeded' if result.execution.get('outcome') == 'succeeded' else 'failure_status_mismatch'
+
+
+async def verify_local(spec, *, catalog=None, scenario: ScenarioV1 | None = None, gaps=()):
+    if spec is None:
+        return VerificationResult('not_run', 'not_run', False, False, (), {}, (), (), ())
+    # The fake strips credentials and serves every origin itself, so neither can be verified here.
+    unverified = (('auth_headers',) if spec['transport'].get('auth', {}).get('kind', 'none') != 'none' else ()) + ('server_origin',)
+    if scenario is None:
+        return replace(_assess(*await _attempt(spec, catalog, None), gaps), unverified=unverified)
+    derived = document_cases(scenario, catalog)
+    cases = scenario.cases + (derived or ())
+    if derived is None: unverified += ('documented_status_cases',)
+    if any(case.scenario is None for case in cases): unverified += ('status_meaning',)
+    runnable = [case for case in cases if case.scenario is not None]
+    attempts = await asyncio.gather(_attempt(spec, catalog, scenario), *(_attempt(spec, catalog, case.scenario) for case in runnable))
+    main = _assess(*attempts[0], gaps)
+    results = dict(zip((case.name for case in runnable), (_assess(*attempt, gaps) for attempt in attempts[1:])))
+    failed = tuple(_case_check(case, results[case.name]) for case in runnable if results[case.name].checks)
+    rows = tuple(_case_row(case, results.get(case.name)) for case in cases)
+    if failed:
+        main = replace(main, status='failed', semantic_success=False, cleanup_complete=False,
+                       checks=tuple(dict.fromkeys(main.checks + failed)))
+    return replace(main, cases=rows, unverified=unverified)
