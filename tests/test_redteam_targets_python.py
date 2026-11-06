@@ -239,6 +239,7 @@ def test_constructing_the_target_does_not_import(tmp_path, monkeypatch):
         {"entry": "dir/agent.txt:call"},
         {"entry": "/nonexistent/dir/agent.py:call"},
         {"entry": "mod:call", "timeout_s": 0},
+        {"entry": "mod:call", "material": "false"},
         {"entry": "mod:call", "kind": "custom_http"},
     ],
 )
@@ -256,7 +257,11 @@ def test_python_target_serves_the_same_probes_as_custom_http():
     from argus.targets.custom_http import CustomHTTPTarget
 
     assert PythonTarget.compatible_classes == CustomHTTPTarget.compatible_classes
-    assert PythonTarget.material_channel is True
+
+
+def test_material_channel_is_opt_in():
+    assert PythonTarget(PythonSpec(entry="mod:call")).material_channel is False
+    assert PythonTarget(PythonSpec(entry="mod:call", material=True)).material_channel is True
 
 
 MESSAGE = "python targets run only on the local machine: use argus-probe run --local"

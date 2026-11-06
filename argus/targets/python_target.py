@@ -14,7 +14,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, ClassVar
+from typing import Callable
 
 from argus.targets._base import Target, TargetTransportError, Turn
 from argus.targets.custom_http import CustomHTTPTarget, run_log_from_metadata
@@ -39,6 +39,7 @@ class PythonSpec:
     entry: str = ""
     history: bool = True
     timeout_s: float = 300
+    material: bool = False
 
     def __post_init__(self) -> None:
         if self.kind != "python":
@@ -51,6 +52,8 @@ class PythonSpec:
                 raise ValueError(f"entry file not found: {target}")
         if not isinstance(self.timeout_s, (int, float)) or self.timeout_s <= 0:
             raise ValueError("timeout_s must be positive")
+        if not isinstance(self.material, bool):
+            raise ValueError("material must be true or false")
 
 
 def load_entry(entry: str) -> Callable:
@@ -72,12 +75,12 @@ def load_entry(entry: str) -> Callable:
 
 
 class PythonTarget(Target):
-    material_channel: ClassVar[bool] = True
     compatible_classes = CustomHTTPTarget.compatible_classes
 
     def __init__(self, spec: PythonSpec) -> None:
         self.spec = spec
         self.supports_history = spec.history
+        self.material_channel = spec.material
         self._fn: Callable | None = None
         self._conversation_id = str(uuid.uuid4())
         self._probe_id = ""
