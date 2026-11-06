@@ -1,8 +1,8 @@
 """PAIR — Prompt Automatic Iterative Refinement.
 
 Reference: Chao et al. 2023 (arXiv:2310.08419). An attacker LLM observes the
-target's response and refines its prompt round by round. Simpler than TAP
-(no branching). Black-box.
+target's response and refines its prompt round by round, in one stream.
+Black-box.
 """
 
 from __future__ import annotations

@@ -53,9 +53,9 @@ class TAPProbe(IterativeProbe):
     seed_goal: str = ""
     max_rounds: int = 5
     id: str = "tap_default"
-    name: str = "TAP — Tree of Attacks with Pruning"
+    name: str = "Iterative jailbreak named after TAP (one prompt per round, no tree search or pruning)"
     target_class: tuple[str, ...] = ("http-chat",)
-    attack_class: tuple[str, ...] = ("jailbreak", "iterative", "tree-search")
+    attack_class: tuple[str, ...] = ("jailbreak", "iterative")
     severity: str = "high"
     judge_model: str = "claude-haiku-4-5-20251001"
     judge_rubric_path: str = "rubrics/iterative.md"

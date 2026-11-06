@@ -1,6 +1,7 @@
-"""GCG — Greedy Coordinate Gradient (black-box adaptation).
+"""GCG-named random suffix attacker: no gradient and no greedy coordinate search.
 
-Original GCG (Zou et al. 2023, arXiv:2307.15043) requires gradient access.
+Named after Greedy Coordinate Gradient (Zou et al. 2023, arXiv:2307.15043),
+which requires gradient access.
 This is a black-box variant with no gradient: append an adversarial suffix and,
 on each later round, replace ONE random suffix token. Every mutation is kept;
 the judge's verdict only stops the attack.
@@ -56,7 +57,7 @@ class GCGProbe(IterativeProbe):
     max_rounds: int = 10
     seed: int = 42  # deterministic for tests; production callers should pass run-specific seed
     id: str = "gcg_default"
-    name: str = "GCG — Greedy Coordinate Gradient (black-box)"
+    name: str = "Random adversarial suffix named after GCG (no gradient, no revert to best suffix)"
     target_class: tuple[str, ...] = ("http-chat",)
     attack_class: tuple[str, ...] = ("jailbreak", "iterative", "adversarial-suffix")
     severity: str = "high"
