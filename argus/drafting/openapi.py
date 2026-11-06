@@ -94,6 +94,7 @@ class Source:
 class DocumentIssue:
     code: str
     source: Source
+    at: str  # pointer in the expanded document; one source can be expanded at several places
 
 
 @dataclass(frozen=True)
@@ -257,7 +258,7 @@ class _Reader:
                 target, pointer, resolved = self.reference(file, value["$ref"])
                 key = (target, pointer)
                 if key in stack:
-                    self.issues.append(DocumentIssue("reference_cycle", source))
+                    self.issues.append(DocumentIssue("reference_cycle", source, output_pointer))
                     return {"$ref": value["$ref"]}
                 result = self.expand(resolved, target, pointer, output_pointer, stack + (key,), depth + 1, role)
                 if not isinstance(result, dict):
@@ -265,7 +266,7 @@ class _Reader:
                 for name, item in value.items():
                     if name not in {"$ref", "example", "examples", "default"}:
                         if name not in {"description", "summary"}:
-                            self.issues.append(DocumentIssue("reference_siblings_unsupported", source))
+                            self.issues.append(DocumentIssue("reference_siblings_unsupported", source, output_pointer))
                         else:
                             result[name] = self.expand(item, file, pointer_child(source_pointer, name),
                                                        pointer_child(output_pointer, name), stack, depth + 1,
@@ -283,10 +284,12 @@ class _Reader:
                     if not isinstance(item, dict) or any(not isinstance(op, dict) for op in item.values()):
                         raise DocumentError("Additional operations must be an operation map")
                     self.issues.append(DocumentIssue("additional_operations_unsupported",
-                                                     Source(source.file, pointer_child(source_pointer, name))))
+                                                     Source(source.file, pointer_child(source_pointer, name)),
+                                                     pointer_child(output_pointer, name)))
                 if role == _Role.PATH_ITEM and name in {"trace", "query"}:
                     self.issues.append(DocumentIssue("http_method_unsupported",
-                                                     Source(source.file, pointer_child(source_pointer, name))))
+                                                     Source(source.file, pointer_child(source_pointer, name)),
+                                                     pointer_child(output_pointer, name)))
                 child_role = (role.child if isinstance(role, _NamedMap) else _Role.DATA if role == _Role.DATA
                               else _CHILD_ROLES.get(role, {}).get(name, _Role.DATA))
                 result[name] = self.expand(item, file, pointer_child(source_pointer, name),

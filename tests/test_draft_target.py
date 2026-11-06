@@ -301,18 +301,18 @@ def test_duplicate_operation_ids_are_loading_errors(tmp_path):
         catalog_operations(load_openapi(input_file(tmp_path, d)))
 
 
-def test_cycles_remain_bounded_and_block_drafting(tmp_path):
+def test_unread_cycle_stays_bounded_and_does_not_block_drafting(tmp_path):
     d = agent_document()
     d["components"] = {"schemas": {"A": {"$ref": "#/components/schemas/A"}}}
     result, out = invoke(tmp_path, d)
     assert result.exit_code == 3, result.output
-    assert not out.exists()
+    assert out.exists()
     assert "reference_cycle" in out.with_suffix(".gaps.json").read_text()
 
 
-def cycle_gaps(tmp_path, schemas):
+def cycle_gaps(tmp_path, schemas, document=None):
     tmp_path.mkdir(exist_ok=True)
-    d = agent_document()
+    d = document or agent_document()
     d["components"] = {"schemas": schemas}
     result, out = invoke(tmp_path, d)
     gaps = json.loads(out.with_suffix(".gaps.json").read_text())
@@ -326,9 +326,10 @@ def test_document_without_cycles_has_no_cycle_gap(tmp_path):
 
 def test_single_cycle_is_one_gap_with_one_source(tmp_path):
     _, _, cycles = cycle_gaps(tmp_path, {"A": {"$ref": "#/components/schemas/A"}})
-    assert cycles == [{"field": "/transport", "why": "1 reference cycle is not expanded.",
-                       "decision": "Provide a bounded schema without cyclic references.",
-                       "code": "reference_cycle", "kind": "unsupported_feature", "blocking": True,
+    assert cycles == [{"field": "/transport",
+                       "why": "1 reference cycle lies outside the schemas this draft sends or reads and is not expanded.",
+                       "decision": "Confirm that the draft never needs these cyclic schemas.",
+                       "code": "reference_cycle", "kind": "unsupported_feature", "blocking": False,
                        "source": [{"file": "api.json", "pointer": "/components/schemas/A"}]}]
 
 
@@ -340,8 +341,8 @@ def test_many_cycles_collapse_into_one_gap_listing_every_location(tmp_path):
         "Loop": {"$ref": "#/components/schemas/Loop"},
     })
     assert len(cycles) == 1
-    assert cycles[0]["why"] == "4 reference cycles are not expanded."
-    assert cycles[0]["kind"] == "unsupported_feature" and cycles[0]["blocking"] is True
+    assert cycles[0]["why"] == "4 reference cycles lie outside the schemas this draft sends or reads and are not expanded."
+    assert cycles[0]["kind"] == "unsupported_feature" and cycles[0]["blocking"] is False
     assert cycles[0]["source"] == [{"file": "api.json", "pointer": pointer} for pointer in (
         "/components/schemas/Loop",
         "/components/schemas/Node/properties/child",
@@ -350,14 +351,58 @@ def test_many_cycles_collapse_into_one_gap_listing_every_location(tmp_path):
     )]
 
 
-def test_cycle_gap_still_blocks_an_otherwise_compilable_draft(tmp_path):
-    result, gaps, _ = cycle_gaps(tmp_path / "cyclic", {"A": {"$ref": "#/components/schemas/B"},
-                                                       "B": {"$ref": "#/components/schemas/A"}})
+LOOP = {"Loop": {"$ref": "#/components/schemas/Loop"}}
+
+
+def self_referential_answer(*required):
+    """A sync agent whose answer object has a `parent` field that refers back to the answer."""
+    d = agent_document()
+    d["paths"]["/ask"]["post"]["responses"]["200"]["content"]["application/json"]["schema"] = {"$ref": "#/components/schemas/Answer"}
+    return d, {"Answer": {"type": "object", "required": ["answer", "status", *required], "properties": {
+        "answer": {"type": "string"}, "status": {"type": "string", "enum": ["completed"]},
+        "parent": {"$ref": "#/components/schemas/Answer"}}}}
+
+
+def test_cycle_in_a_field_the_draft_reads_blocks_an_otherwise_compilable_draft(tmp_path):
+    document, schemas = self_referential_answer("parent")
+    result, gaps, cycles = cycle_gaps(tmp_path, schemas, document)
     assert result.exit_code == 3, result.output
     assert gaps["state"] == "needs_input" and gaps["spec_written"] is False
     assert [g["code"] for g in gaps["gaps"] if g["blocking"]] == ["reference_cycle"]
-    _, bounded, _ = cycle_gaps(tmp_path / "bounded", {"A": {"type": "string"}})
-    assert bounded["state"] == "needs_review" and bounded["spec_written"] is True
+    assert cycles == [{"field": "/transport", "why": "1 reference cycle lies in a schema this draft sends or reads.",
+                       "decision": "Provide a bounded schema without cyclic references.",
+                       "code": "reference_cycle", "kind": "unsupported_feature", "blocking": True,
+                       "source": [{"file": "api.json", "pointer": "/components/schemas/Answer/properties/parent"}]}]
+
+
+def test_cycle_below_a_read_schema_is_a_review_row(tmp_path):
+    document, schemas = self_referential_answer()
+    result, gaps, cycles = cycle_gaps(tmp_path, schemas, document)
+    assert result.exit_code == 3, result.output
+    assert gaps["state"] == "needs_review" and gaps["spec_written"] is True
+    assert [(g["blocking"], g["source"]) for g in cycles] == [
+        (False, [{"file": "api.json", "pointer": "/components/schemas/Answer/properties/parent"}])]
+
+
+def test_cycle_that_is_the_request_body_blocks(tmp_path):
+    d = agent_document()
+    d["paths"]["/ask"]["post"]["requestBody"]["content"]["application/json"]["schema"] = {"$ref": "#/components/schemas/Q"}
+    _, gaps, cycles = cycle_gaps(tmp_path, {"Q": {"$ref": "#/components/schemas/Q"}}, d)
+    assert gaps["spec_written"] is False
+    assert [(g["blocking"], g["source"]) for g in cycles] == [(True, [{"file": "api.json", "pointer": "/components/schemas/Q"}])]
+
+
+def test_mixed_document_splits_read_and_unread_cycles_into_two_rows(tmp_path):
+    document, schemas = self_referential_answer("parent")
+    result, gaps, cycles = cycle_gaps(tmp_path, {**schemas, **LOOP}, document)
+    assert result.exit_code == 3, result.output
+    assert gaps["state"] == "needs_input" and gaps["spec_written"] is False
+    assert [(g["blocking"], g["why"], g["source"]) for g in cycles] == [
+        (True, "1 reference cycle lies in a schema this draft sends or reads.",
+         [{"file": "api.json", "pointer": "/components/schemas/Answer/properties/parent"}]),
+        (False, "1 reference cycle lies outside the schemas this draft sends or reads and is not expanded.",
+         [{"file": "api.json", "pointer": "/components/schemas/Loop"}]),
+    ]
 
 
 @pytest.mark.parametrize("ref",["#/components/~2bad", "#/paths/missing", "#/list/-1"])
