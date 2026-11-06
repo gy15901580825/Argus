@@ -14,6 +14,7 @@ import json
 import os
 import re
 from dataclasses import asdict, replace
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, AsyncIterator
 
@@ -45,6 +46,27 @@ RUBRICS_DIR = Path(__file__).parent / "rubrics"
 DAILY_CAP_USD = float(os.environ.get("REDTEAM_DAILY_CAP_USD", "13.50"))  # ~$400/month
 # Process-level meter — single tenant for v0; per-customer meters arrive in M3+.
 _COST_METER = CostMeter(daily_cap_usd=DAILY_CAP_USD)
+
+
+def health_body() -> dict:
+    """What GET /healthz returns: the version, judge model names and cost caps, never a key or URL."""
+    try:
+        argus_version = version("argus-probe")
+    except PackageNotFoundError:
+        argus_version = "unknown"
+    try:
+        # Resolved per call from the env, the same way POST /redteam/run and Judge resolve it.
+        cfg = llm.resolve_config()
+        judge = {"provider": cfg.provider, "fast_model": cfg.fast_model, "strong_model": cfg.strong_model}
+    except Exception as exc:  # noqa: BLE001 - health must answer; the type alone carries no env value
+        judge = {"error": type(exc).__name__}
+    return {
+        "status": "ok",
+        "version": argus_version,
+        "judge": judge,
+        "per_run_cap_usd": {"static": _COST_METER.per_run_cap_usd, "deep": _COST_METER.deep_per_run_cap_usd},
+        "daily_cap_usd": _COST_METER.daily_cap_usd,
+    }
 
 
 class RunRequest(BaseModel):
