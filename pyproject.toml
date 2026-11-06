@@ -29,6 +29,21 @@ dependencies = [
     # argus.server loads .env at import time.
     "python-dotenv>=1.0",
 ]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Security",
+    "Topic :: Software Development :: Testing",
+]
+
+[project.urls]
+Homepage = "https://github.com/gy15901580825/Argus"
+Documentation = "https://github.com/gy15901580825/Argus/blob/main/docs/cli.md"
+Source = "https://github.com/gy15901580825/Argus"
+Issues = "https://github.com/gy15901580825/Argus/issues"
+Changelog = "https://github.com/gy15901580825/Argus/releases"
 
 [project.scripts]
 argus-probe = "argus.cli.__main__:main"

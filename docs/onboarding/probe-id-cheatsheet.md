@@ -1,6 +1,6 @@
 # Threat coverage overview
 
-Argus ships 140+ probes covering the threat surface that matters for production AI agents. Each probe is severity-tagged and triple-mapped to MITRE ATLAS / OWASP LLM Top 10 / NIST AI RMF / EU AI Act.
+Argus ships 261 probes. Each probe has a severity and maps to MITRE ATLAS, OWASP LLM Top 10, NIST AI RMF and the EU AI Act. Probes that exercise an OWASP Agentic Top 10 risk also carry that tag.
 
 ## Threat categories
 
@@ -9,9 +9,9 @@ Argus ships 140+ probes covering the threat surface that matters for production 
 | **Prompt injection** | Direct injection, indirect injection (via retrieved content / DOM / image), payload smuggling, instruction override |
 | **System prompt leakage** | Verbatim extraction, paraphrase elicitation, multi-turn elicitation, translation-laundering |
 | **Jailbreak / safety bypass** | Persona attacks, role-play vectors, hypothetical framings, refusal-pattern probing |
-| **Data exfiltration** | Embedded secret elicitation, training-data extraction, side-channel exfil |
+| **Data exfiltration** | Embedded secret elicitation, training-data extraction |
 | **Tool / agent abuse** | Tool-call hijack, capability bait, function-name confusion, excessive agency |
-| **RAG / retrieval attacks** | Embedding poisoning, retrieval mis-ranking, context dilution, chunk-boundary injection |
+| **RAG / retrieval** | One prompt-level probe, `owasp_08_vector_weaknesses`, asks for retrieval internals and checks whether pasted text is treated as a trusted source. No probe poisons an index or tests retrieval ranking |
 | **Browser / computer-use specific** | DOM injection, UI phishing, visual prompt injection, OS-level command injection |
 
 ## Compliance mapping
@@ -23,7 +23,7 @@ Every finding includes the relevant clauses from:
 - **NIST AI Risk Management Framework** — GOVERN / MAP / MEASURE / MANAGE subcategories
 - **EU AI Act** — relevant articles (high-risk system requirements, transparency obligations, etc.)
 
-This is the audit-ready output your AppSec, GRC, and compliance team can hand to internal review.
+These mappings help your AppSec and GRC teams find related controls. They do not establish complete coverage or compliance.
 
 ## Recommended starter sets
 
@@ -32,15 +32,11 @@ Tell `argus-probe run` which set via `--probes <list>`, or pass `all` on its own
 | Use case | Typical runtime | Typical cost |
 |---|---|---|
 | **Quick smoke** (1 probe, 3 prompts) | ~15 s | < $0.01 |
-| **OpenAI / Anthropic-compat agent** | ~45 s | ~$0.05 |
-| **RAG-augmented agent** | ~60 s | ~$0.08 |
-| **Tool-using agent** | ~75 s | ~$0.10 |
-| **Browser / computer-use agent** | ~90 s | ~$0.15 |
 | **Full sweep** (`--probes all`) | ~3 min | a chat target needs `--per-run-cap 5.32` with the default Anthropic judge: the pre-run estimate budgets a fast and a strong judge call for each of its 403 judged prompts (2026-10-29 library) |
 
 Cost figures are approximate; they scale with your agent's response length. A run whose estimate is above `--per-run-cap` does not start, and with `--local` the run stops when Argus's judge spend reaches the cap.
 
-> Curated probe-id lists for each use case ship with your design-partner welcome email. To enumerate everything currently loaded for your account: `argus-probe list-probes`; `argus-probe list-probes --target argus-target.json` shows only the probes that fit your target.
+To list every probe in the installed library, run `argus-probe list-probes`. `argus-probe list-probes --target argus-target.json` shows only the probes that fit your target.
 
 ## Severity model
 

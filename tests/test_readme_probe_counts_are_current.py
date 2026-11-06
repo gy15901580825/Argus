@@ -97,6 +97,7 @@ def test_every_stated_probe_count_matches_the_library():
         "README.md architecture diagram": (README, r"(\d+) YAML"),
         "CONTRIBUTING.md repo layout": (REPO / "CONTRIBUTING.md", r"\((\d+) YAML files\)"),
         "argus/coverage.py docstring": (REPO / "argus" / "coverage.py", r"library of (\d+) probes"),
+        "probe-id cheatsheet": (REPO / "docs" / "onboarding" / "probe-id-cheatsheet.md", r"Argus ships (\d+) probes"),
     }
     stated = {
         label: _find_one(pattern, path.read_text(), label) for label, (path, pattern) in places.items()

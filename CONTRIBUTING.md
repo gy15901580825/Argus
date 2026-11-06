@@ -16,9 +16,9 @@ point it at anything — including while developing.
 
 | Path | What it is |
 |---|---|
-| `argus/` | The `argus-probe` package: probe library, probe loader, judge harness, 9 target adapters, iterative attacks, and the `argus-probe` CLI in `argus/cli/`. Most contributions land here. |
+| `argus/` | The `argus-probe` package: probe library, probe loader, judge harness, 15 target adapters, iterative attacker sketches, and the `argus-probe` CLI in `argus/cli/`. Most contributions land here. |
 | `tests/` | Tests for the `argus` package. |
-| `client_agent/` | Edge agent (browser-use + Playwright) that executes browser-driven probes. |
+| `client_agent/` | Edge agent (Playwright) that runs `browser_use` probes in server mode. |
 | `demo_target/` | Deliberately-vulnerable FastAPI chatbot used as an offline test target. |
 | `demo/` | Offline demo runner (`run_local_demo.py`) plus its recorded results. |
 | `payment_testbed/`, `mcp_testbed/` | Sandboxed worlds and insecure demo agents for `payment_agent` and `mcp_agent` probes. |
@@ -36,8 +36,8 @@ argus/
 ├── judge.py            LLM-judge (Haiku default, Sonnet escalation)
 ├── dispatcher.py       run-level orchestration
 ├── cost_meter.py       daily / per-run budget + predictive abort
-├── iterative_*.py      TAP / PAIR / GCG
-├── targets/            the 9 target adapters
+├── iterative_*.py      PAIR / TAP / GCG sketches, used only in tests
+├── targets/            the 15 target adapters
 ├── rubrics/            judge rubrics (markdown)
 └── probes/             the probe library (261 YAML files)
     ├── *.yaml          OWASP, system-card, and Semia-mapped families
