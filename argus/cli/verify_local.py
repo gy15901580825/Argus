@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from aiohttp import web
 
 from argus.cli.validate_transport_v2 import execute_transport
+from argus.drafting.draft import CONSTRAINT_KEYWORDS
 from argus.drafting.scenario import CHECKS, MAX_BODY_BYTES, MAX_DEPTH, MAX_REQUESTS, ScenarioV1, path_pattern
 from argus.targets import build_target
 from argus_transport import ExecutionPolicy, TransportSpecV2, with_origin
@@ -119,8 +120,8 @@ def _schema_supported(schema, depth=0, *, value=_MISSING):
     allowed = {'type', 'properties', 'required', 'items', 'minItems', 'maxItems', 'additionalProperties',
                'allOf', 'anyOf', 'oneOf', 'enum', 'const', 'minLength', 'maxLength', 'minimum', 'maximum',
                'description', 'title', 'example', 'examples', 'default', 'deprecated', 'readOnly', 'writeOnly', 'format', 'nullable'}
-    if set(schema) - allowed: return False
-    if schema.get('format') not in {None, 'binary', 'byte', 'uuid', 'date', 'date-time', 'int32', 'int64', 'float', 'double'}: return False
+    # Constraints the drafter leaves unchecked (its schema_constraints_unchecked gap) stay unchecked here.
+    if set(schema) - allowed - CONSTRAINT_KEYWORDS: return False
     if 'nullable' in schema and type(schema['nullable']) is not bool: return False
     for keyword in ('allOf', 'anyOf', 'oneOf'):
         if keyword in schema and (not isinstance(schema[keyword], list) or not schema[keyword] or any(not _schema_supported(s, depth+1, value=value) for s in schema[keyword])): return False
@@ -219,7 +220,6 @@ def _schema_valid(value, schema, depth=0):
         if 'items' in schema and any(not _schema_valid(item, schema['items'], depth+1) for item in value): return False
     if isinstance(value, str):
         if len(value) < schema.get('minLength', 0) or len(value) > schema.get('maxLength', MAX_BODY_BYTES): return False
-        if 'pattern' in schema: return False
     if type(value) in {int, float}:
         if value < schema.get('minimum', float('-inf')) or value > schema.get('maximum', float('inf')): return False
     return True

@@ -7,7 +7,7 @@ argus-probe draft-target --openapi api.json --out target.json \
   --no-model --verify-local --scenario scenario.json
 ```
 
-`--scenario` requires `--verify-local`. Without a scenario, bounded schema samples check supported request and response shapes. The result is `schema_mock_only`, never business success. Unsupported schema constraints are reported, rather than ignored. Format checks include UUID, date, date-time, base64 byte, int32 and int64; multipart binary values are decoded strings. Pattern and unsupported schema keywords require additional validation and produce `schema_mock_unsupported`.
+`--scenario` requires `--verify-local`. Without a scenario, bounded schema samples check supported request and response shapes. The result is `schema_mock_only`, never business success. Unsupported schema keywords are reported, rather than ignored, and produce `schema_mock_unsupported`. Format checks include UUID, date, date-time, base64 byte, int32 and int64; multipart binary values are decoded strings. The value constraints that `draft-target` lists in its `schema_constraints_unchecked` gap, such as `pattern`, other `format` values or `multipleOf`, are not checked here either. Values must still have the documented type.
 
 A scenario is an independent oracle prepared from documentation or a reviewed configuration before generating a draft. Neither the model nor the draft creates it. It describes fixed replies, actual request expectations and resource transitions. It never repairs the draft. Local checks cannot prove real service behavior, billing, latency or model safety.
 
