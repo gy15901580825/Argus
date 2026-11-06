@@ -102,6 +102,7 @@ class PersonaStrategyProbe(IterativeProbe):
     assertions: tuple[dict, ...] = ()
     requires_interaction: bool = True
     judge_when_assertions_pass: bool = False
+    contact_markers: tuple[str, ...] = ()
     remediation: str = ""
     remediation_actions: tuple[dict, ...] = ()
 
@@ -142,6 +143,7 @@ class PersonaStrategyProbe(IterativeProbe):
         self.assertions = tuple(self.base.assertions)
         self.requires_interaction = self.base.requires_interaction
         self.judge_when_assertions_pass = self.base.judge_when_assertions_pass
+        self.contact_markers = self.base.contact_markers
         # The base's own fix-it text; without it a server-facing probe falls back to agent-side advice.
         self.remediation = getattr(self.base, "remediation", "")
         self.remediation_actions = tuple(getattr(self.base, "remediation_actions", ()))

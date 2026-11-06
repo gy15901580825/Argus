@@ -114,4 +114,4 @@ def test_marker_found_in_what_is_sent_is_rejected(tmp_path, marker):
 
 
 def test_wellformed_markers_load(tmp_path):
-    assert load_probe(write(tmp_path, ['hosted-only'])).contact_markers == ('hosted-only',)
+    assert load_probe(write(tmp_path, ['Hosted-Only'])).contact_markers == ('hosted-only',)
