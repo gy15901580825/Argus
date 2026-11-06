@@ -568,7 +568,8 @@ The function can be `def` or `async def`:
 
 ```python
 def call(prompt: str, material: str | None, context: dict) -> dict:
-    return {"output": my_agent.run(prompt)}
+    text = prompt if material is None else f"{prompt}\n\n{material}"
+    return {"output": my_agent.run(text)}
 ```
 
 - `prompt` is the attack text. `material` is `None` unless the spec sets `"material": true`. Then, for a probe that carries third-party content (a document or web page the user asks the agent to read), `prompt` is the user's request alone and `material` is that content. A function that drops `material` in that mode never shows the attack to the agent, and the probe can pass without testing anything. `context` is `{"history": [{"role", "content"}, ...], "conversation_id": str, "probe_id": str}`.
@@ -587,7 +588,7 @@ A job that gates a pull request on the function:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
-Wrapping a framework agent takes one function. These examples are not shipped in the package and are not run by Argus's tests. They add `material` to the input when it arrives, so they deliver the attack whether the spec sets `material` to `true` or `false`.
+Wrapping a framework agent takes one function. These examples are not shipped in the package and are not run by Argus's tests. Like the example above, they add `material` to the input when it arrives, so they deliver the attack whether the spec sets `material` to `true` or `false`.
 
 ```python
 # LangChain
