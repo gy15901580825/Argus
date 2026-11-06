@@ -376,7 +376,8 @@ def test_async_response_and_links_are_not_downgraded_to_sync(tmp_path):
     result, out = invoke(tmp_path, d)
     assert result.exit_code == 3, result.output
     assert not out.exists()
-    assert "delivery_unsupported" in out.with_suffix(".gaps.json").read_text()
+    codes = {gap["code"] for gap in json.loads(out.with_suffix(".gaps.json").read_text())["gaps"] if gap["blocking"]}
+    assert {"links_unsupported", "async_poll_missing"} <= codes
 
 
 def test_required_business_flag_is_not_filled_from_example(tmp_path):

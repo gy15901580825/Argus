@@ -177,9 +177,10 @@ def _refusals(values):
     return tuple({"model": r.model, "input_tokens": r.input_tokens, "output_tokens": r.output_tokens} for r in values)
 
 
-async def propose_choices(catalog: OperationCatalog, *, operation=None, server_origin=None,
+async def propose_choices(catalog: OperationCatalog, *, operation=None, server_origin=None, poll_operation=None,
                           intent="Ask an agent a question, optionally with third-party material.") -> ProposalResult:
-    baseline = choose_without_model(catalog, operation=operation, server_origin=server_origin, intent=intent)
+    baseline = choose_without_model(catalog, operation=operation, server_origin=server_origin,
+                                    poll_operation=poll_operation, intent=intent)
     configured = None
     actual_model = None
     usage = None
@@ -251,7 +252,8 @@ async def propose_choices(catalog: OperationCatalog, *, operation=None, server_o
         selection = parse_proposal(output.text, catalog)
         if operation is not None and selection.operation != operation:
             raise ProposalError("model_operation_conflict")
-        choices = choices_from_selection(catalog, selection, operation=operation, server_origin=server_origin, intent=intent)
+        choices = choices_from_selection(catalog, selection, operation=operation, server_origin=server_origin,
+                                         poll_operation=poll_operation, intent=intent)
     except ProposalError as exc:
         error_type = type(exc).__name__
         return finish("rejected", exc.code)

@@ -17,11 +17,12 @@ from argus.drafting.scenario import read_scenario
 @click.option("--out", required=True, type=click.Path(dir_okay=False, path_type=Path))
 @click.option("--operation", help="Select a documented operation ID.")
 @click.option("--server-origin", help="Select one origin declared in root servers.")
+@click.option("--poll-operation", help="Select the documented GET operation that polls an asynchronous submit.")
 @click.option("--intent", default="Ask an agent a question, optionally with third-party material.", show_default=True)
 @click.option("--no-model", is_flag=True, help="Use only deterministic local document extraction.")
 @click.option("--verify-local", is_flag=True, help="Verify a temporary copy on an isolated loopback fake.")
 @click.option("--scenario", "scenario_path", type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Independent version 1 or 2 scenario JSON for local semantic checks.")
-def cmd_draft_target(input_path, out, operation, server_origin, intent, no_model, verify_local, scenario_path):
+def cmd_draft_target(input_path, out, operation, server_origin, poll_operation, intent, no_model, verify_local, scenario_path):
     """Draft a transport v2 target and review gaps from local OpenAPI 3.x."""
     if scenario_path is not None and not verify_local:
         raise click.UsageError("--scenario requires --verify-local.")
@@ -40,13 +41,17 @@ def cmd_draft_target(input_path, out, operation, server_origin, intent, no_model
         catalog = catalog_operations(document)
         if operation is not None and operation not in {op.id for op in catalog.operations}:
             raise click.UsageError("--operation must select a documented operation ID.")
+        if poll_operation is not None and poll_operation not in {op.id for op in catalog.operations}:
+            raise click.UsageError("--poll-operation must select a documented operation ID.")
         scenario = read_scenario(scenario_path, catalog=catalog) if scenario_path is not None else None
         local_result = None
         proposal = None
         if no_model:
-            choices = choose_without_model(catalog, operation=operation, server_origin=server_origin, intent=intent)
+            choices = choose_without_model(catalog, operation=operation, server_origin=server_origin,
+                                           poll_operation=poll_operation, intent=intent)
         else:
-            proposal = asyncio.run(propose_choices(catalog, operation=operation, server_origin=server_origin, intent=intent))
+            proposal = asyncio.run(propose_choices(catalog, operation=operation, server_origin=server_origin,
+                                                   poll_operation=poll_operation, intent=intent))
             choices = proposal.choices
         artifacts = compile_draft(catalog, choices)
         if proposal is not None:
