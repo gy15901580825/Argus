@@ -345,6 +345,7 @@ argus-probe draft-target --openapi api.yaml --out target.json --no-model
 argus-probe draft-target --openapi api.yaml --out target.json --no-model --verify-local --scenario scenario.json
 argus-probe draft-target --openapi api.yaml --out target.json --operation ask --server-origin http://127.0.0.1:8123
 argus-probe draft-target --openapi api.yaml --out target.json --no-model --poll-operation get_job
+argus-probe draft-target --openapi api.yaml --out target.json --no-model --bindings bindings.json
 argus-probe validate-target --target target.json --offline
 ```
 
@@ -365,6 +366,26 @@ Only schemas the draft binds are checked: the request and response objects, the 
 Only local document inputs are accepted. Internal references and bounded adjacent JSON/YAML files within the input directory are supported. Referenced symlinks, directory escapes, known credential filenames, network references and YAML aliases are rejected. The main input path is resolved, including directory symlinks; the credential filename filter applies only to references. The loader enforces byte, depth and node limits. Filename checks do not establish that an arbitrary file is safe; provide only authorized document files. Examples and defaults are omitted from the model catalog. Policy timeouts and budgets have separate provenance.
 
 Exit code `0` means ready after offline validation. `1` means a read, parse, compile, validation or write error; `2` means invalid command usage; `3` means review or input is needed. Inferred bindings in either mode require review. There is no `--execute` or `--docs` option. `--verify-local` checks a temporary copy against a fake on one randomly assigned `127.0.0.1` port. It removes authentication and leaves the delivered spec unchanged. Without an independent `--scenario FILE`, it reports `schema_mock_only` and exits 3, even if the schema mock returns a successful response. A failed local check exits 1 and names the failed check. Independent business success with documented cleanup residue remains review, exits 3, and reports `cleanup_complete: false`. Only a ready draft with full independent verification and complete cleanup can exit 0. Existing draft gaps remain in every case. A version 2 scenario can supply synthetic values for `TARGET_INPUT_*` bindings so such drafts can pass. With a scenario, local verification also runs a failure or pending case for each other value of the poll's documented status enum and fails if a failure status ends as success or a pending status is not polled again. It prints the aspects it cannot check, such as authentication and the server origin, as `local.unverified:` lines. See [local scenarios](https://github.com/gy15901580825/Argus/blob/main/docs/draft-local-scenarios.md) for the versioned format and its limits.
+
+### Bindings file
+
+Some documents cannot name the field that carries the question or the answer, for example when the question goes under a map key the caller chooses. Others document a required value set without saying which value to send. `--bindings FILE` supplies these facts from a small JSON file that a person reviews:
+
+```json
+{
+  "version": 1,
+  "prompt": {"path": "/inputs/question/text"},
+  "reply": {"path": "/result/text", "origin": "API guide, section 3"},
+  "values": {
+    "/mode": {"literal": "MODE_DRAFT"},
+    "/label": {"env": "TARGET_INPUT_RUN_LABEL"}
+  }
+}
+```
+
+Each path is a JSON pointer into the request body (`prompt`, `values`) or into the successful response the draft reads (`reply`). A path can pass through `properties` and through a map key under a schema-valued `additionalProperties`. It cannot pass through an array or an untyped schema. A value is a string, number or boolean `literal`, or an `env` name `TARGET_INPUT_<NAME>`, sent through a run variable. `origin` is an optional note that provenance records with the entry. The command reads the file before the document, and any structural problem exits 2 with no artifacts: an unknown key, a malformed pointer, a value that is not a scalar, an `env` name with a secret word, or a value path that names a credential. Credentials never go in the file; authentication stays on `TARGET_API_KEY`.
+
+The command then checks each entry against the document. The prompt must be a writable string without a value set. The reply must be a string, or an object when the draft polls, and cannot be write-only, an identifier, a timestamp or a plain state. A value must match the field's type and, if the field documents a value set, be one of those values as a literal. A value cannot be sent at the prompt's path or into a read-only field. An object the draft sends through a path must have every required field bound. An entry that fails gets a blocking `binding_unresolved` gap that points at the entry in the file, and the draft writes no spec. An entry that passes is recorded with basis `user_selection`, with sources from both the document and the file. It also gets a non-blocking `binding_user_supplied` gap, unless it names the field the draft would have proposed anyway. With a valid reply and no documented terminal state, a synchronous draft succeeds when the reply is present. The file's SHA-256 is recorded in `provenance.inputs`.
 
 ## Repeated trials
 

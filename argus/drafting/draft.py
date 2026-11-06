@@ -17,6 +17,7 @@ from argus_transport import TransportSpecV2
 from argus_transport.models import AuthSpec, path as transport_path
 from argus_transport.spec_v2 import CONTEXT_KEYS_V2, NAME_RE, SECRET_WORDS
 
+from .bindings import DraftInputs, UserField
 from .openapi import OperationCatalog, Source, pointer_child
 
 
@@ -53,6 +54,8 @@ DECISIONS = {
     "success_conditions_minimal": "Confirm which fields a successful response must carry; add exists checks to the success rule if the API guarantees them.",
     "required_fields_unchecked": "Decide whether a successful response must carry these fields; the success rule does not check them.",
     "field_path_unwritable": "Document another field for this role; no transport path can name an empty field or one that contains a quote, backslash or line break.",
+    "binding_user_supplied": "Confirm that this bindings file entry is right; the draft took it from the file, not the document.",
+    "binding_unresolved": "Correct the bindings file entry so it names a documented field whose schema accepts it.",
 }
 
 # Fixed word table for no-model status classification; every result is still a proposal.
@@ -155,6 +158,8 @@ class DraftChoices:
     intent: str
     # None means synchronous; otherwise reply and completion refer to the poll operation.
     delivery: PollChoice | None = None
+    inputs: DraftInputs | None = None
+    values: tuple[UserField, ...] = ()  # bindings file request values that resolved against the document
 
 
 @dataclass(frozen=True)
@@ -473,20 +478,72 @@ def _poll_choice(catalog, submit, *, poll_operation, required, gaps):
 
 
 def choose_without_model(catalog: OperationCatalog, *, operation=None, server_origin=None, poll_operation=None,
-                         intent="Ask an agent a question, optionally with third-party material.") -> DraftChoices:
-    return _choose(catalog, operation=operation, server_origin=server_origin, poll_operation=poll_operation, intent=intent)
+                         intent="Ask an agent a question, optionally with third-party material.", inputs=None) -> DraftChoices:
+    return _choose(catalog, operation=operation, server_origin=server_origin, poll_operation=poll_operation, intent=intent,
+                   inputs=inputs)
 
 
 def choices_from_selection(catalog: OperationCatalog, selection: OperationSelection, *, operation=None,
                            server_origin=None, poll_operation=None,
-                           intent="Ask an agent a question, optionally with third-party material.") -> DraftChoices:
+                           intent="Ask an agent a question, optionally with third-party material.", inputs=None) -> DraftChoices:
     if operation is not None and operation != selection.operation:
         raise ValueError("Model operation conflicts with the explicit selection")
     return _choose(catalog, operation=operation, server_origin=server_origin, poll_operation=poll_operation,
-                   intent=intent, selection=selection)
+                   intent=intent, selection=selection, inputs=inputs)
 
 
-def _choose(catalog, *, operation, server_origin, intent, poll_operation=None, selection=None):
+def _body_field(path):
+    """The transport pointer of a request body value at path."""
+    return "/transport/request/body/json/" + "/object/".join(pointer_child("", name)[1:] for name in path)
+
+
+def _user_record(catalog, pointer, entry):
+    """Provenance of a value the bindings file chose: the documented field and the file entry."""
+    record = {"source": [catalog.document.source(pointer).to_dict(), entry.source.to_dict()], "basis": "user_selection"}
+    return {**record, "origin": entry.origin} if entry.origin is not None else record
+
+
+def _unresolved(field, entry, why):
+    return Gap(field, why, DECISIONS["binding_unresolved"], "binding_unresolved", "documentation_gap", True, (entry.source,))
+
+
+def _supplied(catalog, field, pointer, entry, why):
+    return Gap(field, why, DECISIONS["binding_user_supplied"], "binding_user_supplied", "documentation_gap", False,
+               (catalog.document.source(pointer), entry.source))
+
+
+def _user_binding(catalog, operation, entry, role, kinds, proposed, gaps):
+    """The binding a file entry names for role, or None after a blocking gap that says why the document rejects it."""
+    field = "/transport/request/body" if role == "prompt" else "/transport/response/text"
+    chain, why = _resolve(catalog, operation, entry.path, role, kinds)
+    if why:
+        gaps.append(_unresolved(field, entry, why))
+        return None
+    if proposed is None or proposed.path != entry.path:
+        gaps.append(_supplied(catalog, field, chain[-1], entry, f"The bindings file names this {role} field; the document does not."))
+    return Binding(entry.path, chain[-1], basis="user_selection")
+
+
+LITERAL_KINDS = {str: ("string",), bool: ("boolean",), int: ("integer", "number"), float: ("number",)}
+
+
+def _user_value(catalog, operation, entry, prompt, gaps):
+    """Whether a file value fits the documented field at its path; a misfit adds a blocking gap."""
+    literal = entry.value.get("literal")
+    chain, why = _resolve(catalog, operation, entry.path, "value", LITERAL_KINDS[type(literal)] if "literal" in entry.value else ("string",))
+    documented = _schema_at(catalog, chain[-1]).get("enum") if chain else None
+    if why is None and prompt is not None and entry.path == prompt.path:
+        why = "The prompt is sent at this path."
+    elif why is None and documented is not None and ("env" in entry.value or literal not in documented):
+        why = "The field documents a value set; send one of them as a literal: " + ", ".join(map(json.dumps, documented)) + "."
+    if why:
+        gaps.append(_unresolved(_body_field(entry.path), entry, why))
+        return False
+    gaps.append(_supplied(catalog, _body_field(entry.path), chain[-1], entry, "The bindings file supplies this request value; the document does not."))
+    return True
+
+
+def _choose(catalog, *, operation, server_origin, intent, poll_operation=None, selection=None, inputs=None):
     doc = catalog.document
     gaps = []
     chosen = None
@@ -526,6 +583,7 @@ def _choose(catalog, *, operation, server_origin, intent, poll_operation=None, s
             gaps.append(_gap(catalog, "/transport/request/url", "server_invalid",
                              "A server URL or origin override is unsafe or unresolved.", kind="unsupported_feature"))
     prompt = reply = completion = delivery = None
+    values = ()
     for issue in doc.issues:
         if issue.code != "reference_cycle":
             why, decision = DOCUMENT_ISSUE_TEXT[issue.code]
@@ -557,7 +615,10 @@ def _choose(catalog, *, operation, server_origin, intent, poll_operation=None, s
                 prompt = Binding((name,), pointer_child(request_pointer, name))
         if selection is not None:
             prompt = selection.prompt
-        if prompt is None:
+        if inputs and inputs.prompt:
+            prompt = _user_binding(catalog, chosen, inputs.prompt, "prompt", ("string",), prompt, gaps)
+        values = tuple(entry for entry in (inputs.values if inputs else ()) if _user_value(catalog, chosen, entry, prompt, gaps))
+        if prompt is None and not (inputs and inputs.prompt):
             gaps.append(_gap(catalog, "/transport/request/body", "prompt_binding_missing",
                              "No unique prompt field can be proposed from the JSON schema.", pointer=pointer))
         responses = op.get("responses", {})
@@ -605,11 +666,17 @@ def _choose(catalog, *, operation, server_origin, intent, poll_operation=None, s
             delivery, reply, completion = polled
             pointer = next((op.pointer for op in catalog.operations if delivery and op.id == delivery.operation), pointer)
         if polled is None or delivery is not None:
+            if inputs and inputs.reply:
+                result = next(op for op in catalog.operations if op.id == delivery.operation) if delivery else chosen
+                reply = _user_binding(catalog, result, inputs.reply, "reply", ("string", "object") if delivery else ("string",), reply, gaps)
+                if delivery is None and not isinstance(completion, Binding):
+                    completion = ReplyPresence() if reply else None
             for binding, field, missing in ((reply, "/transport/response/text", "reply_binding_missing"),
                                              (completion, "/transport/outcome", "completion_missing")):
-                if binding is None:
+                if binding is None and not (missing == "reply_binding_missing" and inputs and inputs.reply):
                     gaps.append(_gap(catalog, field, missing, "No unique documented reply or terminal state can be proposed.", pointer=pointer))
-    return DraftChoices(chosen.id if chosen else None, server, prompt, reply, completion, tuple(gaps), intent, delivery)
+    return DraftChoices(chosen.id if chosen else None, server, prompt, reply, completion, tuple(gaps), intent, delivery,
+                        inputs, values)
 
 
 def _auth(catalog, operation):
@@ -692,7 +759,7 @@ def _status_rules(catalog, op, status, statuses, field, gaps):
 
 def _root(operation, role):
     """The JSON object body schema a role's path starts from: the request body for the prompt, else the 2xx body."""
-    if role != "prompt":
+    if role not in {"prompt", "value"}:
         return _body_schema(operation)[1] or None
     request = operation.data.get("requestBody")
     content = request.get("content") if isinstance(request, dict) else None
@@ -700,10 +767,10 @@ def _root(operation, role):
 
 
 def _walk(catalog, root, path):
-    """The schema pointers from root to the typed field at path, or None when the path leaves the documented objects.
+    """The schema pointers from root to the field at path, or None when the path leaves the documented objects.
 
-    Each step descends `properties`, or a schema-valued `additionalProperties` for a key the document does not name.
-    Arrays, untyped schemas and unexpanded reference-cycle stubs end the walk."""
+    Each step descends an object's `properties`, or a schema-valued `additionalProperties` for a key the document
+    does not name. Arrays, untyped schemas and unexpanded reference-cycle stubs end the walk before their children."""
     chain = [root]
     for key in path:
         raw = _at(catalog, chain[-1])
@@ -721,7 +788,7 @@ def _walk(catalog, root, path):
             chain.append(base + "/additionalProperties")
         else:
             return None
-    return tuple(chain) if _type(_schema_at(catalog, chain[-1])) is not None else None
+    return tuple(chain)
 
 
 def _resolve(catalog, operation, path, role, kinds=("string",)):
@@ -731,13 +798,15 @@ def _resolve(catalog, operation, path, role, kinds=("string",)):
     root = _root(operation, role)
     chain = _walk(catalog, root, path) if root else None
     if chain is None or _field_path(path) is None:
-        return None, "The path does not name a documented field of the " + ("request" if role == "prompt" else "response") + " body."
+        return None, "The path does not name a documented field of the " + ("request" if role in {"prompt", "value"} else "response") + " body."
     schema = _schema_at(catalog, chain[-1])
     if _type(schema) not in kinds:
         return chain, "The field's documented type is not " + " or ".join(kinds) + "."
     if role == "prompt" and (schema.get("readOnly") or schema.get("enum")):
         return chain, "A read-only field or a documented value set cannot carry the question."
-    if role != "prompt" and schema.get("writeOnly"):
+    if role == "value" and schema.get("readOnly"):
+        return chain, "A read-only field is never sent."
+    if role not in {"prompt", "value"} and schema.get("writeOnly"):
         return chain, "A write-only field is never returned."
     if role == "reply" and _metadata(path[-1], schema):
         return chain, "An identifier, timestamp or plain state field describes the call; binding it as the reply measures nothing."
@@ -832,6 +901,8 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                   "selection": {"operation": choices.operation, "intent": choices.intent, "mode": "no-model"},
                   "document_policy": {"examples_and_defaults": "omitted", "network_refs": "denied"},
                   "validation": {"offline": "not_run"}}
+    if choices.inputs:
+        provenance["inputs"].append(dict(choices.inputs.source))
     operation = next((op for op in catalog.operations if op.id == choices.operation), None)
     auth = None
     read = {}
@@ -887,7 +958,9 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                                 kinds=("string", "object") if role == "reply" and choices.delivery else ("string",))
                 read.update(_binding_reads(catalog, operation if role == "prompt" else result, binding, role))
                 source = catalog.document.source(binding.pointer)
-                provenance["fields"][field] = {"source": [source.to_dict()], "basis": binding.basis}
+                entry = getattr(choices.inputs, role, None) if binding.basis == "user_selection" else None
+                provenance["fields"][field] = (_user_record(catalog, binding.pointer, entry) if entry
+                                               else {"source": [source.to_dict()], "basis": binding.basis})
                 if binding.basis == "proposal":
                     gaps.append(_gap(catalog, field, code, "This field's business role is a name/schema-based proposal.",
                                      pointer=binding.pointer, kind="proposal", blocking=False))
@@ -933,8 +1006,6 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
             gaps.append(_gap(catalog, "/transport/request/url", "path_unsafe", "Operation path cannot be safely compiled.", pointer=operation.pointer, kind="unsupported_feature"))
         else:
             request_schema = _object_schema(operation.data["requestBody"]["content"])
-            body = _nest([(choices.prompt.path, {"context": "prompt"})])
-            bound = {choices.prompt.path[0]}
             declarations = {}
             unbound_path = path
             query = {}
@@ -988,6 +1059,31 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                 binding_field = "/transport/let/run/" + variable
                 provenance["fields"][binding_field] = {"source": [catalog.document.source(parameter_pointer).to_dict()], "basis": "non_secret_binding_required", "environment_name_basis": "policy_default"}
                 gaps.append(_gap(catalog, binding_field, "parameter_binding_required", "Supply the documented non-secret parameter through its environment binding.", pointer=parameter_pointer, blocking=False))
+            entries = [(choices.prompt.path, {"context": "prompt"})]
+            for entry in choices.values:
+                chain = _walk(catalog, _root(operation, "value"), entry.path)
+                read.update({pointer: _schema_at(catalog, pointer) for pointer in chain})
+                expression = entry.value
+                if "env" in expression:
+                    variable = "input_" + expression["env"].removeprefix("TARGET_INPUT_").lower()
+                    if variable in declarations:
+                        gaps.append(_gap(catalog, "/transport/request", "parameter_collision", "Required parameter bindings collide; select explicit names.", pointer=operation.pointer, kind="ambiguous_choice"))
+                        continue
+                    declarations[variable] = {"env": expression["env"]}
+                    expression = {"var": variable}
+                entries.append((entry.path, expression))
+                provenance["fields"][_body_field(entry.path)] = _user_record(catalog, chain[-1], entry)
+            body = _nest(entries)
+            bound = {keys[0] for keys, _ in entries}
+            # Each object a bound path passes through is sent, so its own required fields must be sent too.
+            sent = {keys[:end] for keys, _ in entries for end in range(1, len(keys) + 1)}
+            for keys, _ in entries:
+                chain = _walk(catalog, _root(operation, "value"), keys)
+                for depth in range(1, len(keys)):
+                    names = _schema_at(catalog, chain[depth]).get("required")
+                    if isinstance(names, list) and any(keys[:depth] + (name,) not in sent for name in names):
+                        gaps.append(_gap(catalog, "/transport/request/body", "business_input_missing",
+                                         "An object the draft sends has a required field with no value binding.", pointer=chain[depth]))
             properties_pointer = operation.pointer + "/requestBody/content/application~1json/schema/properties"
             for name in required:
                 if name in bound:
@@ -1087,7 +1183,8 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
     gaps.extend(cycle_gaps)
     if any(gap.blocking for gap in cycle_gaps):
         spec = None
-    gaps = tuple(sorted(set(gaps), key=lambda gap: (gap.field, gap.code, not gap.blocking)))
+    gaps = tuple(sorted(set(gaps), key=lambda gap: (gap.field, gap.code, not gap.blocking,
+                                                    [(source.file, source.pointer) for source in gap.source], gap.why)))
     state = DraftState.NEEDS_INPUT if spec is None else DraftState.NEEDS_REVIEW if gaps else DraftState.READY
     return DraftArtifacts(state, spec, gaps, provenance)
 

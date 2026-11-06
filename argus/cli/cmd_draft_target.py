@@ -5,6 +5,7 @@ from dataclasses import replace
 
 import click
 
+from argus.drafting.bindings import read_bindings
 from argus.drafting.draft import DraftState, artifact_destinations, choose_without_model, compile_draft, validate_server_origin, write_artifacts
 from argus.drafting.openapi import DocumentError, catalog_operations, load_openapi
 from argus.drafting.proposal import propose_choices
@@ -19,11 +20,14 @@ from argus.drafting.scenario import read_scenario
 @click.option("--operation", help="Select a documented operation ID.")
 @click.option("--server-origin", help="Select one origin declared in root servers.")
 @click.option("--poll-operation", help="Select the documented GET operation that polls an asynchronous submit.")
+@click.option("--bindings", "bindings_path", type=click.Path(exists=True, dir_okay=False, path_type=Path),
+              help="Version 1 JSON file of reviewed prompt, reply and request value bindings the document cannot supply.")
 @click.option("--intent", default="Ask an agent a question, optionally with third-party material.", show_default=True)
 @click.option("--no-model", is_flag=True, help="Use only deterministic local document extraction.")
 @click.option("--verify-local", is_flag=True, help="Verify a temporary copy on an isolated loopback fake.")
 @click.option("--scenario", "scenario_path", type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Independent version 1 or 2 scenario JSON for local semantic checks.")
-def cmd_draft_target(input_path, out, operation, server_origin, poll_operation, intent, no_model, verify_local, scenario_path):
+def cmd_draft_target(input_path, out, operation, server_origin, poll_operation, bindings_path, intent, no_model, verify_local,
+                     scenario_path):
     """Draft a transport v2 target and review gaps from local OpenAPI 3.x."""
     if scenario_path is not None and not verify_local:
         raise click.UsageError("--scenario requires --verify-local.")
@@ -36,6 +40,12 @@ def cmd_draft_target(input_path, out, operation, server_origin, poll_operation, 
             validate_server_origin(server_origin)
         except (ValueError, TypeError):
             raise click.UsageError("--server-origin must be a bare HTTP(S) origin.") from None
+    inputs = None
+    if bindings_path is not None:
+        try:
+            inputs = read_bindings(bindings_path)
+        except (ValueError, OSError) as exc:
+            raise click.UsageError(f"--bindings: {exc}") from None
     try:
         artifact_destinations(out)
         document = load_openapi(input_path)
@@ -49,10 +59,10 @@ def cmd_draft_target(input_path, out, operation, server_origin, poll_operation, 
         proposal = None
         if no_model:
             choices = choose_without_model(catalog, operation=operation, server_origin=server_origin,
-                                           poll_operation=poll_operation, intent=intent)
+                                           poll_operation=poll_operation, intent=intent, inputs=inputs)
         else:
             proposal = asyncio.run(propose_choices(catalog, operation=operation, server_origin=server_origin,
-                                                   poll_operation=poll_operation, intent=intent))
+                                                   poll_operation=poll_operation, intent=intent, inputs=inputs))
             choices = proposal.choices
         artifacts = compile_draft(catalog, choices)
         if proposal is not None:
