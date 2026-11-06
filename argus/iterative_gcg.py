@@ -1,9 +1,9 @@
 """GCG — Greedy Coordinate Gradient (black-box adaptation).
 
 Original GCG (Zou et al. 2023, arXiv:2307.15043) requires gradient access.
-This is a black-box variant: maintain an adversarial suffix; on each round
-randomly mutate ONE token in the suffix; keep the mutation if the judge's
-fail-confidence improved over the prior round.
+This is a black-box variant with no gradient: append an adversarial suffix and,
+on each later round, replace ONE random suffix token. Every mutation is kept;
+the judge's verdict only stops the attack.
 
 Token vocabulary is a fixed list of ~70 candidate adversarial tokens
 inspired by GCG paper Table 4. No tokenizer dependency — we operate at
@@ -73,9 +73,6 @@ class GCGProbe(IterativeProbe):
     # Internal state — populated as the probe iterates.
     _rng: random.Random = field(default=None, init=False)
     _current_suffix: list[str] = field(default_factory=list, init=False)
-    # Tracked but not yet read — reserved scaffolding for hill-climb-with-revert
-    # in a future iteration (see comment in next_prompt v0-strategy block).
-    _best_fail_confidence: float = field(default=-1.0, init=False)
 
     def __post_init__(self):
         if self.suffix_tokens < 1:
@@ -90,15 +87,5 @@ class GCGProbe(IterativeProbe):
             return None
         if ctx.round_n == 0:
             return f"{self.base_prompt} {' '.join(self._current_suffix)}"
-        # v0 strategy: random walk with score tracking. Always mutate from the
-        # current suffix; record best fail-confidence seen so a future iteration
-        # can implement strict hill-climb-with-revert. The accept/reject branch
-        # is intentionally NOT implemented yet — see _best_fail_confidence note.
-        last = ctx.prior_verdicts[-1]
-        last_score = last.confidence if last.verdict == "fail" else (1.0 - last.confidence) * 0.5
-        if last_score > self._best_fail_confidence:
-            self._best_fail_confidence = last_score
-            # Keep current suffix; mutate from here.
-        # Mutate one token.
         self._current_suffix = _mutate_suffix(self._current_suffix, self._rng)
         return f"{self.base_prompt} {' '.join(self._current_suffix)}"

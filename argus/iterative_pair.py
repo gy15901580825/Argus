@@ -7,7 +7,6 @@ target's response and refines its prompt round by round. Simpler than TAP
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -16,8 +15,6 @@ from argus.probe import ProbeMappings
 from argus import llm
 from argus.cost_meter import CostMeter
 
-
-_ATTACKER_MODEL = "claude-haiku-4-5-20251001"
 
 # Module-level singleton — runner injects it before first probe runs.
 _cost_meter: Optional[CostMeter] = None

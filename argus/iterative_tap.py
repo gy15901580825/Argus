@@ -4,12 +4,11 @@ Named after Tree of Attacks with Pruning (Mehrotra et al. 2024, arXiv:2312.02119
 Round 0 asks the configured text model (fast role) to turn seed_goal into a
 first prompt. Each later round asks it for one refined prompt from the previous
 prompt, the target's response and the judge's verdict. The attack stops after a
-fail verdict or max_rounds. branching_factor is accepted but never read.
+fail verdict or max_rounds.
 """
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -18,8 +17,6 @@ from argus.probe import ProbeMappings
 from argus import llm
 from argus.cost_meter import CostMeter
 
-
-_PLANNER_MODEL = "claude-haiku-4-5-20251001"
 
 # Module-level singleton — runner injects it before first probe runs.
 _cost_meter: Optional[CostMeter] = None
@@ -54,7 +51,6 @@ async def _call_planner_llm(system_prompt: str, user_prompt: str) -> str:
 @dataclass
 class TAPProbe(IterativeProbe):
     seed_goal: str = ""
-    branching_factor: int = 3
     max_rounds: int = 5
     id: str = "tap_default"
     name: str = "TAP — Tree of Attacks with Pruning"
