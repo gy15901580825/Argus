@@ -40,10 +40,11 @@ The server is configured with these environment variables:
 
 The server refuses to start, with exit code 1, when `ARGUS_SERVER_HOST` is not a loopback address and either `ARGUS_SERVER_TOKEN` or `AGENT_CONNECT_SECRET` is not set, unless `ARGUS_SERVER_ALLOW_UNAUTHENTICATED=1`. `/redteam/run` makes the server send requests to whatever target the caller names and spends the server's judge budget. A client agent on `/agent/connect` receives probe payloads and returns results into runs. Neither should be open to a network. Use different values for the two secrets: a client agent machine needs only `AGENT_CONNECT_SECRET`, and the API token would let it start runs. On a loopback address, a missing `AGENT_CONNECT_SECRET` only logs a warning.
 
-`/docs`, `/redoc` and `/openapi.json` stay open without a token. `/agent/connect` does not use `ARGUS_SERVER_TOKEN`; it has its own `AGENT_CONNECT_SECRET`.
+`/healthz`, `/docs`, `/redoc` and `/openapi.json` stay open without a token. `/agent/connect` does not use `ARGUS_SERVER_TOKEN`; it has its own `AGENT_CONNECT_SECRET`.
 
 | Method | Path | Role |
 |--------|------|------|
+| GET  | `/healthz` | Health, version, judge model names and cost caps. No token, no model call, no network |
 | POST | `/redteam/run/preflight` | Cost-cap check without running probes (402 when over the cap) |
 | POST | `/redteam/run` | Execute a red-team run. An empty `probe_ids` selects every probe the target kind can run |
 | GET  | `/redteam/probes` | Probe library |
@@ -57,19 +58,73 @@ Each finding in the `POST /redteam/run` stream includes `events`. The `POST /red
 
 The scenario finding passes through `ctx.redact` when serialized and when emitted in the SSE stream. That redaction masks credentials, email addresses, and values under keys with sensitive names. Trusted finding event structure fields survive both passes, including `event_id`, `parent_event_ids`, `ts`, `operation`, `basis`, `source`, `atlas_technique`, and `seq`. Event field names stay intact. `actor`, `tool_name`, `tool_call_id`, `object_ref`, and `summary` undergo normal text redaction. An object reference whose kind becomes unknown is null, and a summary remains at most 200 characters after redaction.
 
-### `POST /redteam/run` stream
+### `GET /healthz`
 
-The response is a Server-Sent Events stream: one `data:` line per finding, then one `data:` line with the coverage event, then `event: end` with `data: {}`. If the run fails, the stream ends with `event: error` instead, and no coverage event is sent. Its data is `{"detail": str, "type": str, "cost": {...}}`, where `type` names the exception (`CostExceededError` when the run stopped at a cost cap) and `cost` has the same shape as in the coverage event.
+`/healthz` is the one health path. It sits outside `/redteam` because everything under `/redteam` needs the bearer token when `ARGUS_SERVER_TOKEN` is set, and a load balancer probe does not carry one. It makes no model call and opens no network connection. It always returns 200 with this body:
 
-Each finding includes `remediation_actions`; see [the run.json finding format](../run-json.md) for its shape.
+```json
+{
+  "status": "ok",
+  "version": "1.4.0",
+  "judge": {"provider": "anthropic", "fast_model": "claude-haiku-4-5-20251001", "strong_model": "claude-sonnet-4-6"},
+  "per_run_cap_usd": {"static": 0.5, "deep": 5.0},
+  "daily_cap_usd": 13.5
+}
+```
 
-The coverage event has four keys:
+| Field | Type | Meaning |
+|-------|------|---------|
+| `status` | string | Always `"ok"` when the process answers. |
+| `version` | string | The installed `argus-probe` version, or `"unknown"` when the package metadata is missing. |
+| `judge` | object | The judge a run started now would use, resolved from the environment on each request the same way `POST /redteam/run` resolves it. `provider`, `fast_model` and `strong_model` are strings. |
+| `judge.error` | string | Present instead of the three judge fields when the judge settings do not resolve, for example an unknown `REDTEAM_MODEL_PROVIDER`. It is the exception type name only. `POST /redteam/run` answers 500 on the same settings. |
+| `per_run_cap_usd.static` | number | Default per-run cap for static runs, in US dollars. A request's `per_run_cap_usd` overrides it. |
+| `per_run_cap_usd.deep` | number | Default per-run cap for deep runs, in US dollars. |
+| `daily_cap_usd` | number | The process-wide daily cap (`REDTEAM_DAILY_CAP_USD`, default 13.50). |
+
+The body never contains an API key, a token or a base URL. The model names and caps are the only settings it shows. `/healthz` does not check the judge credentials, so a 200 does not mean they are valid.
+
+When the app starts, the server logs the same body once on the `OrchestratorAPI` logger at INFO level, as `argus server config {...}` with the body as JSON.
+
+### Read-only routes
+
+| Route | 200 body |
+|-------|----------|
+| `GET /redteam/probes` | `{"probe_ids": [string, ...]}`. Every probe id in the loaded library. |
+| `GET /redteam/suites` | `{"suites": {suite_id: [probe_id, ...]}}`. Only suites with at least one probe. |
+| `GET /redteam/coverage` | `{"coverage": {"standards": {...}, "totals": {...}, "thin_threshold": number}}`. The library-level coverage table, with no run results. |
+| `POST /redteam/run/preflight` | `{}` when the run fits the caps. Over a cap it answers 402 with `{"detail": string}`. |
+
+Request errors on `/redteam/run` and `/redteam/run/preflight` use FastAPI's `{"detail": ...}` body: 422 for a bad target, probe id, suite or mode, 402 for a cost cap, 500 for missing judge settings. These come before any stream starts.
+
+### Stream contract: `POST /redteam/run`
+
+A 200 response is a Server-Sent Events stream (`Content-Type: text/event-stream`). Each frame ends with a blank line. A frame is either one `data:` line, or an `event:` line followed by one `data:` line. Every `data:` line holds one JSON object.
+
+The frames come in this order:
+
+1. Zero or more finding frames, one per finding, as bare `data:` lines. The object has exactly the keys of a run.json finding, listed in [the run.json format](../run-json.md#run-summary), and no others.
+2. One coverage frame, a bare `data:` line whose `type` is `"coverage"`.
+3. `event: end` with `data: {}`.
+
+If the run fails after the stream starts, the coverage frame and `event: end` are not sent. The stream ends with `event: error` instead. Findings sent before the failure stay valid.
+
+A finding object never has a `type` key, so `type == "coverage"` tells the coverage frame apart from a finding.
+
+#### Coverage frame
 
 ```json
 {"type": "coverage", "coverage": {...}, "summary": {...}, "cost": {"spent_usd": 0.0412, "per_run_cap_usd": 0.5}}
 ```
 
-`coverage` is the per-standard coverage table (the same object `GET /redteam/coverage` returns, with run results filled in). `summary` counts this run's findings:
+| Field | Type | Meaning |
+|-------|------|---------|
+| `type` | string | Always `"coverage"`. |
+| `coverage` | object | The per-standard coverage table, the same object `GET /redteam/coverage` returns, with this run's results filled in. |
+| `summary` | object | Counts of this run's findings, described below. |
+| `cost` | object | `spent_usd` and `per_run_cap_usd`, both numbers, described below. |
+
+`summary` counts this run's findings:
 
 ```json
 {
@@ -84,5 +139,25 @@ The coverage event has four keys:
 `total` counts findings. `evaluated` counts findings whose verdict is in `evaluated_verdicts`: the probe reached the target and came back with a verdict. This is the same rule coverage uses for `tested`. `blocked_by_target`, `skipped`, `aborted_cost` and `error` findings are not evaluated. `by_verdict` counts every finding and always lists all seven verdicts. `failed_by_severity` counts only `fail` findings and always lists all five severities. A verdict or severity outside these lists gets its own key. The summary has no score and no percentage. If you compute a rate, divide by `evaluated`, not `total`. `summary.total` counts findings, while `coverage.totals.probes_run` counts distinct probes that were evaluated, so the two numbers can differ.
 
 `cost.spent_usd` is the cost of this run's model calls in US dollars, rounded to six decimals. It is the engine's own estimate from model token usage and its price table, not an invoice. `cost.per_run_cap_usd` is the per-run cap the run was held to. It is the request's `per_run_cap_usd` when set, otherwise the server's default for the mode (static or deep). It is always a number. A run stopped at the cap can show `spent_usd` above `per_run_cap_usd` by the one call that crossed it.
+
+#### `event: end`
+
+`data: {}`. The run finished and every finding was sent.
+
+#### `event: error`
+
+```json
+{"detail": "per_run cap $0.05 exceeded: this run has spent $0.0600", "type": "CostExceededError", "cost": {"spent_usd": 0.06, "per_run_cap_usd": 0.05}}
+```
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `detail` | string | The error message. |
+| `type` | string | The exception class name. `CostExceededError` means the run stopped at a cost cap. Probes that did not start are sent first as `aborted_cost` findings. |
+| `cost` | object | The same shape as the coverage frame's `cost`. |
+
+#### Stability policy
+
+Within a major version of `argus-probe`, the stream frames, the `/healthz` body and the route bodies above change only by addition: a new key, a new frame type or a new `event:` name. A client must ignore keys and event names it does not know. Renaming or removing a key, changing a key's type, or changing the frame order needs a new major version, and the release notes announce it. Tests in `tests/test_contract_freeze.py`, `tests/test_server_routes.py`, `tests/test_redteam_coverage_api.py` and `tests/test_server_run_cost_cap.py` pin these shapes, so a rename fails CI.
 
 The `/api/v1/redteam` API the CLI uses in server mode (runs, reports, diffs, stored history) is not part of this repo. It was served by `api_service`, which lives at tag `v0.3-full`.

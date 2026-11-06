@@ -117,3 +117,33 @@ def test_server_mode_run_payload(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     assert list(seen) == ["target", "probe_ids", "per_run_cap_usd", "repo", "branch", "commit", "baseline_key"]
     assert seen["target"] == spec and seen["probe_ids"] == ["p1"] and seen["per_run_cap_usd"] == 2.0
+
+
+def test_server_read_route_shapes():
+    from fastapi.testclient import TestClient
+    from argus.server import app
+
+    client = TestClient(app)
+    probes = client.get("/redteam/probes").json()
+    assert list(probes) == ["probe_ids"]
+    assert probes["probe_ids"] and all(isinstance(i, str) for i in probes["probe_ids"])
+    suites = client.get("/redteam/suites").json()
+    assert list(suites) == ["suites"]
+    assert suites["suites"] and all(
+        isinstance(k, str) and v and all(isinstance(i, str) for i in v) for k, v in suites["suites"].items())
+    cov = client.get("/redteam/coverage").json()
+    assert list(cov) == ["coverage"] and set(cov["coverage"]) == {"thin_threshold", "standards", "totals"}
+
+
+def test_server_preflight_shapes():
+    from fastapi.testclient import TestClient
+    from argus.server import app
+
+    client = TestClient(app)
+    body = {"target": {"kind": "openai_compat", "endpoint_url": "https://x", "model": "y"},
+            "probe_ids": ["owasp_01_prompt_injection_basic"]}
+    ok = client.post("/redteam/run/preflight", json=body)
+    assert (ok.status_code, ok.json()) == (200, {})
+    over = client.post("/redteam/run/preflight", json={**body, "per_run_cap_usd": 0.000001})
+    assert over.status_code == 402
+    assert list(over.json()) == ["detail"] and isinstance(over.json()["detail"], str)
