@@ -40,7 +40,7 @@ async def test_an_unmocked_llm_call_is_refused_and_recorded(llm_call_guard):
     with pytest.raises(RuntimeError, match="real LLM call"):
         await llm.complete(llm.resolve_config({"ANTHROPIC_API_KEY": "unused"}), role="fast", system="s", user="u",
                            max_tokens=1)
-    assert [c["model"] for c in llm_call_guard] == ["mistral/m", "mistral/m", "anthropic client", "azure/gpt-5.4-mini"]
+    assert [c["model"] for c in llm_call_guard] == ["mistral/m", "mistral/m", "anthropic client", "azure/gpt-5.6-luna"]
     llm_call_guard.clear()  # the guard fails a test that made such a call; this one expected it
 
 
