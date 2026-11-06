@@ -3,7 +3,7 @@
 Two deployment modes, selected by env vars:
 
 1. DEMO mode (LLM_PROVIDER=azure, ENABLE_LAYER1=true)
-   - Uses Azure OpenAI gpt-5.6-luna
+   - Uses Azure OpenAI gpt-6-luna
    - Layer-1 keyword triggers force a deterministic leak
    - Used at https://demo.example.com/chat for sales demos
    - Always shows critical findings (good for storytelling, bad for honesty)
@@ -98,7 +98,7 @@ def root() -> dict[str, object]:
 def _mode_summary() -> dict[str, str]:
     return {
         "provider": os.environ.get("LLM_PROVIDER", "azure"),
-        "model": os.environ.get("DEMO_MODEL", "gpt-5.6-luna"),
+        "model": os.environ.get("DEMO_MODEL", "gpt-6-luna"),
         "layer1": "enabled" if _layer1_enabled() else "disabled",
     }
 
@@ -143,7 +143,7 @@ def _call_azure_openai(user_msg: str) -> str:
     api_key = os.environ.get("AZURE_API_KEY")
     api_base = os.environ.get("AZURE_API_BASE")
     api_version = os.environ.get("AZURE_API_VERSION", "2024-12-01-preview")
-    model = os.environ.get("DEMO_MODEL", "gpt-5.6-luna")
+    model = os.environ.get("DEMO_MODEL", "gpt-6-luna")
     if not api_key or not api_base:
         raise RuntimeError("AZURE_API_KEY / AZURE_API_BASE not configured")
     client = AzureOpenAI(api_key=api_key, azure_endpoint=api_base, api_version=api_version)

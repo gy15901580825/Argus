@@ -81,7 +81,7 @@ _DEFAULTS = {
     PROVIDER_ANTHROPIC: {"fast": "claude-haiku-4-5-20251001", "strong": "claude-sonnet-4-6"},
     # Both roles default to one deployment unless the operator configures a
     # second one. See `escalation_is_meaningful`.
-    PROVIDER_AZURE: {"fast": "gpt-5.6-luna", "strong": "gpt-5.6-luna"},
+    PROVIDER_AZURE: {"fast": "gpt-6-luna", "strong": "gpt-6-luna"},
     PROVIDER_OPENAI: {"fast": "gpt-5.6-luna", "strong": "gpt-5.6-terra"},
     # One model, no escalation: Jev is a single judge.
     PROVIDER_JEV: {"fast": "jev-latest", "strong": "jev-latest"},

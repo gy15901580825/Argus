@@ -34,7 +34,7 @@ def test_anthropic_is_the_default_provider():
 def test_azure_provider_resolves_azure_deployments():
     cfg = llm.resolve_config(env={"REDTEAM_MODEL_PROVIDER": "azure"})
     assert cfg.provider == "azure"
-    assert (cfg.fast_model, cfg.strong_model) == ("gpt-5.6-luna", "gpt-5.6-luna")
+    assert (cfg.fast_model, cfg.strong_model) == ("gpt-6-luna", "gpt-6-luna")
 
 
 def test_models_are_individually_overridable():
@@ -137,8 +137,8 @@ async def test_azure_path_goes_through_litellm_and_maps_token_fields():
         out = await llm.complete(cfg, role="fast", system="s", user="u", max_tokens=50)
     assert out.text == "hi"
     assert (out.input_tokens, out.output_tokens) == (33, 44)
-    assert out.model == "gpt-5.6-luna"
-    assert m.await_args.kwargs["model"] == "azure/gpt-5.6-luna"
+    assert out.model == "gpt-6-luna"
+    assert m.await_args.kwargs["model"] == "azure/gpt-6-luna"
 
 
 @pytest.mark.asyncio
@@ -174,8 +174,8 @@ async def test_anthropic_failure_falls_back_to_azure():
         out = await llm.complete(cfg, role="fast", system="s", user="u", max_tokens=50)
     assert out.text == "from-azure"
     # Cost must be attributed to the model that actually served it.
-    assert out.model == "gpt-5.6-luna"
-    assert m.await_args.kwargs["model"] == "azure/gpt-5.6-luna"
+    assert out.model == "gpt-6-luna"
+    assert m.await_args.kwargs["model"] == "azure/gpt-6-luna"
 
 
 @pytest.mark.asyncio

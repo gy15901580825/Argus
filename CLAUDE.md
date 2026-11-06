@@ -51,7 +51,7 @@ Detailed request flows → `docs/reference/services.md`.
 
 ### LLM Configuration
 
-- **Azure OpenAI**: `gpt-5.6-luna` — the orchestrator's red-team judge/attacker model when `REDTEAM_MODEL_PROVIDER=azure` (via litellm). The `testing_*` services live in the external repos listed above.
+- **Azure OpenAI**: `gpt-6-luna` — the orchestrator's red-team judge/attacker model when `REDTEAM_MODEL_PROVIDER=azure` (via litellm). The `testing_*` services live in the external repos listed above.
 - **Temperature constraint**: newer Azure OpenAI models (the former default `gpt-5.4-mini` among them) reject a custom temperature parameter — never set `temperature` on an Azure call
 
 ## Common Pitfalls & Gotchas
