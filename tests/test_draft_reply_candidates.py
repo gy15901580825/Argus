@@ -81,7 +81,7 @@ def test_names_that_only_contain_id_stay_reply_candidates(tmp_path, name):
     fields = response_schema(document)["properties"]
     fields[name] = fields.pop("text")
     roles = _reference_index(catalog_for(tmp_path, document))["ask"]
-    assert [binding.name for binding in roles["reply"].values()] == [name]
+    assert [binding.path for binding in roles["reply"].values()] == [(name,)]
 
 
 def test_no_model_never_selects_an_identifier_reply(tmp_path):
@@ -98,7 +98,7 @@ def test_no_model_never_selects_an_identifier_terminal_state(tmp_path):
     response_schema(document)["properties"]["status"]["format"] = "uuid"
     catalog = catalog_for(tmp_path, document)
     choices = choose_without_model(catalog)
-    assert choices.reply.name == "answer"
+    assert choices.reply.path == ("answer",)
     assert choices.completion == ReplyPresence()
 
 
@@ -130,7 +130,7 @@ def test_null_reply_keeps_an_offered_terminal_state(tmp_path):
     choice = {**proposal_document_choices(), "reply": None}
     choice["completion"] = proposal_document_choices()["reply"].rsplit("/", 1)[0] + "/phase"
     selection = parse_proposal(json.dumps(choice), catalog)
-    assert selection.reply is None and selection.completion.name == "phase"
+    assert selection.reply is None and selection.completion.path == ("phase",)
 
 
 @pytest.mark.parametrize("reply, code", [
@@ -246,12 +246,12 @@ def test_names_that_only_contain_lifecycle_words_stay_reply_candidates(tmp_path,
     fields.clear()
     fields[name] = {"type": "string"}
     roles = _reference_index(catalog_for(tmp_path, document))["ask"]
-    assert [binding.name for binding in roles["reply"].values()] == [name]
+    assert [binding.path for binding in roles["reply"].values()] == [(name,)]
 
 
 def test_enum_status_stays_a_completion_candidate(tmp_path):
     roles = _reference_index(catalog_for(tmp_path, agent_document()))["ask"]
-    assert [binding.name for binding in roles["completion"].values()] == ["status"]
+    assert [binding.path for binding in roles["completion"].values()] == [("status",)]
 
 
 def test_sync_response_with_only_status_and_timestamp_blocks_on_the_reply(tmp_path):

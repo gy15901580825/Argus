@@ -142,8 +142,8 @@ def renamed_reply(name):
 @pytest.mark.parametrize("name", BRACKET_ONLY.values(), ids=BRACKET_ONLY.keys())
 def test_a_selected_reply_named_outside_dot_syntax_is_read_with_a_bracket_path(tmp_path, name):
     catalog = catalog_for(tmp_path, renamed_reply(name))
-    reply = Binding(name, SYNC_FIELDS + "/properties/" + name)
-    prompt = Binding("question", "/paths/~1ask/post/requestBody/content/application~1json/schema/properties/question")
+    reply = Binding((name,), SYNC_FIELDS + "/properties/" + name)
+    prompt = Binding(("question",), "/paths/~1ask/post/requestBody/content/application~1json/schema/properties/question")
     choices = choices_from_selection(catalog, OperationSelection("ask", prompt, reply, ReplyPresence()))
     artifacts = compile_draft(catalog, choices)
     assert artifacts.spec is not None

@@ -203,9 +203,9 @@ def test_auto_selection_keeps_the_submit_when_a_get_poll_exists(tmp_path):
     choices = choose_without_model(catalog)
     assert choices.operation == "submit_job"
     assert choices.delivery.operation == "get_job"
-    assert [(item.name, item.parameter, item.submit.name) for item in choices.delivery.ids] == [("job_id", "id", "job_id")]
+    assert [(item.name, item.parameter, item.submit.path) for item in choices.delivery.ids] == [("job_id", "id", ("job_id",))]
     assert choices.reply.pointer == POLL_FIELDS + "/result"
-    assert choices.completion == StatusMap(Binding("status", POLL_FIELDS + "/status", value="COMPLETED"), ("PENDING", "RUNNING"), ("FAILED",))
+    assert choices.completion == StatusMap(Binding(("status",), POLL_FIELDS + "/status", value="COMPLETED"), ("PENDING", "RUNNING"), ("FAILED",))
 
 
 def test_no_poll_operation_blocks(tmp_path):
@@ -323,7 +323,7 @@ def compiled(tmp_path):
 
 @pytest.mark.parametrize("alter", [
     lambda c: replace(c, delivery=replace(c.delivery, ids=(IdBinding("missing_id", Binding(
-        "missing_id", SUBMIT + "/responses/202/content/application~1json/schema/properties/missing_id"), "id"),))),
+        ("missing_id",), SUBMIT + "/responses/202/content/application~1json/schema/properties/missing_id"), "id"),))),
     lambda c: replace(c, delivery=replace(c.delivery, ids=(replace(c.delivery.ids[0], name="other"),))),
     lambda c: replace(c, delivery=replace(c.delivery, ids=(replace(c.delivery.ids[0], parameter="other"),))),
     lambda c: replace(c, delivery=replace(c.delivery, operation="submit_job")),

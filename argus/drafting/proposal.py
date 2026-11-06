@@ -8,8 +8,8 @@ from argus import llm
 from argus.cost_meter import CostMeter, CostExceededError, estimate_call_usd
 
 from .draft import (
-    Binding, DraftChoices, Gap, OperationSelection, ReplyPresence, _binding_schema, _metadata, _object_schema,
-    _read_schemas, _unsupported_reads, choose_without_model, choices_from_selection,
+    Binding, DraftChoices, Gap, OperationSelection, ReplyPresence, _binding_reads, _binding_schema, _metadata, _object_schema,
+    _unsupported_reads, choose_without_model, choices_from_selection,
 )
 from .openapi import OperationCatalog, pointer_child
 
@@ -55,12 +55,12 @@ def _reference_index(catalog):
                     continue
                 if role == "completion" and not (isinstance(values, list) and len(values) == 1 and isinstance(values[0], str)):
                     continue
-                binding = Binding(name, pointer_child(prefix, name), value=values[0] if role == "completion" else None)
+                binding = Binding((name,), pointer_child(prefix, name), value=values[0] if role == "completion" else None)
                 try:
                     _binding_schema(catalog, op, binding, role)
                 except (ValueError, TypeError):
                     continue
-                if _unsupported_reads(catalog, _read_schemas(catalog, binding.pointer)):
+                if _unsupported_reads(catalog, _binding_reads(catalog, op, binding, role)):
                     continue
                 roles[role][binding.pointer] = binding
     return index
@@ -165,7 +165,7 @@ def _model_input(catalog, intent):
                 schema = _binding_schema(catalog, op, binding, role)
                 text, shortened = _description(schema.get("description", ""))
                 clipped |= shortened
-                field = {"pointer": pointer, "name": binding.name, "type": "string", "untrusted_description": text}
+                field = {"pointer": pointer, "name": binding.path[-1], "type": "string", "untrusted_description": text}
                 if role == "completion": field["documented_singleton"] = binding.value
                 fields[role].append(field)
         operations.append({"operation": op.id, "method": op.method, "path": op.path,
@@ -178,9 +178,9 @@ def _refusals(values):
 
 
 async def propose_choices(catalog: OperationCatalog, *, operation=None, server_origin=None, poll_operation=None,
-                          intent="Ask an agent a question, optionally with third-party material.") -> ProposalResult:
+                          intent="Ask an agent a question, optionally with third-party material.", inputs=None) -> ProposalResult:
     baseline = choose_without_model(catalog, operation=operation, server_origin=server_origin,
-                                    poll_operation=poll_operation, intent=intent)
+                                    poll_operation=poll_operation, intent=intent, inputs=inputs)
     configured = None
     actual_model = None
     usage = None
@@ -253,7 +253,7 @@ async def propose_choices(catalog: OperationCatalog, *, operation=None, server_o
         if operation is not None and selection.operation != operation:
             raise ProposalError("model_operation_conflict")
         choices = choices_from_selection(catalog, selection, operation=operation, server_origin=server_origin,
-                                         poll_operation=poll_operation, intent=intent)
+                                         poll_operation=poll_operation, intent=intent, inputs=inputs)
     except ProposalError as exc:
         error_type = type(exc).__name__
         return finish("rejected", exc.code)

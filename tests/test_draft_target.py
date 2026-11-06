@@ -566,7 +566,7 @@ def test_compiler_rejects_nested_response_choices(tmp_path, role, name, value):
     catalog = catalog_operations(load_openapi(input_file(tmp_path, d)))
     choices = choose_without_model(catalog)
     pointer = "/paths/~1ask/post/responses/200/content/application~1json/schema/properties/nested/properties/" + name
-    choices = replace(choices, **{role: Binding(name, pointer, value=value)})
+    choices = replace(choices, **{role: Binding((name,), pointer, value=value)})
     with pytest.raises(ValueError, match="unknown or unsupported operation field"):
         compile_draft(catalog, choices)
 
@@ -582,7 +582,7 @@ def test_compiler_rejects_failure_response_choices(tmp_path, role, name, value):
     responses["500"] = copy.deepcopy(responses["200"])
     catalog = catalog_operations(load_openapi(input_file(tmp_path, d)))
     pointer = "/paths/~1ask/post/responses/500/content/application~1json/schema/properties/" + name
-    choices = replace(choose_without_model(catalog), **{role: Binding(name, pointer, value=value)})
+    choices = replace(choose_without_model(catalog), **{role: Binding((name,), pointer, value=value)})
     with pytest.raises(ValueError, match="unknown or unsupported operation field"):
         compile_draft(catalog, choices)
 
@@ -595,7 +595,7 @@ def test_compiler_rejects_write_only_completion_choice(tmp_path):
     d["paths"]["/ask"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]["status"]["writeOnly"] = True
     catalog = catalog_operations(load_openapi(input_file(tmp_path, d)))
     pointer = "/paths/~1ask/post/responses/200/content/application~1json/schema/properties/status"
-    choices = replace(choose_without_model(catalog), completion=Binding("status", pointer, value="completed"))
+    choices = replace(choose_without_model(catalog), completion=Binding(("status",), pointer, value="completed"))
     with pytest.raises(ValueError, match="incompatible schema"):
         compile_draft(catalog, choices)
 
