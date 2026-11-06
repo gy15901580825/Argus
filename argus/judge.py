@@ -154,7 +154,7 @@ class Judge:
             except llm.AllProvidersFailed as e:
                 # A refusal to review is not a judgement; keep the fast verdict rather
                 # than turning a real finding into an error.
-                if not e.refused:
+                if not e.refused or isinstance(e, llm.JudgeBlockedError):
                     raise
                 note = f"strong judge {e.refusals[0].model} declined to review"
                 if fast_v.verdict == "pass":

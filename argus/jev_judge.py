@@ -216,6 +216,8 @@ async def _explain(cfg: llm.LLMConfig, meter: Optional[CostMeter], default: str,
         llm.record_completion(meter, out)  # raises CostExceededError at the cap, like any judge call
     except llm.AllProvidersFailed as e:
         llm.record_refusals(meter, e.refusals)
+        if isinstance(e, llm.JudgeBlockedError):
+            raise
         logger.warning("explain model %s failed on probe %r; keeping the jev line", text_cfg.fast_model, probe_name)
         return default
     except CostExceededError:

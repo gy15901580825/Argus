@@ -54,7 +54,7 @@ def incomplete_lines(findings: list[dict], stopped_by: str | None = None) -> lis
         reasons = list(dict.fromkeys(str(f.get("reasoning") or "no reason given") for f in errors))
         lines += [f"  {r}" for r in reasons[:3]]
     if stopped_by:
-        lines.append(f"Run stopped early: {stopped_by}. The report covers only the probes that ran.")
+        lines.append(f"Run stopped early: {stopped_by.rstrip('.')}. The report covers only the probes that ran.")
     return lines
 
 

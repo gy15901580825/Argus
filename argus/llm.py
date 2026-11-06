@@ -115,6 +115,72 @@ def record_completion(meter, out) -> None:
                        (out.model, out.input_tokens, out.output_tokens)])
 
 
+class JudgeBlockedError(AllProvidersFailed):
+    """A provider's content filter refused the prompt. Every field comes from the provider's error, never the prompt.
+
+    `fallback` is "off" when a fallback provider exists but a block does not use it, "<provider>/<model>:
+    <error type>" when the other attempt failed too, and None when no other provider was in play.
+    """
+
+    def __init__(self, message: str, *, provider: str, model: str, categories: tuple[str, ...],
+                 fallback: Optional[str], refusals: "list[ModelRefused] | None" = None):
+        super().__init__(message, refusals=refusals)
+        self.provider = provider
+        self.model = model
+        self.categories = categories
+        self.fallback = fallback
+
+    def as_dict(self) -> dict:
+        return {"provider": self.provider, "model": self.model, "categories": list(self.categories),
+                "fallback": self.fallback}
+
+
+# Error codes providers put on a content-filter refusal (Azure's prompt filter, OpenAI's safety system).
+_FILTER_CODES = frozenset({"content_filter", "content_policy_violation"})
+
+
+def _filter_categories(exc: Exception) -> Optional[tuple[str, ...]]:
+    """The categories that fired when `exc` is a provider content-filter refusal, () when it names none, else None."""
+    import anthropic
+    from litellm.exceptions import ContentPolicyViolationError
+
+    body = getattr(exc, "body", None)
+    body = body if isinstance(body, dict) else {}
+    extra = getattr(exc, "provider_specific_fields", None)
+    inner = (extra if isinstance(extra, dict) else {}).get("innererror") or body.get("innererror")
+    inner = inner if isinstance(inner, dict) else {}
+    blocked = (
+        isinstance(exc, ContentPolicyViolationError)
+        or body.get("code") in _FILTER_CODES
+        or inner.get("code") == "ResponsibleAIPolicyViolation"
+        # The Anthropic SDK path does not go through litellm; this is the text litellm maps for Anthropic.
+        or (isinstance(exc, anthropic.BadRequestError) and "content filtering policy" in str(exc))
+    )
+    if not blocked:
+        return None
+    results = inner.get("content_filter_result")
+    results = results if isinstance(results, dict) else {}
+    return tuple(sorted(name for name, r in results.items() if isinstance(r, dict) and r.get("filtered")))
+
+
+def _blocked_error(cfg: "LLMConfig", provider: str, model: str, categories: tuple[str, ...],
+                   other: Optional[str], refusals: "list[ModelRefused]") -> JudgeBlockedError:
+    noun = "deployment" if provider == PROVIDER_AZURE else "model"
+    text = (f"{provider} {noun} {model} blocked the judge prompt with its content filter "
+            f"(categories: {', '.join(categories) or 'not given'}). Use a content filter policy that allows "
+            "red-team text for the judge deployment; on Azure, the jailbreak prompt shield is the one that fires.")
+    fallback = other
+    if other is not None:
+        text += (f" REDTEAM_LLM_FALLBACK=on, and the fallback failed too: {other}." if cfg.fallback_on_block
+                 else f" The other provider failed too: {other}.")
+    elif cfg.fallback_enabled and cfg.fallback_provider is not None:
+        fallback = "off"
+        text += (f" Argus did not fall back to {cfg.fallback_provider}: a content-filter block falls back only "
+                 "with REDTEAM_LLM_FALLBACK=on.")
+    return JudgeBlockedError(text, provider=provider, model=model, categories=categories, fallback=fallback,
+                             refusals=refusals)
+
+
 class ModelRefused(RuntimeError):
     """The model declined the request (stop_reason="refusal")."""
 
@@ -137,6 +203,8 @@ class LLMConfig:
     # jev only: the TypeSafe key, and the litellm model that explains findings and drives deep mode.
     typesafe_api_key: Optional[str] = None
     explain_model: Optional[str] = None
+    # A content-filter block falls back only when REDTEAM_LLM_FALLBACK is set to "on", never by default.
+    fallback_on_block: bool = False
 
     @property
     def fallback_provider(self) -> Optional[str]:
@@ -326,7 +394,8 @@ def describe(cfg: LLMConfig) -> str:
     if r["api_base_host"]:
         text += f", api base {r['api_base_host']}"
     if r["fallback_provider"]:
-        text += f" (falls back to {r['fallback_provider']})"
+        blocks = ", content-filter blocks included" if cfg.fallback_on_block else ""
+        text += f" (falls back to {r['fallback_provider']}{blocks})"
     return text
 
 
@@ -440,6 +509,7 @@ def resolve_config(env: Optional[Mapping[str, str]] = None) -> LLMConfig:
         fast_model=fast,
         strong_model=strong,
         fallback_enabled=env.get("REDTEAM_LLM_FALLBACK", "on").strip().lower() != "off",
+        fallback_on_block=env.get("REDTEAM_LLM_FALLBACK", "").strip().lower() == "on",
         anthropic_api_key=env.get("ANTHROPIC_API_KEY"),
         openai_api_key=env.get("OPENAI_API_KEY"),
         api_base=env.get("REDTEAM_LLM_API_BASE") or None,
@@ -555,11 +625,15 @@ _DISPATCH = {
 async def complete(cfg: LLMConfig, *, role: str, system: str, user: str, max_tokens: int) -> Completion:
     """Run one completion for `role`, falling back to the other provider on failure.
 
+    A content-filter block raises JudgeBlockedError instead, unless `cfg.fallback_on_block`.
+
     The returned `Completion.model` is whichever model served the request — record
     cost against that, not against the model you asked for.
     """
     errors: list[str] = []
     refusals: list[ModelRefused] = []
+    blocked: Optional[tuple[str, str, tuple[str, ...]]] = None
+    other: Optional[str] = None
     attempts = [(cfg.provider, cfg.model_for(role))]
     fb = cfg.fallback_provider
     if cfg.fallback_enabled and fb is not None:
@@ -572,9 +646,19 @@ async def complete(cfg: LLMConfig, *, role: str, system: str, user: str, max_tok
         except Exception as e:  # noqa: BLE001 — any provider error is a fallback trigger
             if isinstance(e, ModelRefused):
                 refusals.append(e)
+            categories = _filter_categories(e)
+            if categories is not None and blocked is None:
+                blocked = (provider, model, categories)
+                logger.warning("redteam LLM call on %s/%s blocked by the provider's content filter", provider, model)
+                if not cfg.fallback_on_block:
+                    raise _blocked_error(cfg, provider, model, categories, other, refusals) from None
+                continue
+            other = f"{provider}/{model}: {type(e).__name__}"
             errors.append(f"{provider}/{model}: {type(e).__name__}: {e}")
             logger.warning("redteam LLM call failed on %s/%s: %s", provider, model, e)
 
+    if blocked is not None:
+        raise _blocked_error(cfg, *blocked, other, refusals)
     raise AllProvidersFailed(
         f"all providers failed for role={role!r}: " + " | ".join(errors), refusals=refusals
     )
