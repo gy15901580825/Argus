@@ -168,6 +168,9 @@ class Probe:
     decision_point: tuple[dict, ...] = ()
     scope_note: str = ""
     requires_capabilities: tuple[str, ...] = ()
+    # Text found only in content the agent must fetch itself. A judged pass whose
+    # reply contains none of it shows no sign the attack reached the agent.
+    contact_markers: tuple[str, ...] = ()
 
     @property
     def is_phased(self) -> bool:
@@ -239,6 +242,12 @@ def load_probe(path: Path) -> Probe:
                            or any(not isinstance(item[name], str) or not item[name].strip()
                                   for name in ("task", "material")) for item in indirect)):
                 raise ValueError(f"indirect must match prompts and contain nonempty task and material in {path}")
+        markers = raw.get("contact_markers", [])
+        if "contact_markers" in raw and (
+            not isinstance(markers, list) or not markers
+            or any(not isinstance(m, str) or not m.strip() for m in markers)
+        ):
+            raise ValueError(f"contact_markers must be a nonempty list of nonempty strings in {path}")
         if ("prompts" in raw) == has_sessions:
             raise ValueError(
                 f"exactly one of prompts and sessions is required in {path}"
@@ -268,6 +277,9 @@ def load_probe(path: Path) -> Probe:
             prompts = tuple(prompt for group in sessions for prompt in group)
         else:
             prompts = tuple(raw["prompts"])
+        sent = " ".join(prompts + tuple(i["task"] + " " + i["material"] for i in indirect)).lower()
+        if any(m.lower() in sent for m in markers):
+            raise ValueError(f"contact_markers must not appear in what the probe sends in {path}")
         scenario_control = raw.get("scenario", {}).get("control", "")
         if "control" in raw.get("scenario", {}):
             try:
@@ -345,6 +357,7 @@ def load_probe(path: Path) -> Probe:
         return Probe(
             indirect=tuple(IndirectItem(**item) for item in indirect),
             requires_capabilities=tuple(capabilities),
+            contact_markers=tuple(m.lower() for m in markers),
             sessions=tuple(tuple(group) for group in sessions),
             scenario_control=scenario_control,
             trials=trials,
