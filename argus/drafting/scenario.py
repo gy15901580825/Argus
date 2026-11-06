@@ -4,10 +4,11 @@ import json
 import math
 import re
 import stat
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from argus.drafting.draft import STATUS_WORDS
 from argus.drafting.openapi import OperationCatalog
 from argus_transport.spec_v2 import ENV_NAME_RE, SECRET_WORDS
 
@@ -16,6 +17,9 @@ MAX_SCENARIO_BYTES = 256 * 1024
 MAX_BODY_BYTES = 64 * 1024
 MAX_REQUESTS = 64
 MAX_DEPTH = 16
+MAX_CASES = 8
+MAX_DOCUMENTED_STATUSES = 32
+OUTCOMES = frozenset({'succeeded', 'blocked', 'target_error', 'stopped'})
 STATES = frozenset({'absent', 'live', 'paused'})
 ROLES = frozenset({'invoke', 'poll', 'upload', 'setup', 'delete', 'confirm', 'pause'})
 CHECKS = {'prompt_bound': 'prompt_not_bound', 'material_bound': 'material_not_bound',
@@ -81,6 +85,20 @@ class ScenarioV1:
     reply: str | None
     required_gaps: tuple[str, ...]
     environment: tuple[tuple[str, str], ...] = ()
+    cases: tuple[OutcomeCase, ...] = ()
+
+
+@dataclass(frozen=True)
+class OutcomeCase:
+    """Another fixed reply sequence and the outcome it must end in.
+
+    Declared cases come from the scenario author and derived cases from the poll's documented status enum.
+    `scenario` is None when the oracle cannot know what a documented value means."""
+    name: str
+    origin: str
+    scenario: ScenarioV1 | None
+    status: str | None = None
+    status_class: str | None = None
 
 
 def invalid(message):
@@ -173,6 +191,80 @@ def _selector(value):
     return Selector(kind, name=name, filename=filename)
 
 
+def _calls(value):
+    calls = _object(value, {'min', 'max'})
+    minimum = _integer(calls['min'], 0, MAX_REQUESTS)
+    maximum = _integer(calls['max'], 1, MAX_REQUESTS)
+    if minimum > maximum: invalid('invalid call range')
+    return minimum, maximum
+
+
+def _replies(values, finals, maximum):
+    replies = []
+    for item in _list(values, 64):
+        if not isinstance(item, dict) or not {'status', 'body', 'effects'} <= set(item) or set(item) - {'status', 'body', 'effects', 'headers'}:
+            invalid('reply has missing or unknown fields')
+        status = _integer(item['status'], 100, 599)
+        if len(json.dumps(item['body'], allow_nan=False).encode('utf-8')) > MAX_BODY_BYTES: invalid('response byte limit exceeded')
+        effects = []
+        for effect in _list(item['effects'], 32):
+            _object(effect, {'resource', 'from', 'to'})
+            if not isinstance(effect['resource'], str) or effect['resource'] not in finals or not isinstance(effect['from'], str) or effect['from'] not in STATES or not isinstance(effect['to'], str) or effect['to'] not in STATES: invalid('invalid resource effect')
+            effects.append(Effect(effect['resource'], effect['from'], effect['to']))
+        headers = item.get('headers', {})
+        if not isinstance(headers, dict) or len(headers) > 2: invalid('invalid response headers')
+        names = set()
+        admitted_headers = []
+        for name, header_value in headers.items():
+            canonical = name.lower() if isinstance(name, str) else ''
+            if canonical not in {'location', 'retry-after'} or canonical in names: invalid('unknown or duplicate response header')
+            names.add(canonical)
+            _text(header_value, limit=2048)
+            if canonical == 'location':
+                parsed = urlsplit(header_value)
+                if not header_value.startswith('/') or header_value.startswith('//') or parsed.scheme or parsed.netloc or parsed.fragment or any(c in header_value for c in '\\{}'):
+                    invalid('Location must be a fixed relative path')
+            elif not re.fullmatch(r'0|[1-9]|10', header_value):
+                invalid('Retry-After must be an integer from zero to ten')
+            admitted_headers.append(('Location' if canonical == 'location' else 'Retry-After', header_value))
+        replies.append(Reply(status, item['body'], tuple(effects), tuple(admitted_headers)))
+    if not replies or len(replies) < maximum: invalid('finite replies must cover maximum calls')
+    return tuple(replies)
+
+
+def _expected(value, keys):
+    expected = _object(value, keys)
+    if not isinstance(expected['outcome'], str) or expected['outcome'] not in OUTCOMES: invalid('invalid expected outcome')
+    if expected['reply'] is not None: _text(expected['reply'], limit=MAX_BODY_BYTES)
+    if expected['outcome'] == 'succeeded' and expected['reply'] is None: invalid('success requires an independent reply')
+    return expected
+
+
+def _sequence_limits(operations):
+    if not operations or not any(op.role == 'invoke' and op.minimum > 0 for op in operations): invalid('missing required invoke')
+    if sum(op.maximum for op in operations) > MAX_REQUESTS or sum(len(op.replies) for op in operations) > 64:
+        invalid('request or reply limit exceeded')
+
+
+def _case(value, main, finals):
+    _object(value, {'name', 'operations', 'expect'})
+    name = _name(value['name'])
+    overrides = value['operations']
+    if not isinstance(overrides, dict) or not overrides: invalid('case must replace at least one operation')
+    known = {op.id for op in main.operations}
+    if set(overrides) - known: invalid('case names an unknown operation')
+    operations = []
+    for op in main.operations:
+        if op.id in overrides:
+            item = _object(overrides[op.id], {'calls', 'replies'})
+            minimum, maximum = _calls(item['calls'])
+            op = replace(op, minimum=minimum, maximum=maximum, replies=_replies(item['replies'], finals, maximum))
+        operations.append(op)
+    _sequence_limits(operations)
+    expected = _expected(value['expect'], {'outcome', 'reply'})
+    return OutcomeCase(name, 'scenario', replace(main, operations=tuple(operations), outcome=expected['outcome'], reply=expected['reply']))
+
+
 def parse_scenario(data, *, catalog: OperationCatalog | None = None) -> ScenarioV1:
     _structure(data)
     try:
@@ -180,10 +272,11 @@ def parse_scenario(data, *, catalog: OperationCatalog | None = None) -> Scenario
             invalid('byte limit exceeded')
     except (TypeError, ValueError, RecursionError):
         invalid('invalid JSON structure')
-    if not isinstance(data, dict) or type(data.get('version')) is not int or data['version'] not in {1, 2}: invalid('unsupported version')
-    _object(data, {'version', 'source', 'resources', 'operations', 'expect'} | ({'environment'} if data['version'] == 2 else set()))
+    if not isinstance(data, dict) or type(data.get('version')) is not int or data['version'] not in {1, 2, 3}: invalid('unsupported version')
+    _object(data, {'version', 'source', 'resources', 'operations', 'expect'}
+            | ({'environment'} if data['version'] >= 2 else set()) | ({'cases'} if data['version'] == 3 else set()))
     environment = ()
-    if data['version'] == 2:
+    if data['version'] >= 2:
         values = data['environment']
         if not isinstance(values, dict) or len(values) > 32: invalid('invalid synthetic environment')
         for name, value in values.items():
@@ -195,10 +288,7 @@ def parse_scenario(data, *, catalog: OperationCatalog | None = None) -> Scenario
     source = _object(data['source'], {'document', 'pointers'})
     _text(source['document'], limit=2048)
     for pointer in _list(source['pointers'], 64): _text(pointer, limit=2048)
-    expected = _object(data['expect'], {'outcome', 'reply', 'resources', 'required_gaps'})
-    if not isinstance(expected['outcome'], str) or expected['outcome'] not in {'succeeded', 'blocked', 'target_error', 'stopped'}: invalid('invalid expected outcome')
-    if expected['reply'] is not None: _text(expected['reply'], limit=MAX_BODY_BYTES)
-    if expected['outcome'] == 'succeeded' and expected['reply'] is None: invalid('success requires an independent reply')
+    expected = _expected(data['expect'], {'outcome', 'reply', 'resources', 'required_gaps'})
     required_gaps = tuple(_text(x) for x in _list(expected['required_gaps'], 32))
     if len(set(required_gaps)) != len(required_gaps): invalid('duplicate required gap')
     finals = {}
@@ -220,7 +310,6 @@ def parse_scenario(data, *, catalog: OperationCatalog | None = None) -> Scenario
     operations = []
     admitted = {op.id: op for op in catalog.operations} if catalog is not None else None
     signatures = set()
-    total_replies = 0
     for value in _list(data['operations'], 32):
         _object(value, {'id', 'method', 'path', 'role', 'calls', 'request', 'replies'})
         id = _text(value['id'])
@@ -236,10 +325,7 @@ def parse_scenario(data, *, catalog: OperationCatalog | None = None) -> Scenario
             if op is None or op.method.upper() != method or op.path != value['path']:
                 invalid('operation does not match independent catalog')
         if not isinstance(value['role'], str) or value['role'] not in ROLES: invalid('invalid operation role')
-        calls = _object(value['calls'], {'min', 'max'})
-        minimum = _integer(calls['min'], 0, MAX_REQUESTS)
-        maximum = _integer(calls['max'], 1, MAX_REQUESTS)
-        if minimum > maximum: invalid('invalid call range')
+        minimum, maximum = _calls(value['calls'])
         checks = []
         for item in _list(value['request'], 32):
             _object(item, {'check', 'at', 'equals'})
@@ -254,42 +340,65 @@ def parse_scenario(data, *, catalog: OperationCatalog | None = None) -> Scenario
         if value['role'] == 'poll' and set(names) != {c.at.name for c in checks if c.check == 'poll_identity' and c.at.kind == 'path'}:
             invalid('poll identities require independent checks')
         if value['role'] == 'upload' and not any(c.check == 'material_bound' for c in checks): invalid('upload requires material check')
-        replies = []
-        for item in _list(value['replies'], 64):
-            if not isinstance(item, dict) or not {'status', 'body', 'effects'} <= set(item) or set(item) - {'status', 'body', 'effects', 'headers'}:
-                invalid('reply has missing or unknown fields')
-            status = _integer(item['status'], 100, 599)
-            if len(json.dumps(item['body'], allow_nan=False).encode('utf-8')) > MAX_BODY_BYTES: invalid('response byte limit exceeded')
-            effects = []
-            for effect in _list(item['effects'], 32):
-                _object(effect, {'resource', 'from', 'to'})
-                if not isinstance(effect['resource'], str) or effect['resource'] not in finals or not isinstance(effect['from'], str) or effect['from'] not in STATES or not isinstance(effect['to'], str) or effect['to'] not in STATES: invalid('invalid resource effect')
-                effects.append(Effect(effect['resource'], effect['from'], effect['to']))
-            headers = item.get('headers', {})
-            if not isinstance(headers, dict) or len(headers) > 2: invalid('invalid response headers')
-            names = set()
-            admitted_headers = []
-            for name, header_value in headers.items():
-                canonical = name.lower() if isinstance(name, str) else ''
-                if canonical not in {'location', 'retry-after'} or canonical in names: invalid('unknown or duplicate response header')
-                names.add(canonical)
-                _text(header_value, limit=2048)
-                if canonical == 'location':
-                    parsed = urlsplit(header_value)
-                    if not header_value.startswith('/') or header_value.startswith('//') or parsed.scheme or parsed.netloc or parsed.fragment or any(c in header_value for c in '\\{}'):
-                        invalid('Location must be a fixed relative path')
-                elif not re.fullmatch(r'0|[1-9]|10', header_value):
-                    invalid('Retry-After must be an integer from zero to ten')
-                admitted_headers.append(('Location' if canonical == 'location' else 'Retry-After', header_value))
-            replies.append(Reply(status, item['body'], tuple(effects), tuple(admitted_headers)))
-        if not replies or len(replies) < maximum: invalid('finite replies must cover maximum calls')
-        total_replies += len(replies)
-        operations.append(ScenarioOperation(id, method, value['path'], value['role'], minimum, maximum, tuple(checks), tuple(replies)))
-    if not operations or not any(op.role == 'invoke' and op.minimum > 0 for op in operations): invalid('missing required invoke')
-    if sum(op.maximum for op in operations) > MAX_REQUESTS or total_replies > 64: invalid('request or reply limit exceeded')
+        replies = _replies(value['replies'], finals, maximum)
+        operations.append(ScenarioOperation(id, method, value['path'], value['role'], minimum, maximum, tuple(checks), replies))
+    _sequence_limits(operations)
     if any(op.role == 'upload' for op in operations) and not any(c.check == 'resource_identity' for op in operations if op.role == 'invoke' for c in op.request):
         invalid('upload requires invoke reference check')
-    return ScenarioV1(source, tuple(operations), tuple(resources), expected['outcome'], expected['reply'], required_gaps, environment)
+    main = ScenarioV1(source, tuple(operations), tuple(resources), expected['outcome'], expected['reply'], required_gaps, environment)
+    cases = []
+    for value in _list(data.get('cases', []), MAX_CASES):
+        case = _case(value, main, finals)
+        if case.name in {c.name for c in cases}: invalid('duplicate case name')
+        cases.append(case)
+    return replace(main, cases=tuple(cases))
+
+
+def document_cases(scenario: ScenarioV1, catalog: OperationCatalog | None) -> tuple[OutcomeCase, ...] | None:
+    """One case per other value of the documented status enum in the scenario's terminal poll reply.
+
+    A failed value replaces the terminal reply's status and must end as target_error. A pending value is inserted,
+    without effects, before the terminal reply and must not change the scenario's outcome. None means no single
+    documented status applies, so nothing was derived."""
+    polls = [op for op in scenario.operations if op.role == 'poll']
+    if catalog is None or scenario.outcome != 'succeeded' or len(polls) != 1 or polls[0].minimum != polls[0].maximum:
+        return None
+    poll = polls[0]
+    index = poll.maximum - 1
+    terminal = poll.replies[index]
+    documented = next((op for op in catalog.operations if op.id == poll.id), None)
+    response = documented.data.get('responses', {}).get(str(terminal.status)) if documented else None
+    content = response.get('content') if isinstance(response, dict) else None
+    schema = content.get('application/json', {}).get('schema') if isinstance(content, dict) else None
+    properties = schema.get('properties') if isinstance(schema, dict) else None
+    if not isinstance(properties, dict) or not isinstance(terminal.body, dict):
+        return None
+    fields = [(name, field['enum']) for name, field in properties.items()
+              if isinstance(field, dict) and isinstance(field.get('enum'), list) and all(isinstance(v, str) for v in field['enum'])
+              and terminal.body.get(name) in field['enum']]
+    if len(fields) != 1:
+        return None
+    name, values = fields[0]
+    others = [value for value in dict.fromkeys(values) if value != terminal.body[name]]
+    if len(others) > MAX_DOCUMENTED_STATUSES:
+        return None
+    cases = []
+    for value in others:
+        kind = STATUS_WORDS.get(value.lower())
+        swapped = replace(terminal, body={**terminal.body, name: value})
+        if kind == 'pending':
+            replies = poll.replies[:index] + (replace(swapped, effects=()), terminal)
+            variant = replace(scenario, cases=())
+        elif kind == 'failed':
+            replies = poll.replies[:index] + (swapped,)
+            variant = replace(scenario, outcome='target_error', reply=None, cases=())
+        else:
+            cases.append(OutcomeCase(f'status:{value}', 'document', None, value, 'unclassified'))
+            continue
+        operations = tuple(replace(op, minimum=len(replies), maximum=len(replies), replies=replies) if op is poll else op
+                           for op in scenario.operations)
+        cases.append(OutcomeCase(f'status:{value}', 'document', replace(variant, operations=operations), value, kind))
+    return tuple(cases)
 
 
 def _unique(pairs):

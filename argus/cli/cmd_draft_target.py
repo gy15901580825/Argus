@@ -1,4 +1,5 @@
 import asyncio
+import json
 from pathlib import Path
 from dataclasses import replace
 
@@ -76,6 +77,11 @@ def cmd_draft_target(input_path, out, operation, server_origin, poll_operation, 
         click.echo(f"local.status: {local_result.status}")
         for check in local_result.checks:
             click.echo(f"local.check: {check}")
+        for case in local_result.cases:
+            state = "not_run" if case["passed"] is None else "passed" if case["passed"] else "failed"
+            click.echo(f"local.case: {json.dumps(case['name'])[1:-1]} {state}")
+        for aspect in local_result.unverified:
+            click.echo(f"local.unverified: {aspect}")
         if local_result.status == "failed":
             raise click.exceptions.Exit(1)
     if artifacts.state != DraftState.READY or (local_result is not None and (local_result.status != "verified" or not local_result.cleanup_complete)):
