@@ -635,7 +635,7 @@ Each command's `--help` lists its flags.
 
 ## License
 
-Apache-2.0. See [LICENSE](https://github.com/gy15901580825/Argus/blob/main/LICENSE). Copyright 2026 Argus contributors; see [NOTICE](https://github.com/gy15901580825/Argus/blob/main/NOTICE).
+Apache-2.0. See [LICENSE](https://github.com/gy15901580825/Argus/blob/main/LICENSE). Copyright 2026 Veyon Solutions; see [NOTICE](https://github.com/gy15901580825/Argus/blob/main/NOTICE).
 
 ## Security
 
