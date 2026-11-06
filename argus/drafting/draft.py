@@ -516,6 +516,9 @@ def _user_binding(catalog, operation, entry, role, kinds, proposed, gaps):
     """The binding a file entry names for role, or None after a blocking gap that says why the document rejects it."""
     field = "/transport/request/body" if role == "prompt" else "/transport/response/text"
     chain, why = _resolve(catalog, operation, entry.path, role, kinds)
+    if why is None and role == "reply" and _schema_at(catalog, chain[-1]).get("enum"):
+        # The document's own reply proposals predate this rule; a fixed value set never carries the agent's answer.
+        why = "A documented value set is a fixed value or a state, never the agent's answer."
     if why:
         gaps.append(_unresolved(field, entry, why))
         return None
@@ -675,6 +678,9 @@ def _choose(catalog, *, operation, server_origin, intent, poll_operation=None, s
                                              (completion, "/transport/outcome", "completion_missing")):
                 if binding is None and not (missing == "reply_binding_missing" and inputs and inputs.reply):
                     gaps.append(_gap(catalog, field, missing, "No unique documented reply or terminal state can be proposed.", pointer=pointer))
+        elif inputs and inputs.reply:
+            gaps.append(_unresolved("/transport/response/text", inputs.reply,
+                                    "No poll operation is selected, so the reply path cannot be checked against its response."))
     return DraftChoices(chosen.id if chosen else None, server, prompt, reply, completion, tuple(gaps), intent, delivery,
                         inputs, values)
 

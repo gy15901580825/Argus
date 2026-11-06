@@ -8,7 +8,7 @@ from click.testing import CliRunner
 from argus.cli.__main__ import main
 from argus.drafting.bindings import read_bindings
 from argus.drafting.draft import Binding, OperationSelection, ReplyPresence, choices_from_selection, compile_draft
-from test_draft_async import catalog_for, input_file
+from test_draft_async import POLL_FIELDS, async_document, catalog_for, input_file
 from test_draft_target import agent_document
 from test_draft_target_model import proposed_document, stub_model  # noqa: F401
 
@@ -381,3 +381,38 @@ def test_a_map_key_no_transport_path_can_name_blocks(tmp_path):
     result, out = draft(tmp_path, nested_document(), {**NESTED, "prompt": {"path": "/inputs/it's/text"}})
     assert result.exit_code == 3, result.output
     assert only(artifacts(out)[1], "binding_unresolved")["source"] == [file_source("/prompt")]
+
+
+def polled(tmp_path, bindings, document=None):
+    return draft(tmp_path, document or async_document(result={"type": "object", "properties": {"text": {"type": "string"}}}), bindings)
+
+
+def test_a_nested_reply_on_a_polled_draft_reads_the_poll_response(tmp_path):
+    result, out = polled(tmp_path, {"reply": {"path": "/result/text"}})
+    assert result.exit_code == 3, result.output
+    spec, report, provenance = artifacts(out)
+    assert spec["transport"]["response"]["text"] == {"paths": ["$.result.text"], "cast": "string", "empty": "error"}
+    assert provenance["fields"]["/transport/response/text"]["source"] == [
+        {"file": "api.json", "pointer": POLL_FIELDS + "/result/properties/text"}, file_source("/reply")]
+    assert "reply_binding_proposed" not in codes(report)
+
+
+@pytest.mark.parametrize("path", ["/status", "/result/code"], ids=["state", "nested_code"])
+def test_a_reply_on_a_documented_value_set_blocks(tmp_path, path):
+    document = async_document(result={"type": "object", "properties": {"code": {"type": "string", "enum": ["A", "B"]}}})
+    result, out = polled(tmp_path, {"reply": {"path": path}}, document)
+    assert result.exit_code == 3, result.output
+    spec, report, _ = artifacts(out)
+    assert spec is None and only(report, "binding_unresolved")["source"] == [file_source("/reply")]
+
+
+def test_a_reply_is_not_left_unchecked_when_the_poll_cannot_be_paired(tmp_path):
+    document = async_document()
+    submitted = document["paths"]["/jobs"]["post"]["responses"]["202"]["content"]["application/json"]["schema"]
+    submitted["properties"] = {"ticket": {"type": "string"}}
+    submitted["required"] = ["ticket"]
+    result, out = polled(tmp_path, {"reply": {"path": "/result"}}, document)
+    assert result.exit_code == 3, result.output
+    report = artifacts(out)[1]
+    assert "poll_id_binding_missing" in codes(report, blocking=True)
+    assert only(report, "binding_unresolved")["source"] == [file_source("/reply")]
