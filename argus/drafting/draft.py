@@ -104,7 +104,7 @@ class Gap:
 
 @dataclass(frozen=True)
 class Binding:
-    name: str
+    path: tuple[str, ...]  # property names from the body root; a key under additionalProperties is never a document fact
     pointer: str
     basis: str = "proposal"
     value: str | None = None
@@ -290,12 +290,6 @@ def _keywords(schema):
     return tuple(sorted(unsupported)), tuple(sorted(unchecked))
 
 
-def _read_schemas(catalog, pointer):
-    """The bound property schema at pointer and the object schema that holds it."""
-    container = pointer.rsplit("/properties/", 1)[0]
-    return {item: _schema_at(catalog, item) for item in (pointer, container)}
-
-
 def _unsupported_reads(catalog, read):
     found = {}
     for pointer, schema in read.items():
@@ -355,7 +349,7 @@ def _id_variable(name):
 
 def _id_candidates(op):
     fields, prefix = _response_fields(op)
-    return {name: Binding(name, pointer_child(prefix, name)) for name, schema in (fields or {}).items()
+    return {name: Binding((name,), pointer_child(prefix, name)) for name, schema in (fields or {}).items()
             if isinstance(schema, dict) and _type(schema) in {"string", "integer"} and not schema.get("writeOnly")
             and _id_variable(name)}
 
@@ -392,11 +386,11 @@ def _pair(parameters, ids):
     """Map each poll path parameter to one submit ID: equal names, or `id` to the only `<x>_id`/`<x>Id` field."""
     pairs = []
     for parameter, _ in parameters:
-        named = [binding for binding in ids.values() if re.fullmatch(r".+(?:_id|[a-z0-9]Id)", binding.name)]
+        named = [binding for binding in ids.values() if re.fullmatch(r".+(?:_id|[a-z0-9]Id)", binding.path[0])]
         match = ids.get(parameter) or (named[0] if parameter == "id" and len(named) == 1 else None)
         if match is None:
             return None
-        pairs.append(IdBinding(_id_variable(match.name), match, parameter))
+        pairs.append(IdBinding(_id_variable(match.path[0]), match, parameter))
     if len({pair.name for pair in pairs}) != len(pairs):
         return None
     return tuple(pairs)
@@ -453,10 +447,10 @@ def _poll_choice(catalog, submit, *, poll_operation, required, gaps):
     op, pairs = candidates[0]
     (name, schema), _, prefix = _status_field(op)
     unwritable = [(field, binding) for field, binding in [*(("/transport/delivery/ids", pair.submit) for pair in pairs),
-                                                          ("/transport/outcome", Binding(name, pointer_child(prefix, name)))]
-                  if _field_path(binding.name) is None]
+                                                          ("/transport/outcome", Binding((name,), pointer_child(prefix, name)))]
+                  if _field_path(binding.path) is None]
     if unwritable:
-        gaps.extend(_gap(catalog, field, "field_path_unwritable", f"No transport path can name the field {json.dumps(binding.name)}.",
+        gaps.extend(_gap(catalog, field, "field_path_unwritable", f"No transport path can name the field {json.dumps(binding.path[-1])}.",
                          pointer=binding.pointer, kind="unsupported_feature") for field, binding in unwritable)
         return None, None, None
     if poll_operation is None:
@@ -468,13 +462,13 @@ def _poll_choice(catalog, submit, *, poll_operation, required, gaps):
     classes = _classify(schema["enum"])
     completion = None
     if len(classes["succeeded"]) == 1 and classes["pending"]:
-        completion = StatusMap(Binding(name, pointer_child(prefix, name), value=classes["succeeded"][0]),
+        completion = StatusMap(Binding((name,), pointer_child(prefix, name), value=classes["succeeded"][0]),
                                tuple(classes["pending"]), tuple(classes["failed"]))
     fields, _ = _response_fields(op)
     texts = [field for field, value in fields.items()
              if field.lower() in {"answer", "reply", "output", "result"} and _type(value) in {"string", "object"}
              and not value.get("writeOnly") and not _metadata(field, value)]
-    reply = Binding(texts[0], pointer_child(prefix, texts[0])) if len(texts) == 1 else None
+    reply = Binding((texts[0],), pointer_child(prefix, texts[0])) if len(texts) == 1 else None
     return PollChoice(op.id, pairs), reply, completion
 
 
@@ -560,7 +554,7 @@ def _choose(catalog, *, operation, server_origin, intent, poll_operation=None, s
                       and not schema.get("enum") and not schema.get("readOnly")]
             if len(fields) == 1:
                 name, _ = fields[0]
-                prompt = Binding(name, pointer_child(request_pointer, name))
+                prompt = Binding((name,), pointer_child(request_pointer, name))
         if selection is not None:
             prompt = selection.prompt
         if prompt is None:
@@ -595,9 +589,9 @@ def _choose(catalog, *, operation, server_origin, intent, poll_operation=None, s
                       and not schema.get("writeOnly")
                       and schema.get("enum") in [["completed"], ["COMPLETED"], ["succeeded"], ["success"]]]
             if len(texts) == 1:
-                reply = Binding(texts[0][0], pointer_child(response_pointer, texts[0][0]))
+                reply = Binding((texts[0][0],), pointer_child(response_pointer, texts[0][0]))
             if len(states) == 1:
-                completion = Binding(states[0][0], pointer_child(response_pointer, states[0][0]), value=states[0][1]["enum"][0])
+                completion = Binding((states[0][0],), pointer_child(response_pointer, states[0][0]), value=states[0][1]["enum"][0])
             elif reply is not None:
                 completion = ReplyPresence()
         if selection is not None:
@@ -643,12 +637,12 @@ def _auth(catalog, operation):
     raise ValueError("Authentication scheme is unsupported")
 
 
-def _field_path(name):
-    """The transport path that reads the top-level field `name`, or None when no transport path can name it.
+def _field_path(path):
+    """The transport path that reads the field at `path`, or None when no transport path can name it.
 
     A reserved word such as `where` fails the dot form and falls back to the bracket form."""
-    dotted = ["$." + name] if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) else []
-    for candidate in [*dotted, "$['" + name + "']"]:
+    dotted = ["$" + "".join("." + name for name in path)] if all(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) for name in path) else []
+    for candidate in [*dotted, "$" + "".join("['" + name + "']" for name in path)]:
         try:
             return transport_path(candidate)
         except ValueError:
@@ -668,9 +662,9 @@ def _success_when(catalog, op, primary, field, gaps):
                          "The response schema documents no required fields, so success checks only the success signal and the reply.",
                          pointer=pointer, blocking=False))
         return primary, None
-    names = [name for name in dict.fromkeys(required) if name in schema["properties"] and _field_path(name) != primary["path"]]
+    names = [name for name in dict.fromkeys(required) if name in schema["properties"] and _field_path((name,)) != primary["path"]]
     # `all` holds the signal plus 31 checks.
-    checked = [name for name in names if _field_path(name)]
+    checked = [name for name in names if _field_path((name,))]
     groups = (([name for name in names if name not in checked], "no rule path can name them"),
               (checked[31:], "a rule holds at most 31 field checks"))
     unchecked = [name for group, _ in groups for name in group]
@@ -679,7 +673,7 @@ def _success_when(catalog, op, primary, field, gaps):
         gaps.append(Gap(field, f"Success does not check these required fields: {why}.", DECISIONS["required_fields_unchecked"],
                         "required_fields_unchecked", "documentation_gap", False,
                         tuple(catalog.document.source(f"{pointer}/required/{required.index(name)}") for name in unchecked)))
-    present = [{"path": _field_path(name), "exists": True} for name in checked[:31]]
+    present = [{"path": _field_path((name,)), "exists": True} for name in checked[:31]]
     return ({"all": [primary, *present]} if present else primary), pointer + "/required"
 
 
@@ -687,34 +681,84 @@ def _status_rules(catalog, op, status, statuses, field, gaps):
     """Success and failure rules for a status map read on op's 2xx body.
 
     202 means accepted and not finished (RFC 9110, 15.3.3), so it never matches success; a documented failure on any 2xx ends the run."""
-    when, required = _success_when(catalog, op, {"path": _field_path(status.field.name), "equals": status.field.value}, field, gaps)
+    when, required = _success_when(catalog, op, {"path": _field_path(status.field.path), "equals": status.field.value}, field, gaps)
     finished = [code for code in statuses if code != 202]
     rules = [{"id": "completed", "priority": 10, "http_status": finished, "when": when, "outcome": "succeeded"}] if finished else []
     if status.failed:
         rules.append({"id": "failed", "priority": 5, "http_status": statuses,
-                      "when": {"path": _field_path(status.field.name), "one_of": list(status.failed)}, "outcome": "target_error"})
+                      "when": {"path": _field_path(status.field.path), "one_of": list(status.failed)}, "outcome": "target_error"})
     return rules, required
 
 
+def _root(operation, role):
+    """The JSON object body schema a role's path starts from: the request body for the prompt, else the 2xx body."""
+    if role != "prompt":
+        return _body_schema(operation)[1] or None
+    request = operation.data.get("requestBody")
+    content = request.get("content") if isinstance(request, dict) else None
+    return operation.pointer + "/requestBody/content/application~1json/schema" if _object_schema(content) else None
+
+
+def _walk(catalog, root, path):
+    """The schema pointers from root to the typed field at path, or None when the path leaves the documented objects.
+
+    Each step descends `properties`, or a schema-valued `additionalProperties` for a key the document does not name.
+    Arrays, untyped schemas and unexpanded reference-cycle stubs end the walk."""
+    chain = [root]
+    for key in path:
+        raw = _at(catalog, chain[-1])
+        schema = _nullable(raw)
+        if _type(schema) != "object":
+            return None
+        base = chain[-1]
+        if schema is not raw:
+            keyword = "anyOf" if "anyOf" in raw else "oneOf"
+            base += f"/{keyword}/{1 - raw[keyword].index({'type': 'null'})}"
+        properties, extra = schema.get("properties"), schema.get("additionalProperties")
+        if isinstance(properties, dict) and key in properties:
+            chain.append(pointer_child(base + "/properties", key))
+        elif isinstance(extra, dict):
+            chain.append(base + "/additionalProperties")
+        else:
+            return None
+    return tuple(chain) if _type(_schema_at(catalog, chain[-1])) is not None else None
+
+
+def _resolve(catalog, operation, path, role, kinds=("string",)):
+    """The schema pointers to the field at path for role, and why it cannot carry that role (None when it can).
+
+    The pointers are None when the path names no documented field a transport path can reach."""
+    root = _root(operation, role)
+    chain = _walk(catalog, root, path) if root else None
+    if chain is None or _field_path(path) is None:
+        return None, "The path does not name a documented field of the " + ("request" if role == "prompt" else "response") + " body."
+    schema = _schema_at(catalog, chain[-1])
+    if _type(schema) not in kinds:
+        return chain, "The field's documented type is not " + " or ".join(kinds) + "."
+    if role == "prompt" and (schema.get("readOnly") or schema.get("enum")):
+        return chain, "A read-only field or a documented value set cannot carry the question."
+    if role != "prompt" and schema.get("writeOnly"):
+        return chain, "A write-only field is never returned."
+    if role == "reply" and _metadata(path[-1], schema):
+        return chain, "An identifier, timestamp or plain state field describes the call; binding it as the reply measures nothing."
+    return chain, None
+
+
 def _binding_schema(catalog, operation, binding, role, kinds=("string",)):
-    if role == "prompt":
-        prefix = operation.pointer + "/requestBody/content/application~1json/schema/properties"
-    else:
-        success = _success(operation)
-        if success is None:
-            raise ValueError("Choice references an unknown or unsupported operation field")
-        prefix = operation.pointer + "/responses/" + success[0][0] + "/content/application~1json/schema/properties"
-    if (binding.pointer not in catalog.document.sources
-            or binding.pointer != pointer_child(prefix, binding.name)
-            or _field_path(binding.name) is None
-            or binding.basis not in {"proposal", "document_fact", "user_selection"}):
+    chain, why = _resolve(catalog, operation, binding.path, role, kinds)
+    if chain is None or chain[-1] != binding.pointer or binding.basis not in {"proposal", "document_fact", "user_selection"}:
         raise ValueError("Choice references an unknown or unsupported operation field")
-    value = _schema_at(catalog, binding.pointer)
-    if _type(value) not in kinds or value.get("readOnly") and role == "prompt" or value.get("writeOnly") and role != "prompt":
+    if why:
         raise ValueError("Choice field has an incompatible schema")
+    value = _schema_at(catalog, binding.pointer)
     if role == "completion" and (binding.value is None or binding.value not in value.get("enum", [])):
         raise ValueError("Choice terminal value is not documented")
     return value
+
+
+def _binding_reads(catalog, operation, binding, role):
+    """Every schema on the walk to a bound field: the body, each object it passes and the field itself."""
+    return {pointer: _schema_at(catalog, pointer) for pointer in _walk(catalog, _root(operation, role), binding.path)}
 
 
 def _poll_target(catalog, operation, choices):
@@ -730,7 +774,7 @@ def _poll_target(catalog, operation, choices):
         raise ValueError("Poll choice references an unknown or unsupported operation")
     for item in delivery.ids:
         _binding_schema(catalog, operation, item.submit, "id", kinds=("string", "integer"))
-        if item.name != _id_variable(item.submit.name):
+        if item.name != _id_variable(item.submit.path[0]):
             raise ValueError("Poll ID variable does not match its submit field")
     return poll, parameters
 
@@ -764,6 +808,17 @@ def _cycle_gaps(catalog, read, operations):
         gaps.append(Gap("/transport", why, "Confirm that the draft never needs these cyclic schemas.", "reference_cycle",
                         "unsupported_feature", False, tuple(sorted(other, key=lambda source: (source.file, source.pointer)))))
     return gaps
+
+
+def _nest(entries):
+    """A transport JSON body from (path, expression) pairs, with one `object` expression per shared parent."""
+    body = {}
+    for path, expression in entries:
+        node = body
+        for key in path[:-1]:
+            node = node.setdefault(key, {"object": {}})["object"]
+        node[path[-1]] = expression
+    return body
 
 
 def _unsafe_path(path):
@@ -805,7 +860,7 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                 classified = (binding.field.value, *binding.pending, *binding.failed)
                 if len(set(classified)) != len(classified) or not set(classified) <= set(values):
                     raise ValueError("Status values must be documented and disjoint")
-                read.update(_read_schemas(catalog, binding.field.pointer))
+                read.update(_binding_reads(catalog, result, binding.field, "completion"))
                 source = catalog.document.source(binding.field.pointer)
                 for target in (field, "/transport/delivery/pending"):
                     provenance["fields"][target] = {"source": [source.to_dict()], "basis": binding.field.basis, "strategy": "status_word_table"}
@@ -830,14 +885,14 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
             elif binding:
                 _binding_schema(catalog, operation if role == "prompt" else result, binding, role,
                                 kinds=("string", "object") if role == "reply" and choices.delivery else ("string",))
-                read.update(_read_schemas(catalog, binding.pointer))
+                read.update(_binding_reads(catalog, operation if role == "prompt" else result, binding, role))
                 source = catalog.document.source(binding.pointer)
                 provenance["fields"][field] = {"source": [source.to_dict()], "basis": binding.basis}
                 if binding.basis == "proposal":
                     gaps.append(_gap(catalog, field, code, "This field's business role is a name/schema-based proposal.",
                                      pointer=binding.pointer, kind="proposal", blocking=False))
         for item in choices.delivery.ids if choices.delivery else ():
-            read.update(_read_schemas(catalog, item.submit.pointer))
+            read.update(_binding_reads(catalog, operation, item.submit, "id"))
             parameter_pointer, parameter_schema = poll_parameters[item.parameter]
             read[parameter_pointer + "/schema"] = parameter_schema
             field = "/transport/delivery/ids/" + item.name
@@ -878,7 +933,8 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
             gaps.append(_gap(catalog, "/transport/request/url", "path_unsafe", "Operation path cannot be safely compiled.", pointer=operation.pointer, kind="unsupported_feature"))
         else:
             request_schema = _object_schema(operation.data["requestBody"]["content"])
-            body = {choices.prompt.name: {"context": "prompt"}}
+            body = _nest([(choices.prompt.path, {"context": "prompt"})])
+            bound = {choices.prompt.path[0]}
             declarations = {}
             unbound_path = path
             query = {}
@@ -934,7 +990,7 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                 gaps.append(_gap(catalog, binding_field, "parameter_binding_required", "Supply the documented non-secret parameter through its environment binding.", pointer=parameter_pointer, blocking=False))
             properties_pointer = operation.pointer + "/requestBody/content/application~1json/schema/properties"
             for name in required:
-                if name == choices.prompt.name:
+                if name in bound:
                     continue
                 schema = request_schema["properties"].get(name)
                 field_pointer = pointer_child(properties_pointer, name) if schema is not None else operation.pointer
@@ -952,7 +1008,7 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                 binding_field = "/transport/let/run/" + variable
                 provenance["fields"][binding_field] = {"source": [catalog.document.source(field_pointer).to_dict()], "basis": "non_secret_binding_required", "environment_name_basis": "policy_default"}
                 gaps.append(_gap(catalog, binding_field, "body_binding_required", "Supply the required non-secret body field through its environment binding.", pointer=field_pointer, blocking=False))
-            if any(name != choices.prompt.name and name not in required for name in request_schema["properties"]):
+            if any(name not in bound and name not in required for name in request_schema["properties"]):
                 gaps.append(_gap(catalog, "/transport/request/body", "optional_inputs_unbound", "Optional request fields are omitted; this draft binds only the proposed prompt and required fields.", pointer=operation.pointer, blocking=False))
             if "{" in unbound_path:
                 gaps.append(_gap(catalog, "/transport/request/url", "path_binding_missing", "Path parameters are not declared.", pointer=operation.pointer))
@@ -968,9 +1024,9 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                     retry_after = any(isinstance(response.get("headers"), dict)
                                       and any(str(name).lower() == "retry-after" for name in response["headers"])
                                       for _, response in _success(result))
-                    delivery = {"kind": "poll", "ids": {item.name: {"path": _field_path(item.submit.name)} for item in choices.delivery.ids},
+                    delivery = {"kind": "poll", "ids": {item.name: {"path": _field_path(item.submit.path)} for item in choices.delivery.ids},
                                 "request": {"method": "GET", "url": server + poll_path, "headers": {"Accept": "application/json"}, "body": {"none": True}},
-                                "pending": {"path": _field_path(status.field.name), "one_of": list(status.pending)},
+                                "pending": {"path": _field_path(status.field.path), "one_of": list(status.pending)},
                                 **({"wait": {"from": "Retry-After", "default_s": POLL_INTERVAL_S, "max_s": RETRY_AFTER_MAX_S}} if retry_after
                                    else {"interval_s": POLL_INTERVAL_S}),
                                 "max_polls": MAX_POLLS, "submit_http_status": [int(code) for code, _ in _success(operation)],
@@ -979,17 +1035,17 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                     # A submit that documents the poll's state and answer can end the run itself; otherwise every accepted submit is polled.
                     submitted, submitted_prefix = _response_fields(operation)
                     polled = _response_fields(result)[0]
-                    if all(submitted.get(name) == polled[name] for name in (status.field.name, choices.reply.name)):
+                    if all(submitted.get(name) == polled[name] for name in (status.field.path[0], choices.reply.path[0])):
                         delivery["submit_outcome"]["rules"], submit_required = _status_rules(
                             catalog, operation, status, delivery["submit_http_status"], "/transport/delivery/submit_outcome", gaps)
-                        sources = [pointer_child(submitted_prefix, name) for name in (status.field.name, choices.reply.name)]
+                        sources = [pointer_child(submitted_prefix, name) for name in (status.field.path[0], choices.reply.path[0])]
                         provenance["fields"]["/transport/delivery/submit_outcome"] = {
                             "source": [catalog.document.source(pointer).to_dict() for pointer in sources + ([submit_required] if submit_required else [])],
                             "basis": "proposal", "strategy": "submit_documents_poll_state_and_reply"}
                 else:
                     delivery = {"kind": "sync"}
-                    primary = ({"path": _field_path(choices.reply.name), "exists": True} if isinstance(choices.completion, ReplyPresence)
-                               else {"path": _field_path(choices.completion.name), "equals": choices.completion.value})
+                    primary = ({"path": _field_path(choices.reply.path), "exists": True} if isinstance(choices.completion, ReplyPresence)
+                               else {"path": _field_path(choices.completion.path), "equals": choices.completion.value})
                     when, required = _success_when(catalog, result, primary, "/transport/outcome", gaps)
                     rules = [{"id": "completed", "priority": 10, "http_status": result_statuses, "when": when, "outcome": "succeeded"}]
                 if required:
@@ -1000,7 +1056,7 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                     "request": {"method": operation.method, "url": server + path,
                                 "headers": {"Accept": "application/json"}, "query": query, "body": {"json": body}},
                     "auth": auth,
-                    "response": {"format": "json", "text": {"paths": [_field_path(choices.reply.name)], "cast": cast, "empty": "error"}, "metadata": {}},
+                    "response": {"format": "json", "text": {"paths": [_field_path(choices.reply.path)], "cast": cast, "empty": "error"}, "metadata": {}},
                     "outcome": {"kind": "rules", "unmatched": "target_error", "rules": rules},
                     "delivery": delivery, "let": {"run": declarations},
                     "timeout": {"total_deadline_s": POLL_DEADLINE_S if choices.delivery else 120, "read_s": 120, "cleanup_s": 60},
