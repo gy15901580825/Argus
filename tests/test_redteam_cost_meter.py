@@ -213,7 +213,7 @@ def test_estimate_skips_escalation_when_fast_and_strong_are_one_model(monkeypatc
     # Azure ships one deployment for both roles; the judge does not escalate then.
     monkeypatch.setenv("REDTEAM_MODEL_PROVIDER", "azure")
     m = CostMeter(daily_cap_usd=13.50, per_run_cap_usd=0.50)
-    one_call = 300 / 1e6 * 0.20 + 600 / 1e6 * 1.20  # gpt-5.6-luna
+    one_call = 300 / 1e6 * 0.10 + 600 / 1e6 * 0.50  # gpt-6-luna
     assert m.check_or_abort_pre_run(
         probe_ids=["p"], target_kind="custom_http", total_exchanges=10
     ) == pytest.approx(one_call * 10)
