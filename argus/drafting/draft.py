@@ -39,10 +39,10 @@ DECISIONS = {
     "business_input_missing": "Provide an explicit binding for the required business field; examples are not production values.",
     "parameter_binding_required": "Supply the non-secret parameter through the generated TARGET_INPUT environment binding.",
     "optional_inputs_unbound": "Decide whether the omitted optional fields or material are required for your use case.",
+    "reference_cycle": "Provide a bounded schema without cyclic references.",
 }
 
 DOCUMENT_ISSUE_TEXT = {
-    "reference_cycle": ("A reference cycle is not expanded.", "Provide a bounded schema without cyclic references."),
     "reference_siblings_unsupported": (
         "Reference siblings cannot replace or add schema constraints in this command.",
         "Provide a schema without unsupported reference siblings."),
@@ -270,10 +270,18 @@ def _choose(catalog, *, operation, server_origin, intent, selection=None):
             gaps.append(_gap(catalog, "/transport/request/url", "server_invalid",
                              "A server URL or origin override is unsafe or unresolved.", kind="unsupported_feature"))
     prompt = reply = completion = None
+    # One review row per document: large vendor schemas serialize dozens of cycles.
+    cycles = sorted({issue.source for issue in doc.issues if issue.code == "reference_cycle"},
+                    key=lambda source: (source.file, source.pointer))
+    if cycles:
+        why = "1 reference cycle is not expanded." if len(cycles) == 1 else f"{len(cycles)} reference cycles are not expanded."
+        gaps.append(Gap("/transport", why, DECISIONS["reference_cycle"],
+                        "reference_cycle", "unsupported_feature", True, tuple(cycles)))
     for issue in doc.issues:
-        why, decision = DOCUMENT_ISSUE_TEXT[issue.code]
-        gaps.append(Gap("/transport", why, decision,
-                        issue.code, "unsupported_feature", True, (issue.source,)))
+        if issue.code != "reference_cycle":
+            why, decision = DOCUMENT_ISSUE_TEXT[issue.code]
+            gaps.append(Gap("/transport", why, decision,
+                            issue.code, "unsupported_feature", True, (issue.source,)))
     if doc.data.get("webhooks"):
         gaps.append(_gap(catalog, "/transport", "webhooks_unsupported", "Webhook flows are not compiled.", kind="unsupported_feature"))
     if chosen:
