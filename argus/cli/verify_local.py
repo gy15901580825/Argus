@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from aiohttp import web
 
 from argus.cli.validate_transport_v2 import execute_transport
-from argus.drafting.draft import CONSTRAINT_KEYWORDS
+from argus.drafting.draft import CONSTRAINT_KEYWORDS, _nullable, _type
 from argus.drafting.scenario import CHECKS, MAX_BODY_BYTES, MAX_DEPTH, MAX_REQUESTS, ScenarioV1, document_cases, path_pattern
 from argus.targets import build_target
 from argus_transport import ExecutionPolicy, TransportSpecV2, with_origin
@@ -155,11 +155,12 @@ def _schema_supported(schema, depth=0, *, value=_MISSING):
 
 def _schema_sample(schema, depth=0):
     if depth > 16 or not isinstance(schema, dict): raise ValueError('schema_mock_unsupported')
-    if 'enum' in schema and schema['enum']: return copy.deepcopy(schema['enum'][0])
+    schema = _nullable(schema)
+    if 'enum' in schema and schema['enum']: return copy.deepcopy(next((v for v in schema['enum'] if v is not None), schema['enum'][0]))
     if 'const' in schema: return copy.deepcopy(schema['const'])
     formats = {'uuid': '00000000-0000-4000-8000-000000000001', 'date': '2026-01-01', 'date-time': '2026-01-01T00:00:00Z', 'byte': 'c2NoZW1hIHNhbXBsZQ=='}
     if schema.get('format') in formats: return formats[schema['format']]
-    kind = schema.get('type', 'object' if 'properties' in schema else None)
+    kind = _type(schema) or ('object' if 'properties' in schema else None)
     if kind == 'object': return {key: _schema_sample(value, depth+1) for key, value in schema.get('properties', {}).items()}
     if kind == 'array': return [_schema_sample(schema.get('items', {}), depth+1) for _ in range(min(schema.get('minItems', 0), 8))]
     if kind == 'string': return 'schema sample' + 'x' * min(schema.get('minLength', 0), 128)
