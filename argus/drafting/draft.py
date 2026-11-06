@@ -216,7 +216,22 @@ def _object_schema(content):
     schema = media.get("schema") if isinstance(media, dict) else None
     if not isinstance(schema, dict) or schema.get("type") != "object" or not isinstance(schema.get("properties"), dict):
         return None
-    return schema
+    return {**schema, "properties": {name: _nullable(field) for name, field in schema["properties"].items()}}
+
+
+def _nullable(schema):
+    """Read `anyOf` or `oneOf` of one schema and `{type: null}` as that schema, as `_type` reads `type: [T, "null"]` as T."""
+    if not isinstance(schema, dict):
+        return schema
+    keyword = "anyOf" if "anyOf" in schema else "oneOf"
+    branches = schema.get(keyword)
+    if not isinstance(branches, list) or len(branches) != 2 or {"type": "null"} not in branches:
+        return schema
+    inner = branches[1 - branches.index({"type": "null"})]
+    rest = {key: value for key, value in schema.items() if key != keyword}
+    if not isinstance(inner, dict) or rest.keys() & inner.keys():
+        return schema
+    return {**rest, **inner}
 
 
 def _type(schema):
@@ -254,6 +269,10 @@ def _at(catalog, pointer):
     return value
 
 
+def _schema_at(catalog, pointer):
+    return _nullable(_at(catalog, pointer))
+
+
 def _keywords(schema):
     """Unsupported and unchecked keywords of one schema the draft reads, ignoring its subschemas."""
     if not isinstance(schema, dict):
@@ -271,7 +290,7 @@ def _keywords(schema):
 def _read_schemas(catalog, pointer):
     """The bound property schema at pointer and the object schema that holds it."""
     container = pointer.rsplit("/properties/", 1)[0]
-    return {item: _at(catalog, item) for item in (pointer, container)}
+    return {item: _schema_at(catalog, item) for item in (pointer, container)}
 
 
 def _unsupported_reads(catalog, read):
@@ -628,7 +647,7 @@ def _binding_schema(catalog, operation, binding, role, kinds=("string",)):
             or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", binding.name)
             or binding.basis not in {"proposal", "document_fact", "user_selection"}):
         raise ValueError("Choice references an unknown or unsupported operation field")
-    value = _at(catalog, binding.pointer)
+    value = _schema_at(catalog, binding.pointer)
     if _type(value) not in kinds or value.get("readOnly") and role == "prompt" or value.get("writeOnly") and role != "prompt":
         raise ValueError("Choice field has an incompatible schema")
     if role == "completion" and (binding.value is None or binding.value not in value.get("enum", [])):
@@ -884,7 +903,7 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                                        if isinstance(choices.completion, ReplyPresence)
                                        else {"path": _field_path(choices.completion.name), "equals": choices.completion.value}),
                               "outcome": "succeeded"}]
-                cast = "string_or_json" if _type(_at(catalog, choices.reply.pointer)) == "object" else "string"
+                cast = "string_or_json" if _type(_schema_at(catalog, choices.reply.pointer)) == "object" else "string"
                 transport = {
                     "version": 2,
                     "request": {"method": operation.method, "url": server + path,
