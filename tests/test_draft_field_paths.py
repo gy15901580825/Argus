@@ -5,7 +5,7 @@ from click.testing import CliRunner
 
 from argus.cli.__main__ import main
 from argus.drafting.draft import Binding, OperationSelection, ReplyPresence, choices_from_selection, compile_draft
-from test_draft_async import POLL_FIELDS, SUBMIT, async_document, catalog_for, gaps, poll_schema, run
+from test_draft_async import POLL_FIELDS, SUBMIT, async_document, catalog_for, gaps, poll_schema, run, scenario
 from test_draft_target import agent_document
 
 UNWRITABLE = {"quote": "it's", "backslash": "back\\slash", "newline": "new\nline", "carriage_return": "carriage\rreturn", "empty": ""}
@@ -149,3 +149,32 @@ def test_a_selected_reply_named_outside_dot_syntax_is_read_with_a_bracket_path(t
     transport = artifacts.spec["transport"]
     assert transport["response"]["text"]["paths"] == [f"$['{name}']"]
     assert rule(transport, "succeeded") == {"path": f"$['{name}']", "exists": True}
+
+
+def renamed_scenario(tmp_path, status="status", job_id=None):
+    data = json.loads(scenario(tmp_path).read_text())
+    submit, poll = data["operations"]
+    if job_id:
+        submit["replies"][0]["body"] = {job_id: "job-7"}
+        poll["path"] = "/jobs/{" + job_id + "}"
+        poll["request"][0]["at"]["name"] = job_id
+    for reply in poll["replies"]:
+        reply["body"][status] = reply["body"].pop("status")
+    path = tmp_path / "renamed-scenario.json"
+    path.write_text(json.dumps(data))
+    return path
+
+
+@pytest.mark.parametrize("document,names", [
+    (lambda: poll_status("where"), {"status": "where"}),
+    (lambda: poll_status("job state"), {"status": "job state"}),
+    (lambda: poll_id("where"), {"job_id": "where"}),
+], ids=["status_reserved_word", "status_space", "id_reserved_word"])
+def test_bracket_paths_match_a_real_poll_run(tmp_path, document, names):
+    built = document()
+    poll_schema(built, next(path for path in built["paths"] if path != "/jobs"))["properties"]["result"] = {"type": "string"}
+    result, out = run(tmp_path, built, "--verify-local", "--scenario", str(renamed_scenario(tmp_path, **names)))
+    assert result.exit_code == 3, result.output
+    local = json.loads(out.with_suffix(".provenance.json").read_text())["validation"]["local"]
+    assert local["status"] == "verified" and local["semantic_success"] is True
+    assert local["execution"]["requests"]["poll"] == 2 and local["execution"]["reply"] == "pong"

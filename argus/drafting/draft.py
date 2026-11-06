@@ -14,7 +14,7 @@ import httpx
 import idna
 
 from argus_transport import TransportSpecV2
-from argus_transport.models import AuthSpec
+from argus_transport.models import AuthSpec, path as transport_path
 from argus_transport.spec_v2 import CONTEXT_KEYS_V2, NAME_RE, SECRET_WORDS
 
 from .openapi import OperationCatalog, Source, pointer_child
@@ -52,6 +52,7 @@ DECISIONS = {
     "async_shape_unsupported": "Review the asynchronous flow; this command drafts only a documented GET poll with a top-level string status enum.",
     "success_conditions_minimal": "Confirm which fields a successful response must carry; add exists checks to the success rule if the API guarantees them.",
     "required_fields_unchecked": "Decide whether a successful response must carry these fields; the success rule does not check them.",
+    "field_path_unwritable": "Document another field for this role; no transport path can name an empty field or one that contains a quote, backslash or line break.",
 }
 
 # Fixed word table for no-model status classification; every result is still a proposal.
@@ -356,7 +357,7 @@ def _id_candidates(op):
     fields, prefix = _response_fields(op)
     return {name: Binding(name, pointer_child(prefix, name)) for name, schema in (fields or {}).items()
             if isinstance(schema, dict) and _type(schema) in {"string", "integer"} and not schema.get("writeOnly")
-            and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) and _id_variable(name)}
+            and _id_variable(name)}
 
 
 def _parameters(op):
@@ -450,13 +451,20 @@ def _poll_choice(catalog, submit, *, poll_operation, required, gaps):
                          pointer=submit.pointer, kind="ambiguous_choice"))
         return None, None, None
     op, pairs = candidates[0]
+    (name, schema), _, prefix = _status_field(op)
+    unwritable = [(field, binding) for field, binding in [*(("/transport/delivery/ids", pair.submit) for pair in pairs),
+                                                          ("/transport/outcome", Binding(name, pointer_child(prefix, name)))]
+                  if _field_path(binding.name) is None]
+    if unwritable:
+        gaps.extend(_gap(catalog, field, "field_path_unwritable", f"No transport path can name the field {json.dumps(binding.name)}.",
+                         pointer=binding.pointer, kind="unsupported_feature") for field, binding in unwritable)
+        return None, None, None
     if poll_operation is None:
         gaps.append(_gap(catalog, "/transport/delivery", "poll_proposed", "The only matching GET operation was selected as the poll.",
                          pointer=op.pointer, kind="proposal", blocking=False))
     if any(parameter.get("in") != "path" and parameter.get("required") for parameter, _ in _parameters(op)):
         gaps.append(_gap(catalog, "/transport/delivery/request", "async_shape_unsupported",
                          "The poll operation requires parameters other than job identifiers.", pointer=op.pointer, kind="unsupported_feature"))
-    (name, schema), _, prefix = _status_field(op)
     classes = _classify(schema["enum"])
     completion = None
     if len(classes["succeeded"]) == 1 and classes["pending"]:
@@ -643,7 +651,16 @@ def _auth(catalog, operation):
 
 
 def _field_path(name):
-    return "$." + name if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) else "$['" + name + "']"
+    """The transport path that reads the top-level field `name`, or None when no transport path can name it.
+
+    A reserved word such as `where` fails the dot form and falls back to the bracket form."""
+    dotted = ["$." + name] if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) else []
+    for candidate in [*dotted, "$['" + name + "']"]:
+        try:
+            return transport_path(candidate)
+        except ValueError:
+            pass
+    return None
 
 
 def _success_when(catalog, op, primary, field, gaps):
@@ -659,8 +676,8 @@ def _success_when(catalog, op, primary, field, gaps):
                          pointer=pointer, blocking=False))
         return primary, None
     names = [name for name in dict.fromkeys(required) if name in schema["properties"] and _field_path(name) != primary["path"]]
-    # Bracket paths have no escapes and jsonpath_ng reads a backslash as one; `all` holds the signal plus 31 checks.
-    checked = [name for name in names if re.fullmatch(r"[^'\\\r\n]+", name)]
+    # `all` holds the signal plus 31 checks.
+    checked = [name for name in names if _field_path(name)]
     groups = (([name for name in names if name not in checked], "no rule path can name them"),
               (checked[31:], "a rule holds at most 31 field checks"))
     unchecked = [name for group, _ in groups for name in group]
@@ -696,7 +713,7 @@ def _binding_schema(catalog, operation, binding, role, kinds=("string",)):
         prefix = operation.pointer + "/responses/" + success[0][0] + "/content/application~1json/schema/properties"
     if (binding.pointer not in catalog.document.sources
             or binding.pointer != pointer_child(prefix, binding.name)
-            or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", binding.name)
+            or _field_path(binding.name) is None
             or binding.basis not in {"proposal", "document_fact", "user_selection"}):
         raise ValueError("Choice references an unknown or unsupported operation field")
     value = _schema_at(catalog, binding.pointer)

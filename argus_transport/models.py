@@ -74,7 +74,8 @@ _CONTROL_HEADERS = {
     "proxy-authorization",
     "accept-encoding",
 }
-_PATH = re.compile(r"\$(?:\.[A-Za-z_][\w-]*|\[\d+\]|\['[^'\r\n]+'\])*\Z")
+# jsonpath_ng reads a backslash in a quoted name as an escape, so a bracket name may not hold one.
+_PATH = re.compile(r"\$(?:\.[A-Za-z_][\w-]*|\[\d+\]|\['[^'\\\r\n]+'\])*\Z")
 
 
 class FrozenDict(dict):
@@ -141,7 +142,8 @@ def positive(value, maximum=None):
 def path(value, legacy=False):
     text(value)
     if not legacy and not _PATH.fullmatch(value):
-        raise ValueError("Unsupported transport JSONPath")
+        raise ValueError("Unsupported transport JSONPath: use $.name, $[0] or $['name'], where a bracket name "
+                         "is not empty and has no quote, backslash or line break")
     from jsonpath_ng import parse
 
     try:
