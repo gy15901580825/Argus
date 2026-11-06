@@ -680,7 +680,7 @@ def _choose(catalog, *, operation, server_origin, intent, poll_operation=None, s
                     gaps.append(_gap(catalog, field, missing, "No unique documented reply or terminal state can be proposed.", pointer=pointer))
         elif inputs and inputs.reply:
             gaps.append(_unresolved("/transport/response/text", inputs.reply,
-                                    "No poll operation is selected, so the reply path cannot be checked against its response."))
+                                    "No poll operation could be paired with the submit, so the reply path cannot be checked against its response."))
     return DraftChoices(chosen.id if chosen else None, server, prompt, reply, completion, tuple(gaps), intent, delivery,
                         inputs, values)
 
