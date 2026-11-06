@@ -59,14 +59,14 @@ The scenario finding passes through `ctx.redact` when serialized and when emitte
 
 ### `POST /redteam/run` stream
 
-The response is a Server-Sent Events stream: one `data:` line per finding, then one `data:` line with the coverage event, then `event: end` with `data: {}`. If the run fails, the stream ends with `event: error` instead, and no coverage event is sent.
+The response is a Server-Sent Events stream: one `data:` line per finding, then one `data:` line with the coverage event, then `event: end` with `data: {}`. If the run fails, the stream ends with `event: error` instead, and no coverage event is sent. Its data is `{"detail": str, "type": str, "cost": {...}}`, where `type` names the exception (`CostExceededError` when the run stopped at a cost cap) and `cost` has the same shape as in the coverage event.
 
 Each finding includes `remediation_actions`; see [the run.json finding format](../run-json.md) for its shape.
 
-The coverage event has three keys:
+The coverage event has four keys:
 
 ```json
-{"type": "coverage", "coverage": {...}, "summary": {...}}
+{"type": "coverage", "coverage": {...}, "summary": {...}, "cost": {"spent_usd": 0.0412, "per_run_cap_usd": 0.5}}
 ```
 
 `coverage` is the per-standard coverage table (the same object `GET /redteam/coverage` returns, with run results filled in). `summary` counts this run's findings:
@@ -82,5 +82,7 @@ The coverage event has three keys:
 ```
 
 `total` counts findings. `evaluated` counts findings whose verdict is in `evaluated_verdicts`: the probe reached the target and came back with a verdict. This is the same rule coverage uses for `tested`. `blocked_by_target`, `skipped`, `aborted_cost` and `error` findings are not evaluated. `by_verdict` counts every finding and always lists all seven verdicts. `failed_by_severity` counts only `fail` findings and always lists all five severities. A verdict or severity outside these lists gets its own key. The summary has no score and no percentage. If you compute a rate, divide by `evaluated`, not `total`. `summary.total` counts findings, while `coverage.totals.probes_run` counts distinct probes that were evaluated, so the two numbers can differ.
+
+`cost.spent_usd` is the cost of this run's model calls in US dollars, rounded to six decimals. It is the engine's own estimate from model token usage and its price table, not an invoice. `cost.per_run_cap_usd` is the per-run cap the run was held to. It is the request's `per_run_cap_usd` when set, otherwise the server's default for the mode (static or deep). It is always a number. A run stopped at the cap can show `spent_usd` above `per_run_cap_usd` by the one call that crossed it.
 
 The `/api/v1/redteam` API the CLI uses in server mode (runs, reports, diffs, stored history) is not part of this repo. It was served by `api_service`, which lives at tag `v0.3-full`.

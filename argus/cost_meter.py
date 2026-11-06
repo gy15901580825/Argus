@@ -235,6 +235,12 @@ class CostMeter:
         run = self._run_state.get()
         return run.spent_usd if run is not None else 0.0
 
+    def per_run_cap(self, deep: bool, override: float | None = None) -> float:
+        """The per-run cap in force: the caller's override, else the static or deep default."""
+        if override is not None:
+            return override
+        return self.deep_per_run_cap_usd if deep else self.per_run_cap_usd
+
     @contextlib.contextmanager
     def run_scope(self, run_id: str, deep: bool = False, per_run_cap_usd: float | None = None,
                   spent_usd: float = 0.0, resume: bool = False):
@@ -283,9 +289,7 @@ class CostMeter:
             over = f"daily cap ${self.daily_cap_usd:.2f} already reached on {self._day}"
         run = self._run_state.get()
         if run is not None:
-            cap = self.deep_per_run_cap_usd if run.deep else self.per_run_cap_usd
-            if run.per_run_cap_usd is not None:
-                cap = run.per_run_cap_usd
+            cap = self.per_run_cap(run.deep, run.per_run_cap_usd)
             label = "deep per_run" if run.deep else "per_run"
             run.spent_usd += cost
             if run.deep:
@@ -373,8 +377,7 @@ class CostMeter:
         exchanges = total_exchanges if total_exchanges is not None else len(probe_ids) * iterative_rounds
         estimated = per_exchange * exchanges
 
-        default_cap = self.deep_per_run_cap_usd if deep else self.per_run_cap_usd
-        cap = per_run_cap_override if per_run_cap_override is not None else default_cap
+        cap = self.per_run_cap(deep, per_run_cap_override)
         if estimated > cap:
             raise CostExceededError(
                 f"estimated cost ${estimated:.4f} > per_run_cap ${cap:.2f}",

@@ -458,6 +458,11 @@ async def run(req: RunRequest):
         emitted: list[dict] = []
         probes = _run_probes(req, anthropic_api_key)
         spent, started = 0.0, False
+        cap = _COST_METER.per_run_cap(req.mode == "deep", req.per_run_cap_usd)
+
+        def cost() -> dict:
+            return {"spent_usd": round(spent, 6), "per_run_cap_usd": cap}
+
         try:
             while True:
                 with _COST_METER.run_scope(
@@ -479,11 +484,12 @@ async def run(req: RunRequest):
                 "type": "coverage",
                 "coverage": build_coverage(load_probe_library(PROBES_DIR), emitted),
                 "summary": build_summary(emitted),
+                "cost": cost(),
             }
             yield f"data: {json.dumps(coverage_event)}\n\n".encode()
             yield b"event: end\ndata: {}\n\n"
         except Exception as exc:
-            payload = json.dumps({"detail": str(exc), "type": type(exc).__name__})
+            payload = json.dumps({"detail": str(exc), "type": type(exc).__name__, "cost": cost()})
             yield f"event: error\ndata: {payload}\n\n".encode()
         finally:
             await probes.aclose()
