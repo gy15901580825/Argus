@@ -13,9 +13,10 @@ from urllib.parse import unquote, urlsplit
 import yaml
 
 
-MAX_BYTES = 2 * 1024 * 1024
-MAX_DEPTH = 64
-MAX_NODES = 50_000
+MAX_BYTES = 4 * 1024 * 1024
+MAX_DEPTH = 128
+MAX_NODES = 4_000_000
+MAX_YAML_EVENTS = 3 * MAX_NODES
 METHODS = frozenset({"get", "post", "put", "patch", "delete", "head", "options", "trace", "query"})
 
 
@@ -178,13 +179,15 @@ class _Reader:
                 raise DocumentError("Document symlinks are not allowed")
         try:
             info = file.stat()
-            if not stat.S_ISREG(info.st_mode) or info.st_size + self.bytes > MAX_BYTES:
-                raise DocumentError("Document byte limit exceeded or file is not regular")
+            if not stat.S_ISREG(info.st_mode):
+                raise DocumentError("Document file is not regular")
+            if info.st_size + self.bytes > MAX_BYTES:
+                raise DocumentError(f"Document byte limit exceeded (MAX_BYTES={MAX_BYTES}, observed={info.st_size + self.bytes})")
             with file.open("rb") as handle:
                 raw = handle.read(MAX_BYTES - self.bytes + 1)
             self.bytes += len(raw)
             if self.bytes > MAX_BYTES:
-                raise DocumentError("Document byte limit exceeded")
+                raise DocumentError(f"Document byte limit exceeded (MAX_BYTES={MAX_BYTES}, observed={self.bytes})")
             text = raw.decode("utf-8")
             if file.suffix.lower() == ".json":
                 data = json.loads(text, object_pairs_hook=_unique)
@@ -199,8 +202,10 @@ class _Reader:
                         depth += 1
                     elif isinstance(event, (yaml.MappingEndEvent, yaml.SequenceEndEvent)):
                         depth -= 1
-                    if depth > MAX_DEPTH or count > MAX_NODES * 3:
-                        raise DocumentError("Document structure limit exceeded")
+                    if depth > MAX_DEPTH:
+                        raise DocumentError(f"YAML depth limit exceeded (MAX_DEPTH={MAX_DEPTH}, observed={depth})")
+                    if count > MAX_YAML_EVENTS:
+                        raise DocumentError(f"YAML event limit exceeded (MAX_YAML_EVENTS={MAX_YAML_EVENTS}, observed={count})")
                 data = yaml.load(text, Loader=_SafeLoader)
         except (OSError, UnicodeError, yaml.YAMLError, json.JSONDecodeError, RecursionError) as exc:
             raise DocumentError(f"Cannot parse local document ({type(exc).__name__})") from None
@@ -241,8 +246,10 @@ class _Reader:
     def expand(self, value, file, source_pointer, output_pointer="", stack=(), depth=0,
                role: _Role | _NamedMap = _Role.DOCUMENT):
         self.nodes += 1
-        if self.nodes > MAX_NODES or depth > MAX_DEPTH:
-            raise DocumentError("Expanded document structure limit exceeded")
+        if self.nodes > MAX_NODES:
+            raise DocumentError(f"Expanded document node limit exceeded (MAX_NODES={MAX_NODES}, observed={self.nodes})")
+        if depth > MAX_DEPTH:
+            raise DocumentError(f"Expanded document depth limit exceeded (MAX_DEPTH={MAX_DEPTH}, observed={depth})")
         source = Source(file.relative_to(self.root).as_posix(), source_pointer)
         self.sources[output_pointer] = source
         if isinstance(value, dict):

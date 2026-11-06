@@ -323,6 +323,8 @@ For local version 2 runs with undo requests or tracked created resources, [run.j
 
 `draft-target` prepares a transport v2 draft and review checklist from a local OpenAPI 3.0, 3.1 or 3.2 JSON/YAML file. The default mode uses your existing text-model configuration for one bounded proposal. `--no-model` uses only deterministic extraction and selection. Without `--verify-local`, neither mode sends a target request or resolves target credentials and environment bindings. Local verification uses only an isolated loopback fake with synthetic inputs. **No target request does not mean no model request.** Use `--no-model` for fully offline drafting.
 
+Local OpenAPI loading is bounded to 4 MiB of original input bytes across unique local files, 4,000,000 expansion calls, and depth 128. Expansion calls include reference wrappers and every expansion of a reused reference; depth includes reference hops. YAML parsing also has a per-file budget of 12,000,000 events and container depth 128. Exceeding a bound reports its name, configured value, and observed value. These finite limits do not guarantee that every document below them can produce a runnable draft.
+
 `draft-target` is experimental. Drafts require human review. On 2026-11-05, no evaluated real target produced a runnable draft without edits. Asynchronous APIs and very large documents are known limits.
 
 ```bash
