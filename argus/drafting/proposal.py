@@ -8,7 +8,7 @@ from argus import llm
 from argus.cost_meter import CostMeter, CostExceededError, estimate_call_usd
 
 from .draft import (
-    Binding, DraftChoices, Gap, OperationSelection, ReplyPresence, _binding_schema, _identifier, _object_schema,
+    Binding, DraftChoices, Gap, OperationSelection, ReplyPresence, _binding_schema, _metadata, _object_schema,
     _read_schemas, _unsupported_reads, choose_without_model, choices_from_selection,
 )
 from .openapi import OperationCatalog, pointer_child
@@ -48,7 +48,7 @@ def _reference_index(catalog):
                 if re.search(r"key|token|password|secret|auth|credential", name, re.I):
                     continue
                 values = field.get("enum") if isinstance(field, dict) else None
-                if role != "prompt" and _identifier(name, field):
+                if role != "prompt" and _metadata(name, field):
                     continue
                 # A documented value set is a fixed input or a state, never the agent's answer.
                 if role != "completion" and values:
@@ -177,9 +177,10 @@ def _refusals(values):
     return tuple({"model": r.model, "input_tokens": r.input_tokens, "output_tokens": r.output_tokens} for r in values)
 
 
-async def propose_choices(catalog: OperationCatalog, *, operation=None, server_origin=None,
+async def propose_choices(catalog: OperationCatalog, *, operation=None, server_origin=None, poll_operation=None,
                           intent="Ask an agent a question, optionally with third-party material.") -> ProposalResult:
-    baseline = choose_without_model(catalog, operation=operation, server_origin=server_origin, intent=intent)
+    baseline = choose_without_model(catalog, operation=operation, server_origin=server_origin,
+                                    poll_operation=poll_operation, intent=intent)
     configured = None
     actual_model = None
     usage = None
@@ -251,7 +252,8 @@ async def propose_choices(catalog: OperationCatalog, *, operation=None, server_o
         selection = parse_proposal(output.text, catalog)
         if operation is not None and selection.operation != operation:
             raise ProposalError("model_operation_conflict")
-        choices = choices_from_selection(catalog, selection, operation=operation, server_origin=server_origin, intent=intent)
+        choices = choices_from_selection(catalog, selection, operation=operation, server_origin=server_origin,
+                                         poll_operation=poll_operation, intent=intent)
     except ProposalError as exc:
         error_type = type(exc).__name__
         return finish("rejected", exc.code)

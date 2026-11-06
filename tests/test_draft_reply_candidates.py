@@ -8,8 +8,8 @@ from argus.cli.__main__ import main
 from argus.drafting.draft import ReplyPresence, choices_from_selection, choose_without_model, compile_draft
 from argus.drafting.openapi import catalog_operations, load_openapi
 from argus.drafting.proposal import ProposalError, _reference_index, parse_proposal, propose_choices
-from test_draft_bound_schemas import required_body_field, response_schema, scenario_file, verify_cli
-from test_draft_target import agent_document, input_file
+from test_draft_bound_schemas import gap_file, required_body_field, response_schema, scenario_file, verify_cli
+from test_draft_target import agent_document, input_file, invoke
 from test_draft_target_model import proposal_document_choices, proposed_document, stub_model  # noqa: F401
 
 
@@ -218,3 +218,56 @@ def test_verify_local_accepts_every_constraint_the_drafter_accepts(keyword, valu
     assert module._schema_supported(schema, value="sample")
     assert module._schema_valid("sample", schema)
     assert not module._schema_valid(7, schema)
+
+
+@pytest.mark.parametrize("name, schema", [
+    ("status", {"type": "string"}), ("state", {"type": "string"}), ("createdAt", {"type": "string"}),
+    ("updatedAt", {"type": "string"}), ("finished_at", {"type": "string"}), ("COMPLETED_AT", {"type": "string"}),
+    ("text", {"type": "string", "format": "date-time"}),
+])
+def test_lifecycle_and_timestamp_fields_are_never_reply_candidates(tmp_path, name, schema):
+    document = agent_document()
+    fields = response_schema(document)["properties"]
+    fields.clear()
+    fields[name] = schema
+    catalog = catalog_for(tmp_path, document)
+    assert _reference_index(catalog)["ask"]["reply"] == {}
+    pointer = "/paths/~1ask/post/responses/200/content/application~1json/schema/properties/" + name
+    with pytest.raises(ProposalError) as error:
+        parse_proposal(json.dumps({"operation": "ask", "prompt": "/paths/~1ask/post/requestBody/content/application~1json/schema/properties/question",
+                                   "reply": pointer, "completion": None}), catalog)
+    assert error.value.code == "model_field_unknown"
+
+
+@pytest.mark.parametrize("name", ["format", "chat", "data", "statusText", "estate"])
+def test_names_that_only_contain_lifecycle_words_stay_reply_candidates(tmp_path, name):
+    document = agent_document()
+    fields = response_schema(document)["properties"]
+    fields.clear()
+    fields[name] = {"type": "string"}
+    roles = _reference_index(catalog_for(tmp_path, document))["ask"]
+    assert [binding.name for binding in roles["reply"].values()] == [name]
+
+
+def test_enum_status_stays_a_completion_candidate(tmp_path):
+    roles = _reference_index(catalog_for(tmp_path, agent_document()))["ask"]
+    assert [binding.name for binding in roles["completion"].values()] == ["status"]
+
+
+def test_sync_response_with_only_status_and_timestamp_blocks_on_the_reply(tmp_path):
+    document = agent_document()
+    fields = response_schema(document)["properties"]
+    fields.clear()
+    fields.update({"status": {"type": "string"}, "createdAt": {"type": "string", "format": "date-time"}})
+    result, out = invoke(tmp_path, document)
+    assert result.exit_code == 3, result.output
+    assert not out.exists()
+    assert "reply_binding_missing" in {gap["code"] for gap in gap_file(out)["gaps"] if gap["blocking"]}
+
+
+def test_sync_answer_with_a_timestamp_format_is_not_bound(tmp_path):
+    document = agent_document()
+    response_schema(document)["properties"]["answer"]["format"] = "date-time"
+    result, out = invoke(tmp_path, document)
+    assert not out.exists()
+    assert "reply_binding_missing" in {gap["code"] for gap in gap_file(out)["gaps"] if gap["blocking"]}
