@@ -502,3 +502,15 @@ def test_status_enum_with_a_non_string_value_is_not_a_status(tmp_path):
     assert result.exit_code == 3, result.output
     assert not out.exists()
     assert blocking(out) & {"async_shape_unsupported", "completion_missing"}
+
+
+def test_cycle_under_an_opaque_object_reply_is_a_review_row(tmp_path):
+    document = async_document(result={"type": "object", "additionalProperties": {"$ref": "#/components/schemas/Value"}})
+    document["components"] = {"schemas": {"Value": {"type": "object", "properties": {
+        "list": {"type": "array", "items": {"$ref": "#/components/schemas/Value"}}}}}}
+    result, out = run(tmp_path, document)
+    assert result.exit_code == 3, result.output
+    transport = json.loads(out.read_text())["transport"]
+    assert transport["response"]["text"] == {"paths": ["$.result"], "cast": "string_or_json", "empty": "error"}
+    assert [(gap["blocking"], gap["source"]) for gap in gaps(out)["gaps"] if gap["code"] == "reference_cycle"] == [
+        (False, [{"file": "api.json", "pointer": "/components/schemas/Value/properties/list/items"}])]

@@ -532,13 +532,6 @@ def _choose(catalog, *, operation, server_origin, intent, poll_operation=None, s
             gaps.append(_gap(catalog, "/transport/request/url", "server_invalid",
                              "A server URL or origin override is unsafe or unresolved.", kind="unsupported_feature"))
     prompt = reply = completion = delivery = None
-    # One review row per document, because large vendor schemas serialize dozens of cycles.
-    cycles = sorted({issue.source for issue in doc.issues if issue.code == "reference_cycle"},
-                    key=lambda source: (source.file, source.pointer))
-    if cycles:
-        why = "1 reference cycle is not expanded." if len(cycles) == 1 else f"{len(cycles)} reference cycles are not expanded."
-        gaps.append(Gap("/transport", why, DECISIONS["reference_cycle"],
-                        "reference_cycle", "unsupported_feature", True, tuple(cycles)))
     for issue in doc.issues:
         if issue.code != "reference_cycle":
             why, decision = DOCUMENT_ISSUE_TEXT[issue.code]
@@ -740,6 +733,37 @@ def _poll_target(catalog, operation, choices):
         if item.name != _id_variable(item.submit.name):
             raise ValueError("Poll ID variable does not match its submit field")
     return poll, parameters
+
+
+def _cycle_gaps(catalog, read, operations):
+    """One blocking row for reference cycles whose stub is a schema the draft sends or reads, one review row for the rest.
+
+    Large vendor documents serialize dozens of cycles, so each row lists every source. A stub below a read schema stays
+    unread: `_keywords` ignores subschemas and an object reply is cast as opaque JSON."""
+    touched = set(read)
+    for op in operations:
+        bodies = [op.pointer + "/requestBody/content/application~1json/schema",
+                  *(op.pointer + "/responses/" + status + "/content/application~1json/schema" for status, _ in _success(op) or ())]
+        for body in (body for body in bodies if body in catalog.document.sources):
+            touched.add(body)
+            schema = _at(catalog, body)
+            properties, required = (schema.get("properties"), schema.get("required")) if isinstance(schema, dict) else (None, None)
+            if isinstance(properties, dict) and isinstance(required, list):
+                touched.update(pointer_child(body + "/properties", name) for name in properties if name in required)
+    cycles = [issue for issue in catalog.document.issues if issue.code == "reference_cycle"]
+    blocked = {issue.source for issue in cycles if issue.at in touched}
+    other = {issue.source for issue in cycles} - blocked
+    gaps = []
+    if blocked:
+        why = ("1 reference cycle lies in a schema" if len(blocked) == 1 else f"{len(blocked)} reference cycles lie in schemas") + " this draft sends or reads."
+        gaps.append(Gap("/transport", why, DECISIONS["reference_cycle"], "reference_cycle", "unsupported_feature", True,
+                        tuple(sorted(blocked, key=lambda source: (source.file, source.pointer)))))
+    if other:
+        why = (("1 reference cycle lies" if len(other) == 1 else f"{len(other)} reference cycles lie")
+               + " outside the schemas this draft sends or reads and " + ("is" if len(other) == 1 else "are") + " not expanded.")
+        gaps.append(Gap("/transport", why, "Confirm that the draft never needs these cyclic schemas.", "reference_cycle",
+                        "unsupported_feature", False, tuple(sorted(other, key=lambda source: (source.file, source.pointer)))))
+    return gaps
 
 
 def _unsafe_path(path):
@@ -1002,7 +1026,12 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
         gaps.append(Gap("/transport", "Schemas this draft binds carry constraints it does not check: " + names + ".",
                         DECISIONS["schema_constraints_unchecked"], "schema_constraints_unchecked",
                         "unsupported_feature", False, tuple(sources)))
-    gaps = tuple(sorted(set(gaps), key=lambda gap: (gap.field, gap.code)))
+    # Decided last, once every schema the draft reads is known.
+    cycle_gaps = _cycle_gaps(catalog, read, (operation, result) if operation else ())
+    gaps.extend(cycle_gaps)
+    if any(gap.blocking for gap in cycle_gaps):
+        spec = None
+    gaps = tuple(sorted(set(gaps), key=lambda gap: (gap.field, gap.code, not gap.blocking)))
     state = DraftState.NEEDS_INPUT if spec is None else DraftState.NEEDS_REVIEW if gaps else DraftState.READY
     return DraftArtifacts(state, spec, gaps, provenance)
 
