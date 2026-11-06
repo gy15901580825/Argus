@@ -64,8 +64,8 @@ def _json_body(raw):
 
 
 class StrictLoopbackPolicy(ExecutionPolicy):
-    def __init__(self, origin):
-        super().__init__(frozenset({origin}), (), frozenset())
+    def __init__(self, origin, env_names=frozenset()):
+        super().__init__(frozenset({origin}), (), frozenset(env_names))
         object.__setattr__(self, 'origin', origin)
         object.__setattr__(self, 'denied', False)
         object.__setattr__(self, 'dispatches', 0)
@@ -493,8 +493,9 @@ async def verify_local(spec, *, catalog=None, scenario: ScenarioV1 | None = None
         transport = build_target(copied).spec.transport
         if not isinstance(transport, TransportSpecV2): raise ValueError('version 2 transport required')
         fake.material_required = fake.material_required or material_binding(transport) != 'none'
-        policy = StrictLoopbackPolicy(fake.origin)
-        evidence = await execute_transport(transport, policy=policy, environ={}, deadline_at=active_deadline)
+        environ = dict(scenario.environment) if scenario else {}
+        policy = StrictLoopbackPolicy(fake.origin, environ)
+        evidence = await execute_transport(transport, policy=policy, environ=environ, deadline_at=active_deadline)
         execution = _summary(evidence)
         if policy.denied: fake.fail('unsafe_location')
         if policy.budget_exceeded: fake.fail('verification_budget_exceeded')

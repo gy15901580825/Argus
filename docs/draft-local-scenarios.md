@@ -1,6 +1,6 @@
 # Verify a draft locally
 
-`draft-target --verify-local` executes one transport v2 attempt on a temporary copy. Every configured request origin becomes the same randomly assigned `http://127.0.0.1:PORT`, including provision, setup, polling, abort, undo and confirmation. Authentication is removed. Original secret references and environment values are not resolved. The fake and copy are discarded when verification ends. The delivered target file remains unchanged.
+`draft-target --verify-local` executes one transport v2 attempt on a temporary copy. Every configured request origin becomes the same randomly assigned `http://127.0.0.1:PORT`, including provision, setup, polling, abort, undo and confirmation. Authentication is removed. Original secret references and process environment values are not resolved; only a version 2 scenario's synthetic values are used. The fake and copy are discarded when verification ends. The delivered target file remains unchanged.
 
 ```bash
 argus-probe draft-target --openapi api.json --out target.json \
@@ -61,6 +61,28 @@ Resources have `id`, `initial` and `cleanup`. States are `absent`, `live` and `p
 `expect.resources` contains exactly one `{ "id": "file", "final": "absent" }` row per resource. A declared delete must end absent. Query DELETE and optional confirmation GET are observed only when the transport sends them. Existing v2 confirmation is a fallback for an unexpected primary cleanup status, not an extra request after every successful DELETE. A pause is an exceptional branch and does not count as completed business or deletion.
 
 For documented lack of deletion, use `cleanup: "documented_no_delete"`, record the expected live residue, and list the independently required gap code in `expect.required_gaps`. Verification requires that code in the draft's existing gap list. It reports `business_only` and incomplete cleanup, and never invents a DELETE. An unrelated transport leftover or undeleted resource with a declared delete fails `cleanup_left_resources`.
+
+## Version 2
+
+Version 2 accepts every version 1 field plus a required `environment` object. It maps non-secret input names to synthetic string values, so a draft that sends `TARGET_INPUT_*` environment bindings can run against the fake. Version 1 files keep working unchanged and still reject `environment`.
+
+```json
+{
+  "version": 2,
+  "environment": {"TARGET_INPUT_URL": "https://material.invalid/doc"},
+  "source": {"document": "api.json", "pointers": ["/paths/~1ask/post"]},
+  "resources": [],
+  "operations": [{
+    "id": "ask", "method": "POST", "path": "/ask", "role": "invoke",
+    "calls": {"min": 1, "max": 1},
+    "request": [{"check": "prompt_bound", "at": {"kind": "json", "pointer": "/goal"}, "equals": "ping"}],
+    "replies": [{"status": 200, "body": {"status": "COMPLETED", "result": "done"}, "effects": []}]
+  }],
+  "expect": {"outcome": "succeeded", "reply": "done", "resources": [], "required_gaps": []}
+}
+```
+
+Names must start with `TARGET_INPUT_`, use uppercase letters, digits and underscores, and contain none of `key`, `token`, `secret`, `password`, `auth`, `header` or `cookie`. Values are nonempty text up to 1024 bytes without control characters. At most 32 names are allowed. The fake admits only these names; the process environment is never read. Values are synthetic and should not be production data.
 
 ## Evidence and limits
 

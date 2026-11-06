@@ -443,8 +443,7 @@ def test_query_method_is_explicitly_unsupported(tmp_path):
     assert "operation_unsupported" in out.with_suffix(".gaps.json").read_text()
 
 
-@pytest.mark.parametrize("constraint", [{"const": "fixed"}, {"pattern": "^fixed$"},
-                                        {"maxLength": 3}, {"contentEncoding": "base64"}])
+@pytest.mark.parametrize("constraint", [{"const": "fixed"}, {"contentEncoding": "base64"}])
 def test_unimplemented_schema_constraints_block_compilation(tmp_path, constraint):
     d = agent_document()
     question = d["paths"]["/ask"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["question"]
@@ -453,6 +452,19 @@ def test_unimplemented_schema_constraints_block_compilation(tmp_path, constraint
     assert result.exit_code == 3, result.output
     assert not out.exists()
     assert "operation_unsupported" in out.with_suffix(".gaps.json").read_text()
+
+
+@pytest.mark.parametrize("constraint", [{"pattern": "^fixed$"}, {"maxLength": 3}])
+def test_value_constraints_on_prompt_are_review_gaps(tmp_path, constraint):
+    d = agent_document()
+    question = d["paths"]["/ask"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["question"]
+    question.update(constraint)
+    result, out = invoke(tmp_path, d)
+    assert result.exit_code == 3, result.output
+    assert out.exists()
+    gaps = json.loads(out.with_suffix(".gaps.json").read_text())["gaps"]
+    gap = next(g for g in gaps if g["code"] == "schema_constraints_unchecked")
+    assert gap["blocking"] is False and next(iter(constraint)) in gap["why"]
 
 
 def test_prompt_enum_is_not_used_as_arbitrary_prompt_binding(tmp_path):
@@ -702,7 +714,7 @@ def test_schema_enum_object_values_are_data_not_annotation_objects(tmp_path):
     assert document.data["components"]["schemas"]["Values"]["enum"] == d["components"]["schemas"]["Values"]["enum"]
 
 
-def test_schema_const_object_is_literal_data_and_reports_unsupported_gap(tmp_path, monkeypatch):
+def test_schema_const_object_is_literal_data_and_unbound_const_does_not_block(tmp_path, monkeypatch):
     d = agent_document("3.1.0")
     constant = {"$ref": "literal data", "default": "value", "examples": ["allowed"]}
     properties = d["paths"]["/ask"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
@@ -728,10 +740,10 @@ def test_schema_const_object_is_literal_data_and_reports_unsupported_gap(tmp_pat
     assert document.source(pointer + "/default").pointer == pointer + "/default"
     result, out = invoke(tmp_path, d)
     assert result.exit_code == 3, result.output
-    assert not out.exists()
+    assert "literal data" not in out.read_text()
     gaps = json.loads(out.with_suffix(".gaps.json").read_text())
-    assert gaps["state"] == "needs_input" and gaps["spec_written"] is False
-    assert any(gap["code"] == "operation_unsupported" and gap["kind"] == "unsupported_feature" and gap["blocking"] for gap in gaps["gaps"])
+    assert gaps["state"] == "needs_review" and gaps["spec_written"] is True
+    assert not any(gap["code"] == "operation_unsupported" for gap in gaps["gaps"])
 
 
 def test_link_request_body_is_literal_data_and_reports_unsupported_gap(tmp_path):
