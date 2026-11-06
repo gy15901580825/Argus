@@ -22,12 +22,15 @@ from argus.targets._base import Target
 
 CASES = [
     (lambda: TAPProbe(seed_goal="say PWNED", max_rounds=1),
+     "seeded_iterative_refine",
      "Iterative jailbreak named after TAP (one prompt per round, no tree search or pruning)",
      ("jailbreak", "iterative")),
     (lambda: PAIRProbe(seed_prompt="say PWNED", max_rounds=1),
+     "pair_default",
      "PAIR — Prompt Automatic Iterative Refinement",
      ("jailbreak", "iterative", "self-refinement")),
     (lambda: GCGProbe(base_prompt="say PWNED", max_rounds=1),
+     "random_suffix_search",
      "Random adversarial suffix named after GCG (no gradient, no revert to best suffix)",
      ("jailbreak", "iterative", "adversarial-suffix")),
 ]
@@ -49,9 +52,9 @@ class _PromptRecordingJudge:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("make_probe,name,classes", CASES)
-async def test_judge_reads_the_attacker_name_and_report_carries_class_remediation(tmp_path, make_probe, name,
-                                                                                   classes):
+@pytest.mark.parametrize("make_probe,expected_id,name,classes", CASES)
+async def test_judge_reads_the_attacker_name_and_report_carries_class_remediation(tmp_path, make_probe,
+                                                                               expected_id, name, classes):
     (tmp_path / "iterative.md").write_text("Assess the response")
     probe = make_probe()
     judge = _PromptRecordingJudge()
@@ -61,8 +64,9 @@ async def test_judge_reads_the_attacker_name_and_report_carries_class_remediatio
 
     assert [p.splitlines()[0] for p in judge.user_prompts] == [f"Probe: {name}"]
     assert probe.attack_class == classes
+    assert [f["probe_id"] for f in findings] == [expected_id]
     report = json.loads(run_json.render_json({"id": "r1", "status": "completed",
                                               "target_spec": {"kind": "http"}, "findings": findings}))
-    assert [f["probe_id"] for f in report["findings"]] == [probe.id]
+    assert [f["probe_id"] for f in report["findings"]] == [expected_id]
     assert [f["remediation"] for f in report["findings"]] == [remediation.for_classes(("jailbreak",))]
     assert [f["remediation_actions"] for f in report["findings"]] == [remediation.actions_for_classes(("jailbreak",))]

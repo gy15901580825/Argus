@@ -76,6 +76,7 @@ def test_readme_probe_breakdown_sums_to_the_stated_total():
 
 # The intro and the architecture diagram repeat the total; both went stale at 219.
 _REPEATED_TOTALS = {
+    "headline": r"Argus runs\s+(\d+)\s+red-team",
     "intro": r"library of\s+(\d+)\s+adversarial",
     "architecture diagram": r"(\d+)\s+YAML\s",
 }
