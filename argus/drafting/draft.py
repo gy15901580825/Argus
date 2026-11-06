@@ -38,6 +38,8 @@ DECISIONS = {
     "cleanup_mapping_missing": "Select the documented cleanup relation; no cleanup request is generated yet.",
     "business_input_missing": "Provide an explicit binding for the required business field; examples are not production values.",
     "parameter_binding_required": "Supply the non-secret parameter through the generated TARGET_INPUT environment binding.",
+    "body_binding_required": "Supply the required non-secret body field through the generated TARGET_INPUT environment binding; examples are not production values.",
+    "schema_constraints_unchecked": "Confirm that values sent and received satisfy these schema constraints; the draft does not check them.",
     "optional_inputs_unbound": "Decide whether the omitted optional fields or material are required for your use case.",
     "reference_cycle": "Provide a bounded schema without cyclic references.",
 }
@@ -184,40 +186,57 @@ def _type(schema):
     return value
 
 
-def _schema_supported(schema):
-    fields = {"type", "properties", "required", "items", "enum", "nullable",
-              "additionalProperties", "description", "title", "deprecated", "readOnly", "writeOnly"}
-    if not isinstance(schema, dict) or set(schema) - fields:
-        return False
-    if _type(schema) not in {"object", "array", "string", "integer", "number", "boolean", "null"}:
-        return False
-    properties = schema.get("properties", {})
-    if not isinstance(properties, dict) or any(not _schema_supported(item) for item in properties.values()):
-        return False
-    if "items" in schema and not _schema_supported(schema["items"]):
-        return False
-    if "additionalProperties" in schema and not isinstance(schema["additionalProperties"], bool):
-        return False
-    return True
+SCHEMA_KEYWORDS = frozenset({"type", "properties", "required", "items", "enum", "nullable", "additionalProperties",
+                             "description", "title", "deprecated", "readOnly", "writeOnly"})
+# Value constraints the draft neither encodes nor checks; on a schema it reads they become one review gap.
+CONSTRAINT_KEYWORDS = frozenset({"format", "minLength", "maxLength", "pattern", "minimum", "maximum",
+                                 "exclusiveMinimum", "exclusiveMaximum", "multipleOf", "minItems", "maxItems",
+                                 "uniqueItems", "minProperties", "maxProperties"})
 
 
-def _unsupported(value):
-    if isinstance(value, dict):
-        for key, item in value.items():
-            if key == "schema":
-                if not _schema_supported(item):
-                    return True
-            elif key == "content" and isinstance(item, dict):
-                if any(isinstance(media, dict) and "encoding" in media for media in item.values()):
-                    return True
-                if _unsupported(item):
-                    return True
-            elif _unsupported(item):
-                return True
-        return False
-    if isinstance(value, list):
-        return any(_unsupported(item) for item in value)
-    return False
+def _at(catalog, pointer):
+    value = catalog.document.data
+    for key in pointer.split("/")[1:]:
+        value = value[key.replace("~1", "/").replace("~0", "~")]
+    return value
+
+
+def _keywords(schema):
+    """Unsupported and unchecked keywords of one schema the draft reads, ignoring its subschemas."""
+    if not isinstance(schema, dict):
+        return ("schema",), ()
+    unsupported = set(schema) - SCHEMA_KEYWORDS - CONSTRAINT_KEYWORDS
+    unchecked = set(schema) & CONSTRAINT_KEYWORDS
+    extra = schema.get("additionalProperties", False)
+    if isinstance(extra, dict):
+        unchecked.add("additionalProperties")
+    elif not isinstance(extra, bool):
+        unsupported.add("additionalProperties")
+    return tuple(sorted(unsupported)), tuple(sorted(unchecked))
+
+
+def _read_schemas(catalog, pointer):
+    """The bound property schema at pointer and the object schema that holds it."""
+    container = pointer.rsplit("/properties/", 1)[0]
+    return {item: _at(catalog, item) for item in (pointer, container)}
+
+
+def _unsupported_reads(catalog, read):
+    found = {}
+    for pointer, schema in read.items():
+        unsupported = _keywords(schema)[0]
+        if unsupported:
+            found[pointer] = unsupported
+        media = pointer.removesuffix("/schema")
+        if media != pointer and "encoding" in _at(catalog, media):
+            found[media] = ("encoding",)
+    return found
+
+
+def _unsupported_gap(catalog, pointer, keywords):
+    return _gap(catalog, "/transport/response" if "/responses/" in pointer else "/transport/request", "operation_unsupported",
+                "A schema this draft reads uses unsupported keywords: " + ", ".join(keywords) + ".",
+                pointer=pointer, kind="unsupported_feature")
 
 
 def choose_without_model(catalog: OperationCatalog, *, operation=None, server_origin=None,
@@ -292,7 +311,7 @@ def _choose(catalog, *, operation, server_origin, intent, selection=None):
             gaps.append(_gap(catalog, "/transport/request/url", "server_override_unsupported",
                              "Path or operation server overrides require an explicit flow decision.",
                              pointer=pointer, kind="unsupported_feature"))
-        if chosen.method != "POST" or _unsupported(op) or op.get("callbacks"):
+        if chosen.method != "POST" or op.get("callbacks"):
             gaps.append(_gap(catalog, "/transport/request", "operation_unsupported",
                              "This skeleton supports simple synchronous JSON POST operations.",
                              pointer=pointer, kind="unsupported_feature"))
@@ -396,9 +415,7 @@ def _binding_schema(catalog, operation, binding, role):
             or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", binding.name)
             or binding.basis not in {"proposal", "document_fact", "user_selection"}):
         raise ValueError("Choice references an unknown or unsupported operation field")
-    value = catalog.document.data
-    for key in binding.pointer.split("/")[1:]:
-        value = value[key.replace("~1", "/").replace("~0", "~")]
+    value = _at(catalog, binding.pointer)
     if _type(value) != "string" or value.get("readOnly") and role == "prompt" or value.get("writeOnly") and role != "prompt":
         raise ValueError("Choice field has an incompatible schema")
     if role == "completion" and (binding.value is None or binding.value not in value.get("enum", [])):
@@ -415,6 +432,7 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                   "validation": {"offline": "not_run"}}
     operation = next((op for op in catalog.operations if op.id == choices.operation), None)
     auth = None
+    read = {}
     if operation:
         try:
             auth = _auth(catalog, operation)
@@ -444,6 +462,7 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                                 code, "proposal", False, (catalog.document.source(choices.reply.pointer),)))
             elif binding:
                 _binding_schema(catalog, operation, binding, role)
+                read.update(_read_schemas(catalog, binding.pointer))
                 source = catalog.document.source(binding.pointer)
                 provenance["fields"][field] = {"source": [source.to_dict()], "basis": binding.basis}
                 if binding.basis == "proposal":
@@ -453,6 +472,8 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
             gaps.append(_gap(catalog, "/transport/auth", "authentication_binding_required",
                              "Bind the documented authentication scheme to TARGET_API_KEY before execution.",
                              pointer=operation.pointer, blocking=False))
+        gaps.extend(_unsupported_gap(catalog, pointer, keywords)
+                    for pointer, keywords in _unsupported_reads(catalog, read).items())
         cleanup = any(op.method == "DELETE" or re.search(r"cancel|pause", op.id, re.I) for op in catalog.operations)
         gaps.append(_gap(catalog, "/transport/lifecycle", "cleanup_mapping_missing" if cleanup else "cleanup_endpoint_missing",
                          "No cleanup relation is selected." if cleanup else "No cleanup endpoint is documented; decide whether this operation requires cleanup.",
@@ -498,6 +519,11 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                         or "content" in parameter or parameter.get("allowReserved")):
                     gaps.append(_gap(catalog, "/transport/request", "parameter_unsupported", "A required parameter needs an explicit supported binding.", pointer=parameter_pointer, kind="unsupported_feature"))
                     continue
+                schema_pointer = parameter_pointer + "/schema"
+                unsupported = _keywords(parameter["schema"])[0]
+                if unsupported:
+                    gaps.append(_unsupported_gap(catalog, schema_pointer, unsupported))
+                    continue
                 variable = "input_" + re.sub(r"[^a-zA-Z0-9_]", "_", name).lower()
                 if re.search(r"key|token|password|secret|auth", name, re.I):
                     gaps.append(_gap(catalog, "/transport/request", "credential_parameter_unsupported", "Credential parameters must use a supported authentication scheme.", pointer=parameter_pointer, kind="unsupported_feature"))
@@ -509,6 +535,7 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                     gaps.append(_gap(catalog, "/transport/request", "parameter_collision", "Required parameter bindings collide; select explicit names.", pointer=operation.pointer, kind="ambiguous_choice"))
                     continue
                 declarations[variable] = {"env": "TARGET_" + variable.upper()}
+                read[schema_pointer] = parameter["schema"]
                 if place == "query":
                     query[name] = {"var": variable}
                 else:
@@ -517,12 +544,28 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                 binding_field = "/transport/let/run/" + variable
                 provenance["fields"][binding_field] = {"source": [catalog.document.source(parameter_pointer).to_dict()], "basis": "non_secret_binding_required", "environment_name_basis": "policy_default"}
                 gaps.append(_gap(catalog, binding_field, "parameter_binding_required", "Supply the documented non-secret parameter through its environment binding.", pointer=parameter_pointer, blocking=False))
+            properties_pointer = operation.pointer + "/requestBody/content/application~1json/schema/properties"
             for name in required:
-                if name != choices.prompt.name:
-                    field_pointer = operation.pointer + "/requestBody/content/application~1json/schema/properties"
-                    gaps.append(_gap(catalog, "/transport/request/body", "business_input_missing", "A required business field has no documented value binding.", pointer=pointer_child(field_pointer, name) if name in request_schema["properties"] else operation.pointer))
+                if name == choices.prompt.name:
+                    continue
+                schema = request_schema["properties"].get(name)
+                field_pointer = pointer_child(properties_pointer, name) if schema is not None else operation.pointer
+                variable = "input_" + re.sub(r"[^a-zA-Z0-9_]", "_", name).lower()
+                if (_type(schema) != "string" or "enum" in schema or schema.get("readOnly") or _keywords(schema)[0]
+                        or not NAME_RE.fullmatch(variable) or any(word in variable for word in SECRET_WORDS + ("credential",))):
+                    gaps.append(_gap(catalog, "/transport/request/body", "business_input_missing", "A required business field has no documented value binding.", pointer=field_pointer))
+                    continue
+                if variable in declarations:
+                    gaps.append(_gap(catalog, "/transport/request", "parameter_collision", "Required parameter bindings collide; select explicit names.", pointer=operation.pointer, kind="ambiguous_choice"))
+                    continue
+                declarations[variable] = {"env": "TARGET_" + variable.upper()}
+                body[name] = {"var": variable}
+                read[field_pointer] = schema
+                binding_field = "/transport/let/run/" + variable
+                provenance["fields"][binding_field] = {"source": [catalog.document.source(field_pointer).to_dict()], "basis": "non_secret_binding_required", "environment_name_basis": "policy_default"}
+                gaps.append(_gap(catalog, binding_field, "body_binding_required", "Supply the required non-secret body field through its environment binding.", pointer=field_pointer, blocking=False))
             if any(name != choices.prompt.name and name not in required for name in request_schema["properties"]):
-                gaps.append(_gap(catalog, "/transport/request/body", "optional_inputs_unbound", "Optional request fields are omitted; this draft binds only the proposed prompt.", pointer=operation.pointer, blocking=False))
+                gaps.append(_gap(catalog, "/transport/request/body", "optional_inputs_unbound", "Optional request fields are omitted; this draft binds only the proposed prompt and required fields.", pointer=operation.pointer, blocking=False))
             if "{" in unbound_path:
                 gaps.append(_gap(catalog, "/transport/request/url", "path_binding_missing", "Path parameters are not declared.", pointer=operation.pointer))
             if not any(gap.blocking for gap in gaps):
@@ -548,6 +591,13 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                 provenance["fields"]["/transport/request/url"] = {"source": [catalog.document.source(operation.pointer).to_dict(), catalog.document.source(f"/servers/{server_index}/url").to_dict()], "basis": "document_path_and_selected_server"}
                 provenance["policy_defaults"] = {key: {"value": transport[key], "basis": "policy_default"} for key in ("timeout", "limits", "budget", "session")}
                 provenance["policy_defaults"]["request.headers"] = {"value": transport["request"]["headers"], "basis": "policy_default"}
+    unchecked = {pointer: _keywords(schema)[1] for pointer, schema in read.items() if _keywords(schema)[1]}
+    if unchecked:
+        names = ", ".join(sorted(set().union(*unchecked.values())))
+        sources = sorted((catalog.document.source(pointer) for pointer in unchecked), key=lambda source: (source.file, source.pointer))
+        gaps.append(Gap("/transport", "Schemas this draft binds carry constraints it does not check: " + names + ".",
+                        DECISIONS["schema_constraints_unchecked"], "schema_constraints_unchecked",
+                        "unsupported_feature", False, tuple(sources)))
     gaps = tuple(sorted(set(gaps), key=lambda gap: (gap.field, gap.code)))
     state = DraftState.NEEDS_INPUT if spec is None else DraftState.NEEDS_REVIEW if gaps else DraftState.READY
     return DraftArtifacts(state, spec, gaps, provenance)

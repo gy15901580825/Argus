@@ -20,7 +20,7 @@ from argus.drafting.scenario import read_scenario
 @click.option("--intent", default="Ask an agent a question, optionally with third-party material.", show_default=True)
 @click.option("--no-model", is_flag=True, help="Use only deterministic local document extraction.")
 @click.option("--verify-local", is_flag=True, help="Verify a temporary copy on an isolated loopback fake.")
-@click.option("--scenario", "scenario_path", type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Independent version-one scenario JSON for local semantic checks.")
+@click.option("--scenario", "scenario_path", type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Independent version 1 or 2 scenario JSON for local semantic checks.")
 def cmd_draft_target(input_path, out, operation, server_origin, intent, no_model, verify_local, scenario_path):
     """Draft a transport v2 target and review gaps from local OpenAPI 3.x."""
     if scenario_path is not None and not verify_local:

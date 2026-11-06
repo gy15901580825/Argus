@@ -9,7 +9,7 @@ from argus.cost_meter import CostMeter, CostExceededError, estimate_call_usd
 
 from .draft import (
     Binding, DraftChoices, Gap, OperationSelection, ReplyPresence, _binding_schema, _object_schema,
-    _unsupported, choose_without_model, choices_from_selection,
+    _read_schemas, _unsupported_reads, choose_without_model, choices_from_selection,
 )
 from .openapi import OperationCatalog, pointer_child
 
@@ -28,7 +28,7 @@ def _reference_index(catalog):
     for op in catalog.operations:
         roles = {"prompt": {}, "reply": {}, "completion": {}}
         index[op.id] = roles
-        if op.method != "POST" or _unsupported(op.data) or op.data.get("callbacks"):
+        if op.method != "POST" or op.data.get("callbacks"):
             continue
         schemas = []
         request = op.data.get("requestBody", {})
@@ -56,6 +56,8 @@ def _reference_index(catalog):
                 try:
                     _binding_schema(catalog, op, binding, role)
                 except (ValueError, TypeError):
+                    continue
+                if _unsupported_reads(catalog, _read_schemas(catalog, binding.pointer)):
                     continue
                 roles[role][binding.pointer] = binding
     return index

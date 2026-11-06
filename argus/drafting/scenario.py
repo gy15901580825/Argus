@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from argus.drafting.openapi import OperationCatalog
+from argus_transport.spec_v2 import ENV_NAME_RE, SECRET_WORDS
 
 
 MAX_SCENARIO_BYTES = 256 * 1024
@@ -79,6 +80,7 @@ class ScenarioV1:
     outcome: str
     reply: str | None
     required_gaps: tuple[str, ...]
+    environment: tuple[tuple[str, str], ...] = ()
 
 
 def invalid(message):
@@ -178,8 +180,18 @@ def parse_scenario(data, *, catalog: OperationCatalog | None = None) -> Scenario
             invalid('byte limit exceeded')
     except (TypeError, ValueError, RecursionError):
         invalid('invalid JSON structure')
-    _object(data, {'version', 'source', 'resources', 'operations', 'expect'})
-    if type(data['version']) is not int or data['version'] != 1: invalid('unsupported version')
+    if not isinstance(data, dict) or type(data.get('version')) is not int or data['version'] not in {1, 2}: invalid('unsupported version')
+    _object(data, {'version', 'source', 'resources', 'operations', 'expect'} | ({'environment'} if data['version'] == 2 else set()))
+    environment = ()
+    if data['version'] == 2:
+        values = data['environment']
+        if not isinstance(values, dict) or len(values) > 32: invalid('invalid synthetic environment')
+        for name, value in values.items():
+            # Synthetic values stand in for non-secret draft inputs only; credentials stay unresolved.
+            if not ENV_NAME_RE.fullmatch(name) or not re.fullmatch(r'TARGET_INPUT_[A-Z0-9_]+', name) or any(word in name.lower() for word in SECRET_WORDS):
+                invalid('synthetic environment admits only non-secret TARGET_INPUT names')
+            _text(value, limit=1024)
+        environment = tuple(values.items())
     source = _object(data['source'], {'document', 'pointers'})
     _text(source['document'], limit=2048)
     for pointer in _list(source['pointers'], 64): _text(pointer, limit=2048)
@@ -277,7 +289,7 @@ def parse_scenario(data, *, catalog: OperationCatalog | None = None) -> Scenario
     if sum(op.maximum for op in operations) > MAX_REQUESTS or total_replies > 64: invalid('request or reply limit exceeded')
     if any(op.role == 'upload' for op in operations) and not any(c.check == 'resource_identity' for op in operations if op.role == 'invoke' for c in op.request):
         invalid('upload requires invoke reference check')
-    return ScenarioV1(source, tuple(operations), tuple(resources), expected['outcome'], expected['reply'], required_gaps)
+    return ScenarioV1(source, tuple(operations), tuple(resources), expected['outcome'], expected['reply'], required_gaps, environment)
 
 
 def _unique(pairs):

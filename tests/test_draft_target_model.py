@@ -204,6 +204,25 @@ async def test_single_model_proposal_records_usage_cost_limits_and_sources(tmp_p
     assert artifacts.provenance["fields"]["/transport/request/body"]["basis"] == "proposal"
 
 
+async def test_unbound_schema_keywords_do_not_hide_model_candidates(tmp_path, stub_model):
+    from argus.drafting.proposal import propose_choices
+    calls, _, _ = stub_model
+    doc = proposed_document()
+    op = doc["paths"]["/ask"]["post"]
+    op["requestBody"]["content"]["application/json"]["schema"]["properties"]["callback"] = {"type": "string", "format": "uri"}
+    op["responses"]["400"] = {"description": "Bad request", "content": {"application/json": {"schema": {
+        "type": "object", "properties": {"code": {"type": "string", "pattern": "^E[0-9]+$"}}}}}}
+    catalog = catalog_operations(load_openapi(input_file(tmp_path, doc)))
+    result = await propose_choices(catalog)
+    choices = proposal_document_choices()
+    assert len(calls) == 1
+    assert choices["prompt"] in calls[0]["user"] and choices["reply"] in calls[0]["user"]
+    assert result.disclosure.to_dict()["status"] == "accepted"
+    artifacts = compile_draft(catalog, result.choices)
+    assert artifacts.spec["transport"]["request"]["body"]["json"] == {"utterance": {"context": "prompt"}}
+    assert not any(g.code in {"operation_unsupported", "schema_constraints_unchecked"} for g in artifacts.gaps)
+
+
 @pytest.mark.parametrize("reason", ["no_config", "missing_credentials"])
 async def test_model_unavailable_falls_back_exactly_with_explicit_gap(tmp_path, monkeypatch, reason):
     from argus import llm
@@ -435,17 +454,22 @@ async def test_explicit_operation_cannot_be_overridden_by_valid_model_references
     assert any(g.code == "model_operation_conflict" for g in result.choices.gaps)
 
 
-async def test_business_input_gap_remains_after_accepted_model_selection(tmp_path, stub_model):
+@pytest.mark.parametrize("kind", ["integer", "string"])
+async def test_business_input_gap_remains_after_accepted_model_selection(tmp_path, stub_model, kind):
     from argus.drafting.proposal import propose_choices
     doc = proposed_document()
     request = doc["paths"]["/ask"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-    request["properties"]["organization"] = {"type": "string"}
+    request["properties"]["organization"] = {"type": kind}
     request["required"].append("organization")
     catalog = catalog_operations(load_openapi(input_file(tmp_path, doc)))
     result = await propose_choices(catalog)
     artifacts = compile_draft(catalog, result.choices)
-    assert artifacts.spec is None
-    assert any(g.code == "business_input_missing" and g.blocking for g in artifacts.gaps)
+    if kind == "integer":
+        assert artifacts.spec is None
+        assert any(g.code == "business_input_missing" and g.blocking for g in artifacts.gaps)
+    else:
+        assert artifacts.spec["transport"]["let"]["run"] == {"input_organization": {"env": "TARGET_INPUT_ORGANIZATION"}}
+        assert any(g.code == "body_binding_required" and not g.blocking for g in artifacts.gaps)
 
 
 async def test_conservative_estimate_includes_configured_fallback(tmp_path, monkeypatch):
