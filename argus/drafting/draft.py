@@ -17,7 +17,7 @@ from argus_transport import TransportSpecV2
 from argus_transport.models import AuthSpec, path as transport_path
 from argus_transport.spec_v2 import CONTEXT_KEYS_V2, NAME_RE, SECRET_WORDS
 
-from .bindings import DraftInputs, UserField
+from .bindings import DraftInputs, UserField, UserStep
 from .openapi import OperationCatalog, Source, pointer_child
 
 
@@ -56,6 +56,7 @@ DECISIONS = {
     "field_path_unwritable": "Document another field for this role; no transport path can name an empty field or one that contains a quote, backslash or line break.",
     "binding_user_supplied": "Confirm that this bindings file entry is right; the draft took it from the file, not the document.",
     "binding_unresolved": "Correct the bindings file entry so it names a documented field whose schema accepts it.",
+    "setup_undo_proposed": "Confirm that this DELETE removes what the step creates and that the captured field identifies it.",
 }
 
 # Fixed word table for no-model status classification; every result is still a proposal.
@@ -148,6 +149,42 @@ class OperationSelection:
 
 
 @dataclass(frozen=True)
+class StepValue:
+    """A checked value of a setup step or its undo: where it is sent, its expression and the schema that accepts it."""
+    location: str  # body, path or query
+    path: tuple[str, ...]  # body path, or the one parameter name
+    expression: dict
+    leaf: str
+    source: Source | None  # None when the draft proposed it
+
+
+@dataclass(frozen=True)
+class StepCapture:
+    name: str
+    path: tuple[str, ...]
+    leaf: str
+    source: Source | None  # None when the draft proposed it
+
+
+@dataclass(frozen=True)
+class StepUndo:
+    operation: str
+    values: tuple[StepValue, ...]
+    source: Source | None  # None when the draft proposed it
+
+
+@dataclass(frozen=True)
+class SetupStep:
+    """A bindings file step the document accepts, ready to compile into the lifecycle."""
+    entry: UserStep
+    field: str  # its transport pointer, /transport/lifecycle/<scope>/<index>
+    values: tuple[StepValue, ...]
+    capture: tuple[StepCapture, ...]
+    undo: StepUndo | None
+    reads: tuple[str, ...]  # every schema pointer its values, parameters and captures were checked against
+
+
+@dataclass(frozen=True)
 class DraftChoices:
     operation: str | None
     server: str | None
@@ -160,6 +197,7 @@ class DraftChoices:
     delivery: PollChoice | None = None
     inputs: DraftInputs | None = None
     values: tuple[UserField, ...] = ()  # bindings file request values that resolved against the document
+    steps: tuple[SetupStep, ...] = ()  # bindings file setup steps that resolved against the document
 
 
 @dataclass(frozen=True)
@@ -546,6 +584,240 @@ def _user_value(catalog, operation, entry, prompt, gaps):
     return True
 
 
+STEP_LITERAL_KINDS = {**LITERAL_KINDS, list: ("array",), dict: ("object",)}
+GENERATED_KINDS = {"uuid4": ("string",), "now_iso8601": ("string",), "now_unix_ms": ("integer", "number")}
+ID_NAME = re.compile(r"(?i:id)|.+(?:_id|[a-z0-9]Id)")
+
+
+def _leaf(catalog, pointer, kinds):
+    """pointer, or the one branch of a union there whose type comes first in kinds; None when no single branch does."""
+    schema = _schema_at(catalog, pointer)
+    keyword = next((key for key in ("anyOf", "oneOf") if isinstance(schema, dict) and isinstance(schema.get(key), list)), None)
+    if keyword is None:
+        return pointer
+    for kind in kinds:
+        found = [index for index, branch in enumerate(schema[keyword]) if _type(_nullable(branch)) == kind]
+        if found:
+            return f"{pointer}/{keyword}/{found[0]}" if len(found) == 1 else None
+    return None
+
+
+def _value_kinds(expression, captured):
+    """The JSON types a step expression sends."""
+    kind, item = next(iter(expression.items()))
+    if kind == "literal":
+        return STEP_LITERAL_KINDS[type(item)]
+    if kind == "generate":
+        return GENERATED_KINDS[item]
+    if kind == "var":
+        return captured[item]
+    return ("string",)
+
+
+def _capture_kinds(catalog, capture):
+    return ("string",) if _type(_schema_at(catalog, capture.leaf)) == "string" else ("integer", "number")
+
+
+def _material(expression):
+    return expression.get("context") == "material" or any(_material(part) for part in expression.get("concat", ()))
+
+
+def _variables(expression):
+    return ({expression["var"]} if "var" in expression else set()).union(*map(_variables, expression.get("concat", ())))
+
+
+def _value_set(catalog, leaf, expression):
+    documented = _schema_at(catalog, leaf).get("enum")
+    if documented is not None and ("literal" not in expression or expression["literal"] not in documented):
+        return "The field documents a value set; send one of them as a literal: " + ", ".join(map(json.dumps, documented)) + "."
+    return None
+
+
+def _auth_or_none(catalog, operation):
+    try:
+        return _auth(catalog, operation)
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+def _sendable(catalog, operation, auth, methods):
+    """Why the draft cannot send operation beside the ask, or None."""
+    if operation.method not in methods:
+        return ("An undo must be a documented DELETE; anything else would report cleanup it never did." if methods == {"DELETE"}
+                else "A setup step must create or change something with POST, PUT or PATCH.")
+    if operation.path_data.get("servers") or operation.data.get("servers") or operation.data.get("callbacks"):
+        return "The operation overrides the server or declares callbacks, which the draft does not follow."
+    if _auth_or_none(catalog, operation) != auth:
+        return "The operation's authentication differs from the ask's."
+    if _unsafe_path(operation.path) or _parameters(operation) is None or _success(operation) is None:
+        return "The operation's path, parameters or successful response cannot be compiled."
+    request = operation.data.get("requestBody")
+    if isinstance(request, dict) and request.get("required") and (operation.method == "DELETE" or _root(operation, "step") is None):
+        return "The operation requires a request body this draft cannot send."
+    return None
+
+
+def _parameter_value(catalog, operation, entry, captured):
+    """A checked path or query parameter value, or why the document rejects it."""
+    name = entry.path[0]
+    found = [(parameter, pointer) for parameter, pointer in _parameters(operation)
+             if isinstance(parameter, dict) and parameter.get("name") == name and parameter.get("in") in {"path", "query"}]
+    if len(found) != 1 or "content" in found[0][0] or "schema" not in found[0][0]:
+        return None, "No path or query parameter of this name is documented with a schema."
+    (parameter, pointer), kinds = found[0], _value_kinds(entry.value, captured)
+    if parameter["in"] == "path" and set(entry.value) - {"var", "env"}:
+        return None, "A path parameter takes a captured value or an environment value."
+    leaf = _leaf(catalog, pointer + "/schema", kinds)
+    if leaf is None or _type(_schema_at(catalog, leaf)) not in set(kinds) & {"string", "integer", "number", "boolean"}:
+        return None, "The parameter's documented type is not " + " or ".join(kinds) + "."
+    why = _value_set(catalog, leaf, entry.value)
+    return (None, why) if why else (StepValue(parameter["in"], (name,), entry.value, leaf, entry.source), None)
+
+
+def _unbound(names):
+    return ", ".join(map(json.dumps, names)) + "."
+
+
+def _missing_parameters(operation, given):
+    return [parameter.get("name") for parameter, _ in _parameters(operation)
+            if isinstance(parameter, dict) and (parameter.get("required") or parameter.get("in") == "path") and parameter.get("name") not in given]
+
+
+def _unbound_required(catalog, root, paths):
+    """Required fields of the body, and of each object a bound path passes through, that no path binds."""
+    sent = {path[:end] for path in paths for end in range(1, len(path) + 1)}
+    names = [(name,) for name in _schema_at(catalog, root).get("required") or () if isinstance(name, str)]
+    for path in paths:
+        chain = _walk(catalog, root, path)
+        for depth in range(1, len(path)):
+            names += [path[:depth] + (name,) for name in _schema_at(catalog, chain[depth]).get("required") or () if isinstance(name, str)]
+    return sorted({".".join(name) for name in names if name not in sent})
+
+
+def _parameter_values(catalog, operation, entries, captured, block, source):
+    values = []
+    for entry in entries:
+        value, why = _parameter_value(catalog, operation, entry, captured)
+        if why:
+            block(entry.source, why)
+        else:
+            values.append(value)
+    missing = _missing_parameters(operation, {entry.path[0] for entry in entries})
+    if missing:
+        block(source, "These required parameters have no value: " + _unbound(missing))
+    return tuple(values)
+
+
+def _proposed_undo(catalog, operation, entry, auth, captures, captured):
+    """The only DELETE on the created resource's own path, fed by the step's one capture, or None when the document does not pin one."""
+    deletes = [(other, match.group(1)) for other in catalog.operations if other.method == "DELETE"
+               and (match := re.fullmatch(re.escape(operation.path) + r"/\{([^{}/]+)\}", other.path))]
+    if len(deletes) != 1 or _sendable(catalog, deletes[0][0], auth, {"DELETE"}):
+        return None
+    (target, parameter), = deletes
+    if entry.capture is None:
+        schema = _body_schema(operation)[0] or {}
+        names = [name for name in schema.get("required") or () if isinstance(name, str) and ID_NAME.fullmatch(name)]
+        if len(names) != 1:
+            return None
+        chain, why = _resolve(catalog, operation, (names[0],), "capture", ("string", "integer"))
+        if why or _id_variable(names[0]) is None:
+            return None
+        captures = (StepCapture(f"{entry.id}_{_id_variable(names[0])}", (names[0],), chain[-1], None),)
+        captured = {**captured, captures[0].name: _capture_kinds(catalog, captures[0])}
+    if len(captures) != 1:
+        return None
+    blocked = []
+    values = _parameter_values(catalog, target, [UserField((parameter,), None, None, {"var": captures[0].name})], captured,
+                               lambda source, why: blocked.append(why), None)
+    return None if blocked else (StepUndo(target.id, values, None), captures)
+
+
+def _setup_steps(catalog, invoke, inputs, gaps):
+    """Check each bindings file step against the document; a step that fails adds blocking gaps and is left out."""
+    auth = _auth_or_none(catalog, invoke)
+    operations = {op.id: op for op in catalog.operations}
+    captured, steps, counts = {}, [], {"run": 0, "attempt": 0}
+    for entry in inputs.steps:
+        field = f"/transport/lifecycle/{entry.scope}/{counts[entry.scope]}"
+        counts[entry.scope] += 1
+        found = []
+        own_names = {capture.name for capture in entry.capture or ()}
+        reads_from = set().union(*(_variables(item.value) for item in (*entry.values, *entry.parameters)),
+                                 *(_variables(item.value) - own_names for item in (entry.undo.parameters if entry.undo else ())))
+        if not reads_from <= set(captured):
+            continue  # it reads a capture of an earlier step that already blocks the draft
+
+        def block(source, why):
+            found.append(Gap(field, why, DECISIONS["binding_unresolved"], "binding_unresolved", "documentation_gap", True, (source,)))
+
+        op = operations.get(entry.operation)
+        why = "The operation is not documented." if op is None else _sendable(catalog, op, auth, {"POST", "PUT", "PATCH"})
+        if why:
+            block(Source(entry.source.file, entry.source.pointer + "/operation"), why)
+            gaps.extend(found)
+            continue
+        values, reads = [], set()
+        for value in entry.values:
+            chain, why = _resolve(catalog, op, value.path, "step", _value_kinds(value.value, captured))
+            why = why or _value_set(catalog, chain[-1], value.value)
+            if why:
+                block(value.source, why)
+                continue
+            values.append(StepValue("body", value.path, value.value, chain[-1], value.source))
+            reads.update(chain)
+        root = _root(op, "step")
+        missing = _unbound_required(catalog, root, [value.path for value in values]) if root and len(values) == len(entry.values) else []
+        if missing:
+            block(entry.source, "These required request fields have no value: " + _unbound(missing))
+        values += _parameter_values(catalog, op, entry.parameters, captured, block, entry.source)
+        if entry.scope == "run" and any(_material(value.value) for value in (*entry.values, *entry.parameters)):
+            block(entry.source, "Material changes with every ask, so only an attempt step can send it.")
+        captures = []
+        for capture in entry.capture or ():
+            chain, why = _resolve(catalog, op, capture.path, "capture", ("string", "integer"))
+            if why:
+                block(capture.source, why)
+                continue
+            captures.append(StepCapture(capture.name, capture.path, chain[-1], capture.source))
+        own = {**captured, **{capture.name: _capture_kinds(catalog, capture) for capture in captures}}
+        undo = None
+        if entry.undo is not None and not any(gap.blocking for gap in found):
+            target = operations.get(entry.undo.operation)
+            why = "The operation is not documented." if target is None else _sendable(catalog, target, auth, {"DELETE"})
+            if why:
+                block(Source(entry.undo.source.file, entry.undo.source.pointer + "/operation"), why)
+            else:
+                undo = StepUndo(target.id, _parameter_values(catalog, target, entry.undo.parameters, own, block, entry.undo.source), entry.undo.source)
+        elif entry.undo is None and not any(gap.blocking for gap in found):
+            proposed = _proposed_undo(catalog, op, entry, auth, tuple(captures), own)
+            if proposed:
+                undo, proposal = proposed
+                captures = list(proposal)
+        gaps.extend(found)
+        if any(gap.blocking for gap in found):
+            continue
+        captured.update({capture.name: _capture_kinds(catalog, capture) for capture in captures})
+        for capture in captures:
+            reads.update(_walk(catalog, _root(op, "capture"), capture.path))
+        for value in undo.values if undo else ():
+            reads.add(value.leaf)
+        reads.update(value.leaf for value in values if value.location != "body")
+        gaps.append(Gap(field, "The bindings file adds this setup step; the document does not say the ask needs it.",
+                        DECISIONS["binding_user_supplied"], "binding_user_supplied", "documentation_gap", False,
+                        (catalog.document.source(op.pointer), entry.source)))
+        if undo is None:
+            gaps.append(_gap(catalog, field + "/undo", "cleanup_mapping_missing",
+                             f"Setup step {json.dumps(entry.id)} has no undo the document can express, so what it creates is left behind.",
+                             pointer=op.pointer, blocking=False))
+        elif undo.source is None:
+            gaps.append(Gap(field + "/undo", f"The draft pairs this step with the only DELETE on its created path, fed by the response field "
+                            f"{json.dumps('.'.join(captures[0].path))}.", DECISIONS["setup_undo_proposed"], "setup_undo_proposed", "proposal", False,
+                            (catalog.document.source(operations[undo.operation].pointer), catalog.document.source(captures[0].leaf))))
+        steps.append(SetupStep(entry, field, tuple(values), tuple(captures), undo, tuple(sorted(reads))))
+    return tuple(steps)
+
+
 def _choose(catalog, *, operation, server_origin, intent, poll_operation=None, selection=None, inputs=None):
     doc = catalog.document
     gaps = []
@@ -586,7 +858,7 @@ def _choose(catalog, *, operation, server_origin, intent, poll_operation=None, s
             gaps.append(_gap(catalog, "/transport/request/url", "server_invalid",
                              "A server URL or origin override is unsafe or unresolved.", kind="unsupported_feature"))
     prompt = reply = completion = delivery = None
-    values = ()
+    values = steps = ()
     for issue in doc.issues:
         if issue.code != "reference_cycle":
             why, decision = DOCUMENT_ISSUE_TEXT[issue.code]
@@ -621,6 +893,7 @@ def _choose(catalog, *, operation, server_origin, intent, poll_operation=None, s
         if inputs and inputs.prompt:
             prompt = _user_binding(catalog, chosen, inputs.prompt, "prompt", ("string",), prompt, gaps)
         values = tuple(entry for entry in (inputs.values if inputs else ()) if _user_value(catalog, chosen, entry, prompt, gaps))
+        steps = _setup_steps(catalog, chosen, inputs, gaps) if inputs else ()
         if prompt is None and not (inputs and inputs.prompt):
             gaps.append(_gap(catalog, "/transport/request/body", "prompt_binding_missing",
                              "No unique prompt field can be proposed from the JSON schema.", pointer=pointer))
@@ -682,7 +955,7 @@ def _choose(catalog, *, operation, server_origin, intent, poll_operation=None, s
             gaps.append(_unresolved("/transport/response/text", inputs.reply,
                                     "No poll operation could be paired with the submit, so the reply path cannot be checked against its response."))
     return DraftChoices(chosen.id if chosen else None, server, prompt, reply, completion, tuple(gaps), intent, delivery,
-                        inputs, values)
+                        inputs, values, steps)
 
 
 def _auth(catalog, operation):
@@ -763,9 +1036,12 @@ def _status_rules(catalog, op, status, statuses, field, gaps):
     return rules, required
 
 
+REQUEST_ROLES = frozenset({"prompt", "value", "step"})
+
+
 def _root(operation, role):
     """The JSON object body schema a role's path starts from: the request body for the prompt, else the 2xx body."""
-    if role not in {"prompt", "value"}:
+    if role not in REQUEST_ROLES:
         return _body_schema(operation)[1] or None
     request = operation.data.get("requestBody")
     content = request.get("content") if isinstance(request, dict) else None
@@ -804,15 +1080,17 @@ def _resolve(catalog, operation, path, role, kinds=("string",)):
     root = _root(operation, role)
     chain = _walk(catalog, root, path) if root else None
     if chain is None or _field_path(path) is None:
-        return None, "The path does not name a documented field of the " + ("request" if role in {"prompt", "value"} else "response") + " body."
+        return None, "The path does not name a documented field of the " + ("request" if role in REQUEST_ROLES else "response") + " body."
+    if role == "step":
+        chain = chain[:-1] + (_leaf(catalog, chain[-1], kinds) or chain[-1],)
     schema = _schema_at(catalog, chain[-1])
     if _type(schema) not in kinds:
         return chain, "The field's documented type is not " + " or ".join(kinds) + "."
     if role == "prompt" and (schema.get("readOnly") or schema.get("enum")):
         return chain, "A read-only field or a documented value set cannot carry the question."
-    if role == "value" and schema.get("readOnly"):
+    if role in {"value", "step"} and schema.get("readOnly"):
         return chain, "A read-only field is never sent."
-    if role not in {"prompt", "value"} and schema.get("writeOnly"):
+    if role not in REQUEST_ROLES and schema.get("writeOnly"):
         return chain, "A write-only field is never returned."
     if role == "reply" and _metadata(path[-1], schema):
         return chain, "An identifier, timestamp or plain state field describes the call; binding it as the reply measures nothing."
@@ -894,6 +1172,62 @@ def _nest(entries):
             node = node.setdefault(key, {"object": {}})["object"]
         node[path[-1]] = expression
     return body
+
+
+def _step_records(catalog, step):
+    """Provenance of a setup step, its captures and its undo, each from the document and the file entry that chose it."""
+    document = catalog.document.source
+    operations = {op.id: op for op in catalog.operations}
+    record = {"source": [document(operations[step.entry.operation].pointer).to_dict(), step.entry.source.to_dict(),
+                         *(document(value.leaf).to_dict() for value in step.values)], "basis": "user_selection"}
+    records = {step.field: {**record, "origin": step.entry.origin} if step.entry.origin is not None else record}
+    for capture in step.capture:
+        records[f"{step.field}/capture/{capture.name}"] = {
+            "source": [document(capture.leaf).to_dict(), *([capture.source.to_dict()] if capture.source else [])],
+            "basis": "user_selection" if capture.source else "proposal"}
+    if step.undo:
+        records[step.field + "/undo"] = {
+            "source": [document(operations[step.undo.operation].pointer).to_dict(), *(document(value.leaf).to_dict() for value in step.undo.values),
+                       *([step.undo.source.to_dict()] if step.undo.source else [])],
+            "basis": "user_selection" if step.undo.source else "proposal"}
+    return records
+
+
+def _sent(catalog, server, operation_id, values, declarations):
+    """The transport request that sends checked values to a documented operation, with its documented 2xx statuses.
+
+    An environment value becomes a run variable, so a missing one stops the run before any request."""
+    operation = next(op for op in catalog.operations if op.id == operation_id)
+    url, query, body = operation.path, {}, []
+    for value in values:
+        expression = value.expression
+        if "env" in expression:
+            variable = "input_" + expression["env"].removeprefix("TARGET_INPUT_").lower()
+            declarations.setdefault(variable, {"env": expression["env"]})
+            expression = {"var": variable}
+        if value.location == "path":
+            url = url.replace("{" + value.path[0] + "}", "{" + expression["var"] + "}")
+        elif value.location == "query":
+            query[value.path[0]] = expression
+        else:
+            body.append((value.path, expression))
+    request = {"method": operation.method, "url": server + url, "headers": {"Accept": "application/json"},
+               **({"query": query} if query else {}),
+               "body": {"json": _nest(body)} if operation.method != "DELETE" and _root(operation, "step") else {"none": True}}
+    return request, [int(code) for code, _ in _success(operation)]
+
+
+def _step_spec(catalog, server, step, declarations):
+    request, statuses = _sent(catalog, server, step.entry.operation, step.values, declarations)
+    spec = {"id": step.entry.id, "request": request, "expect": {"http_status": statuses}}
+    if any(_material(value.expression) for value in step.values):
+        spec["if_present"] = "material"
+    if step.capture:
+        spec["capture"] = {capture.name: {"path": _field_path(capture.path)} for capture in step.capture}
+    if step.undo:
+        undo, undo_statuses = _sent(catalog, server, step.undo.operation, step.undo.values, declarations)
+        spec["undo"] = {"request": undo, "expect": {"http_status": undo_statuses}}
+    return spec
 
 
 def _unsafe_path(path):
@@ -981,6 +1315,9 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
             if item.submit.basis == "proposal":
                 gaps.append(_gap(catalog, field, "poll_id_binding_proposed", "The submit field was paired with the poll path parameter by name.",
                                  pointer=item.submit.pointer, kind="proposal", blocking=False))
+        for step in choices.steps:
+            read.update({pointer: _schema_at(catalog, pointer) for pointer in step.reads})
+            provenance["fields"].update(_step_records(catalog, step))
         if choices.delivery and auth is not None:
             try:
                 same_auth = _auth(catalog, result) == auth
@@ -1112,6 +1449,9 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                 gaps.append(_gap(catalog, binding_field, "body_binding_required", "Supply the required non-secret body field through its environment binding.", pointer=field_pointer, blocking=False))
             if any(name not in bound and name not in required for name in request_schema["properties"]):
                 gaps.append(_gap(catalog, "/transport/request/body", "optional_inputs_unbound", "Optional request fields are omitted; this draft binds only the proposed prompt and required fields.", pointer=operation.pointer, blocking=False))
+            lifecycle = {"run": [], "attempt": []}
+            for step in choices.steps:
+                lifecycle[step.entry.scope].append(_step_spec(catalog, server, step, declarations))
             if "{" in unbound_path:
                 gaps.append(_gap(catalog, "/transport/request/url", "path_binding_missing", "Path parameters are not declared.", pointer=operation.pointer))
             if choices.delivery and any(item.name in declarations for item in choices.delivery.ids):
@@ -1161,13 +1501,25 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                     "response": {"format": "json", "text": {"paths": [_field_path(choices.reply.path)], "cast": cast, "empty": "error"}, "metadata": {}},
                     "outcome": {"kind": "rules", "unmatched": "target_error", "rules": rules},
                     "delivery": delivery, "let": {"run": declarations},
+                    **({"lifecycle": {scope: items for scope, items in lifecycle.items() if items}} if choices.steps else {}),
                     "timeout": {"total_deadline_s": POLL_DEADLINE_S if choices.delivery else 120, "read_s": 120, "cleanup_s": 60},
                     "session": {"mode": "none"},
                     "limits": {"response_bytes": 8388608, "event_bytes": 1048576, "max_events": 1024, "max_rules": 32},
-                    # Every poll is charged against the request budget.
-                    "budget": {"max_requests": 1 + MAX_POLLS if choices.delivery else 1, "cleanup_reserve": 0},
+                    # Every setup step and poll is charged against the request budget; each undo reserves its cleanup request
+                    # before its step is sent. Both are sized for one attempt.
+                    "budget": {"max_requests": len(choices.steps) + 1 + (MAX_POLLS if choices.delivery else 0),
+                               "cleanup_reserve": sum(step.undo is not None for step in choices.steps)},
                 }
-                spec = {"kind": "custom_http", "transport": TransportSpecV2.from_dict(transport).to_dict()}
+                try:
+                    spec = {"kind": "custom_http", "transport": TransportSpecV2.from_dict(transport).to_dict()}
+                except ValueError as exc:
+                    if not choices.steps:
+                        raise
+                    # Names from the bindings file can still clash with names the draft chose.
+                    gaps.append(Gap("/transport/lifecycle", f"The setup steps do not compile into a valid transport: {exc}.",
+                                    DECISIONS["binding_unresolved"], "binding_unresolved", "documentation_gap", True,
+                                    (Source(choices.inputs.source["file"], "/steps"),)))
+                    spec = None
                 server_index = next(index for index, entry in enumerate(catalog.document.data["servers"]) if _server(entry["url"])[1] == server)
                 provenance["fields"]["/transport/request/url"] = {"source": [catalog.document.source(operation.pointer).to_dict(), catalog.document.source(f"/servers/{server_index}/url").to_dict()], "basis": "document_path_and_selected_server"}
                 provenance["policy_defaults"] = {key: {"value": transport[key], "basis": "policy_default"} for key in ("timeout", "limits", "budget", "session")}

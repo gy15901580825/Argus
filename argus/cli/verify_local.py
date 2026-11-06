@@ -536,7 +536,9 @@ async def verify_local(spec, *, catalog=None, scenario: ScenarioV1 | None = None
     # The fake strips credentials and serves every origin itself, so neither can be verified here.
     unverified = (('auth_headers',) if spec['transport'].get('auth', {}).get('kind', 'none') != 'none' else ()) + ('server_origin',)
     if scenario is None:
-        return replace(_assess(*await _attempt(spec, catalog, None), gaps), unverified=unverified)
+        # The schema mock answers every documented call, so it cannot tell whether a setup step did its job.
+        steps = tuple(f"setup_step:{step['id']}" for scope in ('run', 'attempt') for step in spec['transport'].get('lifecycle', {}).get(scope, ()))
+        return replace(_assess(*await _attempt(spec, catalog, None), gaps), unverified=unverified + steps)
     derived = document_cases(scenario, catalog)
     cases = scenario.cases + (derived or ())
     if derived is None: unverified += ('documented_status_cases',)
