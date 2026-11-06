@@ -1,8 +1,10 @@
 import hmac
 import ipaddress
+import json
 import logging
 import os
 import sys
+from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
 # Load .env from this directory, then the parent; existing values are never overridden.
@@ -17,7 +19,15 @@ from fastapi.middleware.cors import CORSMiddleware
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("OrchestratorAPI")
 
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    logger.info("argus server config %s", json.dumps(health_body()))
+    yield
+
+
 app = FastAPI(
+    lifespan=_lifespan,
     title="Argus Orchestrator API",
     version="1.0.0",
     description="""
@@ -28,6 +38,7 @@ app = FastAPI(
     * `/redteam/*` - Red-team runs, probes, suites and coverage
       (needs `Authorization: Bearer <token>` when ARGUS_SERVER_TOKEN is set)
     * `/agent/connect` - WebSocket endpoint for agent connections
+    * `/healthz` - Version, judge models and cost caps (no token, no model call)
     """,
     docs_url="/docs",  # Swagger UI at /docs
     redoc_url="/redoc",  # ReDoc at /redoc
@@ -116,10 +127,17 @@ def startup_error(
 
 # Import the global connection manager from separate module to avoid circular imports
 from argus.connection_manager import connection_manager
-from argus.api import router as redteam_router
+from argus.api import health_body, router as redteam_router
 from argus.scenarios.api import router as scenario_router
 app.include_router(redteam_router, dependencies=[Depends(require_server_token)])
 app.include_router(scenario_router)
+
+
+@app.get("/healthz")
+async def healthz() -> dict:
+    """Outside /redteam so load balancers can call it without the bearer token."""
+    return health_body()
+
 
 @app.websocket("/agent/connect")
 async def websocket_endpoint(websocket: WebSocket):

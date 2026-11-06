@@ -1,4 +1,5 @@
 import asyncio
+import dataclasses
 import json
 from collections import Counter
 
@@ -9,6 +10,7 @@ from fastapi import FastAPI
 from argus import api, cost_meter, llm
 from argus.cost_meter import CostMeter
 from argus.probe import Probe, ProbeMappings
+from argus.runner import Finding
 
 
 @pytest.fixture
@@ -85,6 +87,19 @@ def server_run(monkeypatch, tmp_path):
         return response.text, events
 
     return run, started, closed
+
+
+def frames(text):
+    """Each SSE frame as (event name or None, decoded data)."""
+    out = []
+    for block in text.split("\n\n"):
+        if not block:
+            continue
+        lines = block.split("\n")
+        name = lines[0][len("event: "):] if lines[0].startswith("event: ") else None
+        assert lines[-1].startswith("data: ") and len(lines) == (2 if name else 1), block
+        out.append((name, json.loads(lines[-1][len("data: "):])))
+    return out
 
 
 def findings(events):
@@ -217,6 +232,9 @@ async def test_coverage_event_reports_spend_and_the_cap_in_force(server_run, mod
     assert events[4:] == [{}]
     assert text.endswith("event: end\ndata: {}\n\n")
     assert events[3]["cost"] == {"spent_usd": 0.09, "per_run_cap_usd": expected_cap}
+    stream = frames(text)
+    assert [name for name, _ in stream] == [None, None, None, None, "end"]
+    assert all(set(data) == {f.name for f in dataclasses.fields(Finding)} for _, data in stream[:3])
 
 
 async def test_cap_hit_error_event_reports_spend_past_the_cap(server_run):
@@ -231,3 +249,7 @@ async def test_cap_hit_error_event_reports_spend_past_the_cap(server_run):
     assert events[-1]["type"] == "CostExceededError"
     assert events[-1]["cost"] == {"spent_usd": 0.06, "per_run_cap_usd": 0.05}
     assert events[-1]["cost"]["spent_usd"] >= events[-1]["cost"]["per_run_cap_usd"]
+    stream = frames(text)
+    assert [name for name, _ in stream] == [None, None, None, "error"]
+    assert set(stream[-1][1]) == {"detail", "type", "cost"}
+    assert isinstance(stream[-1][1]["detail"], str) and stream[-1][1]["detail"]
