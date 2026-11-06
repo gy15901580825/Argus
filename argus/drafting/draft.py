@@ -186,12 +186,14 @@ def _type(schema):
     return value
 
 
-_IDENTIFIER_NAME = re.compile(r"(?i:id|uuid)|.*(?:_(?i:id|uuid)|[a-z0-9](?:Id|ID|Uuid|UUID))")
+_METADATA_NAME = re.compile(r"(?i:id|uuid)|.*(?:_(?i:id|uuid|at)|[a-z0-9](?:Id|ID|Uuid|UUID|At))")
 
 
-def _identifier(name, schema):
-    """A run, request or record identifier echoes the call; binding it as the reply or terminal state measures nothing."""
-    return bool(_IDENTIFIER_NAME.fullmatch(name)) or isinstance(schema, dict) and schema.get("format") == "uuid"
+def _metadata(name, schema):
+    """Identifiers, timestamps and plain-string states describe the call; binding one as the reply or terminal state measures nothing."""
+    schema = schema if isinstance(schema, dict) else {}
+    return (bool(_METADATA_NAME.fullmatch(name)) or schema.get("format") in {"uuid", "date-time"}
+            or name.lower() in {"status", "state"} and not schema.get("enum"))
 
 
 SCHEMA_KEYWORDS =frozenset({"type", "properties", "required", "items", "enum", "nullable", "additionalProperties",
@@ -360,9 +362,9 @@ def _choose(catalog, *, operation, server_origin, intent, selection=None):
         if response_schema:
             texts = [(name, schema) for name, schema in response_schema["properties"].items()
                      if name.lower() in {"answer", "reply", "output", "result"} and _type(schema) == "string" and not schema.get("writeOnly")
-                     and not _identifier(name, schema)]
+                     and not _metadata(name, schema)]
             states = [(name, schema) for name, schema in response_schema["properties"].items()
-                      if name.lower() in {"status", "state"} and isinstance(schema, dict) and not _identifier(name, schema)
+                      if name.lower() in {"status", "state"} and isinstance(schema, dict) and not _metadata(name, schema)
                       and _type(schema) == "string"
                       and not schema.get("writeOnly")
                       and schema.get("enum") in [["completed"], ["COMPLETED"], ["succeeded"], ["success"]]]
