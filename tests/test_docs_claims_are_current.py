@@ -58,3 +58,29 @@ def test_cli_md_links_work_on_pypi():
     links = re.findall(r"\]\(([^)]+)\)", CLI_MD.read_text())
     relative = [l for l in links if not l.startswith(("https://", "http://", "#"))]
     assert relative == []
+
+
+def _heading_slugs(path: Path) -> set[str]:
+    slugs, seen, in_code = set(), {}, False
+    for line in path.read_text().splitlines():
+        if line.startswith("```"):
+            in_code = not in_code
+        m = None if in_code else re.match(r"#{1,6}\s+(.*)", line)
+        if m:
+            slug = re.sub(r"[^\w\- ]", "", m.group(1).strip().lower()).replace(" ", "-")
+            n = seen.get(slug, 0)
+            seen[slug] = n + 1
+            slugs.add(slug if n == 0 else f"{slug}-{n}")
+    return slugs
+
+
+def test_cli_md_links_into_the_repo_resolve():
+    prefix = "https://github.com/gy15901580825/Argus/blob/main/"
+    broken = []
+    for link in re.findall(r"\]\((" + re.escape(prefix) + r"[^)]+)\)", CLI_MD.read_text()):
+        path, _, anchor = link[len(prefix):].partition("#")
+        target = REPO / path
+        if not target.exists() or (anchor and anchor not in _heading_slugs(target)):
+            broken.append(link)
+    own = [a for a in re.findall(r"\]\(#([^)]+)\)", CLI_MD.read_text()) if a not in _heading_slugs(CLI_MD)]
+    assert broken + own == []
