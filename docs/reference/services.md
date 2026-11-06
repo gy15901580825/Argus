@@ -155,9 +155,10 @@ A finding object never has a `type` key, so `type == "coverage"` tells the cover
 | `detail` | string | The error message. |
 | `type` | string | The exception class name. `CostExceededError` means the run stopped at a cost cap. Probes that did not start are sent first as `aborted_cost` findings. |
 | `cost` | object | The same shape as the coverage frame's `cost`. |
+| `judge_blocked` | object | Only when `type` is `JudgeBlockedError`: a provider content filter refused a judge or attacker prompt. It holds `provider` (string), `model` (string, the model or deployment), `categories` (array of strings, empty when the provider names none) and `fallback` (`"off"` when a fallback provider exists but a block does not use it, `"<provider>/<model>: <error type>"` when the other attempt failed too, or null). |
 
 #### Stability policy
 
-Within a major version of `argus-probe`, the stream frames, the `/healthz` body and the route bodies above change only by addition: a new key, a new frame type or a new `event:` name. A client must ignore keys and event names it does not know. Renaming or removing a key, changing a key's type, or changing the frame order needs a new major version, and the release notes announce it. Tests in `tests/test_contract_freeze.py`, `tests/test_server_routes.py`, `tests/test_redteam_coverage_api.py` and `tests/test_server_run_cost_cap.py` pin these shapes, so a rename fails CI.
+Within a major version of `argus-probe`, the stream frames, the `/healthz` body and the route bodies above change only by addition: a new key, a new frame type or a new `event:` name. A client must ignore keys and event names it does not know. Renaming or removing a key, changing a key's type, or changing the frame order needs a new major version, and the release notes announce it. Tests in `tests/test_contract_freeze.py`, `tests/test_server_routes.py`, `tests/test_redteam_coverage_api.py`, `tests/test_server_run_cost_cap.py` and `tests/test_judge_blocked.py` pin these shapes, so a rename fails CI.
 
 The `/api/v1/redteam` API the CLI uses in server mode (runs, reports, diffs, stored history) is not part of this repo. It was served by `api_service`, which lives at tag `v0.3-full`.

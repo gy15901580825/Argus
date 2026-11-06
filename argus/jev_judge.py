@@ -217,7 +217,10 @@ async def _explain(cfg: llm.LLMConfig, meter: Optional[CostMeter], default: str,
     except llm.AllProvidersFailed as e:
         llm.record_refusals(meter, e.refusals)
         if isinstance(e, llm.JudgeBlockedError):
-            raise
+            # The verdict stands without a reason, so the block is noted on the finding, not raised.
+            logger.warning("explain model %s on probe %r: %s", text_cfg.fast_model, probe_name, e)
+            return (f"{default} | explanation not written: JudgeBlockedError: {e.provider} {e.model} "
+                    f"(categories: {', '.join(e.categories) or 'not given'})")
         logger.warning("explain model %s failed on probe %r; keeping the jev line", text_cfg.fast_model, probe_name)
         return default
     except CostExceededError:

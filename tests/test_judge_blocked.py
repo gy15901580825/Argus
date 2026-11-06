@@ -349,12 +349,12 @@ async def test_every_attacker_call_raises_the_block(monkeypatch, module, call):
     assert fallback_calls == []
 
 
-async def test_a_blocked_jev_explain_call_raises_instead_of_dropping_the_reason(monkeypatch):
+async def test_a_blocked_jev_explain_call_keeps_the_verdict_and_names_the_block(monkeypatch):
     from argus import jev_judge
 
     cfg = llm.resolve_config({"REDTEAM_MODEL_PROVIDER": "jev", "TYPESAFE_API_KEY": "test",
                               "REDTEAM_EXPLAIN_MODEL": "explain-model"})
     _stub_litellm(monkeypatch, _azure_block())
-    with pytest.raises(llm.JudgeBlockedError) as caught:
-        await jev_judge._explain(cfg, None, "jev line", "fail", "p", PROMPT_MARK, "reply", "rubric")
-    assert (caught.value.provider, caught.value.model) == ("litellm", "explain-model")
+    reasoning = await jev_judge._explain(cfg, None, "jev line", "fail", "p", PROMPT_MARK, "reply", "rubric")
+    assert reasoning == ("jev line | explanation not written: JudgeBlockedError: litellm explain-model "
+                         "(categories: jailbreak)")
