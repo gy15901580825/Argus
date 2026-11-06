@@ -78,7 +78,8 @@ def _isolate_env(monkeypatch, request, _test_home):
     # Judge provider auto-detect reads these; a developer's shell must not change results.
     # The live rubric and scan-skill tiers need the real ANTHROPIC_API_KEY.
     scrub = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "REDTEAM_MODEL_PROVIDER",
-             "REDTEAM_FAST_MODEL", "REDTEAM_STRONG_MODEL", "REDTEAM_LLM_API_BASE", "REDTEAM_EXPLAIN_MODEL"]
+             "REDTEAM_FAST_MODEL", "REDTEAM_STRONG_MODEL", "REDTEAM_LLM_API_BASE", "REDTEAM_EXPLAIN_MODEL",
+             "REDTEAM_LLM_FALLBACK"]
     if request.node.get_closest_marker("rubric_live") or request.node.get_closest_marker("live_skillscan"):
         scrub.remove("ANTHROPIC_API_KEY")
     # Server secrets from a developer's .env would 401 /redteam/* or refuse /agent/connect tests.

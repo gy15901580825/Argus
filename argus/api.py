@@ -511,8 +511,10 @@ async def run(req: RunRequest):
             yield f"data: {json.dumps(coverage_event)}\n\n".encode()
             yield b"event: end\ndata: {}\n\n"
         except Exception as exc:
-            payload = json.dumps({"detail": str(exc), "type": type(exc).__name__, "cost": cost()})
-            yield f"event: error\ndata: {payload}\n\n".encode()
+            error = {"detail": str(exc), "type": type(exc).__name__, "cost": cost()}
+            if isinstance(exc, llm.JudgeBlockedError):
+                error["judge_blocked"] = exc.as_dict()
+            yield f"event: error\ndata: {json.dumps(error)}\n\n".encode()
         finally:
             await probes.aclose()
 
