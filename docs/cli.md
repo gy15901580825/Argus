@@ -184,7 +184,7 @@ argus-probe judge-check --judge-provider litellm --judge-model gemini/gemini-2.5
 
 ## Supported agent shapes
 
-`argus-probe init --kind <X>` generates a target spec for one of:
+`argus-probe init --kind <X>` generates a target spec for one of the kinds below. Without `--kind`, `init` lists every kind with a one-line description and asks for one, with `openai_compat` as the default. When stdin is not a terminal (a pipe or CI), `init` cannot ask, so it exits 2 with the list of kinds and an example command. The kinds:
 
 | `--kind` | For |
 |---|---|
@@ -198,6 +198,10 @@ argus-probe judge-check --judge-provider litellm --judge-model gemini/gemini-2.5
 | `mcp_agent` | Agents that connect to MCP tool servers, run against a hostile MCP testbed |
 | `testbed_agent` | Generic form of `mcp_agent` / `payment_agent`; `environment` picks the testbed |
 | `http_upload` | File-upload-and-render sinks (upload then inline-render an active payload) |
+| `a2a_agent` | Agents that talk to A2A peers, run against an A2A peer testbed |
+| `mcp_server` | MCP servers you run over Streamable HTTP; tests the server, not an agent |
+| `a2a_server` | A2A servers: inbound authentication, task boundaries and callback registration |
+| `vllm_server` | vLLM model servers, checked against published vLLM advisories |
 | `python` | An agent written as a Python function in your repo. Runs only with `run --local` or in CI; a server refuses it |
 
 Full configuration reference: [target spec cookbook](https://github.com/gy15901580825/Argus/blob/main/docs/onboarding/target-spec-cookbook.md).
@@ -561,7 +565,7 @@ field and load with empty agentic mappings.
 
 ```
 argus-probe quickstart          Run the MCP probes against a built-in demo agent, no key
-argus-probe init                Interactive target.json generator
+argus-probe init                Interactive target.json generator; asks for the kind unless --kind is given
 argus-probe validate-target     Send one prompt to a chat target and check it answers
 argus-probe list-probes         List probe ids (local library, or a server with --api-url); --target / --target-class filter them
 argus-probe run                 Submit a run + write the report

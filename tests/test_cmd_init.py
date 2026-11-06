@@ -396,3 +396,63 @@ def test_init_python_kind_writes_a_local_run(tmp_path, monkeypatch):
         "--probes owasp_01_prompt_injection_basic,syscard_crescendo "
         "--out argus-report.html"
     ) in result.output
+
+
+def _on_a_terminal(monkeypatch):
+    # CliRunner replaces stdin with a pipe, so a terminal has to be simulated.
+    monkeypatch.setattr("argus.cli.cmd_init._stdin_is_tty", lambda: True)
+
+
+def test_bare_init_on_a_terminal_asks_for_the_kind_and_defaults_to_openai_compat(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _on_a_terminal(monkeypatch)
+    result = CliRunner().invoke(init_command, [], input="\n\nmy-model\n\nn\n")
+    assert result.exit_code == 0, result.output
+    spec = load_target_spec(str(tmp_path / "argus-target.json"))
+    assert spec["kind"] == "openai_compat"
+    assert spec["model"] == "my-model"
+
+
+def test_bare_init_on_a_terminal_lists_every_kind_with_a_description(tmp_path, monkeypatch):
+    from argus.cli.cmd_init import _KIND_DESCRIPTIONS
+    from argus.cli.target_loader import _KNOWN_KINDS
+
+    monkeypatch.chdir(tmp_path)
+    _on_a_terminal(monkeypatch)
+    result = CliRunner().invoke(init_command, ["--no-workflow"], input="mcp_agent\n\n\n")
+    assert result.exit_code == 0, result.output
+    for kind in _KNOWN_KINDS:
+        assert f"{kind}  " in result.output and _KIND_DESCRIPTIONS[kind] in result.output
+    assert json.loads((tmp_path / "argus-target.json").read_text())["kind"] == "mcp_agent"
+
+
+def test_bare_init_without_a_terminal_exits_2_and_lists_the_kinds(tmp_path, monkeypatch):
+    from argus.cli.target_loader import _KNOWN_KINDS
+
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(init_command, ["--no-workflow"], input="\n\nm\n\n")
+    assert result.exit_code == 2, result.output
+    for kind in _KNOWN_KINDS:
+        assert kind in result.output
+    assert "argus-probe init --kind openai_compat" in result.output
+    assert not (tmp_path / "argus-target.json").exists()
+
+
+def test_kind_flag_does_not_ask_for_the_kind(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _on_a_terminal(monkeypatch)
+    result = CliRunner().invoke(
+        init_command, ["--kind", "custom_http", "--no-workflow"], input="https://agent.example/chat\n\n\n"
+    )
+    assert result.exit_code == 0, result.output
+    assert "Target kind [" not in result.output
+    assert json.loads((tmp_path / "argus-target.json").read_text())["kind"] == "custom_http"
+
+
+def test_every_known_kind_has_a_description():
+    # The kind prompt shows every known kind, so a kind without a description shows a blank line.
+    from argus.cli.cmd_init import _KIND_DESCRIPTIONS
+    from argus.cli.target_loader import _KNOWN_KINDS
+
+    assert set(_KIND_DESCRIPTIONS) == set(_KNOWN_KINDS)
+    assert all(_KIND_DESCRIPTIONS.values())
