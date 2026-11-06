@@ -232,8 +232,8 @@ async def test_material_binding_cannot_pass_without_independent_material_oracle(
     assert 'material_not_bound' in result.checks
 
 
-@pytest.mark.parametrize('constraint', [{'not': {'type': 'string'}}, {'pattern': '^(a+)+$'},
-                                      {'exclusiveMinimum': 5}, {'uniqueItems': True}])
+@pytest.mark.parametrize('constraint', [{'not': {'type': 'string'}}, {'patternProperties': {'^a': {'type': 'string'}}},
+                                      {'if': {'type': 'string'}}, {'contains': {'type': 'string'}}])
 async def test_unsupported_schema_constraints_are_explicit(tmp_path, constraint):
     original_catalog = api(tmp_path)
     spec = compile_draft(original_catalog, choose_without_model(original_catalog)).spec

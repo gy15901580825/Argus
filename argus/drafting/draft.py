@@ -97,8 +97,8 @@ class ReplyPresence:
 class OperationSelection:
     operation: str
     prompt: Binding
-    reply: Binding
-    completion: Binding | ReplyPresence
+    reply: Binding | None
+    completion: Binding | ReplyPresence | None
 
 
 @dataclass(frozen=True)
@@ -186,7 +186,15 @@ def _type(schema):
     return value
 
 
-SCHEMA_KEYWORDS = frozenset({"type", "properties", "required", "items", "enum", "nullable", "additionalProperties",
+_IDENTIFIER_NAME = re.compile(r"(?i:id|uuid)|.*(?:_(?i:id|uuid)|[a-z0-9](?:Id|ID|Uuid|UUID))")
+
+
+def _identifier(name, schema):
+    """A run, request or record identifier echoes the call; binding it as the reply or terminal state measures nothing."""
+    return bool(_IDENTIFIER_NAME.fullmatch(name)) or isinstance(schema, dict) and schema.get("format") == "uuid"
+
+
+SCHEMA_KEYWORDS =frozenset({"type", "properties", "required", "items", "enum", "nullable", "additionalProperties",
                              "description", "title", "deprecated", "readOnly", "writeOnly"})
 # Value constraints the draft neither encodes nor checks; on a schema it reads they become one review gap.
 CONSTRAINT_KEYWORDS = frozenset({"format", "minLength", "maxLength", "pattern", "minimum", "maximum",
@@ -351,9 +359,10 @@ def _choose(catalog, *, operation, server_origin, intent, selection=None):
                                      "Response links need an explicit flow choice.", pointer=pointer, kind="unsupported_feature"))
         if response_schema:
             texts = [(name, schema) for name, schema in response_schema["properties"].items()
-                     if name.lower() in {"answer", "reply", "output", "result"} and _type(schema) == "string" and not schema.get("writeOnly")]
+                     if name.lower() in {"answer", "reply", "output", "result"} and _type(schema) == "string" and not schema.get("writeOnly")
+                     and not _identifier(name, schema)]
             states = [(name, schema) for name, schema in response_schema["properties"].items()
-                      if name.lower() in {"status", "state"} and isinstance(schema, dict)
+                      if name.lower() in {"status", "state"} and isinstance(schema, dict) and not _identifier(name, schema)
                       and _type(schema) == "string"
                       and not schema.get("writeOnly")
                       and schema.get("enum") in [["completed"], ["COMPLETED"], ["succeeded"], ["success"]]]
