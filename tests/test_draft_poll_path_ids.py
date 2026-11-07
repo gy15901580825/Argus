@@ -58,28 +58,14 @@ def test_same_name_submit_path_values_and_resource_id_compile(tmp_path):
     result, out = run(tmp_path)
     assert result.exit_code == 3, result.output
     spec, report, provenance = artifacts(out)
-    assert spec is not None and not codes(report, True)
-    transport = spec['transport']
-    assert transport['request']['url'].endswith('/orgs/{input_o}/ws/{input_w}/autos/{input_a}:invoke')
-    assert transport['delivery']['request']['url'].endswith('/orgs/{input_o}/ws/{input_w}/autos/{input_a}/runs/{r}')
-    selector = transport['delivery']['ids']['r']
-    assert selector['last_segment'] is True
-    assert selector['poll'] == {'path': '$.name', 'last_segment': True, 'expect_prefix': {'concat': [
-        {'literal': 'orgs/'}, {'var': 'input_o'}, {'literal': '/ws/'}, {'var': 'input_w'},
-        {'literal': '/autos/'}, {'var': 'input_a'}, {'literal': '/runs/'}]}}
-    assert provenance['fields']['/transport/delivery/ids/r/poll']['basis'] == 'document_fact'
-    assert provenance['fields']['/transport/delivery/ids/r/last_segment']['basis'] == 'proposal'
-    assert 'poll_id_extraction_proposed' in codes(report)
-    assert len(transport['delivery']['ids']) == 1
+    assert spec is None and 'poll_id_binding_missing' in codes(report, True)
 
 
 def test_more_than_four_total_parameters_with_one_response_id(tmp_path):
     result, out = run(tmp_path, document(extra=True))
     assert result.exit_code == 3, result.output
     spec, report, _ = artifacts(out)
-    assert spec is not None and codes(report, True) == []
-    assert list(spec['transport']['delivery']['ids']) == ['r']
-    assert '{input_region}' in spec['transport']['delivery']['request']['url']
+    assert spec is None and 'poll_id_binding_missing' in codes(report, True)
 
 
 def renamed(doc):
@@ -255,8 +241,8 @@ def test_verify_local_with_scenario_exercises_resource_identity(tmp_path):
     result, out = run(tmp_path, None, None, '--verify-local', '--scenario', str(p))
     assert result.exit_code == 3, result.output
     local = artifacts(out)[2]['validation']['local']
-    assert local['semantic_success'] is True and local['status'] == 'verified'
-    assert local['execution']['requests']['poll'] == 1
+    assert local['semantic_success'] is False and local['status'] == 'not_run'
+    assert artifacts(out)[0] is None
 
 
 @pytest.mark.parametrize('resource,value,poll_name,outcome,reason,tail', [
@@ -341,9 +327,8 @@ def test_name_based_carry_precedes_a_same_named_response_field(tmp_path):
     doc['paths'][SUBMIT]['post']['responses']['202']['content']['application/json']['schema']['properties']['o'] = {'type': 'string'}
     result, out = run(tmp_path, doc)
     assert result.exit_code == 3
-    spec = artifacts(out)[0]
-    assert spec is not None and list(spec['transport']['delivery']['ids']) == ['r']
-    assert '/orgs/{input_o}/' in spec['transport']['delivery']['request']['url']
+    spec, report, _ = artifacts(out)
+    assert spec is None and 'poll_id_binding_missing' in codes(report, True)
 
 
 def test_renamed_id_placeholder_is_not_rewritten_as_a_carried_placeholder(tmp_path):
@@ -774,10 +759,7 @@ def test_response_run_slot_preserves_parent_carries_with_reordered_parameters(tm
     result, out = run(tmp_path, doc)
     assert result.exit_code == 3, result.output
     spec, report, _ = artifacts(out)
-    assert spec is not None and codes(report, True) == []
-    assert list(spec['transport']['delivery']['ids']) == ['r']
-    assert spec['transport']['delivery']['request']['url'].endswith(
-        '/orgs/{input_o}/ws/{input_w}/autos/{input_a}/runs/{r}' + suffix)
+    assert spec is None and 'poll_id_binding_missing' in codes(report, True)
 
 
 def test_compile_rejects_forged_carried_run_slot(tmp_path):
@@ -824,10 +806,7 @@ def test_non_parent_heuristic_pair_has_accurate_review_text(tmp_path):
     result, out = run(tmp_path, doc)
     assert result.exit_code == 3, result.output
     spec, report, _ = artifacts(out)
-    assert spec is not None and codes(report, True) == []
-    gap = next(gap for gap in report['gaps'] if gap['code'] == 'poll_id_binding_proposed')
-    assert 'by name' not in gap['why'] and 'proposed' in gap['why']
-    assert gap['decision'].startswith('Confirm')
+    assert spec is None and 'poll_id_binding_missing' in codes(report, True)
 
 
 def test_integer_resource_id_has_type_specific_review_text(tmp_path):
@@ -841,3 +820,118 @@ def test_integer_resource_id_has_type_specific_review_text(tmp_path):
     gap = next(gap for gap in report['gaps'] if gap['why'] == 'Resource-name extraction requires a string submit ID.')
     assert gap['code'] == 'poll_resource_id_type_unsupported'
     assert 'string' in gap['decision'] and 'Format' not in gap['decision']
+
+
+def spelled_parent_document(case):
+    doc = nested_parent_echo_document(False)
+    submit = next(path['post'] for path in doc['paths'].values() if 'post' in path)
+    poll = next(path['get'] for path in doc['paths'].values() if 'get' in path)
+    if case.startswith('HP'):
+        name = {'HP1': 'agent_id', 'HP1b': 'agent_id', 'HP2': 'AgentId', 'HP3': 'project'}[case]
+        resource = 'projects' if case == 'HP3' else 'agents'
+        field = 'project_id' if case == 'HP3' else 'agentId'
+        submit['parameters'] = [parameter(name)]
+        submit['responses']['202']['content']['application/json']['schema']['properties'] = {
+            field: {'type': 'string'}, **({'run': {'type': 'string'}} if case == 'HP1b' else {})}
+        poll['parameters'] = [parameter(name), parameter('id')]
+        response = {'status': {'type': 'string', 'enum': ['PENDING', 'COMPLETED', 'FAILED']},
+                    'result': {'type': 'string'}}
+        if case != 'HP3': response[field] = {'type': 'string'}
+        poll['responses']['200']['content']['application/json']['schema']['properties'] = response
+        doc['paths'] = {'/' + resource + '/{' + name + '}/runs': {'post': submit},
+                        '/' + resource + '/{' + name + '}/runs/{id}': {'get': poll}}
+    else:
+        submit['parameters'] = [parameter('id')]
+        submit['responses']['202']['content']['application/json']['schema']['properties'] = {
+            'message_id': {'type': 'string'}, **({'id': {'type': 'string'}} if case != 'NL1c' else {})}
+        poll['parameters'] = [parameter('id'), parameter('message_id')]
+        response = {'message_id': {'type': 'string'},
+                    'status': {'type': 'string', 'enum': ['PENDING', 'COMPLETED', 'FAILED']},
+                    'result': {'type': 'string'}}
+        if case == 'NL1b': response['id'] = {'type': 'string'}
+        poll['responses']['200']['content']['application/json']['schema']['properties'] = response
+        doc['paths'] = {'/agents/{id}/sessions': {'post': submit},
+                        '/sessions/{id}/messages/{message_id}': {'get': poll}}
+    return doc
+
+
+@pytest.mark.parametrize('case,parent', [
+    ('HP1', 'agent_id'), ('HP1b', 'agent_id'), ('HP2', 'AgentId'), ('HP3', 'project'),
+    ('NL1', 'id'), ('NL1b', 'id'), ('NL1c', 'id'),
+])
+def test_nested_poll_requires_explicit_parent_mapping(tmp_path, case, parent):
+    result, out = run(tmp_path, spelled_parent_document(case))
+    assert result.exit_code == 3, result.output
+    spec, report, _ = artifacts(out)
+    assert spec is None
+    gap = next(gap for gap in report['gaps'] if gap['code'] == 'poll_id_binding_missing')
+    assert '{' + parent + '}' in gap['why']
+    assert 'explicit' in gap['why'] and 'mapping' in gap['why']
+    assert 'No submit response field maps uniquely' not in gap['why']
+
+
+def test_nested_heuristic_stays_blocked_with_explicit_parent_mapping(tmp_path):
+    doc = spelled_parent_document('HP1')
+    binding = {'poll': {'operation': 'get_run', 'parameters': {'agent_id': 'agent_id'}}}
+    result, out = run(tmp_path, doc, binding)
+    spec, report, _ = artifacts(out)
+    assert result.exit_code == 3, result.output
+    assert spec is None
+    gap = next(gap for gap in report['gaps'] if gap['code'] == 'poll_id_binding_missing')
+    assert '{id}' in gap['why'] and 'response ID' in gap['why']
+
+
+def test_nested_response_parent_does_not_replace_explicit_mapping(tmp_path):
+    doc = document(resource=False)
+    doc['paths'][SUBMIT]['post']['responses']['202']['content']['application/json']['schema']['properties'].update({
+        name: {'type': 'string'} for name in ('o', 'w', 'a')})
+    result, out = run(tmp_path, doc)
+    spec, report, _ = artifacts(out)
+    assert result.exit_code == 3, result.output
+    assert spec is None
+    why = next(gap['why'] for gap in report['gaps'] if gap['code'] == 'poll_id_binding_missing')
+    assert all('{' + name + '}' in why for name in ('o', 'w', 'a'))
+
+
+def test_explicit_nested_mappings_verify_local_with_response_run_id(tmp_path):
+    binding = {'poll': {'operation': 'get_run', 'parameters': {
+        name: name for name in ('o', 'w', 'a')}}}
+    path = tmp_path / 'explicit-scenario.json'
+    path.write_text(json.dumps(scenario()))
+    result, out = run(tmp_path, None, binding, '--verify-local', '--scenario', str(path))
+    assert result.exit_code == 3, result.output
+    spec, report, provenance = artifacts(out)
+    assert spec is not None and codes(report, True) == []
+    assert list(spec['transport']['delivery']['ids']) == ['r']
+    assert all(provenance['fields']['/transport/delivery/request/url/' + name]['basis'] == 'user_selection'
+               for name in ('o', 'w', 'a'))
+    local = provenance['validation']['local']
+    assert local['status'] == 'verified' and local['semantic_success'] is True
+    assert local['execution']['requests']['poll'] == 1
+
+
+@pytest.mark.parametrize('change', ['missing_source', 'missing_inputs', 'response_parent'])
+def test_compiler_rejects_implicit_nested_parent_ownership(tmp_path, change):
+    from dataclasses import replace
+    from argus.drafting.bindings import read_bindings
+    from argus.drafting.draft import IdBinding, choose_without_model, compile_draft
+    from test_draft_async import catalog_for
+    doc = document(resource=False)
+    doc['paths'][SUBMIT]['post']['responses']['202']['content']['application/json']['schema']['properties']['parent_id'] = {'type': 'string'}
+    catalog = catalog_for(tmp_path, doc)
+    binding = tmp_path / 'explicit.json'
+    binding.write_text(json.dumps({'version': 1, 'poll': {'operation': 'get_run', 'parameters': {
+        name: name for name in ('o', 'w', 'a')}}}))
+    choices = choose_without_model(catalog, operation='invoke', poll_operation='get_run', inputs=read_bindings(binding))
+    delivery = choices.delivery
+    if change == 'missing_source':
+        delivery = replace(delivery, carried=(replace(delivery.carried[0], source=None), *delivery.carried[1:]))
+    elif change == 'missing_inputs':
+        choices = replace(choices, inputs=None)
+    else:
+        run = delivery.ids[0]
+        parent = replace(run.submit, path=('parent_id',), pointer=run.submit.pointer.rsplit('/', 1)[0] + '/parent_id')
+        delivery = replace(delivery, ids=(*delivery.ids, IdBinding('parent_id', parent, 'o')),
+                           carried=tuple(item for item in delivery.carried if item.parameter != 'o'))
+    with pytest.raises(ValueError, match='explicit'):
+        compile_draft(catalog, replace(choices, delivery=delivery))
