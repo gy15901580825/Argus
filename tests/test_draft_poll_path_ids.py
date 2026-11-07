@@ -220,7 +220,8 @@ def test_explicit_false_preserves_raw_capture_and_documented_identity(tmp_path):
     result, out = run(tmp_path, bindings={'ids': {'r': {'last_segment': False}}})
     assert result.exit_code == 3, result.output
     selector = artifacts(out)[0]['transport']['delivery']['ids']['r']
-    assert not selector.get('last_segment', False) and selector['poll']['last_segment'] is False
+    assert not selector.get('last_segment', False) and 'expect_prefix' not in selector
+    assert selector['poll']['last_segment'] is True
 
 
 def test_presence_completion_remains_the_only_blocker_after_pairing(tmp_path):
@@ -495,3 +496,99 @@ def test_resource_format_without_prefix_blocks_with_named_gap(tmp_path):
     assert result.exit_code == 3, result.output
     spec, report, _ = artifacts(out)
     assert spec is None and 'poll_resource_format_unsupported' in codes(report, True)
+
+
+def test_submit_selector_uses_documented_poll_prefix(tmp_path):
+    result, out = run(tmp_path)
+    assert result.exit_code == 3, result.output
+    selector = artifacts(out)[0]['transport']['delivery']['ids']['r']
+    assert selector['expect_prefix'] == {'concat': [
+        {'literal': 'orgs/'}, {'var': 'input_o'}, {'literal': '/ws/'}, {'var': 'input_w'},
+        {'literal': '/autos/'}, {'var': 'input_a'}, {'literal': '/runs/'}]}
+
+
+async def submit_capture_attempt(tmp_path, value, *, bindings=None, force_prefix=False):
+    result, out = run(tmp_path, bindings=bindings)
+    assert result.exit_code == 3, result.output
+    spec = artifacts(out)[0]
+    assert spec is not None
+    data = copy.deepcopy(spec['transport'])
+    if force_prefix:
+        selector = data['delivery']['ids']['r']
+        selector['expect_prefix'] = selector['poll']['expect_prefix']
+    seen = []
+    app = RecordingApp()
+    async def submitted(request):
+        seen.append(('POST', request.raw_path))
+        return web.json_response({'r': value}, status=202)
+    async def polled(request):
+        seen.append(('GET', request.raw_path))
+        return web.json_response({'name': request.path.lstrip('/'), 'status': 'COMPLETED', 'result': 'pong'})
+    app.route('POST', '/{tail:.*}', submitted)
+    app.route('GET', '/{tail:.*}', polled)
+    async with serve(app) as origin:
+        parsed = TransportSpecV2.from_dict(with_origin(data, origin))
+        runtime = V2Run(parsed, policy=ExecutionPolicy.local(parsed), environ=scenario()['environment'])
+        try:
+            response = await runtime.attempt(TransportContext(prompt='ping'))
+        finally:
+            await runtime.close()
+    return response, seen
+
+
+@pytest.mark.parametrize('value', [
+    NAME.replace('org-1', 'foreign'), NAME.replace('auto-1', 'foreign'),
+    NAME + '/steps/7', 'run-1/7', 'run-1',
+])
+async def test_foreign_or_multi_segment_submit_cannot_succeed(tmp_path, value):
+    response, seen = await submit_capture_attempt(tmp_path, value)
+    assert response.outcome == 'target_error'
+    assert response.reason_code.value == 'id_prefix_mismatch'
+    assert seen == [('POST', '/orgs/org-1/ws/ws-1/autos/auto-1:invoke')]
+
+
+async def test_own_full_submit_identity_still_succeeds(tmp_path):
+    response, seen = await submit_capture_attempt(tmp_path, NAME)
+    assert response.outcome == 'succeeded' and response.response_text == 'pong'
+    assert seen == [('POST', '/orgs/org-1/ws/ws-1/autos/auto-1:invoke'),
+                    ('GET', '/orgs/org-1/ws/ws-1/autos/auto-1/runs/run-1')]
+
+
+async def test_explicit_false_bare_submit_succeeds_with_full_poll_identity(tmp_path):
+    response, seen = await submit_capture_attempt(tmp_path, 'run-1', bindings={'ids': {'r': {'last_segment': False}}})
+    assert response.outcome == 'succeeded' and response.response_text == 'pong'
+    assert seen[-1] == ('GET', '/orgs/org-1/ws/ws-1/autos/auto-1/runs/run-1')
+
+
+@pytest.mark.parametrize('suffix', ['run-1/steps/7', 'run-1/7', 'run%2F1', '', '!'])
+async def test_prefixed_submit_capture_requires_one_id_segment(tmp_path, suffix):
+    response, seen = await submit_capture_attempt(tmp_path, NAME.rsplit('/', 1)[0] + '/' + suffix, force_prefix=True)
+    assert response.outcome == 'target_error'
+    assert response.reason_code.value == 'id_prefix_mismatch'
+    assert len(seen) == 1
+
+
+def test_integer_id_cannot_use_inferred_resource_extraction(tmp_path):
+    doc = document()
+    doc['paths'][SUBMIT]['post']['responses']['202']['content']['application/json']['schema']['properties']['r']['type'] = 'integer'
+    doc['paths'][POLL]['get']['parameters'][-1]['schema']['type'] = 'integer'
+    result, out = run(tmp_path, doc)
+    assert result.exit_code == 3
+    spec, report, _ = artifacts(out)
+    assert spec is None
+    assert 'poll_resource_format_unsupported' in codes(report, True)
+
+
+@pytest.mark.parametrize('code', ['poll_id_extraction_proposed', 'poll_identity_unchecked', 'poll_resource_format_unsupported'])
+def test_f4_gaps_give_specific_review_decisions(tmp_path, code):
+    doc = document(resource=code != 'poll_identity_unchecked')
+    if code == 'poll_identity_unchecked':
+        del poll_fields(doc)['r']
+    if code == 'poll_resource_format_unsupported':
+        poll_fields(doc)['name']['description'] = 'Format: free text.'
+    result, out = run(tmp_path, doc)
+    assert result.exit_code == 3
+    report = artifacts(out)[1]
+    entry = next(gap for gap in report['gaps'] if gap['code'] == code)
+    assert 'before compiling the flow' not in entry['decision']
+    assert entry['decision'].startswith(('Confirm', 'Review', 'Correct'))
