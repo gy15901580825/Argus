@@ -397,7 +397,7 @@ The poll can reuse required string or integer path parameters from the submit re
 }
 ```
 
-`poll` can also be an operation ID string. Its choice must agree with `--poll-operation`. `parameters` maps poll path names to submit path names, and `ids` names submit response fields with a boolean `last_segment` override. Structural mistakes exit 2. Unknown or incompatible document mappings create blocking `binding_unresolved` gaps with the file entry as their source.
+`poll` can also be an operation ID string. Its choice must agree with `--poll-operation`. `parameters` maps poll path names to submit path names, and `ids` names submit response fields with a boolean `last_segment` override. In the example, `last_segment: true` requires a documented resource-name format that supplies this ID's identity prefix. Without that format, the draft blocks with `binding_unresolved` and writes no spec because it cannot check the submit identity. Structural mistakes exit 2. Unknown or incompatible document mappings create blocking `binding_unresolved` gaps with the file entry as their source.
 
 A poll response `name` field can document `Format: collections/{collection}/runs/{run}`. When that format matches the poll path tail, the draft proposes last-segment extraction for the submit ID. It checks the submit prefix and the exact poll identity using a prefix built from the carried values. The extraction remains a proposal because the poll format does not prove the submit ID's shape. The submit value must contain the documented prefix followed by exactly one ID segment. A foreign prefix, a bare ID, or extra segments after that prefix end as a target error before polling. A wrong poll prefix or changed ID ends as a target error before success.
 

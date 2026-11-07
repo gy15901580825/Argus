@@ -525,6 +525,9 @@ def _resource_identity(catalog, poll, pairs, carried, overrides, gaps):
         override = supplied.get(item.submit.path[0])
         selected = identity[1] if identity and identity[0] == item.name else None
         extract = override.last_segment if override else selected is not None
+        if override and extract and selected is None:
+            gaps.append(_unresolved("/transport/delivery/ids", override,
+                                    "The resource-name format is not documented, so the submit identity cannot be checked."))
         if extract and _type(_schema_at(catalog, item.submit.pointer)) != "string":
             gaps.append(_unresolved("/transport/delivery/ids", override, "Last-segment extraction requires a string submit ID.") if override
                         else _gap(catalog, "/transport/delivery/ids", "poll_resource_format_unsupported",
@@ -1715,7 +1718,7 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
     unchecked = {pointer: _keywords(schema)[1] for pointer, schema in read.items() if _keywords(schema)[1]}
     if unchecked:
         names = ", ".join(sorted(set().union(*unchecked.values())))
-        sources = sorted((catalog.document.source(pointer) for pointer in unchecked), key=lambda source: (source.file, source.pointer))
+        sources = sorted({catalog.document.source(pointer) for pointer in unchecked}, key=lambda source: (source.file, source.pointer))
         gaps.append(Gap("/transport", "Schemas this draft binds carry constraints it does not check: " + names + ".",
                         DECISIONS["schema_constraints_unchecked"], "schema_constraints_unchecked",
                         "unsupported_feature", False, tuple(sources)))
