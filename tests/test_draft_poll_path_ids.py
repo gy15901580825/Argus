@@ -54,14 +54,48 @@ def run(tmp_path, doc=None, bindings=None, *opts):
     return draft(tmp_path, doc or document(), bindings, '--operation', 'invoke', '--poll-operation', 'get_run', *opts)
 
 
-def test_same_name_submit_path_values_and_resource_id_compile(tmp_path):
+
+
+def run_with_explicit_parents(tmp_path, doc=None, bindings=None, *opts):
+    doc = doc or document()
+    supplied = copy.deepcopy(bindings or {})
+    poll = supplied.get('poll', {'operation': 'get_run'})
+    if isinstance(poll, str): poll = {'operation': poll}
+    present = {parameter['name'] for path in doc['paths'].values() for parameter in path.get('get', {}).get('parameters', [])}
+    parents = {name: name for name in ('o', 'w', 'a', 'region', 'input_o') if name in present}
+    supplied['poll'] = {**poll, 'parameters': {**parents, **poll.get('parameters', {})}}
+    return run(tmp_path, doc, supplied, *opts)
+
+
+def single_id_document():
+    doc = document(resource=False)
+    submit = doc['paths'][SUBMIT]['post']
+    submit['parameters'] = []
+    poll = doc['paths'][POLL]['get']
+    poll['parameters'] = [parameter('r')]
+    doc['paths'] = {'/runs': {'post': submit}, '/runs/{r}': {'get': poll}}
+    return doc
+
+
+def explicit_choices(tmp_path, doc=None):
+    from argus.drafting.bindings import read_bindings
+    from argus.drafting.draft import choose_without_model
+    from test_draft_async import catalog_for
+    catalog = catalog_for(tmp_path, doc or document())
+    path = tmp_path / 'explicit-bindings.json'
+    path.write_text(json.dumps({'version': 1, 'poll': {'operation': 'get_run', 'parameters': {
+        name: name for name in ('o', 'w', 'a')}}}))
+    return catalog, choose_without_model(catalog, operation='invoke', poll_operation='get_run', inputs=read_bindings(path))
+
+
+def test_same_named_parent_parameters_require_explicit_mappings(tmp_path):
     result, out = run(tmp_path)
     assert result.exit_code == 3, result.output
     spec, report, provenance = artifacts(out)
     assert spec is None and 'poll_id_binding_missing' in codes(report, True)
 
 
-def test_more_than_four_total_parameters_with_one_response_id(tmp_path):
+def test_many_parent_parameters_require_explicit_mappings(tmp_path):
     result, out = run(tmp_path, document(extra=True))
     assert result.exit_code == 3, result.output
     spec, report, _ = artifacts(out)
@@ -79,7 +113,7 @@ def renamed(doc):
 def test_explicit_mapping_and_extraction_have_file_provenance(tmp_path):
     bindings = {'poll': {'operation': 'get_run', 'parameters': {'organization': 'o'}},
                 'ids': {'r': {'last_segment': True, 'origin': 'gold_derived'}}}
-    result, out = run(tmp_path, renamed(document()), bindings)
+    result, out = run_with_explicit_parents(tmp_path, renamed(document()), bindings)
     assert result.exit_code == 3, result.output
     spec, report, provenance = artifacts(out)
     assert spec is not None and codes(report, True) == []
@@ -91,7 +125,7 @@ def test_explicit_mapping_and_extraction_have_file_provenance(tmp_path):
 
 
 def test_file_poll_string_selects_the_operation(tmp_path):
-    result, out = draft(tmp_path, document(), {'poll': 'get_run'}, '--operation', 'invoke')
+    result, out = draft(tmp_path, single_id_document(), {'poll': 'get_run'}, '--operation', 'invoke')
     assert result.exit_code == 3, result.output
     spec, report, _ = artifacts(out)
     assert spec is not None and 'poll_proposed' not in codes(report)
@@ -142,7 +176,7 @@ def test_incompatible_same_named_path_does_not_fall_back_to_response(tmp_path):
     doc = document(resource=False)
     doc['paths'][SUBMIT]['post']['responses']['202']['content']['application/json']['schema']['properties']['o'] = {'type': 'string'}
     doc['paths'][SUBMIT]['post']['parameters'][0]['schema']['type'] = 'integer'
-    result, out = run(tmp_path, doc)
+    result, out = run_with_explicit_parents(tmp_path, doc)
     assert result.exit_code == 3, result.output
     assert artifacts(out)[0] is None and 'poll_id_binding_missing' in codes(artifacts(out)[1], True)
 
@@ -170,7 +204,7 @@ def test_all_carried_get_cannot_identify_submitted_job(tmp_path):
 def test_a_claimed_but_unusable_resource_format_blocks(tmp_path, fmt):
     doc = document()
     poll_fields(doc)['name']['description'] = 'Format: ' + fmt
-    result, out = run(tmp_path, doc)
+    result, out = run_with_explicit_parents(tmp_path, doc)
     assert result.exit_code == 3, result.output
     assert artifacts(out)[0] is None and 'poll_resource_format_unsupported' in codes(artifacts(out)[1], True)
 
@@ -178,7 +212,7 @@ def test_a_claimed_but_unusable_resource_format_blocks(tmp_path, fmt):
 def test_conflicting_documented_resource_formats_block(tmp_path):
     doc = document()
     poll_fields(doc)['name']['title'] = 'Format: ws/{w}/autos/{a}/runs/{r}'
-    result, out = run(tmp_path, doc)
+    result, out = run_with_explicit_parents(tmp_path, doc)
     assert result.exit_code == 3
     assert artifacts(out)[0] is None and 'poll_resource_format_unsupported' in codes(artifacts(out)[1], True)
 
@@ -187,7 +221,7 @@ def test_integer_id_cannot_use_resource_extraction(tmp_path):
     doc = document()
     doc['paths'][SUBMIT]['post']['responses']['202']['content']['application/json']['schema']['properties']['r']['type'] = 'integer'
     doc['paths'][POLL]['get']['parameters'][-1]['schema']['type'] = 'integer'
-    result, out = run(tmp_path, doc, {'ids': {'r': {'last_segment': True}}})
+    result, out = run_with_explicit_parents(tmp_path, doc, {'ids': {'r': {'last_segment': True}}})
     assert result.exit_code == 3
     assert artifacts(out)[0] is None and 'binding_unresolved' in codes(artifacts(out)[1], True)
 
@@ -195,7 +229,7 @@ def test_integer_id_cannot_use_resource_extraction(tmp_path):
 def test_ordinary_ids_do_not_gain_last_segment_and_unchecked_identity_is_reported(tmp_path):
     doc = document(resource=False)
     del poll_fields(doc)['r']
-    result, out = run(tmp_path, doc)
+    result, out = run_with_explicit_parents(tmp_path, doc)
     assert result.exit_code == 3
     spec, report, _ = artifacts(out)
     assert spec is not None and spec['transport']['delivery']['ids']['r'] == {'path': '$.r'}
@@ -203,7 +237,7 @@ def test_ordinary_ids_do_not_gain_last_segment_and_unchecked_identity_is_reporte
 
 
 def test_explicit_false_preserves_raw_capture_and_documented_identity(tmp_path):
-    result, out = run(tmp_path, bindings={'ids': {'r': {'last_segment': False}}})
+    result, out = run_with_explicit_parents(tmp_path, bindings={'ids': {'r': {'last_segment': False}}})
     assert result.exit_code == 3, result.output
     selector = artifacts(out)[0]['transport']['delivery']['ids']['r']
     assert not selector.get('last_segment', False) and 'expect_prefix' not in selector
@@ -215,7 +249,7 @@ def test_presence_completion_remains_the_only_blocker_after_pairing(tmp_path):
     fields = poll_fields(doc)
     del fields['status']; del fields['result']
     fields['state'] = {'type': 'object', 'properties': {'completed': {'type': 'object', 'properties': {'outputs': {'type': 'string'}}}}}
-    result, out = run(tmp_path, doc, {'reply': {'path': '/state/completed/outputs'}})
+    result, out = run_with_explicit_parents(tmp_path, doc, {'reply': {'path': '/state/completed/outputs'}})
     assert result.exit_code == 3, result.output
     spec, report, provenance = artifacts(out)
     assert spec is None and codes(report, True) == ['async_shape_unsupported']
@@ -236,7 +270,7 @@ def scenario():
             'expect': {'outcome': 'succeeded', 'reply': 'pong', 'resources': [], 'required_gaps': []}}
 
 
-def test_verify_local_with_scenario_exercises_resource_identity(tmp_path):
+def test_verify_local_does_not_run_implicit_nested_carries(tmp_path):
     p = tmp_path / 'scenario.json'; p.write_text(json.dumps(scenario()))
     result, out = run(tmp_path, None, None, '--verify-local', '--scenario', str(p))
     assert result.exit_code == 3, result.output
@@ -252,7 +286,7 @@ def test_verify_local_with_scenario_exercises_resource_identity(tmp_path):
     (False, 'run/part', 'run/part', 'succeeded', '', '/runs/run%2Fpart'),
 ])
 async def test_runtime_identity_and_encoded_id(tmp_path, resource, value, poll_name, outcome, reason, tail):
-    result, out = run(tmp_path, document(resource=resource))
+    result, out = run_with_explicit_parents(tmp_path, document(resource=resource))
     assert result.exit_code == 3, result.output
     spec = artifacts(out)[0]
     assert spec is not None
@@ -316,13 +350,13 @@ def test_identity_and_capture_guards_block_unsupported_shapes(tmp_path, change):
         poll['parameters'].append(parameter('job_id'))
         submit['responses']['202']['content']['application/json']['schema']['properties'] = {'job_id': {'type': 'string'}}
         doc['paths'][POLL.replace('{r}', '{id}') + '/{job_id}'] = original
-    result, out = run(tmp_path, doc)
+    result, out = run_with_explicit_parents(tmp_path, doc)
     assert result.exit_code == 3, result.output
     assert artifacts(out)[0] is None
     assert set(codes(artifacts(out)[1], True)) & {'poll_resource_format_unsupported', 'poll_id_binding_missing'}
 
 
-def test_name_based_carry_precedes_a_same_named_response_field(tmp_path):
+def test_same_named_parent_response_field_does_not_replace_explicit_mapping(tmp_path):
     doc = document(resource=False)
     doc['paths'][SUBMIT]['post']['responses']['202']['content']['application/json']['schema']['properties']['o'] = {'type': 'string'}
     result, out = run(tmp_path, doc)
@@ -351,10 +385,8 @@ def test_renamed_id_placeholder_is_not_rewritten_as_a_carried_placeholder(tmp_pa
 
 def test_compile_rejects_a_forged_carried_binding(tmp_path):
     from dataclasses import replace
-    from argus.drafting.draft import choose_without_model, compile_draft
-    from test_draft_async import catalog_for
-    catalog = catalog_for(tmp_path, document())
-    choices = choose_without_model(catalog, operation='invoke', poll_operation='get_run')
+    from argus.drafting.draft import compile_draft
+    catalog, choices = explicit_choices(tmp_path)
     carry = choices.delivery.carried
     broken = replace(carry[0], submit_parameter='w')
     with pytest.raises(ValueError, match='Carried poll parameter'):
@@ -364,18 +396,18 @@ def test_compile_rejects_a_forged_carried_binding(tmp_path):
 def test_an_unsupported_identity_schema_is_in_the_read_set(tmp_path):
     doc = document()
     poll_fields(doc)['name']['not'] = {'const': 'foreign'}
-    result, out = run(tmp_path, doc)
+    result, out = run_with_explicit_parents(tmp_path, doc)
     assert result.exit_code == 3
     spec, report, _ = artifacts(out)
     assert spec is None and 'operation_unsupported' in codes(report, True)
 
 
 def test_two_presence_style_polls_remain_ambiguous(tmp_path):
-    doc = document()
+    doc = single_id_document()
     fields = poll_fields(doc)
     fields.pop('status');fields['state'] = {'type': 'object'}
-    other = copy.deepcopy(doc['paths'][POLL]);other['get']['operationId'] = 'get_other'
-    doc['paths'][POLL + '/detail'] = other
+    other = copy.deepcopy(doc['paths']['/runs/{r}']);other['get']['operationId'] = 'get_other'
+    doc['paths']['/runs/{r}/detail'] = other
     result, out = draft(tmp_path, doc, {'reply': {'path': '/result'}}, '--operation', 'invoke')
     assert result.exit_code == 3
     assert artifacts(out)[0] is None and 'poll_ambiguous' in codes(artifacts(out)[1], True)
@@ -384,7 +416,7 @@ def test_two_presence_style_polls_remain_ambiguous(tmp_path):
 def test_response_capture_type_mismatch_blocks(tmp_path):
     doc = document(resource=False)
     doc['paths'][POLL]['get']['parameters'][-1]['schema']['type'] = 'integer'
-    result, out = run(tmp_path, doc)
+    result, out = run_with_explicit_parents(tmp_path, doc)
     assert result.exit_code == 3
     assert artifacts(out)[0] is None and 'poll_id_binding_missing' in codes(artifacts(out)[1], True)
 
@@ -413,7 +445,7 @@ def test_unsafe_literal_resource_segment_is_rejected_before_compiling(tmp_path):
     poll = doc['paths'].pop(POLL)
     poll['get']['responses']['200']['content']['application/json']['schema']['properties']['name']['description'] = 'Format: @' + FORMAT
     doc['paths']['/@' + POLL.lstrip('/')] = poll
-    result, out = run(tmp_path, doc)
+    result, out = run_with_explicit_parents(tmp_path, doc)
     assert result.exit_code == 3
     assert artifacts(out)[0] is None and 'poll_resource_format_unsupported' in codes(artifacts(out)[1], True)
 
@@ -426,7 +458,7 @@ def test_submit_and_poll_keep_distinct_shadowed_path_variables(tmp_path):
     poll = doc['paths'].pop(POLL)
     poll['get']['parameters'].append(parameter('input_o'))
     doc['paths'][POLL.replace('/orgs/{o}', '/orgs/{o}/shadows/{input_o}')] = poll
-    result, out = run(tmp_path, doc)
+    result, out = run_with_explicit_parents(tmp_path, doc)
     assert result.exit_code == 3
     spec, report, _ = artifacts(out)
     assert spec is not None and codes(report, True) == []
@@ -436,13 +468,13 @@ def test_submit_and_poll_keep_distinct_shadowed_path_variables(tmp_path):
 
 
 def test_enum_and_presence_style_polls_remain_ambiguous(tmp_path):
-    doc = document()
-    other = copy.deepcopy(doc['paths'][POLL])
+    doc = single_id_document()
+    other = copy.deepcopy(doc['paths']['/runs/{r}'])
     other['get']['operationId'] = 'get_other'
     fields = other['get']['responses']['200']['content']['application/json']['schema']['properties']
     fields.pop('status')
     fields['state'] = {'type': 'object'}
-    doc['paths'][POLL + '/detail'] = other
+    doc['paths']['/runs/{r}/detail'] = other
     result, out = draft(tmp_path, doc, {'reply': {'path': '/result'}}, '--operation', 'invoke')
     assert result.exit_code == 3
     spec, report, _ = artifacts(out)
@@ -457,7 +489,7 @@ def test_enum_and_presence_style_polls_remain_ambiguous(tmp_path):
 def test_incompatible_same_field_identity_is_reported_unchecked(tmp_path, schema):
     doc = document(resource=False)
     poll_fields(doc)['r'] = schema
-    result, out = run(tmp_path, doc)
+    result, out = run_with_explicit_parents(tmp_path, doc)
     assert result.exit_code == 3
     spec, report, _ = artifacts(out)
     assert spec is not None and codes(report, True) == []
@@ -467,7 +499,7 @@ def test_incompatible_same_field_identity_is_reported_unchecked(tmp_path, schema
 def test_unsupported_same_field_identity_schema_blocks(tmp_path):
     doc = document(resource=False)
     poll_fields(doc)['r']['not'] = {'const': 'foreign'}
-    result, out = run(tmp_path, doc)
+    result, out = run_with_explicit_parents(tmp_path, doc)
     assert result.exit_code == 3
     spec, report, _ = artifacts(out)
     assert spec is None and 'operation_unsupported' in codes(report, True)
@@ -476,14 +508,14 @@ def test_unsupported_same_field_identity_schema_blocks(tmp_path):
 def test_resource_format_without_prefix_blocks_with_named_gap(tmp_path):
     doc = document()
     poll_fields(doc)['name']['description'] = 'Format: {r}'
-    result, out = run(tmp_path, doc)
+    result, out = run_with_explicit_parents(tmp_path, doc)
     assert result.exit_code == 3, result.output
     spec, report, _ = artifacts(out)
     assert spec is None and 'poll_resource_format_unsupported' in codes(report, True)
 
 
 def test_submit_selector_uses_documented_poll_prefix(tmp_path):
-    result, out = run(tmp_path)
+    result, out = run_with_explicit_parents(tmp_path)
     assert result.exit_code == 3, result.output
     selector = artifacts(out)[0]['transport']['delivery']['ids']['r']
     assert selector['expect_prefix'] == {'concat': [
@@ -492,7 +524,7 @@ def test_submit_selector_uses_documented_poll_prefix(tmp_path):
 
 
 async def submit_capture_attempt(tmp_path, value, *, bindings=None, force_prefix=False):
-    result, out = run(tmp_path, bindings=bindings)
+    result, out = run_with_explicit_parents(tmp_path, bindings=bindings)
     assert result.exit_code == 3, result.output
     spec = artifacts(out)[0]
     assert spec is not None
@@ -556,7 +588,7 @@ def test_integer_id_cannot_use_inferred_resource_extraction(tmp_path):
     doc = document()
     doc['paths'][SUBMIT]['post']['responses']['202']['content']['application/json']['schema']['properties']['r']['type'] = 'integer'
     doc['paths'][POLL]['get']['parameters'][-1]['schema']['type'] = 'integer'
-    result, out = run(tmp_path, doc)
+    result, out = run_with_explicit_parents(tmp_path, doc)
     assert result.exit_code == 3
     spec, report, _ = artifacts(out)
     assert spec is None
@@ -570,7 +602,7 @@ def test_f4_gaps_give_specific_review_decisions(tmp_path, code):
         del poll_fields(doc)['r']
     if code == 'poll_resource_format_unsupported':
         poll_fields(doc)['name']['description'] = 'Format: free text.'
-    result, out = run(tmp_path, doc)
+    result, out = run_with_explicit_parents(tmp_path, doc)
     assert result.exit_code == 3
     report = artifacts(out)[1]
     entry = next(gap for gap in report['gaps'] if gap['code'] == code)
@@ -583,7 +615,7 @@ def test_explicit_extraction_without_documented_format_blocks(tmp_path, poll_id_
     doc = document(resource=False)
     if not poll_id_documented:
         del poll_fields(doc)['r']
-    result, out = run(tmp_path, doc, {'ids': {'r': {'last_segment': True}}})
+    result, out = run_with_explicit_parents(tmp_path, doc, {'ids': {'r': {'last_segment': True}}})
     assert result.exit_code == 3, result.output
     spec, report, _ = artifacts(out)
     assert spec is None
@@ -596,7 +628,7 @@ def test_explicit_extraction_without_documented_format_blocks(tmp_path, poll_id_
 
 
 def test_explicit_extraction_with_documented_format_keeps_submit_prefix(tmp_path):
-    result, out = run(tmp_path, bindings={'ids': {'r': {'last_segment': True}}})
+    result, out = run_with_explicit_parents(tmp_path, bindings={'ids': {'r': {'last_segment': True}}})
     assert result.exit_code == 3, result.output
     spec, report, _ = artifacts(out)
     assert spec is not None and codes(report, True) == []
@@ -606,7 +638,7 @@ def test_explicit_extraction_with_documented_format_keeps_submit_prefix(tmp_path
 
 
 async def test_explicit_false_without_format_accepts_bare_id(tmp_path):
-    result, out = run(tmp_path, document(resource=False), {'ids': {'r': {'last_segment': False}}})
+    result, out = run_with_explicit_parents(tmp_path, document(resource=False), {'ids': {'r': {'last_segment': False}}})
     assert result.exit_code == 3, result.output
     spec, report, _ = artifacts(out)
     assert spec is not None and codes(report, True) == []
@@ -639,7 +671,7 @@ def test_shared_schema_constraints_have_unique_sources(tmp_path):
     schema = {'$ref': '#/components/schemas/RunId'}
     doc['paths'][SUBMIT]['post']['responses']['202']['content']['application/json']['schema']['properties']['r'] = schema
     poll_fields(doc)['r'] = copy.deepcopy(schema)
-    result, out = run(tmp_path, doc)
+    result, out = run_with_explicit_parents(tmp_path, doc)
     assert result.exit_code == 3, result.output
     spec, report, _ = artifacts(out)
     assert spec is not None and codes(report, True) == []
@@ -656,7 +688,7 @@ def test_unchecked_override_attack_scenarios_cannot_produce_specs(tmp_path, subm
     poll['replies'][0]['body'] = {'status': 'COMPLETED', 'result': 'pong'}
     path = tmp_path / 'attack-scenario.json'
     path.write_text(json.dumps(attack))
-    result, out = run(tmp_path, document(resource=False), {'ids': {'r': {'last_segment': True}}},
+    result, out = run_with_explicit_parents(tmp_path, document(resource=False), {'ids': {'r': {'last_segment': True}}},
                       '--verify-local', '--scenario', str(path))
     spec, report, provenance = artifacts(out)
     assert spec is None
@@ -751,7 +783,7 @@ def test_run_slot_collision_uses_url_order_not_parameter_order(tmp_path, suffix)
 
 
 @pytest.mark.parametrize('suffix', ['', '/result'])
-def test_response_run_slot_preserves_parent_carries_with_reordered_parameters(tmp_path, suffix):
+def test_implicit_parent_carries_block_with_reordered_parameters(tmp_path, suffix):
     doc = document(resource=False)
     poll = doc['paths'].pop(POLL)['get']
     poll['parameters'].reverse()
@@ -764,10 +796,8 @@ def test_response_run_slot_preserves_parent_carries_with_reordered_parameters(tm
 
 def test_compile_rejects_forged_carried_run_slot(tmp_path):
     from dataclasses import replace
-    from argus.drafting.draft import CarriedBinding, choose_without_model, compile_draft
-    from test_draft_async import catalog_for
-    catalog = catalog_for(tmp_path, response_parent_and_run_document())
-    choices = choose_without_model(catalog, operation='invoke', poll_operation='get_run')
+    from argus.drafting.draft import CarriedBinding, compile_draft
+    catalog, choices = explicit_choices(tmp_path, document(resource=False))
     delivery = choices.delivery
     parent = next(item for item in delivery.carried if item.parameter == 'a')
     run = next(item for item in delivery.ids if item.parameter == 'r')
@@ -782,12 +812,10 @@ def test_compile_rejects_forged_carried_run_slot(tmp_path):
 
 def test_compile_rejects_forged_parent_echo_run_id(tmp_path):
     from dataclasses import replace
-    from argus.drafting.draft import choose_without_model, compile_draft
-    from test_draft_async import catalog_for
+    from argus.drafting.draft import compile_draft
     doc = document(resource=False)
     doc['paths'][SUBMIT]['post']['responses']['202']['content']['application/json']['schema']['properties']['a'] = {'type': 'string'}
-    catalog = catalog_for(tmp_path, doc)
-    choices = choose_without_model(catalog, operation='invoke', poll_operation='get_run')
+    catalog, choices = explicit_choices(tmp_path, doc)
     run = choices.delivery.ids[0]
     parent = replace(run.submit, path=('a',), pointer=run.submit.pointer.rsplit('/', 1)[0] + '/a')
     forged = replace(choices.delivery, ids=(replace(run, name='a', submit=parent),))
@@ -795,7 +823,7 @@ def test_compile_rejects_forged_parent_echo_run_id(tmp_path):
         compile_draft(catalog, replace(choices, delivery=forged))
 
 
-def test_non_parent_heuristic_pair_has_accurate_review_text(tmp_path):
+def test_nested_id_named_heuristic_is_not_used(tmp_path):
     doc = document(resource=False)
     doc['paths'][SUBMIT]['post']['responses']['202']['content']['application/json']['schema']['properties'] = {'job_id': {'type': 'string'}}
     poll = doc['paths'].pop(POLL)['get']
@@ -813,7 +841,7 @@ def test_integer_resource_id_has_type_specific_review_text(tmp_path):
     doc = document()
     doc['paths'][SUBMIT]['post']['responses']['202']['content']['application/json']['schema']['properties']['r']['type'] = 'integer'
     doc['paths'][POLL]['get']['parameters'][-1]['schema']['type'] = 'integer'
-    result, out = run(tmp_path, doc)
+    result, out = run_with_explicit_parents(tmp_path, doc)
     assert result.exit_code == 3, result.output
     spec, report, _ = artifacts(out)
     assert spec is None
@@ -974,3 +1002,42 @@ def test_multiple_explicit_run_fields_are_ambiguous(tmp_path):
     spec, report, _ = artifacts(out)
     assert result.exit_code == 3, result.output
     assert spec is None and 'poll_id_binding_missing' in codes(report, True)
+
+
+def test_explicit_parent_mappings_allow_more_than_four_total_placeholders(tmp_path):
+    result, out = run_with_explicit_parents(tmp_path, document(extra=True))
+    spec, report, _ = artifacts(out)
+    assert result.exit_code == 3, result.output
+    assert spec is not None and codes(report, True) == []
+    assert list(spec['transport']['delivery']['ids']) == ['r']
+    assert '{input_region}' in spec['transport']['delivery']['request']['url']
+
+
+def test_single_placeholder_keeps_the_id_named_heuristic_and_accurate_text(tmp_path):
+    doc = single_id_document()
+    submit = doc['paths']['/runs']['post']
+    submit['responses']['202']['content']['application/json']['schema']['properties'] = {'job_id': {'type': 'string'}}
+    poll = doc['paths'].pop('/runs/{r}')['get']
+    poll['parameters'] = [parameter('id')]
+    fields = poll['responses']['200']['content']['application/json']['schema']['properties']
+    fields['job_id'] = fields.pop('r')
+    doc['paths']['/runs/{id}'] = {'get': poll}
+    result, out = run(tmp_path, doc)
+    spec, report, _ = artifacts(out)
+    assert result.exit_code == 3, result.output
+    assert spec is not None and codes(report, True) == []
+    why = next(gap['why'] for gap in report['gaps'] if gap['code'] == 'poll_id_binding_proposed')
+    assert 'proposed' in why and 'by name' not in why
+
+
+def test_compiler_rejects_a_nested_heuristic_run_selector_without_explicit_selection(tmp_path):
+    from dataclasses import replace
+    from argus.drafting.draft import compile_draft
+    doc = document(resource=False)
+    doc['paths'][SUBMIT]['post']['responses']['202']['content']['application/json']['schema']['properties']['resource'] = {'type': 'string'}
+    catalog, choices = explicit_choices(tmp_path, doc)
+    run = choices.delivery.ids[0]
+    response = replace(run.submit, path=('resource',), pointer=run.submit.pointer.rsplit('/', 1)[0] + '/resource')
+    delivery = replace(choices.delivery, ids=(replace(run, name='resource', submit=response),))
+    with pytest.raises(ValueError, match='explicit'):
+        compile_draft(catalog, replace(choices, delivery=delivery))
