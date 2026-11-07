@@ -51,6 +51,7 @@ DECISIONS = {
     "poll_id_extraction_proposed": "Confirm that the submit ID is a full resource name with the documented poll prefix. If the submit returns a bare ID, set ids.<field>.last_segment to false.",
     "poll_identity_unchecked": "Review how the poll response verifies the submitted ID. No documented identity field was found.",
     "poll_resource_format_unsupported": "Correct the resource-name Format declaration to match a supported poll path and carried values.",
+    "poll_resource_id_type_unsupported": "Use a documented string submit response ID for resource-name extraction.",
     "poll_status_proposed": "Confirm the success value and the values that mean the job is still running.",
     "poll_status_unclassified": "Confirm that these documented values should end the run as target errors.",
     "async_shape_unsupported": "Review the asynchronous flow; this command drafts only a documented GET poll with a top-level string status enum.",
@@ -450,7 +451,16 @@ def _poll_parameters(op):
     return _path_parameters(op) or None
 
 
-def _pair(parameters, ids, submit, mappings=()):
+def _run_id(poll, ids, submit_path_names):
+    parameter = re.findall(r"\{([^{}]+)\}", poll.path)[-1]
+    binding = next((item for item in ids if item.parameter == parameter), None)
+    return binding if binding and binding.submit.path[0] not in submit_path_names else None
+
+
+def _pair(poll, ids, submit, mappings=()):
+    parameters = _poll_parameters(poll)
+    if not parameters:
+        return None
     paths = dict(_path_parameters(submit) or ())
     response, _ = _response_fields(submit)
     explicit = {entry.parameter: entry for entry in mappings}
@@ -471,7 +481,8 @@ def _pair(parameters, ids, submit, mappings=()):
         if match is None or _type(response[match.path[0]]) != _type(schema):
             return None
         pairs.append(IdBinding(_id_variable(match.path[0]), match, parameter))
-    if not 1 <= len(pairs) <= 4 or len({pair.name for pair in pairs}) != len(pairs):
+    if (not 1 <= len(pairs) <= 4 or len({pair.name for pair in pairs}) != len(pairs)
+            or _run_id(poll, pairs, paths) is None):
         return None
     return tuple(pairs), tuple(carried)
 
@@ -530,7 +541,7 @@ def _resource_identity(catalog, poll, pairs, carried, overrides, gaps):
                                     "The resource-name format is not documented, so the submit identity cannot be checked."))
         if extract and _type(_schema_at(catalog, item.submit.pointer)) != "string":
             gaps.append(_unresolved("/transport/delivery/ids", override, "Last-segment extraction requires a string submit ID.") if override
-                        else _gap(catalog, "/transport/delivery/ids", "poll_resource_format_unsupported",
+                        else _gap(catalog, "/transport/delivery/ids", "poll_resource_id_type_unsupported",
                                   "Resource-name extraction requires a string submit ID.", pointer=item.submit.pointer))
         fallback = fields.get(item.submit.path[0])
         comparable = (_type(fallback) == _type(_schema_at(catalog, item.submit.pointer))
@@ -589,7 +600,7 @@ def _poll_choice(catalog, submit, *, poll_operation, required, gaps, inputs=None
     polls = [(op, _poll_parameters(op)) for op in catalog.operations if poll_operation in {None, op.id}]
     polls = [(op, parameters) for op, parameters in polls if parameters]
     paired = [(op, pairing) for op, parameters in polls
-              if (pairing := _pair(parameters, ids, submit, inputs.poll.parameters if inputs and inputs.poll else ()))]
+              if (pairing := _pair(op, ids, submit, inputs.poll.parameters if inputs and inputs.poll else ()))]
     if not paired and not required:
         return None
     candidates = [(op, pairs) for op, pairs in paired if _status_field(op)[0]]
@@ -1276,6 +1287,8 @@ def _poll_target(catalog, operation, choices):
                 or parameters[item.parameter][0] != item.poll_pointer
                 or _type(submit_parameters[item.submit_parameter][1]) != _type(parameters[item.parameter][1])):
             raise ValueError("Carried poll parameter does not match a submit path parameter")
+    if _run_id(poll, delivery.ids, submit_parameters) is None:
+        raise ValueError("Poll run slot requires a submit response ID that does not name a submit path parameter")
     return poll, parameters
 
 
@@ -1481,7 +1494,9 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                                                       catalog.document.source(parameter_pointer).to_dict()],
                                            "basis": item.submit.basis}
             if item.submit.basis == "proposal":
-                gaps.append(_gap(catalog, field, "poll_id_binding_proposed", "The submit field was paired with the poll path parameter by name.",
+                why = ("The submit field was paired with the poll path parameter by name." if item.parameter == item.submit.path[0]
+                       else "The only ID-named submit field is proposed for this poll path parameter.")
+                gaps.append(_gap(catalog, field, "poll_id_binding_proposed", why,
                                  pointer=item.submit.pointer, kind="proposal", blocking=False))
         for item in choices.delivery.carried if choices.delivery else ():
             source_schema = _schema_at(catalog, item.submit_pointer + "/schema")
