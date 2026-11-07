@@ -256,7 +256,7 @@ def confirmation_data(origin, *, reserve=2, undo=True):
     step = {'id': 'upload_sample',
             'request': {'method': 'POST', 'url': origin + '/files', 'body': {'json': {}}},
             'expect': {'http_status': [201]},
-            'capture': {'file_id': {'path': '$.name', 'expect_prefix': {'literal': 'organizations/'}, 'last_segment': True},
+            'capture': {'file_id': {'path': '$.name', 'expect_prefix': {'literal': 'organizations/one/files/'}, 'last_segment': True},
                         'file_name': {'path': '$.name', 'expect_prefix': {'literal': 'organizations/'}}}}
     if undo:
         step['undo'] = {'request': {'method': 'DELETE', 'url': origin + '/files/{file_id}'},
