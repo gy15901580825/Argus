@@ -17,7 +17,7 @@ from argus_transport import TransportSpecV2
 from argus_transport.models import AuthSpec, path as transport_path
 from argus_transport.spec_v2 import CONTEXT_KEYS_V2, NAME_RE, SECRET_WORDS
 
-from .bindings import DraftInputs, UserField, UserStep
+from .bindings import DraftInputs, UserField, UserStep, UserId
 from .openapi import OperationCatalog, Source, pointer_child
 
 
@@ -45,9 +45,13 @@ DECISIONS = {
     "reference_cycle": "Provide a bounded schema without cyclic references.",
     "async_poll_missing": "Provide the documented GET operation that returns the submitted job's state and result.",
     "poll_ambiguous": "Select the documented poll operation with --poll-operation.",
-    "poll_id_binding_missing": "Document which submit response field fills each poll path parameter.",
+    "poll_id_binding_missing": "Select the run's submit response ID. Bind each nested parent to a same-name submit response field or an explicit poll.parameters mapping.",
     "poll_proposed": "Confirm that this GET operation returns the submitted job's state and result.",
     "poll_id_binding_proposed": "Confirm that this submit response field identifies the job the poll operation reads.",
+    "poll_id_extraction_proposed": "Confirm that the submit ID is a full resource name with the documented poll prefix. If the submit returns a bare ID, set ids.<field>.last_segment to false.",
+    "poll_identity_unchecked": "Review how the poll response verifies the submitted ID. No documented identity field was found.",
+    "poll_resource_format_unsupported": "Correct the resource-name Format declaration to match a supported poll path and carried values.",
+    "poll_resource_id_type_unsupported": "Use a documented string submit response ID for resource-name extraction.",
     "poll_status_proposed": "Confirm the success value and the values that mean the job is still running.",
     "poll_status_unclassified": "Confirm that these documented values should end the run as target errors.",
     "async_shape_unsupported": "Review the asynchronous flow; this command drafts only a documented GET poll with a top-level string status enum.",
@@ -120,10 +124,29 @@ class ReplyPresence:
 
 
 @dataclass(frozen=True)
+class CarriedBinding:
+    parameter: str
+    submit_parameter: str
+    submit_pointer: str
+    poll_pointer: str
+    source: Source | None = None
+
+
+@dataclass(frozen=True)
+class PollIdentity:
+    field: Binding
+    prefix_parts: tuple[str | CarriedBinding, ...]
+
+
+@dataclass(frozen=True)
 class IdBinding:
     name: str
     submit: Binding
     parameter: str
+    last_segment: bool = False
+    identity: PollIdentity | None = None
+    override: UserId | None = None
+    fallback: Binding | None = None
 
 
 @dataclass(frozen=True)
@@ -138,6 +161,7 @@ class StatusMap:
 class PollChoice:
     operation: str
     ids: tuple[IdBinding, ...]
+    carried: tuple[CarriedBinding, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -406,37 +430,163 @@ def _parameters(op):
             + [(parameter, pointer_child(op.pointer + "/parameters", index)) for index, parameter in enumerate(operation_level)])
 
 
-def _poll_parameters(op):
-    """Required path parameters of a same-origin GET with one 2xx JSON object response, or None if it cannot be a poll.
-
-    A GET that documents only 202 never reports a finished job, so it cannot be the poll."""
-    if (op.method != "GET" or op.path_data.get("servers") or op.data.get("servers") or op.data.get("callbacks")
-            or _response_fields(op)[0] is None or [status for status, _ in _success(op)] == ["202"]):
-        return None
+def _path_parameters(op):
     parameters = _parameters(op)
     if parameters is None or any(not isinstance(parameter, dict) for parameter, _ in parameters):
         return None
     found = [(parameter, pointer) for parameter, pointer in parameters if parameter.get("in") == "path"]
     names = [parameter.get("name") for parameter, _ in found]
-    if (not 1 <= len(found) <= 4 or sorted(names) != sorted(re.findall(r"\{([^{}]+)\}", op.path)) or len(set(names)) != len(names)
+    if (any(not isinstance(name, str) for name in names)
+            or sorted(names) != sorted(re.findall(r"\{([^{}]+)\}", op.path)) or len(set(names)) != len(names)
             or any(parameter.get("required") is not True or parameter.get("style", "simple") != "simple" or "content" in parameter
                    or _type(parameter.get("schema")) not in {"string", "integer"} for parameter, _ in found)):
         return None
     return tuple((parameter["name"], (pointer, parameter["schema"])) for parameter, pointer in found)
 
 
-def _pair(parameters, ids):
-    """Map each poll path parameter to one submit ID: equal names, or `id` to the only `<x>_id`/`<x>Id` field."""
-    pairs = []
-    for parameter, _ in parameters:
-        named = [binding for binding in ids.values() if re.fullmatch(r".+(?:_id|[a-z0-9]Id)", binding.path[0])]
-        match = ids.get(parameter) or (named[0] if parameter == "id" and len(named) == 1 else None)
-        if match is None:
+def _poll_parameters(op):
+    if (op.method != "GET" or op.path_data.get("servers") or op.data.get("servers") or op.data.get("callbacks")
+            or _response_fields(op)[0] is None or [status for status, _ in _success(op)] == ["202"]):
+        return None
+    return _path_parameters(op) or None
+
+
+def _run_id(poll, ids, submit_path_names):
+    parameter = re.findall(r"\{([^{}]+)\}", poll.path)[-1]
+    binding = next((item for item in ids if item.parameter == parameter), None)
+    return binding if binding and binding.submit.path[0] not in submit_path_names else None
+
+
+def _unmapped_parents(poll, mappings, ids, response):
+    names = re.findall(r"\{([^{}]+)\}", poll.path)
+    parameters = dict(_poll_parameters(poll) or ())
+    return [name for name in names[:-1] if name not in {entry.parameter for entry in mappings}
+            and (name not in ids or _type(response[name]) != _type(parameters[name][1]))]
+
+
+def _pair(poll, ids, submit, mappings=(), overrides=()):
+    parameters = _poll_parameters(poll)
+    if not parameters:
+        return None
+    paths = dict(_path_parameters(submit) or ())
+    response, _ = _response_fields(submit)
+    explicit = {entry.parameter: entry for entry in mappings}
+    if set(explicit) - {name for name, _ in parameters} or _unmapped_parents(poll, mappings, ids, response):
+        return None
+    run_parameter = re.findall(r"\{([^{}]+)\}", poll.path)[-1]
+    pairs, carried = [], []
+    for parameter, (poll_pointer, schema) in parameters:
+        selected = explicit.get(parameter)
+        if selected:
+            source = selected.submit_parameter
+            if parameter == run_parameter:
+                return None
+            if source not in paths or _type(paths[source][1]) != _type(schema):
+                return None
+            carried.append(CarriedBinding(parameter, source, paths[source][0], poll_pointer,
+                                          selected.source))
+            continue
+        match = ids.get(parameter)
+        if match is None and parameter == run_parameter and len(overrides) == 1:
+            selected_id = ids.get(overrides[0].field)
+            match = replace(selected_id, basis="user_selection") if selected_id else None
+        if match is None and not overrides and len(parameters) == 1 and parameter == "id":
+            named = [binding for binding in ids.values() if re.fullmatch(r".+(?:_id|[a-z0-9]Id)", binding.path[0])]
+            match = named[0] if len(named) == 1 else None
+        if match is None or _type(response[match.path[0]]) != _type(schema):
             return None
         pairs.append(IdBinding(_id_variable(match.path[0]), match, parameter))
-    if len({pair.name for pair in pairs}) != len(pairs):
+    if (not 1 <= len(pairs) <= 4 or len({pair.name for pair in pairs}) != len(pairs)
+            or _run_id(poll, pairs, paths) is None):
         return None
-    return tuple(pairs)
+    return tuple(pairs), tuple(carried)
+
+
+def _resource_identity(catalog, poll, pairs, carried, overrides, gaps):
+    fields, prefix = _response_fields(poll)
+    name = fields.get("name")
+    templates = []
+    if isinstance(name, dict):
+        for text in (name.get("title"), name.get("description")):
+            if isinstance(text, str) and re.search(r"(?i)\bFormat:", text):
+                matches = re.findall(r"(?i)\bFormat:\s*`?([^\s`]+)", text)
+                templates.extend(match.rstrip(".,;`") for match in matches or [""])
+    identity = None
+    if templates:
+        template = templates[0]
+        segments = template.split("/")
+        path_segments = poll.path.lstrip("/").split("/")
+        placeholder = lambda part: re.fullmatch(r"\{[^{}]+\}", part)
+        canonical = lambda items: ["{}" if placeholder(part) else part for part in items]
+        valid = (len(set(templates)) == 1 and _type(name) == "string" and not name.get("writeOnly")
+                 and all(placeholder(part) or re.fullmatch(r"[A-Za-z0-9._~-]+", part) and part not in {".", ".."} for part in segments)
+                 and canonical(segments) == canonical(path_segments[-len(segments):]))
+        tail = path_segments[-len(segments):]
+        target = next((item for item in pairs if "{" + item.parameter + "}" == tail[-1]), None) if valid else None
+        known = {"{" + item.parameter + "}": item for item in carried}
+        parts, literal = [], ""
+        if target:
+            for segment, parameter in zip(segments[:-1], tail[:-1]):
+                if placeholder(segment):
+                    if parameter not in known:
+                        valid = False
+                        break
+                    if literal: parts.append(literal)
+                    parts.append(known[parameter]); literal = "/"
+                else:
+                    literal += segment + "/"
+            if literal: parts.append(literal)
+        if not valid or target is None or not parts:
+            gaps.append(_gap(catalog, "/transport/delivery/ids", "poll_resource_format_unsupported",
+                             "The documented resource-name format does not uniquely match the poll path and carried parameters.",
+                             pointer=pointer_child(prefix, "name"), kind="unsupported_feature"))
+        else:
+            identity = (target.name, PollIdentity(Binding(("name",), pointer_child(prefix, "name"), "document_fact"), tuple(parts)))
+    supplied = {entry.field: entry for entry in overrides}
+    used = {item.submit.path[0] for item in pairs}
+    for field in supplied.keys() - used:
+        gaps.append(_unresolved("/transport/delivery/ids", supplied[field], "The entry does not name a paired submit response ID."))
+    result = []
+    for item in pairs:
+        override = supplied.get(item.submit.path[0])
+        selected = identity[1] if identity and identity[0] == item.name else None
+        extract = override.last_segment if override else selected is not None
+        if override and extract and selected is None:
+            gaps.append(_unresolved("/transport/delivery/ids", override,
+                                    "The resource-name format is not documented, so the submit identity cannot be checked."))
+        if extract and _type(_schema_at(catalog, item.submit.pointer)) != "string":
+            gaps.append(_unresolved("/transport/delivery/ids", override, "Last-segment extraction requires a string submit ID.") if override
+                        else _gap(catalog, "/transport/delivery/ids", "poll_resource_id_type_unsupported",
+                                  "Resource-name extraction requires a string submit ID.", pointer=item.submit.pointer))
+        fallback = fields.get(item.submit.path[0])
+        comparable = (_type(fallback) == _type(_schema_at(catalog, item.submit.pointer))
+                      and not fallback.get("writeOnly"))
+        if selected is None and not comparable:
+            gaps.append(_gap(catalog, "/transport/delivery/ids/" + item.name, "poll_identity_unchecked",
+                             "The poll response documents no field that verifies this submit ID's identity.",
+                             pointer=poll.pointer, blocking=False))
+        checked_fallback = (Binding(item.submit.path, pointer_child(prefix, item.submit.path[0]), "document_fact")
+                            if selected is None and comparable else None)
+        result.append(replace(item, last_segment=extract, identity=selected, override=override, fallback=checked_fallback))
+    return tuple(result)
+
+
+def _input_variable(name):
+    return "input_" + re.sub(r"[^a-zA-Z0-9_]", "_", name).lower()
+
+
+def _id_selector(item):
+    selector = {"path": _field_path(item.submit.path)}
+    if item.last_segment:
+        selector["last_segment"] = True
+    if item.identity:
+        prefix = {"concat": [{"literal": part} if isinstance(part, str)
+                              else {"var": _input_variable(part.submit_parameter)} for part in item.identity.prefix_parts]}
+        if item.last_segment:
+            selector["expect_prefix"] = prefix
+        selector["poll"] = {"path": _field_path(item.identity.field.path), "last_segment": True,
+                            "expect_prefix": prefix}
+    return selector
 
 
 def _status_field(op):
@@ -459,12 +609,14 @@ def _classify(values):
     return classes
 
 
-def _poll_choice(catalog, submit, *, poll_operation, required, gaps):
+def _poll_choice(catalog, submit, *, poll_operation, required, gaps, inputs=None):
     """Pair the submit with a documented GET poll. Returns (delivery, reply, completion), or None to stay synchronous."""
     ids = _id_candidates(submit)
     polls = [(op, _poll_parameters(op)) for op in catalog.operations if poll_operation in {None, op.id}]
     polls = [(op, parameters) for op, parameters in polls if parameters]
-    paired = [(op, pairs) for op, parameters in polls if (pairs := _pair(parameters, ids))]
+    paired = [(op, pairing) for op, parameters in polls
+              if (pairing := _pair(op, ids, submit, inputs.poll.parameters if inputs and inputs.poll else (),
+                                  inputs.ids if inputs else ()))]
     if not paired and not required:
         return None
     candidates = [(op, pairs) for op, pairs in paired if _status_field(op)[0]]
@@ -473,22 +625,32 @@ def _poll_choice(catalog, submit, *, poll_operation, required, gaps):
                          "The submit response carries no answer and no GET operation can return the job's result.", pointer=submit.pointer))
         return None, None, None
     if not paired:
-        gaps.append(_gap(catalog, "/transport/delivery/ids", "poll_id_binding_missing",
-                         "No submit response field maps uniquely to every poll path parameter.", pointer=polls[0][0].pointer))
+        if inputs and inputs.poll:
+            for entry in inputs.poll.parameters:
+                gaps.append(_unresolved("/transport/delivery/request", entry,
+                                        "This mapping cannot pair the documented poll with a compatible submit path parameter."))
+        poll = polls[0][0]
+        missing = _unmapped_parents(poll, inputs.poll.parameters if inputs and inputs.poll else (), ids, _response_fields(submit)[0])
+        why = ("Nested poll parent placeholders require same-name submit response fields or explicit poll.parameters mappings: "
+               + ", ".join("{" + name + "}" for name in missing) + "." if missing else
+               "The poll run placeholder {" + re.findall(r"\{([^{}]+)\}", poll.path)[-1]
+               + "} cannot be paired with a compatible submit response ID and supported parent bindings.")
+        gaps.append(_gap(catalog, "/transport/delivery/ids", "poll_id_binding_missing", why, pointer=poll.pointer))
         return None, None, None
-    if not candidates:
-        shape = any(_status_field(op)[1] for op, _ in paired)
-        gaps.append(_gap(catalog, "/transport/delivery/pending" if shape else "/transport/outcome",
-                         "async_shape_unsupported" if shape else "completion_missing",
-                         "The poll state is not a top-level string enum." if shape else "The poll response documents no terminal state.",
-                         pointer=paired[0][0].pointer, kind="unsupported_feature" if shape else "documentation_gap"))
-        return None, None, None
-    if len(candidates) > 1:
+    if len(paired) > 1:
         gaps.append(_gap(catalog, "/transport/delivery", "poll_ambiguous", "Several GET operations can poll the submitted job.",
                          pointer=submit.pointer, kind="ambiguous_choice"))
         return None, None, None
-    op, pairs = candidates[0]
-    (name, schema), _, prefix = _status_field(op)
+    op, (pairs, carried) = candidates[0] if candidates else paired[0]
+    pairs = _resource_identity(catalog, op, pairs, carried, inputs.ids if inputs else (), gaps)
+    status, other_state, prefix = _status_field(op)
+    if status is None:
+        gaps.append(_gap(catalog, "/transport/delivery/pending" if other_state else "/transport/outcome",
+                         "async_shape_unsupported" if other_state else "completion_missing",
+                         "The poll state is not a top-level string enum." if other_state else "The poll response documents no terminal state.",
+                         pointer=op.pointer, kind="unsupported_feature" if other_state else "documentation_gap"))
+        return PollChoice(op.id, pairs, carried), None, None
+    (name, schema) = status
     unwritable = [(field, binding) for field, binding in [*(("/transport/delivery/ids", pair.submit) for pair in pairs),
                                                           ("/transport/outcome", Binding((name,), pointer_child(prefix, name)))]
                   if _field_path(binding.path) is None]
@@ -512,7 +674,7 @@ def _poll_choice(catalog, submit, *, poll_operation, required, gaps):
              if field.lower() in {"answer", "reply", "output", "result"} and _type(value) in {"string", "object"}
              and not value.get("writeOnly") and not _metadata(field, value)]
     reply = Binding((texts[0],), pointer_child(prefix, texts[0])) if len(texts) == 1 else None
-    return PollChoice(op.id, pairs), reply, completion
+    return PollChoice(op.id, pairs, carried), reply, completion
 
 
 def choose_without_model(catalog: OperationCatalog, *, operation=None, server_origin=None, poll_operation=None,
@@ -857,6 +1019,13 @@ def _choose(catalog, *, operation, server_origin, intent, poll_operation=None, s
         except (ValueError, TypeError):
             gaps.append(_gap(catalog, "/transport/request/url", "server_invalid",
                              "A server URL or origin override is unsafe or unresolved.", kind="unsupported_feature"))
+    if inputs and inputs.poll:
+        if poll_operation is not None and poll_operation != inputs.poll.operation:
+            gaps.append(_unresolved("/transport/delivery", inputs.poll, "The file poll operation conflicts with --poll-operation."))
+        elif inputs.poll.operation not in {op.id for op in catalog.operations}:
+            gaps.append(_unresolved("/transport/delivery", inputs.poll, "The file poll operation is not documented."))
+        else:
+            poll_operation = inputs.poll.operation
     prompt = reply = completion = delivery = None
     values = steps = ()
     for issue in doc.issues:
@@ -936,7 +1105,7 @@ def _choose(catalog, *, operation, server_origin, intent, poll_operation=None, s
         success = _success(chosen)
         required = success is not None and any(status == "202" for status, _ in success) or poll_operation is not None
         # A documented answer keeps the call synchronous unless the API or the user says otherwise.
-        polled = (_poll_choice(catalog, chosen, poll_operation=poll_operation, required=required, gaps=gaps)
+        polled = (_poll_choice(catalog, chosen, poll_operation=poll_operation, required=required, gaps=gaps, inputs=inputs)
                   if success and (reply is None or required) else None)
         if polled is not None:
             delivery, reply, completion = polled
@@ -949,11 +1118,14 @@ def _choose(catalog, *, operation, server_origin, intent, poll_operation=None, s
                     completion = ReplyPresence() if reply else None
             for binding, field, missing in ((reply, "/transport/response/text", "reply_binding_missing"),
                                              (completion, "/transport/outcome", "completion_missing")):
-                if binding is None and not (missing == "reply_binding_missing" and inputs and inputs.reply):
+                if (binding is None and not (missing == "reply_binding_missing" and inputs and inputs.reply)
+                        and not (missing == "completion_missing" and any(gap.blocking and gap.code in {"async_shape_unsupported", "completion_missing"} for gap in gaps))):
                     gaps.append(_gap(catalog, field, missing, "No unique documented reply or terminal state can be proposed.", pointer=pointer))
         elif inputs and inputs.reply:
             gaps.append(_unresolved("/transport/response/text", inputs.reply,
                                     "No poll operation could be paired with the submit, so the reply path cannot be checked against its response."))
+    if inputs and inputs.ids and delivery is None:
+        gaps.extend(_unresolved("/transport/delivery/ids", entry, "No paired poll can use this submit ID extraction entry.") for entry in inputs.ids)
     return DraftChoices(chosen.id if chosen else None, server, prompt, reply, completion, tuple(gaps), intent, delivery,
                         inputs, values, steps)
 
@@ -1123,12 +1295,34 @@ def _poll_target(catalog, operation, choices):
         raise ValueError("A poll draft completes only through a status map")
     poll = next((op for op in catalog.operations if op.id == delivery.operation), None)
     parameters = dict(_poll_parameters(poll) or ()) if poll else {}
-    if not parameters or sorted(item.parameter for item in delivery.ids) != sorted(parameters):
+    if not parameters or sorted(item.parameter for item in (*delivery.ids, *delivery.carried)) != sorted(parameters):
         raise ValueError("Poll choice references an unknown or unsupported operation")
     for item in delivery.ids:
         _binding_schema(catalog, operation, item.submit, "id", kinds=("string", "integer"))
         if item.name != _id_variable(item.submit.path[0]):
             raise ValueError("Poll ID variable does not match its submit field")
+    submit_parameters = dict(_path_parameters(operation) or ())
+    for item in delivery.carried:
+        if (item.submit_parameter not in submit_parameters
+                or submit_parameters[item.submit_parameter][0] != item.submit_pointer
+                or parameters[item.parameter][0] != item.poll_pointer
+                or _type(submit_parameters[item.submit_parameter][1]) != _type(parameters[item.parameter][1])):
+            raise ValueError("Carried poll parameter does not match a submit path parameter")
+    if _run_id(poll, delivery.ids, submit_parameters) is None:
+        raise ValueError("Poll run slot requires a submit response ID that does not name a submit path parameter")
+    names = re.findall(r"\{([^{}]+)\}", poll.path)
+    if len(names) > 1 and any(item.parameter != item.submit.path[0]
+            and (item.parameter != names[-1] or item.submit.basis != "user_selection") for item in delivery.ids):
+        raise ValueError("Nested poll response parents require exact names; renamed run IDs require explicit bindings selections")
+    explicit = {entry.parameter: entry for entry in choices.inputs.poll.parameters} if choices.inputs and choices.inputs.poll else {}
+    for item in delivery.carried:
+        selected = explicit.get(item.parameter)
+        if selected is None or item.source != selected.source or item.submit_parameter != selected.submit_parameter:
+            raise ValueError("Carried poll parameters require explicit bindings mappings")
+    for item in delivery.ids:
+        if item.submit.basis == "user_selection" and (item.override is None or choices.inputs is None
+                or item.override not in choices.inputs.ids or item.override.field != item.submit.path[0]):
+            raise ValueError("A file-selected run ID requires its explicit bindings entry")
     return poll, parameters
 
 
@@ -1309,12 +1503,54 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
             parameter_pointer, parameter_schema = poll_parameters[item.parameter]
             read[parameter_pointer + "/schema"] = parameter_schema
             field = "/transport/delivery/ids/" + item.name
+            if item.fallback:
+                read.update(_binding_reads(catalog, result, item.fallback, "id"))
+            if item.identity:
+                read.update(_binding_reads(catalog, result, item.identity.field, "id"))
+                provenance["fields"][field + "/poll"] = {
+                    "source": [catalog.document.source(item.identity.field.pointer).to_dict()], "basis": "document_fact"}
+            if item.override or item.identity:
+                record = {"source": [catalog.document.source(item.submit.pointer).to_dict()],
+                          "basis": "user_selection" if item.override else "proposal"}
+                if item.override:
+                    record["source"].append(item.override.source.to_dict())
+                    if item.override.origin is not None: record["origin"] = item.override.origin
+                    gaps.append(Gap(field + "/last_segment", "The file selects how this submit ID is extracted.",
+                                    DECISIONS["binding_user_supplied"], "binding_user_supplied", "documentation_gap", False,
+                                    (catalog.document.source(item.submit.pointer), item.override.source)))
+                else:
+                    record["source"].append(catalog.document.source(item.identity.field.pointer).to_dict())
+                    gaps.append(_gap(catalog, field + "/last_segment", "poll_id_extraction_proposed",
+                                     "The documented poll resource name suggests extracting the submit ID's last segment.",
+                                     pointer=item.submit.pointer, kind="proposal", blocking=False))
+                provenance["fields"][field + "/last_segment"] = record
             provenance["fields"][field] = {"source": [catalog.document.source(item.submit.pointer).to_dict(),
                                                       catalog.document.source(parameter_pointer).to_dict()],
                                            "basis": item.submit.basis}
+            if item.submit.basis == "user_selection":
+                provenance["fields"][field]["source"].append(item.override.source.to_dict())
+                gaps.append(Gap(field, "The bindings file selects this submit response field for the poll run placeholder.",
+                                DECISIONS["binding_user_supplied"], "binding_user_supplied", "documentation_gap", False,
+                                (catalog.document.source(item.submit.pointer), item.override.source)))
             if item.submit.basis == "proposal":
-                gaps.append(_gap(catalog, field, "poll_id_binding_proposed", "The submit field was paired with the poll path parameter by name.",
+                why = ("The submit field was paired with the poll path parameter by name." if item.parameter == item.submit.path[0]
+                       else "The only ID-named submit field is proposed for this poll path parameter.")
+                gaps.append(_gap(catalog, field, "poll_id_binding_proposed", why,
                                  pointer=item.submit.pointer, kind="proposal", blocking=False))
+        for item in choices.delivery.carried if choices.delivery else ():
+            source_schema = _schema_at(catalog, item.submit_pointer + "/schema")
+            read[item.submit_pointer + "/schema"] = source_schema
+            read[item.poll_pointer + "/schema"] = poll_parameters[item.parameter][1]
+            field = "/transport/delivery/request/url/" + item.parameter
+            record = {"source": [catalog.document.source(item.submit_pointer).to_dict(),
+                                 catalog.document.source(item.poll_pointer).to_dict()],
+                      "basis": "user_selection" if item.source else "document_fact"}
+            if item.source:
+                record["source"].append(item.source.to_dict())
+                gaps.append(Gap(field, "The file maps this poll parameter to the submit path.",
+                                DECISIONS["binding_user_supplied"], "binding_user_supplied", "documentation_gap", False,
+                                (catalog.document.source(item.submit_pointer), catalog.document.source(item.poll_pointer), item.source)))
+            provenance["fields"][field] = record
         for step in choices.steps:
             read.update({pointer: _schema_at(catalog, pointer) for pointer in step.reads})
             provenance["fields"].update(_step_records(catalog, step))
@@ -1351,6 +1587,7 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
             request_schema = _object_schema(operation.data["requestBody"]["content"])
             declarations = {}
             unbound_path = path
+            path_bindings = {}
             query = {}
             path_parameters = operation.path_data.get("parameters", [])
             operation_parameters = operation.data.get("parameters", [])
@@ -1382,7 +1619,7 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                 if unsupported:
                     gaps.append(_unsupported_gap(catalog, schema_pointer, unsupported))
                     continue
-                variable = "input_" + re.sub(r"[^a-zA-Z0-9_]", "_", name).lower()
+                variable = _input_variable(name)
                 if re.search(r"key|token|password|secret|auth", name, re.I):
                     gaps.append(_gap(catalog, "/transport/request", "credential_parameter_unsupported", "Credential parameters must use a supported authentication scheme.", pointer=parameter_pointer, kind="unsupported_feature"))
                     continue
@@ -1398,10 +1635,11 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                     query[name] = {"var": variable}
                 else:
                     unbound_path = unbound_path.replace("{" + name + "}", "")
-                    path = path.replace("{" + name + "}", "{" + variable + "}")
+                    path_bindings[name] = variable
                 binding_field = "/transport/let/run/" + variable
                 provenance["fields"][binding_field] = {"source": [catalog.document.source(parameter_pointer).to_dict()], "basis": "non_secret_binding_required", "environment_name_basis": "policy_default"}
                 gaps.append(_gap(catalog, binding_field, "parameter_binding_required", "Supply the documented non-secret parameter through its environment binding.", pointer=parameter_pointer, blocking=False))
+            path = re.sub(r"\{([^{}]+)\}", lambda match: "{" + path_bindings.get(match[1], match[1]) + "}", path)
             entries = [(choices.prompt.path, {"context": "prompt"})]
             for entry in choices.values:
                 chain = _walk(catalog, _root(operation, "value"), entry.path)
@@ -1433,7 +1671,7 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                     continue
                 schema = request_schema["properties"].get(name)
                 field_pointer = pointer_child(properties_pointer, name) if schema is not None else operation.pointer
-                variable = "input_" + re.sub(r"[^a-zA-Z0-9_]", "_", name).lower()
+                variable = _input_variable(name)
                 if (_type(schema) != "string" or "enum" in schema or schema.get("readOnly") or _keywords(schema)[0]
                         or not NAME_RE.fullmatch(variable) or any(word in variable for word in SECRET_WORDS + ("credential",))):
                     gaps.append(_gap(catalog, "/transport/request/body", "business_input_missing", "A required business field has no documented value binding.", pointer=field_pointer))
@@ -1461,12 +1699,14 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                 if choices.delivery:
                     status = choices.completion
                     poll_path = result.path
-                    for item in choices.delivery.ids:
-                        poll_path = poll_path.replace("{" + item.parameter + "}", "{" + item.name + "}")
+                    replacements = {item.parameter: item.name for item in choices.delivery.ids}
+                    replacements.update({item.parameter: _input_variable(item.submit_parameter)
+                                         for item in choices.delivery.carried})
+                    poll_path = re.sub(r"\{([^{}]+)\}", lambda match: "{" + replacements[match[1]] + "}", poll_path)
                     retry_after = any(isinstance(response.get("headers"), dict)
                                       and any(str(name).lower() == "retry-after" for name in response["headers"])
                                       for _, response in _success(result))
-                    delivery = {"kind": "poll", "ids": {item.name: {"path": _field_path(item.submit.path)} for item in choices.delivery.ids},
+                    delivery = {"kind": "poll", "ids": {item.name: _id_selector(item) for item in choices.delivery.ids},
                                 "request": {"method": "GET", "url": server + poll_path, "headers": {"Accept": "application/json"}, "body": {"none": True}},
                                 "pending": {"path": _field_path(status.field.path), "one_of": list(status.pending)},
                                 **({"wait": {"from": "Retry-After", "default_s": POLL_INTERVAL_S, "max_s": RETRY_AFTER_MAX_S}} if retry_after
@@ -1532,7 +1772,7 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
     unchecked = {pointer: _keywords(schema)[1] for pointer, schema in read.items() if _keywords(schema)[1]}
     if unchecked:
         names = ", ".join(sorted(set().union(*unchecked.values())))
-        sources = sorted((catalog.document.source(pointer) for pointer in unchecked), key=lambda source: (source.file, source.pointer))
+        sources = sorted({catalog.document.source(pointer) for pointer in unchecked}, key=lambda source: (source.file, source.pointer))
         gaps.append(Gap("/transport", "Schemas this draft binds carry constraints it does not check: " + names + ".",
                         DECISIONS["schema_constraints_unchecked"], "schema_constraints_unchecked",
                         "unsupported_feature", False, tuple(sources)))

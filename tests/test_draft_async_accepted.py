@@ -12,7 +12,7 @@ from test_draft_verify_local import verify
 
 
 SUBMIT = "/paths/~1v1~1questions/post"
-POLL = "/paths/~1v1~1questions~1{threadId}~1{runId}/get"
+POLL = "/paths/~1v1~1questions~1{runId}/get"
 THREAD = "6f1c2a9e-3b4d-4e5f-8a7b-9c0d1e2f3a4b"
 RUN = "0b9e8d7c-6a5f-4e3d-9c2b-1a0f9e8d7c6b"
 RETRY_AFTER = {"Retry-After": {"description": "Seconds before the next poll.", "schema": {"type": "string"}}}
@@ -26,7 +26,7 @@ def response(description, headers=None, schema=None):
     return data
 
 
-def accepted_document():
+def nested_accepted_document():
     """A submit documenting 200 (terminal) and 202 (still running) with one body, polled by two IDs."""
     error = {"description": "Validation error", "content": {"application/json": {"schema": {
         "type": "object", "properties": {"detail": {"type": "string"}}}}}}
@@ -76,12 +76,20 @@ def accepted_document():
     }
 
 
+def accepted_document():
+    document = nested_accepted_document()
+    poll = document["paths"].pop("/v1/questions/{threadId}/{runId}")["get"]
+    poll["parameters"] = [parameter for parameter in poll["parameters"] if parameter["name"] == "runId"]
+    document["paths"]["/v1/questions/{runId}"] = {"get": poll}
+    return document
+
+
 def submit_responses(document):
     return document["paths"]["/v1/questions"]["post"]["responses"]
 
 
 def poll_responses(document):
-    return document["paths"]["/v1/questions/{threadId}/{runId}"]["get"]["responses"]
+    return document["paths"]["/v1/questions/{runId}"]["get"]["responses"]
 
 
 def body(status, output=None):
@@ -97,10 +105,9 @@ def scenario(submit, polls, *, outcome="succeeded", reply="pong"):
             {"id": "ask_question", "method": "POST", "path": "/v1/questions", "role": "invoke", "calls": {"min": 1, "max": 1},
              "request": [{"check": "prompt_bound", "at": {"kind": "json", "pointer": "/message"}, "equals": "ping"}],
              "replies": [submit]},
-            {"id": "get_question_run", "method": "GET", "path": "/v1/questions/{threadId}/{runId}", "role": "poll",
+            {"id": "get_question_run", "method": "GET", "path": "/v1/questions/{runId}", "role": "poll",
              "calls": {"min": len(polls), "max": max(len(polls), 1)},
-             "request": [{"check": "poll_identity", "at": {"kind": "path", "name": "threadId"}, "equals": THREAD},
-                         {"check": "poll_identity", "at": {"kind": "path", "name": "runId"}, "equals": RUN}],
+             "request": [{"check": "poll_identity", "at": {"kind": "path", "name": "runId"}, "equals": RUN}],
              "replies": polls or [{"status": 200, "body": body("completed", "unused"), "effects": []}]},
         ],
         "expect": {"outcome": outcome, "reply": reply, "resources": [], "required_gaps": []},
@@ -115,7 +122,16 @@ def finished(state, output=None, status=200):
     return {"status": status, "body": body(state, output), "effects": []}
 
 
-def test_submit_documenting_200_and_202_with_one_body_compiles_a_two_id_poll(tmp_path):
+def test_nested_response_ids_fill_documented_parent_and_run(tmp_path):
+    result, out = run(tmp_path, nested_accepted_document())
+    assert result.exit_code == 3, result.output
+    assert out.exists()
+    transport = json.loads(out.read_text())["transport"]
+    assert transport["delivery"]["ids"] == {"threadid": {"path": "$.threadId"}, "runid": {"path": "$.runId"}}
+    assert transport["delivery"]["request"]["url"].endswith("/v1/questions/{threadid}/{runid}")
+
+
+def test_submit_documenting_200_and_202_with_one_body_compiles_a_single_id_poll(tmp_path):
     result, out = run(tmp_path, accepted_document())
     assert result.exit_code == 3, result.output
     assert "spec_written: true" in result.output
@@ -127,8 +143,8 @@ def test_submit_documenting_200_and_202_with_one_body_compiles_a_two_id_poll(tmp
               "when": {"path": "$.status", "one_of": ["failed"]}, "outcome": "target_error"}
     assert transport["delivery"] == {
         "kind": "poll",
-        "ids": {"threadid": {"path": "$.threadId"}, "runid": {"path": "$.runId"}},
-        "request": {"method": "GET", "url": "http://127.0.0.1:8123/v1/questions/{threadid}/{runid}",
+        "ids": {"runid": {"path": "$.runId"}},
+        "request": {"method": "GET", "url": "http://127.0.0.1:8123/v1/questions/{runid}",
                     "headers": {"Accept": "application/json"}, "body": {"none": True}},
         "pending": {"path": "$.status", "one_of": ["running"]},
         "wait": {"from": "Retry-After", "default_s": 5, "max_s": 60},

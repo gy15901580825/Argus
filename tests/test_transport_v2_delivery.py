@@ -59,7 +59,7 @@ async def test_same_suffix_changed_raw_identity_is_rejected():
     app = responses({'run_id': 'organizations/o1/runs/job-1', 'status': 'PENDING'},
                     polls=[{'run_id': 'organizations/o1/other/job-1', 'status': 'COMPLETED', 'result': 'done'}])
     async with serve(app) as origin:
-        result = await runtime(transformed(poll_spec(origin + '/run'), prefix='organizations/o1/')).attempt(TransportContext(prompt='normal task'))
+        result = await runtime(transformed(poll_spec(origin + '/run'), prefix=None)).attempt(TransportContext(prompt='normal task'))
         assert result.reason_code.value == 'poll_identity_changed'
         assert len(app.calls) == 2
 

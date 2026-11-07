@@ -60,12 +60,36 @@ class UserStep:
 
 
 @dataclass(frozen=True)
+class UserCarry:
+    parameter: str
+    submit_parameter: str
+    source: Source
+
+
+@dataclass(frozen=True)
+class UserPoll:
+    operation: str
+    parameters: tuple[UserCarry, ...]
+    source: Source
+
+
+@dataclass(frozen=True)
+class UserId:
+    field: str
+    last_segment: bool
+    source: Source
+    origin: str | None = None
+
+
+@dataclass(frozen=True)
 class DraftInputs:
     source: dict  # {"file", "sha256"} of the raw bytes, appended to provenance inputs
     prompt: UserField | None
     reply: UserField | None
     values: tuple[UserField, ...]
     steps: tuple[UserStep, ...] = ()
+    poll: UserPoll | None = None
+    ids: tuple[UserId, ...] = ()
 
 
 def _unique(pairs):
@@ -223,6 +247,42 @@ def _steps(data, file):
     return tuple(steps)
 
 
+def _poll_input(data, file):
+    where = "/poll"
+    if isinstance(data, str):
+        operation, parameters = data, {}
+    else:
+        _object(data, where, {"operation", "parameters"}, {"operation"})
+        operation, parameters = data["operation"], data.get("parameters", {})
+    if not isinstance(operation, str) or not operation.strip():
+        raise ValueError("/poll/operation must name an operation")
+    if not isinstance(parameters, dict):
+        raise ValueError("/poll/parameters must map poll names to submit path names")
+    carried = []
+    for name, source in parameters.items():
+        at = pointer_child(where + "/parameters", name)
+        if (not isinstance(source, str) or not name or not source
+                or CREDENTIAL_NAME.search(name) or CREDENTIAL_NAME.search(source)):
+            raise ValueError(f"{at} must name non-secret poll and submit path parameters")
+        carried.append(UserCarry(name, source, Source(file, at)))
+    return UserPoll(operation, tuple(carried), Source(file, where))
+
+
+def _id_inputs(data, file):
+    if not isinstance(data, dict):
+        raise ValueError("/ids must map submit response fields to extraction entries")
+    result = []
+    for name, entry in data.items():
+        at = pointer_child("/ids", name)
+        if not name or CREDENTIAL_NAME.search(name):
+            raise ValueError(f"{at} must name a non-secret submit response field")
+        origin = _entry(entry, at, {"last_segment"})
+        if type(entry.get("last_segment")) is not bool:
+            raise ValueError(f"{at}/last_segment must be a boolean")
+        result.append(UserId(name, entry["last_segment"], Source(file, at), origin))
+    return tuple(result)
+
+
 def read_bindings(path: Path) -> DraftInputs:
     """Parse a version 1 bindings file; any structural problem raises ValueError before the document is read."""
     path = Path(path)
@@ -233,8 +293,8 @@ def read_bindings(path: Path) -> DraftInputs:
         data = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique, parse_constant=_constant)
     except (UnicodeError, json.JSONDecodeError, RecursionError):
         raise ValueError("file must be UTF-8 JSON") from None
-    if not isinstance(data, dict) or not set(data) <= {"version", "prompt", "reply", "values", "steps"}:
-        raise ValueError("file must be an object with only version, prompt, reply, values and steps")
+    if not isinstance(data, dict) or not set(data) <= {"version", "prompt", "reply", "values", "steps", "poll", "ids"}:
+        raise ValueError("file must be an object with only version, prompt, reply, values, steps, poll and ids")
     if type(data.get("version")) is not int or data["version"] != 1:
         raise ValueError("version must be 1")
     values = data.get("values", {})
@@ -246,4 +306,6 @@ def read_bindings(path: Path) -> DraftInputs:
         _field(data["prompt"], file, "/prompt") if "prompt" in data else None,
         _field(data["reply"], file, "/reply") if "reply" in data else None,
         tuple(_value(pointer, entry, file) for pointer, entry in values.items()),
-        _steps(data.get("steps", []), file))
+        _steps(data.get("steps", []), file),
+        _poll_input(data["poll"], file) if "poll" in data else None,
+        _id_inputs(data.get("ids", {}), file))
