@@ -45,7 +45,7 @@ DECISIONS = {
     "reference_cycle": "Provide a bounded schema without cyclic references.",
     "async_poll_missing": "Provide the documented GET operation that returns the submitted job's state and result.",
     "poll_ambiguous": "Select the documented poll operation with --poll-operation.",
-    "poll_id_binding_missing": "Select the run's submit response ID and explicitly map every nested parent in poll.parameters.",
+    "poll_id_binding_missing": "Select the run's submit response ID. Bind each nested parent to a same-name submit response field or an explicit poll.parameters mapping.",
     "poll_proposed": "Confirm that this GET operation returns the submitted job's state and result.",
     "poll_id_binding_proposed": "Confirm that this submit response field identifies the job the poll operation reads.",
     "poll_id_extraction_proposed": "Confirm that the submit ID is a full resource name with the documented poll prefix. If the submit returns a bare ID, set ids.<field>.last_segment to false.",
@@ -457,9 +457,11 @@ def _run_id(poll, ids, submit_path_names):
     return binding if binding and binding.submit.path[0] not in submit_path_names else None
 
 
-def _unmapped_parents(poll, mappings):
+def _unmapped_parents(poll, mappings, ids, response):
     names = re.findall(r"\{([^{}]+)\}", poll.path)
-    return [name for name in names[:-1] if name not in {entry.parameter for entry in mappings}]
+    parameters = dict(_poll_parameters(poll) or ())
+    return [name for name in names[:-1] if name not in {entry.parameter for entry in mappings}
+            and (name not in ids or _type(response[name]) != _type(parameters[name][1]))]
 
 
 def _pair(poll, ids, submit, mappings=(), overrides=()):
@@ -469,7 +471,7 @@ def _pair(poll, ids, submit, mappings=(), overrides=()):
     paths = dict(_path_parameters(submit) or ())
     response, _ = _response_fields(submit)
     explicit = {entry.parameter: entry for entry in mappings}
-    if set(explicit) - {name for name, _ in parameters} or _unmapped_parents(poll, mappings):
+    if set(explicit) - {name for name, _ in parameters} or _unmapped_parents(poll, mappings, ids, response):
         return None
     run_parameter = re.findall(r"\{([^{}]+)\}", poll.path)[-1]
     pairs, carried = [], []
@@ -485,7 +487,7 @@ def _pair(poll, ids, submit, mappings=(), overrides=()):
                                           selected.source))
             continue
         match = ids.get(parameter)
-        if match is None and len(overrides) == 1:
+        if match is None and parameter == run_parameter and len(overrides) == 1:
             selected_id = ids.get(overrides[0].field)
             match = replace(selected_id, basis="user_selection") if selected_id else None
         if match is None and not overrides and len(parameters) == 1 and parameter == "id":
@@ -628,11 +630,11 @@ def _poll_choice(catalog, submit, *, poll_operation, required, gaps, inputs=None
                 gaps.append(_unresolved("/transport/delivery/request", entry,
                                         "This mapping cannot pair the documented poll with a compatible submit path parameter."))
         poll = polls[0][0]
-        missing = _unmapped_parents(poll, inputs.poll.parameters if inputs and inputs.poll else ())
-        why = ("Nested poll parent placeholders require explicit poll.parameters mappings: "
+        missing = _unmapped_parents(poll, inputs.poll.parameters if inputs and inputs.poll else (), ids, _response_fields(submit)[0])
+        why = ("Nested poll parent placeholders require same-name submit response fields or explicit poll.parameters mappings: "
                + ", ".join("{" + name + "}" for name in missing) + "." if missing else
                "The poll run placeholder {" + re.findall(r"\{([^{}]+)\}", poll.path)[-1]
-               + "} cannot be paired with a compatible submit response ID and explicit parent mappings.")
+               + "} cannot be paired with a compatible submit response ID and supported parent bindings.")
         gaps.append(_gap(catalog, "/transport/delivery/ids", "poll_id_binding_missing", why, pointer=poll.pointer))
         return None, None, None
     if len(paired) > 1:
@@ -1309,9 +1311,9 @@ def _poll_target(catalog, operation, choices):
     if _run_id(poll, delivery.ids, submit_parameters) is None:
         raise ValueError("Poll run slot requires a submit response ID that does not name a submit path parameter")
     names = re.findall(r"\{([^{}]+)\}", poll.path)
-    if len(names) > 1 and ({item.parameter for item in delivery.ids} != {names[-1]}
-            or any(item.parameter != item.submit.path[0] and item.submit.basis != "user_selection" for item in delivery.ids)):
-        raise ValueError("Nested poll parents and renamed run IDs require explicit bindings selections")
+    if len(names) > 1 and any(item.parameter != item.submit.path[0]
+            and (item.parameter != names[-1] or item.submit.basis != "user_selection") for item in delivery.ids):
+        raise ValueError("Nested poll response parents require exact names; renamed run IDs require explicit bindings selections")
     explicit = {entry.parameter: entry for entry in choices.inputs.poll.parameters} if choices.inputs and choices.inputs.poll else {}
     for item in delivery.carried:
         selected = explicit.get(item.parameter)

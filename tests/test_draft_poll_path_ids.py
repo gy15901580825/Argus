@@ -356,13 +356,15 @@ def test_identity_and_capture_guards_block_unsupported_shapes(tmp_path, change):
     assert set(codes(artifacts(out)[1], True)) & {'poll_resource_format_unsupported', 'poll_id_binding_missing'}
 
 
-def test_same_named_parent_response_field_does_not_replace_explicit_mapping(tmp_path):
+def test_one_response_parent_does_not_supply_missing_other_parents(tmp_path):
     doc = document(resource=False)
     doc['paths'][SUBMIT]['post']['responses']['202']['content']['application/json']['schema']['properties']['o'] = {'type': 'string'}
     result, out = run(tmp_path, doc)
     assert result.exit_code == 3
     spec, report, _ = artifacts(out)
     assert spec is None and 'poll_id_binding_missing' in codes(report, True)
+    why = next(gap['why'] for gap in report['gaps'] if gap['code'] == 'poll_id_binding_missing')
+    assert '{o}' not in why and '{w}' in why and '{a}' in why
 
 
 def test_renamed_id_placeholder_is_not_rewritten_as_a_carried_placeholder(tmp_path):
@@ -885,9 +887,9 @@ def spelled_parent_document(case):
 
 @pytest.mark.parametrize('case,parent', [
     ('HP1', 'agent_id'), ('HP1b', 'agent_id'), ('HP2', 'AgentId'), ('HP3', 'project'),
-    ('NL1', 'id'), ('NL1b', 'id'), ('NL1c', 'id'),
+    ('NL1c', 'id'),
 ])
-def test_nested_poll_requires_explicit_parent_mapping(tmp_path, case, parent):
+def test_nested_poll_without_exact_response_parent_requires_explicit_mapping(tmp_path, case, parent):
     result, out = run(tmp_path, spelled_parent_document(case))
     assert result.exit_code == 3, result.output
     spec, report, _ = artifacts(out)
@@ -1043,8 +1045,9 @@ def test_compiler_rejects_a_nested_heuristic_run_selector_without_explicit_selec
         compile_draft(catalog, replace(choices, delivery=delivery))
 
 
-async def test_response_parent_ownership_does_not_reuse_submit_path_input(tmp_path):
-    result, out = run(tmp_path, spelled_parent_document('NL1'))
+@pytest.mark.parametrize('case', ['NL1', 'NL1b'])
+async def test_response_parent_ownership_does_not_reuse_submit_path_input(tmp_path, case):
+    result, out = run(tmp_path, spelled_parent_document(case))
     spec, report, _ = artifacts(out)
     assert result.exit_code == 3, result.output
     assert spec is not None and codes(report, True) == []
@@ -1080,3 +1083,26 @@ def test_parent_response_and_explicit_carries_can_be_mixed(tmp_path):
     assert spec is not None and codes(report, True) == []
     assert spec['transport']['delivery']['ids']['o'] == {'path': '$.o'}
     assert spec['transport']['delivery']['request']['url'].endswith('/orgs/{o}/ws/{input_w}/autos/{input_a}/runs/{r}')
+
+
+@pytest.mark.parametrize('schema', [{'type': 'integer'}, {'type': 'string', 'writeOnly': True}])
+def test_incompatible_response_parent_reports_named_missing_binding(tmp_path, schema):
+    doc = document(resource=False)
+    fields = doc['paths'][SUBMIT]['post']['responses']['202']['content']['application/json']['schema']['properties']
+    fields.update({name: {'type': 'string'} for name in ('o', 'w', 'a')})
+    fields['o'] = schema
+    result, out = run(tmp_path, doc)
+    spec, report, _ = artifacts(out)
+    assert result.exit_code == 3, result.output
+    assert spec is None
+    gap = next(gap for gap in report['gaps'] if gap['code'] == 'poll_id_binding_missing')
+    assert '{o}' in gap['why'] and '{w}' not in gap['why'] and '{a}' not in gap['why']
+
+
+def test_explicit_run_selector_does_not_select_parent_alias(tmp_path):
+    result, out = run(tmp_path, explicit_run_field_document(), {'ids': {'resource': {'last_segment': False}}})
+    spec, report, _ = artifacts(out)
+    assert result.exit_code == 3, result.output
+    assert spec is None
+    gap = next(gap for gap in report['gaps'] if gap['code'] == 'poll_id_binding_missing')
+    assert all('{' + name + '}' in gap['why'] for name in ('o', 'w', 'a'))
