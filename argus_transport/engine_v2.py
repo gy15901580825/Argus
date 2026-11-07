@@ -260,7 +260,9 @@ def capture_value(selector, body, context, scope, env, *, given=False):
             if not isinstance(prefix, str) or not prefix or not raw.startswith(prefix):
                 raise _CapturePrefixError('Invalid capture prefix')
         if selector.last_segment:
-            value = raw if given else raw.rsplit('/', 1)[-1]
+            value = raw
+            if not given:
+                value = raw[len(prefix):] if selector.expect_prefix is not None else raw.rsplit('/', 1)[-1]
             if re.fullmatch(r'[A-Za-z0-9._~-]{1,256}', value) is None:
                 raise _CapturePrefixError('Invalid captured identifier')
             return value

@@ -91,7 +91,7 @@ async def test_prefix_only_retains_long_full_name_without_suffix_validation():
 
 
 async def test_capture_prefix_env_is_snapshotted_once(monkeypatch):
-    monkeypatch.setenv('RESOURCE_PREFIX', 'organizations/')
+    monkeypatch.setenv('RESOURCE_PREFIX', 'organizations/one/')
     app = capture_app('organizations/one/item-one')
     async with serve(app) as origin:
         data = capture_dict(origin, {'item_id': {'path': '$.name', 'last_segment': True, 'expect_prefix': {'env': 'RESOURCE_PREFIX'}}})
