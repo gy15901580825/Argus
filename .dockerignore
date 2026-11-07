@@ -1,4 +1,4 @@
-# Build context for the root Dockerfile, which copies only pyproject.toml, LICENSE, NOTICE, docs/cli.md and argus/.
+# Build context for the root Dockerfile, which copies only pyproject.toml, LICENSE, NOTICE, docs/cli.md, argus/ and argus_transport/.
 .git
 .github
 .claude
