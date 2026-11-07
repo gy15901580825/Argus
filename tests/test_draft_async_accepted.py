@@ -122,12 +122,13 @@ def finished(state, output=None, status=200):
     return {"status": status, "body": body(state, output), "effects": []}
 
 
-def test_nested_response_ids_cannot_supply_implicit_parent(tmp_path):
+def test_nested_response_ids_fill_documented_parent_and_run(tmp_path):
     result, out = run(tmp_path, nested_accepted_document())
     assert result.exit_code == 3, result.output
-    assert not out.exists()
-    gap = next(gap for gap in gaps(out)["gaps"] if gap["code"] == "poll_id_binding_missing")
-    assert "{threadId}" in gap["why"] and "explicit" in gap["why"]
+    assert out.exists()
+    transport = json.loads(out.read_text())["transport"]
+    assert transport["delivery"]["ids"] == {"threadid": {"path": "$.threadId"}, "runid": {"path": "$.runId"}}
+    assert transport["delivery"]["request"]["url"].endswith("/v1/questions/{threadid}/{runid}")
 
 
 def test_submit_documenting_200_and_202_with_one_body_compiles_a_single_id_poll(tmp_path):

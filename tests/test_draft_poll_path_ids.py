@@ -909,16 +909,16 @@ def test_nested_heuristic_stays_blocked_with_explicit_parent_mapping(tmp_path):
     assert '{id}' in gap['why'] and 'response ID' in gap['why']
 
 
-def test_nested_response_parent_does_not_replace_explicit_mapping(tmp_path):
+def test_same_named_response_parents_fill_nested_poll_without_carries(tmp_path):
     doc = document(resource=False)
     doc['paths'][SUBMIT]['post']['responses']['202']['content']['application/json']['schema']['properties'].update({
         name: {'type': 'string'} for name in ('o', 'w', 'a')})
     result, out = run(tmp_path, doc)
     spec, report, _ = artifacts(out)
     assert result.exit_code == 3, result.output
-    assert spec is None
-    why = next(gap['why'] for gap in report['gaps'] if gap['code'] == 'poll_id_binding_missing')
-    assert all('{' + name + '}' in why for name in ('o', 'w', 'a'))
+    assert spec is not None and codes(report, True) == []
+    assert set(spec['transport']['delivery']['ids']) == {'o', 'w', 'a', 'r'}
+    assert spec['transport']['delivery']['request']['url'].endswith('/orgs/{o}/ws/{w}/autos/{a}/runs/{r}')
 
 
 def test_explicit_nested_mappings_verify_local_with_response_run_id(tmp_path):
@@ -1041,3 +1041,42 @@ def test_compiler_rejects_a_nested_heuristic_run_selector_without_explicit_selec
     delivery = replace(choices.delivery, ids=(replace(run, name='resource', submit=response),))
     with pytest.raises(ValueError, match='explicit'):
         compile_draft(catalog, replace(choices, delivery=delivery))
+
+
+async def test_response_parent_ownership_does_not_reuse_submit_path_input(tmp_path):
+    result, out = run(tmp_path, spelled_parent_document('NL1'))
+    spec, report, _ = artifacts(out)
+    assert result.exit_code == 3, result.output
+    assert spec is not None and codes(report, True) == []
+    assert spec['transport']['delivery']['ids']['id'] == {'path': '$.id'}
+    seen = []
+    app = RecordingApp()
+    async def submitted(request):
+        seen.append(('POST', request.raw_path))
+        return web.json_response({'id': '12', 'message_id': '1'}, status=202)
+    async def polled(request):
+        seen.append(('GET', request.raw_path))
+        return web.json_response({'message_id': '1', 'status': 'COMPLETED', 'result': 'own session reply'})
+    app.route('POST', '/{tail:.*}', submitted)
+    app.route('GET', '/{tail:.*}', polled)
+    async with serve(app) as origin:
+        parsed = TransportSpecV2.from_dict(with_origin(spec['transport'], origin))
+        runtime = V2Run(parsed, policy=ExecutionPolicy.local(parsed), environ={'TARGET_INPUT_ID': '7'})
+        try:
+            response = await runtime.attempt(TransportContext(prompt='ping'))
+        finally:
+            await runtime.close()
+    assert response.outcome == 'succeeded' and response.response_text == 'own session reply'
+    assert seen == [('POST', '/agents/7/sessions'), ('GET', '/sessions/12/messages/1')]
+
+
+def test_parent_response_and_explicit_carries_can_be_mixed(tmp_path):
+    doc = document(resource=False)
+    doc['paths'][SUBMIT]['post']['responses']['202']['content']['application/json']['schema']['properties']['o'] = {'type': 'string'}
+    binding = {'poll': {'operation': 'get_run', 'parameters': {'w': 'w', 'a': 'a'}}}
+    result, out = run(tmp_path, doc, binding)
+    spec, report, _ = artifacts(out)
+    assert result.exit_code == 3, result.output
+    assert spec is not None and codes(report, True) == []
+    assert spec['transport']['delivery']['ids']['o'] == {'path': '$.o'}
+    assert spec['transport']['delivery']['request']['url'].endswith('/orgs/{o}/ws/{input_w}/autos/{input_a}/runs/{r}')
