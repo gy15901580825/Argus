@@ -45,7 +45,7 @@ DECISIONS = {
     "reference_cycle": "Provide a bounded schema without cyclic references.",
     "async_poll_missing": "Provide the documented GET operation that returns the submitted job's state and result.",
     "poll_ambiguous": "Select the documented poll operation with --poll-operation.",
-    "poll_id_binding_missing": "Document which submit response field fills each poll path parameter.",
+    "poll_id_binding_missing": "Select the run's submit response ID and explicitly map every nested parent in poll.parameters.",
     "poll_proposed": "Confirm that this GET operation returns the submitted job's state and result.",
     "poll_id_binding_proposed": "Confirm that this submit response field identifies the job the poll operation reads.",
     "poll_id_extraction_proposed": "Confirm that the submit ID is a full resource name with the documented poll prefix. If the submit returns a bare ID, set ids.<field>.last_segment to false.",
@@ -457,27 +457,40 @@ def _run_id(poll, ids, submit_path_names):
     return binding if binding and binding.submit.path[0] not in submit_path_names else None
 
 
-def _pair(poll, ids, submit, mappings=()):
+def _unmapped_parents(poll, mappings):
+    names = re.findall(r"\{([^{}]+)\}", poll.path)
+    return [name for name in names[:-1] if name not in {entry.parameter for entry in mappings}]
+
+
+def _pair(poll, ids, submit, mappings=(), overrides=()):
     parameters = _poll_parameters(poll)
     if not parameters:
         return None
     paths = dict(_path_parameters(submit) or ())
     response, _ = _response_fields(submit)
     explicit = {entry.parameter: entry for entry in mappings}
-    if set(explicit) - {name for name, _ in parameters}:
+    if set(explicit) - {name for name, _ in parameters} or _unmapped_parents(poll, mappings):
         return None
+    run_parameter = re.findall(r"\{([^{}]+)\}", poll.path)[-1]
     pairs, carried = [], []
     for parameter, (poll_pointer, schema) in parameters:
         selected = explicit.get(parameter)
-        source = selected.submit_parameter if selected else parameter
-        if selected or source in paths:
+        if selected:
+            source = selected.submit_parameter
+            if parameter == run_parameter:
+                return None
             if source not in paths or _type(paths[source][1]) != _type(schema):
                 return None
             carried.append(CarriedBinding(parameter, source, paths[source][0], poll_pointer,
-                                          selected.source if selected else None))
+                                          selected.source))
             continue
-        named = [binding for binding in ids.values() if re.fullmatch(r".+(?:_id|[a-z0-9]Id)", binding.path[0])]
-        match = ids.get(parameter) or (named[0] if parameter == "id" and len(named) == 1 else None)
+        match = ids.get(parameter)
+        if match is None and len(overrides) == 1:
+            selected_id = ids.get(overrides[0].field)
+            match = replace(selected_id, basis="user_selection") if selected_id else None
+        if match is None and not overrides and len(parameters) == 1 and parameter == "id":
+            named = [binding for binding in ids.values() if re.fullmatch(r".+(?:_id|[a-z0-9]Id)", binding.path[0])]
+            match = named[0] if len(named) == 1 else None
         if match is None or _type(response[match.path[0]]) != _type(schema):
             return None
         pairs.append(IdBinding(_id_variable(match.path[0]), match, parameter))
@@ -600,7 +613,8 @@ def _poll_choice(catalog, submit, *, poll_operation, required, gaps, inputs=None
     polls = [(op, _poll_parameters(op)) for op in catalog.operations if poll_operation in {None, op.id}]
     polls = [(op, parameters) for op, parameters in polls if parameters]
     paired = [(op, pairing) for op, parameters in polls
-              if (pairing := _pair(op, ids, submit, inputs.poll.parameters if inputs and inputs.poll else ()))]
+              if (pairing := _pair(op, ids, submit, inputs.poll.parameters if inputs and inputs.poll else (),
+                                  inputs.ids if inputs else ()))]
     if not paired and not required:
         return None
     candidates = [(op, pairs) for op, pairs in paired if _status_field(op)[0]]
@@ -613,8 +627,13 @@ def _poll_choice(catalog, submit, *, poll_operation, required, gaps, inputs=None
             for entry in inputs.poll.parameters:
                 gaps.append(_unresolved("/transport/delivery/request", entry,
                                         "This mapping cannot pair the documented poll with a compatible submit path parameter."))
-        gaps.append(_gap(catalog, "/transport/delivery/ids", "poll_id_binding_missing",
-                         "No submit response field maps uniquely to every poll path parameter.", pointer=polls[0][0].pointer))
+        poll = polls[0][0]
+        missing = _unmapped_parents(poll, inputs.poll.parameters if inputs and inputs.poll else ())
+        why = ("Nested poll parent placeholders require explicit poll.parameters mappings: "
+               + ", ".join("{" + name + "}" for name in missing) + "." if missing else
+               "The poll run placeholder {" + re.findall(r"\{([^{}]+)\}", poll.path)[-1]
+               + "} cannot be paired with a compatible submit response ID and explicit parent mappings.")
+        gaps.append(_gap(catalog, "/transport/delivery/ids", "poll_id_binding_missing", why, pointer=poll.pointer))
         return None, None, None
     if len(paired) > 1:
         gaps.append(_gap(catalog, "/transport/delivery", "poll_ambiguous", "Several GET operations can poll the submitted job.",
@@ -1289,6 +1308,19 @@ def _poll_target(catalog, operation, choices):
             raise ValueError("Carried poll parameter does not match a submit path parameter")
     if _run_id(poll, delivery.ids, submit_parameters) is None:
         raise ValueError("Poll run slot requires a submit response ID that does not name a submit path parameter")
+    names = re.findall(r"\{([^{}]+)\}", poll.path)
+    if len(names) > 1 and ({item.parameter for item in delivery.ids} != {names[-1]}
+            or any(item.parameter != item.submit.path[0] and item.submit.basis != "user_selection" for item in delivery.ids)):
+        raise ValueError("Nested poll parents and renamed run IDs require explicit bindings selections")
+    explicit = {entry.parameter: entry for entry in choices.inputs.poll.parameters} if choices.inputs and choices.inputs.poll else {}
+    for item in delivery.carried:
+        selected = explicit.get(item.parameter)
+        if selected is None or item.source != selected.source or item.submit_parameter != selected.submit_parameter:
+            raise ValueError("Carried poll parameters require explicit bindings mappings")
+    for item in delivery.ids:
+        if item.submit.basis == "user_selection" and (item.override is None or choices.inputs is None
+                or item.override not in choices.inputs.ids or item.override.field != item.submit.path[0]):
+            raise ValueError("A file-selected run ID requires its explicit bindings entry")
     return poll, parameters
 
 
@@ -1493,6 +1525,11 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
             provenance["fields"][field] = {"source": [catalog.document.source(item.submit.pointer).to_dict(),
                                                       catalog.document.source(parameter_pointer).to_dict()],
                                            "basis": item.submit.basis}
+            if item.submit.basis == "user_selection":
+                provenance["fields"][field]["source"].append(item.override.source.to_dict())
+                gaps.append(Gap(field, "The bindings file selects this submit response field for the poll run placeholder.",
+                                DECISIONS["binding_user_supplied"], "binding_user_supplied", "documentation_gap", False,
+                                (catalog.document.source(item.submit.pointer), item.override.source)))
             if item.submit.basis == "proposal":
                 why = ("The submit field was paired with the poll path parameter by name." if item.parameter == item.submit.path[0]
                        else "The only ID-named submit field is proposed for this poll path parameter.")
