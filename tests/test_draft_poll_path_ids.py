@@ -592,3 +592,72 @@ def test_f4_gaps_give_specific_review_decisions(tmp_path, code):
     entry = next(gap for gap in report['gaps'] if gap['code'] == code)
     assert 'before compiling the flow' not in entry['decision']
     assert entry['decision'].startswith(('Confirm', 'Review', 'Correct'))
+
+
+@pytest.mark.parametrize('poll_id_documented', [True, False])
+def test_explicit_extraction_without_documented_format_blocks(tmp_path, poll_id_documented):
+    doc = document(resource=False)
+    if not poll_id_documented:
+        del poll_fields(doc)['r']
+    result, out = run(tmp_path, doc, {'ids': {'r': {'last_segment': True}}})
+    assert result.exit_code == 3, result.output
+    spec, report, _ = artifacts(out)
+    assert spec is None
+    gap = next(gap for gap in report['gaps'] if gap['code'] == 'binding_unresolved')
+    assert gap['blocking'] is True
+    assert gap['source'] == [{'file': 'bindings.json', 'pointer': '/ids/r'}]
+    assert 'resource-name format is not documented' in gap['why']
+    assert 'submit identity cannot be checked' in gap['why']
+    assert gap['decision'].startswith('Correct the bindings file entry')
+
+
+def test_explicit_extraction_with_documented_format_keeps_submit_prefix(tmp_path):
+    result, out = run(tmp_path, bindings={'ids': {'r': {'last_segment': True}}})
+    assert result.exit_code == 3, result.output
+    spec, report, _ = artifacts(out)
+    assert spec is not None and codes(report, True) == []
+    selector = spec['transport']['delivery']['ids']['r']
+    assert selector['last_segment'] is True
+    assert selector['expect_prefix'] == selector['poll']['expect_prefix']
+
+
+async def test_explicit_false_without_format_accepts_bare_id(tmp_path):
+    result, out = run(tmp_path, document(resource=False), {'ids': {'r': {'last_segment': False}}})
+    assert result.exit_code == 3, result.output
+    spec, report, _ = artifacts(out)
+    assert spec is not None and codes(report, True) == []
+    assert spec['transport']['delivery']['ids']['r'] == {'path': '$.r'}
+    seen = []
+    app = RecordingApp()
+    async def submitted(request):
+        seen.append(('POST', request.raw_path))
+        return web.json_response({'r': 'run-1'}, status=202)
+    async def polled(request):
+        seen.append(('GET', request.raw_path))
+        return web.json_response({'r': 'run-1', 'status': 'COMPLETED', 'result': 'pong'})
+    app.route('POST', '/{tail:.*}', submitted)
+    app.route('GET', '/{tail:.*}', polled)
+    async with serve(app) as origin:
+        parsed = TransportSpecV2.from_dict(with_origin(copy.deepcopy(spec['transport']), origin))
+        runtime = V2Run(parsed, policy=ExecutionPolicy.local(parsed), environ=scenario()['environment'])
+        try:
+            response = await runtime.attempt(TransportContext(prompt='ping'))
+        finally:
+            await runtime.close()
+    assert response.outcome == 'succeeded' and response.response_text == 'pong'
+    assert seen == [('POST', '/orgs/org-1/ws/ws-1/autos/auto-1:invoke'),
+                    ('GET', '/orgs/org-1/ws/ws-1/autos/auto-1/runs/run-1')]
+
+
+def test_shared_schema_constraints_have_unique_sources(tmp_path):
+    doc = document(resource=False)
+    doc['components'] = {'schemas': {'RunId': {'type': 'string', 'minLength': 1}}}
+    schema = {'$ref': '#/components/schemas/RunId'}
+    doc['paths'][SUBMIT]['post']['responses']['202']['content']['application/json']['schema']['properties']['r'] = schema
+    poll_fields(doc)['r'] = copy.deepcopy(schema)
+    result, out = run(tmp_path, doc)
+    assert result.exit_code == 3, result.output
+    spec, report, _ = artifacts(out)
+    assert spec is not None and codes(report, True) == []
+    gap = next(gap for gap in report['gaps'] if gap['code'] == 'schema_constraints_unchecked')
+    assert gap['source'] == [{'file': 'api.json', 'pointer': '/components/schemas/RunId'}]
