@@ -661,3 +661,23 @@ def test_shared_schema_constraints_have_unique_sources(tmp_path):
     assert spec is not None and codes(report, True) == []
     gap = next(gap for gap in report['gaps'] if gap['code'] == 'schema_constraints_unchecked')
     assert gap['source'] == [{'file': 'api.json', 'pointer': '/components/schemas/RunId'}]
+
+
+@pytest.mark.parametrize('submit_id', ['run-1/7', NAME.replace('org-1', 'foreign')])
+def test_unchecked_override_attack_scenarios_cannot_produce_specs(tmp_path, submit_id):
+    attack = scenario()
+    attack['operations'][0]['replies'][0]['body']['r'] = submit_id
+    poll = attack['operations'][1]
+    poll['request'][-1]['equals'] = submit_id.rsplit('/', 1)[-1]
+    poll['replies'][0]['body'] = {'status': 'COMPLETED', 'result': 'pong'}
+    path = tmp_path / 'attack-scenario.json'
+    path.write_text(json.dumps(attack))
+    result, out = run(tmp_path, document(resource=False), {'ids': {'r': {'last_segment': True}}},
+                      '--verify-local', '--scenario', str(path))
+    spec, report, provenance = artifacts(out)
+    assert spec is None
+    assert result.exit_code == 3, result.output
+    assert 'binding_unresolved' in codes(report, True)
+    local = provenance['validation']['local']
+    assert local['status'] == 'not_run' and local['semantic_success'] is False
+    assert local['execution'] == {} and local['trace'] == []
