@@ -550,7 +550,9 @@ def _id_selector(item):
     if item.identity:
         prefix = {"concat": [{"literal": part} if isinstance(part, str)
                               else {"var": _input_variable(part.submit_parameter)} for part in item.identity.prefix_parts]}
-        selector["poll"] = {"path": _field_path(item.identity.field.path), "last_segment": item.last_segment,
+        if item.last_segment:
+            selector["expect_prefix"] = prefix
+        selector["poll"] = {"path": _field_path(item.identity.field.path), "last_segment": True,
                             "expect_prefix": prefix}
     return selector
 
