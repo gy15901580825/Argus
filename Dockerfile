@@ -17,7 +17,8 @@ RUN apt-get clean && \
 COPY pyproject.toml LICENSE NOTICE ./
 COPY docs/cli.md docs/cli.md
 COPY argus/ argus/
-RUN pip install --no-cache-dir ".[server]" && rm -rf /app/argus
+COPY argus_transport/ argus_transport/
+RUN pip install --no-cache-dir ".[server]" && rm -rf /app/argus /app/argus_transport
 
 ENV PYTHONUNBUFFERED=1
 
