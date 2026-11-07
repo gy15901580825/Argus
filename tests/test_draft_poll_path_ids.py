@@ -935,3 +935,42 @@ def test_compiler_rejects_implicit_nested_parent_ownership(tmp_path, change):
                            carried=tuple(item for item in delivery.carried if item.parameter != 'o'))
     with pytest.raises(ValueError, match='explicit'):
         compile_draft(catalog, replace(choices, delivery=delivery))
+
+
+def explicit_run_field_document():
+    doc = document(resource=False)
+    submit = doc['paths'][SUBMIT]['post']
+    submit['responses']['202']['content']['application/json']['schema']['properties'] = {'resource': {'type': 'string'}}
+    poll = doc['paths'].pop(POLL)['get']
+    poll['parameters'][-1]['name'] = 'id'
+    poll['responses']['200']['content']['application/json']['schema']['properties']['resource'] = poll_fields(document(resource=False))['r']
+    del poll['responses']['200']['content']['application/json']['schema']['properties']['r']
+    doc['paths'][POLL.replace('{r}', '{id}')] = {'get': poll}
+    return doc
+
+
+def test_nested_non_id_named_response_field_can_be_selected_explicitly(tmp_path):
+    binding = {'poll': {'operation': 'get_run', 'parameters': {name: name for name in ('o', 'w', 'a')}},
+               'ids': {'resource': {'last_segment': False, 'origin': 'gold_derived'}}}
+    result, out = run(tmp_path, explicit_run_field_document(), binding)
+    assert result.exit_code == 3, result.output
+    spec, report, provenance = artifacts(out)
+    assert spec is not None and codes(report, True) == []
+    assert spec['transport']['delivery']['ids'] == {'resource': {'path': '$.resource'}}
+    assert spec['transport']['delivery']['request']['url'].endswith('/runs/{resource}')
+    source = provenance['fields']['/transport/delivery/ids/resource']
+    assert source['basis'] == 'user_selection'
+    assert {'file': 'bindings.json', 'pointer': '/ids/resource'} in source['source']
+    gap = next(gap for gap in report['gaps'] if gap['field'] == '/transport/delivery/ids/resource')
+    assert 'bindings file' in gap['why'] and 'by name' not in gap['why']
+
+
+def test_multiple_explicit_run_fields_are_ambiguous(tmp_path):
+    doc = explicit_run_field_document()
+    doc['paths'][SUBMIT]['post']['responses']['202']['content']['application/json']['schema']['properties']['other'] = {'type': 'string'}
+    binding = {'poll': {'operation': 'get_run', 'parameters': {name: name for name in ('o', 'w', 'a')}},
+               'ids': {'resource': {'last_segment': False}, 'other': {'last_segment': False}}}
+    result, out = run(tmp_path, doc, binding)
+    spec, report, _ = artifacts(out)
+    assert result.exit_code == 3, result.output
+    assert spec is None and 'poll_id_binding_missing' in codes(report, True)
