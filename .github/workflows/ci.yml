@@ -232,6 +232,18 @@ jobs:
           ARGUS_CLIENT_IMAGE: argus-transport-client-verify:ci
         run: python -m pytest client_agent/tests/ -q
 
+  orchestrator-image:
+    name: orchestrator image — build and import
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the root Dockerfile
+        run: docker build --tag argus-orchestrator-verify:ci .
+
+      - name: Import the server and transport from the installed package
+        run: docker run --rm argus-orchestrator-verify:ci python -c "import argus.server, argus_transport.engine_v2; print('orchestrator image imports OK')"
+
   probe-library:
     name: probe library — schema validation
     runs-on: ubuntu-latest
