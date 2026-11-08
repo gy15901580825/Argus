@@ -511,7 +511,8 @@ async def test_deep_trials_rejected_after_server_configuration(library, monkeypa
     monkeypatch.setattr(llm, 'explain_config', lambda *_: None)
     with pytest.raises(HTTPException) as caught:
         await api.run(req)
-    assert caught.value.status_code == 500 and '--judge-explain-model' in caught.value.detail
+    assert caught.value.status_code == 422 and '--judge-explain-model' in caught.value.detail
+    assert '--mode static' in caught.value.detail
 
 
 def test_deep_trials_rejected_after_local_configuration(library, monkeypatch):

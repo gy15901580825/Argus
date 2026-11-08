@@ -121,7 +121,7 @@ preflight estimate before the attack starts and enforces its configured cap.
 Server mode prints a labeled client-side estimate, whose prices may differ
 from the server's; the server makes the admission decision and enforces the cap.
 
-The `deep` field in local [run.json](run-json.md#deep-run-metadata) and the
+The `deep` field in local [run.json](https://github.com/gy15901580825/Argus/blob/main/docs/run-json.md#deep-run-metadata) and the
 server's `deep_run` SSE event record the resolved seed and selected threads.
 Reusing a seed reproduces pair selection with the same probes and library;
 it does not promise identical model answers. Indirect probes using a material

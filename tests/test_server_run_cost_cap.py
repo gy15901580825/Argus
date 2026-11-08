@@ -228,13 +228,22 @@ async def test_coverage_event_reports_spend_and_the_cap_in_force(server_run, mod
     meter = CostMeter(daily_cap_usd=100, per_run_cap_usd=0.20, deep_per_run_cap_usd=10.0)
     text, events = await run(meter, mode=mode, cap=override)
     assert findings(events) == [("probe_1", "pass"), ("probe_2", "pass"), ("probe_3", "pass")]
-    assert events[3]["type"] == "coverage"
-    assert events[4:] == [{}]
+    offset = 1 if mode == "deep" else 0
+    metadata = [event for event in events if event.get("type") == "deep_run"]
+    assert len(metadata) == offset
+    if mode == "deep":
+        assert events[0] == metadata[0]
+        assert isinstance(metadata[0]["deep"]["seed"], str) and metadata[0]["deep"]["seed"]
+        assert metadata[0]["deep"]["deep_pairs"] == 1
+        assert metadata[0]["deep"]["max_rounds"] == 20
+        assert metadata[0]["deep"]["threads"] == []
+    assert events[offset + 3]["type"] == "coverage"
+    assert events[offset + 4:] == [{}]
     assert text.endswith("event: end\ndata: {}\n\n")
-    assert events[3]["cost"] == {"spent_usd": 0.09, "per_run_cap_usd": expected_cap}
+    assert events[offset + 3]["cost"] == {"spent_usd": 0.09, "per_run_cap_usd": expected_cap}
     stream = frames(text)
-    assert [name for name, _ in stream] == [None, None, None, None, "end"]
-    assert all(set(data) == {f.name for f in dataclasses.fields(Finding)} for _, data in stream[:3])
+    assert [name for name, _ in stream] == [None] * (4 + offset) + ["end"]
+    assert all(set(data) == {f.name for f in dataclasses.fields(Finding)} for _, data in stream[offset:offset + 3])
 
 
 async def test_cap_hit_error_event_reports_spend_past_the_cap(server_run):
