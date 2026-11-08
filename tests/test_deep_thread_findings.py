@@ -320,3 +320,109 @@ def test_static_evidence_cannot_spoof_thread_metadata_to_restore_a_secret():
     assert 'Deep thread transcript' not in reports.render_html(clean)
     assert 'evidence' not in json.loads(reports.render_sarif(clean))['runs'][0]['results'][0]['properties']
     assert 'transcript' not in ET.fromstring(reports.render_junit(clean)).find('.//testcase/system-out').text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('empty', ['', '  ', None])
+@pytest.mark.parametrize('round_n', [0, 1, 2])
+async def test_empty_attacker_never_sends_or_judges(thread_case, empty, round_n):
+    c = thread_case
+    c.attacker.side_effect = ['benign'] * round_n + [empty]
+    found = await results(c)
+    assert_thread(found[0], c, 'error', 'attacker_stopped', round_n)
+    assert len(c.target.calls) == c.judge.judge.await_count == round_n
+
+
+@pytest.mark.asyncio
+async def test_deep_transport_stop_propagates(thread_case):
+    from argus_transport.runtime_v2 import TargetRunStopped
+    c = thread_case
+    stopped = TargetRunStopped('credential_echo')
+    c.target.responses[1] = stopped
+    with pytest.raises(TargetRunStopped) as caught:
+        await results(c)
+    assert caught.value is stopped
+    assert c.attacker.await_count == len(c.target.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_target_blocks_do_not_trip_unreachable_breaker(thread_case):
+    from argus.targets._base import TargetBlockedError
+    c = thread_case
+    c.target.responses = [TargetBlockedError(403)] * 10
+    c.attacker.side_effect = ['benign'] * 10
+    for _ in range(10):
+        found = await results(c)
+        assert_thread(found[0], c, 'blocked_by_target', 'blocked_by_target', 1)
+    assert len(c.target.calls) == c.attacker.await_count == 10
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('verdict', ['pass', 'fail'])
+async def test_evidence_error_preserves_judged_thread(thread_case, verdict):
+    c = thread_case
+    c.judge.judge.side_effect = [Verdict('pass', 'info', 1, 'safe', 'fixture', None)] * 2 + [
+        Verdict(verdict, 'medium', 1, 'third round', 'fixture', None)]
+    c.target.collect_evidence = AsyncMock(side_effect=ValueError('fixture evidence broken'))
+    found = await results(c)
+    assert_thread(found[0], c, 'fail' if verdict == 'fail' else 'error',
+                  'fail' if verdict == 'fail' else 'collect_evidence', 3)
+    assert 'fixture evidence broken' in found[0].evidence['evidence_error']
+    assert found[0].evidence['transcript'][-1]['verdict'] == verdict
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('exercised', [False, True])
+async def test_assertion_thread_continues_until_exercised(thread_case, exercised):
+    c = thread_case
+    c.probe.assertions = ({'no_call_to_tool': 'forbidden_tool'},)
+    c.probe.requires_interaction = True
+    empty = {'interaction_count': 0, 'tool_calls': []}
+    bad = {'interaction_count': 1, 'tool_calls': [{'tool': 'forbidden_tool'}]}
+    c.target.collect_evidence = AsyncMock(side_effect=[empty, bad if exercised else empty, empty])
+    found = await results(c)
+    assert_thread(found[0], c, 'fail' if exercised else 'error',
+                  'fail' if exercised else 'not_exercised', 2 if exercised else 3)
+    assert found[0].evidence['transcript'][0]['verdict'] == 'not_exercised'
+    c.judge.judge.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_incompatible_thread_was_not_started(thread_case):
+    c = thread_case
+    c.target.compatible_classes = {'unrelated'}
+    found = await results(c)
+    assert_thread(found[0], c, 'skipped', 'not_started', 0)
+    c.attacker.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_contact_in_later_round_counts_for_thread(thread_case):
+    c = thread_case
+    c.probe.contact_markers = ('contact-marker',)
+    c.target.responses[2] += ' contact-marker'
+    found = await results(c)
+    assert_thread(found[0], c, 'pass', 'max_rounds', 3)
+
+
+@pytest.mark.asyncio
+async def test_freeform_thread_evidence_secret_masked_in_every_format(thread_case):
+    c = thread_case
+    secret = 'fixture-collected-secret-0123456789'
+    c.target.collect_evidence = AsyncMock(return_value={f'observed_{secret}': secret})
+    found = await results(c)
+    run = {'id': 'fixture-run', 'status': 'completed', 'target_spec': {'api_key': secret},
+           'findings': [asdict(found[0])]}
+    clean = run_json.scrub_run(run)
+    outputs = [run_json.render_json(run), reports.render_html(clean), reports.render_sarif(clean), reports.render_junit(clean)]
+    assert all(secret not in output for output in outputs)
+    assert all('observed_***' in output for output in outputs)
+
+
+def test_short_secret_does_not_corrupt_deep_replay_metadata():
+    deep = {'seed': 'abc-repeat', 'deep_pairs': 1, 'max_rounds': 3, 'history': True,
+            'threads': [{'thread_id': 'abc::abc-persona::abc-strategy', 'base_probe_id': 'abc',
+                         'persona': 'abc-persona', 'strategy': 'abc-strategy'}]}
+    run = {'target_spec': {'api_key': 'abc'}, 'deep': deep, 'findings': []}
+    clean = json.loads(run_json.render_json(run))
+    assert clean['deep'] == deep
