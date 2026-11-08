@@ -53,6 +53,8 @@ async def run(data, submitted, *, expected_json=None, expected_query=None, poll_
     async with serve(app) as origin:
         if setup:
             with_attempt_undo(data, 'http://127.0.0.1')
+            if setup == 'run':
+                data['lifecycle']['run'] = data['lifecycle'].pop('attempt')
         data = with_origin(data, origin)
         parsed = TransportSpecV2.from_dict(data)
         runtime = V2Run(parsed, policy=ExecutionPolicy.local(parsed), environ=environ or {})
@@ -231,10 +233,11 @@ async def test_conflicting_same_named_input_occurrences_fail_closed():
 
 
 @pytest.mark.parametrize('location', ['body', 'query'])
-async def test_attempt_capture_is_not_a_run_input(location):
+@pytest.mark.parametrize('scope', ['run', 'attempt'])
+async def test_lifecycle_capture_is_not_a_run_input(location, scope):
     data = spec(body={'ref': {'var': 'object_ref'}} if location == 'body' else {'question': {'context': 'prompt'}},
                 query={'ref': {'var': 'object_ref'}} if location == 'query' else None)
-    result, calls, _, cleanup = await run(data, {'run_id': 'obj-1'}, setup=True)
+    result, calls, _, cleanup = await run(data, {'run_id': 'obj-1'}, setup=scope)
     assert result.outcome.value == 'succeeded'
     assert calls == [('POST', '/objects'), ('POST', '/runs?ref=obj-1' if location == 'query' else '/runs'),
                      ('GET', '/runs/obj-1'), ('DELETE', '/objects/obj-1')]
