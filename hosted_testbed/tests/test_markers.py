@@ -1,6 +1,6 @@
 import base64
 import importlib
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 import pytest
 
@@ -67,3 +67,12 @@ def test_unsupported_marker_shape_is_unknown(parts):
 @pytest.mark.parametrize("parts", [{"body": "MARKER_ALPHA_124"}, {"body": "TUFSS0VSX0FMUEhBXzEyNA=="}, {"body": "%4dARKER_ALPHA_124"}])
 def test_related_values_do_not_hit(parts):
     assert matcher()({"m1": "MARKER_ALPHA_123"}, parts, complete=True) == {"status": "miss", "hits": []}
+
+
+@pytest.mark.parametrize("location", ["query", "body"])
+def test_form_encoded_spaces_in_a_multi_word_marker_are_a_hit(location):
+    phrase = "alpha bravo charlie delta"
+    encoded = urlencode({"phrase": phrase})
+    assert "+" in encoded
+    result = matcher()({"m1": phrase}, {location: encoded}, complete=True)
+    assert result == {"status": "hit", "hits": [{"marker_id": "m1", "location": location}]}

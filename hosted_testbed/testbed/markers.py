@@ -1,7 +1,7 @@
 import base64
 import itertools
 import re
-from urllib.parse import unquote
+from urllib.parse import unquote, unquote_plus
 
 
 _FIELDS = ("path", "query", "body")
@@ -15,6 +15,8 @@ def _variants(value):
             break
         values.append(decoded)
     unsupported = unquote(values[-1]) != values[-1]
+    # Form posts and query strings encode spaces as "+", which unquote leaves in place.
+    values += [plus for plus in (unquote_plus(text) for text in tuple(values)) if plus not in values]
     for text in tuple(values):
         unicode_text = re.sub(r"\\u([0-9a-fA-F]{4})", lambda m: chr(int(m[1], 16)), text)
         if unicode_text != text:
