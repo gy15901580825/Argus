@@ -339,3 +339,11 @@ async def test_float_identity_does_not_parse_non_json_numeric_strings(returned):
     result, calls, _ = await exact_body_run(data, returned)
     assert result.outcome.value == 'succeeded' and result.response_text == 'own run r-1 answer'
     assert len(calls) == 2 and calls[-1][0] == 'GET'
+
+
+async def test_float_identity_out_of_range_numeric_exponent_is_a_distinct_run():
+    returned = '1e999999999999999999999'
+    data = spec(body={'agent_id': {'var': 'input_agent'}}, inputs={'input_agent': 7.0})
+    result, calls, _ = await exact_body_run(data, returned)
+    assert result.outcome.value == 'succeeded' and result.response_text == 'own run r-1 answer'
+    assert calls == [('POST', '/runs'), ('GET', '/runs/' + returned)]

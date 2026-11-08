@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 from collections.abc import Callable
 from types import MappingProxyType
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Mapping
 from urllib.parse import unquote, quote, urlencode, urljoin, urlsplit, urlunsplit
@@ -29,20 +30,23 @@ from .models import (
     TransportResult,
 )
 from .security import redacted_transport_logs, resolve_secret
-from .spec_v2 import CaptureSpec, PollSpecV2, RequestSpecV2, TransportSpecV2, _expression_variables
+from .spec_v2 import CaptureSpec, PollSpecV2, RequestSpecV2, TransportSpecV2
 
 if TYPE_CHECKING:
     from .runtime_v2 import V2Run
 
 
 _InputPath = tuple[str | int, ...]
-_ScalarObserver = Callable[[_InputPath, dict, str | int], None]
+_BoundScalar = str | int | float | bool
+_BOUND_SCALAR_TYPES = frozenset({str, int, float, bool})
+_ScalarObserver = Callable[[_InputPath, dict, _BoundScalar], None]
+_JSON_NUMBER = re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?")
 
 
 def bind_v2(
     value: dict,
     context: TransportContext,
-    scope: Mapping[str, str | int],
+    scope: Mapping[str, _BoundScalar],
     env: Mapping[str, str],
 ) -> object:
     return _bind_v2(value, context, scope, env)
@@ -51,12 +55,12 @@ def bind_v2(
 def _bind_v2(
     value: dict,
     context: TransportContext,
-    scope: Mapping[str, str | int],
+    scope: Mapping[str, _BoundScalar],
     env: Mapping[str, str],
     *, _observe_scalar: _ScalarObserver | None = None, _field_path: _InputPath = (),
 ) -> object:
     def emitted(item):
-        if _observe_scalar is not None and _field_path and type(item) in {str, int}:
+        if _observe_scalar is not None and _field_path and type(item) in _BOUND_SCALAR_TYPES:
             _observe_scalar(_field_path, value, item)
         return item
 
@@ -121,7 +125,7 @@ def _bind_v2(
 def render_url(
     request: RequestSpecV2,
     context: TransportContext,
-    scope: Mapping[str, str | int],
+    scope: Mapping[str, _BoundScalar],
     env: Mapping[str, str],
     *, _observe_scalar: _ScalarObserver | None = None,
 ) -> str:
@@ -162,6 +166,19 @@ def render_url(
 class _SentRunInput:
     path: _InputPath
     value: str
+    number: Decimal | None = None
+
+    def matches(self, captured: str | int) -> bool:
+        text = str(captured)
+        if text == self.value:
+            return True
+        if self.number is None or _JSON_NUMBER.fullmatch(text) is None:
+            return False
+        try:
+            number = Decimal(text)
+        except InvalidOperation:
+            return False
+        return number == self.number
 
 
 def _run_input_names(declarations: Mapping[str, dict]) -> frozenset[str]:
@@ -185,6 +202,20 @@ def _run_input_names(declarations: Mapping[str, dict]) -> frozenset[str]:
     for name, expression in declarations.items():
         origins[name] = sources(expression) or {"input"}
     return frozenset(name for name, source in origins.items() if "input" in source)
+
+
+def _is_submit_input(expression: dict, input_names: frozenset[str]) -> bool:
+    if "env" in expression:
+        return True
+    if "var" in expression:
+        return expression["var"] in input_names
+    if "base64" in expression:
+        return _is_submit_input(expression["base64"], input_names)
+    return any(_is_submit_input(part, input_names) for part in expression.get("concat", ()))
+
+
+def _input_text(value: _BoundScalar) -> str:
+    return value if isinstance(value, str) else json.dumps(value, allow_nan=False)
 
 
 @dataclass(frozen=True)
@@ -241,12 +272,13 @@ def _response_parent_reason(submit: RequestSpecV2, submit_url: str, poll: Reques
                 settled.add(name)
         for parent in sent_inputs:
             if parent.path == (destination_name,):
-                if value != parent.value:
+                if not parent.matches(captured):
                     return SafeReasonCode.SUBMIT_PARENT_CHANGED
                 settled.add(name)
-    input_values = {parent.value for parent in inputs} | {parent.value for parent in sent_inputs}
+    input_values = {parent.value for parent in inputs}
     for name, captured in ids.items():
-        if name not in settled and str(captured) in input_values:
+        if name not in settled and (str(captured) in input_values
+                                    or any(parent.matches(captured) for parent in sent_inputs)):
             return SafeReasonCode.SUBMIT_PARENT_ECHO
     return None
 
@@ -254,7 +286,7 @@ def _response_parent_reason(submit: RequestSpecV2, submit_url: str, poll: Reques
 def render_body_v2(
     request: RequestSpecV2,
     context: TransportContext,
-    scope: Mapping[str, str | int],
+    scope: Mapping[str, _BoundScalar],
     env: Mapping[str, str],
     *, boundary: str | None = None, _observe_scalar: _ScalarObserver | None = None,
 ) -> bytes | None:
@@ -726,11 +758,16 @@ class TransportEngineV2:
                                                client, context, scope, start, diagnostics)
                     if result is None:
                         sent_inputs = []
-                        input_names = _run_input_names(self.spec.let.run)
+                        input_names = _run_input_names(self.spec.let.run) | frozenset(
+                            name for step in (*self.spec.lifecycle.run, *self.spec.lifecycle.attempt)
+                            for name in step.capture
+                        )
 
                         def observe(field_path, expression, item):
-                            if any(name in input_names for name in _expression_variables(expression)):
-                                sent_inputs.append(_SentRunInput(field_path, str(item)))
+                            if _is_submit_input(expression, input_names):
+                                text = _input_text(item)
+                                sent_inputs.append(_SentRunInput(field_path, text,
+                                                               Decimal(text) if type(item) is float else None))
 
                         request, content = self._bind_request(self.spec.request, context, scope,
                                                              _observe_scalar=observe)

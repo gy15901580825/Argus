@@ -66,6 +66,10 @@ DECISIONS = {
     "binding_unresolved": "Correct the bindings file entry so it names a documented field whose schema accepts it.",
     "setup_undo_proposed": "Confirm that this DELETE removes what the step creates and that the captured field identifies it.",
 }
+_INDEPENDENT_RUN_ID_DECISION = (
+    "Provide documentation for an independently created run ID distinct from the submit path inputs. "
+    "A bindings file cannot establish that ownership."
+)
 
 # Fixed word table for no-model status classification; every result is still a proposal.
 STATUS_WORDS = {
@@ -767,7 +771,7 @@ def _poll_choice(catalog, submit, *, poll_operation, required, gaps, inputs=None
             name = run.run[1]
             gap = replace(gap,
                           why="The documented response field " + name + " also names a submit path input; no independently owned poll run ID is documented.",
-                          decision="Provide documentation for an independently created run ID distinct from the submit path inputs. A bindings file cannot establish that ownership.")
+                          decision=_INDEPENDENT_RUN_ID_DECISION)
         gaps.append(gap)
         return None, None, None
     if len(paired) > 1:
@@ -1652,6 +1656,15 @@ def _unsafe_path(path):
     return path.startswith("//") or "\\" in path or unquote(path) != path or ".." in path.split("/") or "?" in path or "#" in path
 
 
+def _literal_input_name(reserved: set[str]) -> str:
+    index = 1
+    while "input_literal_" + str(index) in reserved:
+        index += 1
+    name = "input_literal_" + str(index)
+    reserved.add(name)
+    return name
+
+
 def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArtifacts:
     gaps = list(choices.gaps)
     provenance = {"schema_version": 1, "openapi_version": catalog.document.data["openapi"],
@@ -1846,6 +1859,14 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
             required = request_schema.get("required", [])
             if not isinstance(parameters, list) or not isinstance(required, list):
                 raise ValueError("Malformed required fields or parameters")
+            reserved = {_input_variable(name) for name in required}
+            if choices.delivery:
+                reserved.update(item.name for item in choices.delivery.ids)
+            supplied_expressions = [entry.value for entry in choices.values]
+            supplied_expressions += [value.expression for step in choices.steps
+                                     for value in (*step.values, *(step.undo.values if step.undo else ()))]
+            reserved.update("input_" + expression["env"].removeprefix("TARGET_INPUT_").lower()
+                            for expression in supplied_expressions if "env" in expression)
             for parameter, parameter_pointer in parameters:
                 if not isinstance(parameter, dict):
                     raise ValueError("Malformed parameter")
@@ -1891,7 +1912,13 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                 chain = _walk(catalog, _root(operation, "value"), entry.path)
                 read.update({pointer: _schema_at(catalog, pointer) for pointer in chain})
                 expression = entry.value
-                if "env" in expression:
+                if "literal" in expression:
+                    reserved.update(declarations)
+                    variable = _literal_input_name(reserved)
+                    declarations[variable] = expression
+                    provenance["fields"]["/transport/let/run/" + variable] = _user_record(catalog, chain[-1], entry)
+                    expression = {"var": variable}
+                elif "env" in expression:
                     variable = "input_" + expression["env"].removeprefix("TARGET_INPUT_").lower()
                     if variable in declarations:
                         gaps.append(_gap(catalog, "/transport/request", "parameter_collision", "Required parameter bindings collide; select explicit names.", pointer=operation.pointer, kind="ambiguous_choice"))
@@ -1940,6 +1967,14 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                 gaps.append(_gap(catalog, "/transport/request/url", "path_binding_missing", "Path parameters are not declared.", pointer=operation.pointer))
             if choices.delivery and any(item.name in declarations for item in choices.delivery.ids):
                 gaps.append(_gap(catalog, "/transport/delivery/ids", "parameter_collision", "Poll IDs collide with input bindings; select explicit names.", pointer=result.pointer, kind="ambiguous_choice"))
+            if choices.delivery:
+                run_parameter = _poll_parameters(result, _response_fields(operation)[0]).run
+                if run_parameter and any(expression and expression.get("var") in declarations
+                                         for expression in (body.get(run_parameter[1]), query.get(run_parameter[1]))):
+                    gap = _gap(catalog, "/transport/delivery/ids", "poll_id_binding_missing",
+                               "The poll run parameter " + run_parameter[1] + " also names a top-level submit body or query input; "
+                               "no independently owned poll run ID is documented.", pointer=poll_parameters[run_parameter][0])
+                    gaps.append(replace(gap, decision=_INDEPENDENT_RUN_ID_DECISION))
             if not any(gap.blocking for gap in gaps):
                 result_statuses = [int(code) for code, _ in _success(result)]
                 if choices.delivery:

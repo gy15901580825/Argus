@@ -11,7 +11,7 @@ from typing import Literal
 import httpx
 
 from .engine import _OMIT
-from .engine_v2 import TransportEngineV2, bind_v2
+from .engine_v2 import TransportEngineV2, _BOUND_SCALAR_TYPES, _BoundScalar, bind_v2
 from .models import SafeReasonCode, SyncSpec, TransportContext, TransportResult
 from .security import ExecutionPolicy, Redactor
 from .spec_v2 import AbortSpec, PollSpecV2, RequestSpecV2, TransportSpecV2, UndoSpec, _iter_expressions
@@ -202,7 +202,7 @@ class V2Run:
         self.policy = policy
         self.redactor = Redactor()
         self.env: Mapping[str, str] = MappingProxyType({})
-        self.run_vars: Mapping[str, str | int] = MappingProxyType({})
+        self.run_vars: Mapping[str, _BoundScalar] = MappingProxyType({})
         self.client = client
         self._environ = os.environ if environ is None else environ
         self._started = False
@@ -258,8 +258,8 @@ class V2Run:
         for name, expression in self.spec.let.run.items():
             item = bind_v2(expression, context, scope, self.env)
             if item is not _OMIT:
-                if type(item) not in {str, int}:
-                    raise ValueError('Variable requires a string or integer')
+                if type(item) not in _BOUND_SCALAR_TYPES:
+                    raise ValueError('Run variable requires a JSON scalar')
                 scope[name] = item
         self.run_vars = MappingProxyType(scope)
 
