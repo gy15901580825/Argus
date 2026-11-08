@@ -1969,10 +1969,13 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                 gaps.append(_gap(catalog, "/transport/delivery/ids", "parameter_collision", "Poll IDs collide with input bindings; select explicit names.", pointer=result.pointer, kind="ambiguous_choice"))
             if choices.delivery:
                 run_parameter = _poll_parameters(result, _response_fields(operation)[0]).run
+                run_names = {run_parameter[1]} if run_parameter else set()
+                run_names.update(item.name for item in choices.delivery.ids
+                                 if item.location == "path" and (item.location, item.parameter) == run_parameter)
                 if run_parameter and any(expression and expression.get("var") in declarations
-                                         for expression in (body.get(run_parameter[1]), query.get(run_parameter[1]))):
+                                         for name in run_names for expression in (body.get(name), query.get(name))):
                     gap = _gap(catalog, "/transport/delivery/ids", "poll_id_binding_missing",
-                               "The poll run parameter " + run_parameter[1] + " also names a top-level submit body or query input; "
+                               "A poll run parameter or its compiled path slot also names a top-level submit body or query input; "
                                "no independently owned poll run ID is documented.", pointer=poll_parameters[run_parameter][0])
                     gaps.append(replace(gap, decision=_INDEPENDENT_RUN_ID_DECISION))
             if not any(gap.blocking for gap in gaps):
