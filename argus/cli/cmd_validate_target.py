@@ -120,6 +120,7 @@ def cmd_validate_target(
     except TargetLoadError as e:
         raise click.ClickException(str(e))
     kind = spec["kind"]
+    secrets = run_json.run_secrets(spec, substituted)
     if (
         kind == "custom_http"
         and isinstance(spec.get("transport"), dict)
@@ -132,7 +133,7 @@ def cmd_validate_target(
             raise click.UsageError("this option supports version 1 transports only")
         return validate(
             spec, offline=offline or not execute, endpoint_override=endpoint_override,
-            secrets=run_json.run_secrets(spec, substituted),
+            secrets=secrets,
         )
     if "transport" in spec or kind == "browser_use":
         return _validate_transport(
@@ -140,6 +141,7 @@ def cmd_validate_target(
             offline=offline or not execute,
             sample_response=sample_response,
             endpoint_override=endpoint_override,
+            secrets=secrets,
             with_scenario=with_scenario,
             scenario_url=scenario_url,
         )
@@ -148,7 +150,7 @@ def cmd_validate_target(
             build_target(spec, trusted_code=True)
         except Exception as exc:
             raise click.ClickException(
-                f"target spec invalid: {type(exc).__name__}"
+                run_json.mask_text(f"target spec invalid: {type(exc).__name__}: {exc}", secrets)
             ) from exc
         click.echo(
             "legacy configuration: valid; requests.submit=0 requests.poll=0 requests.retry=0"
@@ -158,9 +160,6 @@ def cmd_validate_target(
         return
     if sample_response or endpoint_override:
         raise click.UsageError("these options require a transport specification")
-    # The same masking as run's reports: expanded $VARs and secret-named fields.
-    secrets = run_json.run_secrets(spec, substituted)
-
     def fail(message: str):
         raise click.ClickException(run_json.mask_text(message, secrets))
 
@@ -288,6 +287,7 @@ def _validate_transport(
     offline,
     sample_response,
     endpoint_override,
+    secrets,
     with_scenario=False,
     scenario_url=None,
 ):
@@ -349,7 +349,7 @@ def _validate_transport(
         raise
     except Exception as exc:
         raise click.ClickException(
-            f"target spec invalid: {type(exc).__name__}"
+            run_json.mask_text(f"target spec invalid: {type(exc).__name__}: {exc}", secrets)
         ) from exc
     click.echo(f"spec.transport.version: {transport.version} OK")
     click.echo(f"request.method: {transport.request.method}")
