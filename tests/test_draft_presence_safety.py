@@ -213,11 +213,13 @@ def test_enum_beside_inert_state_does_not_ignore_another_enum(tmp_path):
     {'type': 'boolean'}, {'type': 'array'}, {}, {'description': 'Free text.'},
     {'type': ['string', 'integer']},
     {'type': 'object', 'properties': {'detail': {'type': 'object'}}},
-    {'properties': {'detail': {'type': 'object'}}},
+    {'properties': {'detail': {'type': 'object'}}}, False, True,
 ], ids=['string', 'integer', 'number', 'boolean', 'array', 'untyped',
-        'description-only', 'multi-type', 'inert-object', 'untyped-inert-object'])
+        'description-only', 'multi-type', 'inert-object', 'untyped-inert-object',
+        'false-schema', 'true-schema'])
 def test_enum_restoration_retains_other_sibling_kinds(tmp_path, sibling, empty_enum):
     doc = async_document(result={'type': 'string'})
+    doc['openapi'] = '3.1.0'
     if empty_enum:
         poll_schema(doc)['properties']['status']['enum'].append('')
     _, original = compiled(tmp_path, doc)
