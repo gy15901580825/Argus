@@ -10,7 +10,7 @@ import re
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import AsyncIterator
+from typing import TYPE_CHECKING, AsyncIterator
 from uuid import UUID, uuid4
 
 import httpx
@@ -20,13 +20,15 @@ from argus.a2a.events import events_from_trials
 from argus.cost_meter import CostExceededError
 from argus.events import Event
 from argus.deep_thread import DeepThread
-from argus.persona_strategy import PersonaStrategyProbe
 from argus.phases import PhaseRun, clean_failure, judge_trial
 from argus.trials import TrialRecord, aggregate_trials, pass_wording, snapshot_finding
 from argus_transport.runtime_v2 import TargetRunStopped
 from argus.world_assertions import report_from_reply
 from argus.probe import Probe
 from argus.targets._base import ProbeNotApplicable
+
+if TYPE_CHECKING:
+    from argus.persona_strategy import PersonaStrategyProbe
 
 logger = logging.getLogger(__name__)
 
@@ -323,6 +325,8 @@ def skipped_finding(probe, reasoning: str) -> Finding:
 
 def aborted_finding(probe, reasoning: str, *, history: bool = False) -> Finding:
     """The probe that was running when the cost cap stopped the run."""
+    from argus.persona_strategy import PersonaStrategyProbe
+
     finding = replace(skipped_finding(probe, reasoning), verdict=VERDICT_ABORTED)
     if isinstance(probe, PersonaStrategyProbe):
         return DeepThread(probe, history, finding).finish('cost', reasoning)
@@ -359,6 +363,8 @@ class Runner:
         return skipped_finding(probe, reasoning)
 
     async def run_probe(self, probe) -> AsyncIterator[Finding]:
+        from argus.persona_strategy import PersonaStrategyProbe
+
         if not isinstance(probe, PersonaStrategyProbe):
             async for finding in self._run_probe(probe):
                 yield finding
@@ -495,6 +501,8 @@ class Runner:
         self._check_breaker()
 
     async def _run_once(self, probe, rubric_text) -> AsyncIterator[Finding]:
+        from argus.persona_strategy import PersonaStrategyProbe
+
         # The probe is going to run: tell a stateful adapter where the previous
         # probe ended. Deliberately after both skip decisions — a skipped probe
         # must not open a session — and before any exchange, so nothing the

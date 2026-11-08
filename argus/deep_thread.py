@@ -3,9 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Literal
 
-from argus.persona_strategy import PersonaStrategyProbe
-
 if TYPE_CHECKING:
+    from argus.persona_strategy import PersonaStrategyProbe
     from argus.runner import Finding
 
 DeepStop = Literal['fail', 'max_rounds', 'attacker_stopped', 'attacker_blocked',
