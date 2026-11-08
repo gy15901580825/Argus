@@ -1,5 +1,6 @@
 import json
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 from aiohttp import web
@@ -75,6 +76,55 @@ def proposed_document():
 def proposal_document_choices():
     return {"operation": "ask", "prompt": "/paths/~1ask/post/requestBody/content/application~1json/schema/properties/utterance",
             "reply": "/paths/~1ask/post/responses/200/content/application~1json/schema/properties/text", "completion": None}
+
+
+def two_operation_document():
+    import copy
+    doc = proposed_document()
+    doc["paths"]["/other"] = copy.deepcopy(doc["paths"]["/ask"])
+    doc["paths"]["/other"]["post"]["operationId"] = "other"
+    return doc
+
+
+async def test_fixed_operation_is_the_only_offered_model_operation(tmp_path, stub_model):
+    from argus.drafting.proposal import propose_choices
+    calls, _, _ = stub_model
+    catalog = catalog_operations(load_openapi(input_file(tmp_path, two_operation_document())))
+    result = await propose_choices(catalog, operation="ask")
+    assert result.disclosure.status == "accepted"
+    assert len(calls) == 1
+    assert [op["operation"] for op in json.loads(calls[0]["user"])["operations"]] == ["ask"]
+    assert "When only one operation is offered, that operation is fixed." in calls[0]["system"]
+
+
+async def test_model_instructions_require_scalar_pointer_fields(tmp_path, stub_model):
+    from argus.drafting.proposal import propose_choices
+    catalog = catalog_operations(load_openapi(input_file(tmp_path, proposed_document())))
+    await propose_choices(catalog)
+    assert "prompt, reply and completion are each one pointer string" in stub_model[0][0]["system"]
+    assert "or null where allowed, and never a list" in stub_model[0][0]["system"]
+
+
+async def test_unfixed_model_input_bytes_match_main_synthetic_catalog(tmp_path, stub_model):
+    from argus.drafting.proposal import propose_choices
+    catalog = catalog_operations(load_openapi(input_file(tmp_path, two_operation_document())))
+    await propose_choices(catalog)
+    baseline = (Path(__file__).parent / "fixtures" / "draft_model_input_no_fixed.json").read_bytes().removesuffix(b"\n")
+    assert stub_model[0][0]["user"].encode("utf-8") == baseline
+
+
+async def test_singleton_list_prompt_remains_invalid_model_output(tmp_path, stub_model):
+    from argus.drafting.proposal import propose_choices
+    calls, output, _ = stub_model
+    selection = proposal_document_choices()
+    selection["prompt"] = [selection["prompt"]]
+    output["text"] = json.dumps(selection)
+    catalog = catalog_operations(load_openapi(input_file(tmp_path, proposed_document())))
+    result = await propose_choices(catalog, operation="ask")
+    assert len(calls) == 1
+    assert result.disclosure.status == "rejected"
+    assert any(g.code == "model_output_invalid" for g in result.choices.gaps)
+    assert result.choices.operation == "ask"
 
 
 def test_model_catalog_references_enable_nonheuristic_business_bindings(tmp_path):
@@ -451,6 +501,7 @@ async def test_explicit_operation_cannot_be_overridden_by_valid_model_references
     catalog = catalog_operations(load_openapi(input_file(tmp_path, doc)))
     result = await propose_choices(catalog, operation="ask")
     assert len(calls) == 1 and result.choices.operation == "ask"
+    assert result.disclosure.status == "rejected"
     assert any(g.code == "model_operation_conflict" for g in result.choices.gaps)
 
 
