@@ -91,6 +91,41 @@ def handwritten(submit_path, poll_path, inputs, ids, *, query=None):
     return data
 
 
+@pytest.mark.parametrize("query_name", ["Agent-ID", "AGENT_ID"])
+@pytest.mark.parametrize("drafted", [True, False], ids=["draft", "handwritten"])
+async def test_query_parent_echo_does_not_normalize_spelling(tmp_path, query_name, drafted):
+    if drafted:
+        doc = document("/agents/{agent_id}/runs", ["agent_id"], [query_name],
+                       "/runs", [query_name], query=True)
+        result, out = draft(tmp_path, doc, None, "--operation", "invoke", "--poll-operation", "get_run")
+        target, report, _ = artifacts(out)
+        assert result.exit_code == 3 and target is not None and codes(report, True) == []
+        data = target["transport"]
+    else:
+        data = handwritten("/agents/{input_agent_id}/runs", "/runs", {"input_agent_id": "ag-7"},
+                           ["agent_id"], query={query_name: {"var": "agent_id"}})
+        data["delivery"]["ids"]["agent_id"]["path"] = "$['" + query_name + "']"
+    app = RecordingApp()
+    async def submitted(request):
+        return web.json_response({query_name: "ag-7"}, status=202)
+    async def foreign(request):
+        return web.json_response({"status": "COMPLETED", "result": "foreign parent reply"})
+    app.route("POST", "/{tail:.*}", submitted)
+    app.route("GET", "/{tail:.*}", foreign)
+    async with serve(app) as origin:
+        parsed = TransportSpecV2.from_dict(with_origin(data, origin))
+        runtime = V2Run(parsed, policy=ExecutionPolicy.local(parsed),
+                        environ={"TARGET_INPUT_AGENT_ID": "ag-7"})
+        try:
+            response = await runtime.attempt(TransportContext(prompt="ping"))
+        finally:
+            await runtime.close()
+    assert response.outcome.value == "target_error"
+    assert response.reason_code.value == "submit_parent_echo"
+    assert response.response_text != "foreign parent reply"
+    assert [(call[0], call[1]) for call in app.calls] == [("POST", "/agents/ag-7/runs")]
+
+
 @pytest.mark.parametrize("parent,captured", [("ag-7", "ag-7"), ("7", 7), ("a/b", "a/b"), ("a%2Fb", "a%2Fb")])
 async def test_handwritten_cross_name_echo_uses_transmitted_identity(parent, captured):
     data = handwritten("/agents/{input_agent}/runs", "/runs/{id}", {"input_agent": parent}, ["id"])
