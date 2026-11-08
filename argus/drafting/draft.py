@@ -709,7 +709,7 @@ def status_shape(fields):
             schema = _nullable(fields[name])
             if name == owner:
                 continue
-            if any(key.lower() in STATUS_WORDS for key in schema.get("properties", {})):
+            if isinstance(schema, dict) and any(key.lower() in STATUS_WORDS for key in schema.get("properties", {})):
                 return None
         return enums[0]
     if named and _type(_nullable(fields[named[0]])) == "object":
