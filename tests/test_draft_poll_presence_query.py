@@ -65,17 +65,17 @@ def compiled(tmp_path, doc):
     return compile_draft(catalog, choices)
 
 
-async def execute(spec, submit, poll):
+async def execute(spec, submit, poll, *, submit_status=202):
     app = RecordingApp()
     async def submitted(request):
-        return web.json_response(submit, status=202)
+        return web.json_response(submit, status=submit_status)
     async def polled(request):
         return web.json_response(poll)
     app.route('POST', '/{tail:.*}', submitted)
     app.route('GET', '/{tail:.*}', polled)
     async with serve(app) as origin:
         parsed = TransportSpecV2.from_dict(with_origin(spec['transport'], origin))
-        runtime = V2Run(parsed, policy=ExecutionPolicy.local(parsed), environ={'TARGET_INPUT_ORGANIZATION': 'org-1'})
+        runtime = V2Run(parsed, policy=ExecutionPolicy.local(parsed), environ={'TARGET_INPUT_ORGANIZATION': 'org-1', 'TARGET_INPUT_AGENT_ID': 'agent-1'})
         try:
             result = await runtime.attempt(TransportContext(prompt='ping', run_id='context-run'))
         finally:
@@ -127,11 +127,11 @@ async def test_optional_ordinary_present_bad_identity_fails(tmp_path, value):
 
 
 @pytest.mark.parametrize('present,value,want', [
-    (False, None, 'succeeded'), (True, 'organizations/org-1/jobs/job-1', 'succeeded'),
+    (False, None, 'target_error'), (True, 'organizations/org-1/jobs/job-1', 'succeeded'),
     (True, None, 'target_error'), (True, 'other/job-1', 'target_error'),
     (True, 'organizations/org-1/jobs/job-2', 'target_error'), (True, 1, 'target_error'),
 ])
-async def test_optional_formatted_identity_skips_only_missing(tmp_path, present, value, want):
+async def test_optional_formatted_identity_retains_strict_presence(tmp_path, present, value, want):
     report = compiled(tmp_path, identity_document(required=False, formatted=True))
     assert report.spec is not None
     body = {'status': 'COMPLETED', 'result': 'reply'}
@@ -142,11 +142,8 @@ async def test_optional_formatted_identity_skips_only_missing(tmp_path, present,
     if want == 'target_error':
         assert result.reason_code == 'poll_identity_changed'
     selector = report.spec['transport']['delivery']['ids']['job_id'].get('poll', {})
-    assert selector.get('required', True) is False and selector['last_segment'] is True
-    omission_gaps = [gap for gap in report.gaps if gap.code == 'poll_identity_unchecked']
-    assert omission_gaps
-    gap = omission_gaps[0]
-    assert not gap.blocking and 'omit' in gap.why.lower()
+    assert selector.get('required', True) is True and selector['last_segment'] is True
+    assert not any(gap.code == 'poll_identity_unchecked' for gap in report.gaps)
 
 
 @pytest.mark.parametrize('mutation', ['drop', 'foreign_field'])
@@ -439,7 +436,7 @@ async def test_query_var_run_id_is_captured_while_context_run_id_is_attempt_cont
 
 
 @pytest.mark.parametrize('failure', ['missing', 'unsupported'])
-def test_related_run_query_blocks_sync_reply_fallback(tmp_path, failure):
+async def test_related_run_query_keeps_sync_reply(tmp_path, failure):
     doc = query_document()
     submit = doc['paths']['/jobs']['post']
     response = submit['responses'].pop('202')
@@ -453,9 +450,12 @@ def test_related_run_query_blocks_sync_reply_fallback(tmp_path, failure):
         doc['paths']['/agents/{agent_id}/status']['get']['parameters'][-1]['style'] = 'deepObject'
     catalog = catalog_for(tmp_path, doc)
     report = compile_draft(catalog, choose_without_model(catalog, operation='submit_job'))
-    assert report.spec is None
-    expected = 'poll_id_binding_missing' if failure == 'missing' else 'poll_parameter_unsupported'
-    assert any(gap.blocking and gap.code == expected for gap in report.gaps)
+    assert report.spec is not None
+    assert report.spec['transport']['delivery'] == {'kind': 'sync'}
+    assert not any(gap.blocking for gap in report.gaps)
+    result, calls = await execute(report.spec, {'result': 'sync answer', 'agent_id': 'agent-1', 'run_id': 'run-1'}, {}, submit_status=200)
+    assert result.outcome == 'succeeded' and result.response_text == 'sync answer'
+    assert len(calls) == 1
 
 
 def test_unrelated_run_query_does_not_block_synchronous_reply(tmp_path):
@@ -492,7 +492,7 @@ def test_malformed_poll_parameter_location_has_named_gap(tmp_path, location):
     assert any(gap.blocking and gap.code == 'poll_parameter_unsupported' for gap in report.gaps)
 
 
-def test_multiple_run_queries_cannot_bypass_auto_sync_diagnostics(tmp_path):
+def test_multiple_run_queries_do_not_change_sync_draft(tmp_path):
     doc = query_document()
     submit = doc['paths']['/jobs']['post']
     response = submit['responses'].pop('202')
@@ -502,8 +502,9 @@ def test_multiple_run_queries_cannot_bypass_auto_sync_diagnostics(tmp_path):
         {'name': 'runId', 'in': 'query', 'schema': {'type': 'string'}})
     catalog = catalog_for(tmp_path, doc)
     report = compile_draft(catalog, choose_without_model(catalog, operation='submit_job'))
-    assert report.spec is None
-    assert any(gap.blocking and gap.code == 'poll_parameter_role_ambiguous' for gap in report.gaps)
+    assert report.spec is not None
+    assert report.spec['transport']['delivery'] == {'kind': 'sync'}
+    assert not any(gap.blocking for gap in report.gaps)
 
 
 @pytest.mark.parametrize('required', [['job_id', 'job_id'], 'job_id', ['job_id', 1]])
@@ -519,3 +520,80 @@ def test_identity_presence_retains_existing_required_list_review_policy(tmp_path
         assert selector == {'path': '$.job_id'}
         assert any(gap.code == 'success_conditions_minimal' and not gap.blocking for gap in report.gaps)
         assert any(gap.code == 'poll_identity_unchecked' and not gap.blocking for gap in report.gaps)
+
+
+@pytest.mark.parametrize('case', ['S1b', 'S7'])
+async def test_sync_submit_ignores_related_status_and_list_queries(tmp_path, case):
+    doc = query_document()
+    submit = doc['paths']['/jobs']['post']
+    response = submit['responses'].pop('202')
+    submit['responses']['200'] = response
+    response['content']['application/json']['schema']['properties']['result'] = {'type': 'string'}
+    poll = doc['paths']['/agents/{agent_id}/status']['get']
+    if case == 'S1b':
+        del poll['responses']['200']['content']['application/json']['schema']['properties']['result']
+    else:
+        del response['content']['application/json']['schema']['properties']['run_id']
+        response['content']['application/json']['schema']['required'].remove('run_id')
+        submit['parameters'] = [{'name': 'agent_id', 'in': 'path', 'required': True, 'schema': {'type': 'string'}}]
+        doc['paths']['/agents/{agent_id}/messages'] = {'post': doc['paths'].pop('/jobs')['post']}
+        doc['paths']['/agents/{agent_id}/runs'] = {'get': doc['paths'].pop('/agents/{agent_id}/status')['get']}
+        poll['responses']['200']['content']['application/json']['schema'] = {
+            'type': 'object', 'properties': {'items': {'type': 'array', 'items': {'type': 'object'}}}}
+    catalog = catalog_for(tmp_path, doc)
+    report = compile_draft(catalog, choose_without_model(catalog, operation='submit_job'))
+    assert report.spec is not None, [gap.to_dict() for gap in report.gaps]
+    assert report.spec['transport']['delivery'] == {'kind': 'sync'}
+    result, calls = await execute(report.spec, {'result': 'sync answer', 'agent_id': 'agent-1', 'run_id': 'run-1'}, {}, submit_status=200)
+    assert result.outcome == 'succeeded' and result.response_text == 'sync answer'
+    assert len(calls) == 1 and calls[0][0] == 'POST'
+
+
+@pytest.mark.parametrize('query_name', ['run', 'job', 'execution'])
+async def test_exact_name_run_query_reads_own_reply(tmp_path, query_name):
+    doc = query_document(query_name=query_name)
+    parameter = doc['paths']['/agents/{agent_id}/status']['get']['parameters'][-1]
+    parameter['description'] = {'run': 'The run to fetch.', 'job': 'The job to read.', 'execution': 'Execution to read.'}[query_name]
+    report = compiled(tmp_path, doc)
+    assert report.spec is not None
+    app = RecordingApp()
+    async def submitted(request):
+        return web.json_response({'agent_id': 'agent-1', query_name: 'own-1'}, status=202)
+    async def polled(request):
+        return web.json_response({'status': 'COMPLETED', 'result':
+                                 'own reply' if request.query.get(query_name) == 'own-1' else 'foreign latest'})
+    app.route('POST', '/jobs', submitted)
+    app.route('GET', '/agents/{agent_id}/status', polled)
+    async with serve(app) as origin:
+        parsed = TransportSpecV2.from_dict(with_origin(report.spec['transport'], origin))
+        runtime = V2Run(parsed, policy=ExecutionPolicy.local(parsed))
+        try:
+            result = await runtime.attempt(TransportContext(prompt='ping'))
+        finally:
+            await runtime.close()
+    assert result.outcome == 'succeeded' and result.response_text == 'own reply'
+    assert app.calls[1][1] == '/agents/agent-1/status?' + query_name + '=own-1'
+    assert report.spec['transport']['delivery']['request']['query'][query_name] == {'var': query_name}
+
+
+@pytest.mark.parametrize('kind', ['write_only', 'wrong_type'])
+def test_unusable_exact_name_query_source_blocks_instead_of_omission(tmp_path, kind):
+    doc = query_document(query_name='job')
+    field = doc['paths']['/jobs']['post']['responses']['202']['content']['application/json']['schema']['properties']['job']
+    if kind == 'write_only':
+        field['writeOnly'] = True
+    else:
+        field['type'] = 'integer'
+    report = compiled(tmp_path, doc)
+    assert report.spec is None
+    assert any(gap.blocking and gap.code == 'poll_id_binding_missing' for gap in report.gaps)
+
+
+def test_multiple_exact_name_query_captures_are_ambiguous(tmp_path):
+    doc = query_document(query_name='job')
+    doc['paths']['/jobs']['post']['responses']['202']['content']['application/json']['schema']['properties']['execution'] = {'type': 'string'}
+    doc['paths']['/agents/{agent_id}/status']['get']['parameters'].append(
+        {'name': 'execution', 'in': 'query', 'schema': {'type': 'string'}})
+    report = compiled(tmp_path, doc)
+    assert report.spec is None
+    assert any(gap.blocking and gap.code == 'poll_parameter_role_ambiguous' for gap in report.gaps)
