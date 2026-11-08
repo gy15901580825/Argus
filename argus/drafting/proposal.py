@@ -193,8 +193,12 @@ async def propose_choices(catalog: OperationCatalog, *, operation=None, server_o
 
     def finish(status, code=None, choices=baseline):
         if code:
-            gap = Gap("/model_proposal", "The model proposal was unavailable or rejected; deterministic selections were retained.",
-                      "Review the deterministic draft and model configuration or proposal before execution.",
+            why = "The model proposal was unavailable or rejected; deterministic selections were retained."
+            decision = "Review the deterministic draft and model configuration or proposal before execution."
+            if code == "model_blocked":
+                why = "The provider content filter blocked the model proposal; deterministic selections were retained."
+                decision = "Review the provider filter policy and deterministic draft before execution."
+            gap = Gap("/model_proposal", why, decision,
                       code, "ambiguous_choice", False, (catalog.document.source(""),))
             choices = replace(choices, gaps=choices.gaps + (gap,))
         return ProposalResult(choices, ProposalDisclosure(status, configured, actual_model, usage, refusals,
@@ -235,7 +239,7 @@ async def propose_choices(catalog: OperationCatalog, *, operation=None, server_o
                 refused = getattr(exc, "refusals", ())
                 refusals = _refusals(refused)
                 llm.record_refusals(meter, refused)
-                status, code = "failed", "model_call_failed"
+                status, code = "failed", "model_blocked" if isinstance(exc, llm.JudgeBlockedError) else "model_call_failed"
             else:
                 actual_model = output.model
                 usage = {"input_tokens": output.input_tokens, "output_tokens": output.output_tokens}
