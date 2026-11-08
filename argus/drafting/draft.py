@@ -69,8 +69,8 @@ DECISIONS = {
 # Fixed word table for no-model status classification; every result is still a proposal.
 STATUS_WORDS = {
     **dict.fromkeys(("completed", "succeeded", "success", "done"), "succeeded"),
-    **dict.fromkeys(("pending", "queued", "running", "in_progress", "processing", "started"), "pending"),
-    **dict.fromkeys(("failed", "error", "cancelled", "canceled", "expired", "timed_out"), "failed"),
+    **dict.fromkeys(("pending", "queued", "running", "in_progress", "processing", "started", "executing", "stopping", "awaiting_guidance"), "pending"),
+    **dict.fromkeys(("failed", "error", "cancelled", "canceled", "expired", "timed_out", "stopped"), "failed"),
 }
 POLL_INTERVAL_S = 5
 MAX_POLLS = 60
