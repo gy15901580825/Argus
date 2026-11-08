@@ -190,3 +190,15 @@ def test_unwritable_unknown_presence_child_blocks_instead_of_disappearing(tmp_pa
     poll_schema(doc)['properties']['state']['properties']["unknown'child"] = {'type': 'object'}
     result, out = run(tmp_path, doc)
     assert result.exit_code == 3 and not out.exists(), result.output
+
+
+def test_programmatic_compile_rejects_an_unwritable_unknown_child(tmp_path):
+    from argus.drafting.draft import choose_without_model, compile_draft
+    original = catalog_for(tmp_path, presence_document())
+    choices = choose_without_model(original)
+    assert compile_draft(original, choices).spec is not None
+    changed = presence_document()
+    poll_schema(changed)['properties']['state']['properties']["unknown'child"] = {'type': 'object'}
+    catalog = catalog_for(tmp_path, changed)
+    with pytest.raises(ValueError, match='documented presence child'):
+        compile_draft(catalog, choices)
