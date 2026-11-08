@@ -1,6 +1,8 @@
 """Provider filters remain undecided while preserving useful, safe diagnostics."""
+import asyncio
 import json
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -41,7 +43,7 @@ def scripted_model(monkeypatch, errors):
 
     monkeypatch.setattr(llm, "_acompletion", complete)
     monkeypatch.setitem(cost_meter._PRICES_PER_M_TOKENS, DEPLOYMENT, {"input": 0.0, "output": 0.0})
-    return _config(REDTEAM_LLM_FALLBACK="off"), calls
+    return replace(_config(REDTEAM_LLM_FALLBACK="off"), fallback_enabled=False), calls
 
 
 async def run_scan(monkeypatch, cfg, candidates, hits=()):
@@ -91,7 +93,7 @@ async def test_cached_filtered_items_count_in_real_scan_and_cli(monkeypatch, tmp
     monkeypatch.setattr(scan, "scan_mcp", completed_scan)
     monkeypatch.setattr(cmd_scan_mcp, "sdk_problem", lambda extra: None)
     monkeypatch.chdir(tmp_path)
-    cli = CliRunner().invoke(main, ["scan-mcp", "http://127.0.0.1:9/mcp"])
+    cli = await asyncio.to_thread(CliRunner().invoke, main, ["scan-mcp", "http://127.0.0.1:9/mcp"])
     assert cli.exit_code == 1, cli.output
     assert "content filter" in cli.output.lower() and "policy" in cli.output.lower()
     assert "check the judge provider and its key" not in cli.output
