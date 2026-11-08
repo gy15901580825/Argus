@@ -393,7 +393,7 @@ def document_cases(scenario: ScenarioV1, catalog: OperationCatalog | None) -> tu
         if not isinstance(current, dict):
             return None
         active = [value for value in values if value in current and current[value] is not None]
-        if len(active) != 1 or active[0] not in classes['succeeded']:
+        if len(active) != 1 or active[0] not in classes['succeeded'] or not isinstance(current[active[0]], dict):
             return None
         selected = active[0]
     others = [value for value in dict.fromkeys(values) if value != selected]

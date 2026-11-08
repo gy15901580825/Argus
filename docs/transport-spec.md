@@ -815,6 +815,14 @@ argus-probe validate-target --target browser.json --offline
 argus-probe validate-target --target browser.json --execute --with-scenario
 ```
 
+## Predicate operators
+
+Outcome rules, pending conditions and lifecycle checks share a predicate language. A leaf has a `path` and exactly one of `equals`, `one_of`, `exists` or `type`. Logical `all`, `any` and `not` compose these leaves.
+
+The `type` operator accepts `object`, `array`, `string`, `number`, `boolean` or `null`. For example, `{"path": "$.state.completed", "type": "object"}` matches an object-valued completed child, including an empty object. It rejects false, numbers, strings, arrays and null. A missing path never matches any type, including `null`. `number` includes JSON integers and floating-point numbers; booleans do not match it. `boolean` matches both true and false. `null` matches only an explicitly present JSON null.
+
+Presence completion also needs to exclude active pending and unclassified children. Object type alone does not establish that a run has finished. Drafted presence success rules combine this type test with those exclusions and preserve failure priority.
+
 ## Poll asynchronous jobs
 
 Use `delivery.kind: "poll"` when submission returns a job ID. The following `delivery` object replaces the synchronous delivery object in the example above. Its GET origin must match the submission origin. Keep the top-level response selectors and outcome rules for terminal GET replies.

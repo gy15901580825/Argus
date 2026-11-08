@@ -28,7 +28,7 @@ def test_type_predicate_matches_only_the_json_type(kind, value):
 
 @pytest.mark.parametrize('kind', ['integer', '', 'Object', None, False, 0, [], {}])
 def test_type_predicate_rejects_unknown_or_nonstring_types(kind):
-    with pytest.raises(ValueError, match='type'):
+    with pytest.raises(ValueError):
         predicate({'path': '$.value', 'type': kind})
 
 

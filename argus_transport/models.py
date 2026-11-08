@@ -18,6 +18,12 @@ JsonValue: TypeAlias = (
 )
 
 
+JSON_VALUE_TYPES = {
+    "object": (dict,), "array": (list,), "string": (str,),
+    "number": (int, float), "boolean": (bool,), "null": (type(None),),
+}
+
+
 class LiteralValue(TypedDict):
     literal: JsonValue
 
@@ -246,7 +252,7 @@ def value_expr(value, depth=0):
 def predicate(value, depth=0):
     if depth > 16:
         raise ValueError("Predicate nesting exceeds maximum")
-    object_fields(value, {"path", "equals", "one_of", "exists", "all", "any", "not"})
+    object_fields(value, {"path", "equals", "one_of", "exists", "type", "all", "any", "not"})
     logical = set(value) & {"all", "any", "not"}
     if logical:
         if len(value) != 1:
@@ -262,8 +268,10 @@ def predicate(value, depth=0):
             raise ValueError("Predicate requires path and operator")
         path(value["path"])
         operator = next(k for k in value if k != "path")
-        if operator not in {"equals", "one_of", "exists"}:
+        if operator not in {"equals", "one_of", "exists", "type"}:
             raise ValueError("Invalid predicate operator")
+        if operator == "type" and (not isinstance(value[operator], str) or value[operator] not in JSON_VALUE_TYPES):
+            raise ValueError("Invalid type predicate")
         if operator == "exists" and not isinstance(value[operator], bool):
             raise ValueError("Invalid exists predicate")
         if operator == "one_of" and (

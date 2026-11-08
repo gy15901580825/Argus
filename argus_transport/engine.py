@@ -12,6 +12,7 @@ import httpx
 from jsonpath_ng import parse
 
 from .models import (
+    JSON_VALUE_TYPES,
     RequestSpec,
     PollSpec,
     SafeReasonCode,
@@ -48,6 +49,8 @@ def matches_predicate(body, predicate):
         return (value is not _MISSING) == predicate["exists"]
     if value is _MISSING:
         return False
+    if "type" in predicate:
+        return type(value) in JSON_VALUE_TYPES[predicate["type"]]
     if "equals" in predicate:
         return type(value) == type(predicate["equals"]) and value == predicate["equals"]
     return any(

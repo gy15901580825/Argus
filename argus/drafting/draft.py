@@ -30,6 +30,7 @@ DECISIONS = {
     "server_invalid": "Correct unsafe server URLs or unresolved variables in the input document.",
     "prompt_binding_missing": "Identify the documented prompt property before compiling a target.",
     "reply_binding_missing": "Identify the documented answer property in a successful response.",
+    "poll_status_metadata_omitted": "Review whether these omitted metadata children affect completion; no rule checks them.",
     "completion_missing": "Provide the documented terminal-success state instead of relying on HTTP status alone.",
     "prompt_binding_proposed": "Confirm that this request property carries the question.",
     "reply_binding_proposed": "Confirm that this response property carries the agent answer.",
@@ -685,7 +686,7 @@ def status_values(schema, style):
     if style == "enum":
         values = schema.get("enum")
         return tuple(values) if (_type(schema) == "string" and isinstance(values, list) and len(values) >= 2
-                                 and all(isinstance(value, str) and value for value in values)) else None
+                                 and all(isinstance(value, str) for value in values)) else None
     if style != "presence" or _type(schema) != "object" or not isinstance(schema.get("properties"), dict):
         return None
     fields = {name: _nullable(child) for name, child in schema["properties"].items()
@@ -698,15 +699,26 @@ def status_values(schema, style):
 def status_shape(fields):
     """Select a named presence state or the response's sole eligible enum."""
     named = [name for name in fields if name.lower() in {"status", "state"}]
+    enums = [(name, _nullable(schema), "enum") for name, schema in fields.items()
+             if not _metadata(name, _nullable(schema)) and status_values(schema, "enum") is not None]
     if len(named) > 1:
-        return None
+        if len(enums) != 1 or enums[0][0] not in named:
+            return None
+        owner = enums[0][0]
+        for name in named:
+            schema = _nullable(fields[name])
+            if name == owner:
+                continue
+            if _type(schema) not in {"string", "object"}:
+                return None
+            if _type(schema) == "object" and any(key.lower() in STATUS_WORDS for key in schema.get("properties", {})):
+                return None
+        return enums[0]
     if named and _type(_nullable(fields[named[0]])) == "object":
         schema = _nullable(fields[named[0]])
         if status_values(schema, "presence") is None:
             return None
         return named[0], {**schema, "properties": {key: _nullable(child) for key, child in schema["properties"].items()}}, "presence"
-    enums = [(name, _nullable(schema), "enum") for name, schema in fields.items()
-             if not _metadata(name, _nullable(schema)) and status_values(schema, "enum") is not None]
     return enums[0] if len(enums) == 1 and (not named or enums[0][0] == named[0]) else None
 
 
@@ -780,13 +792,18 @@ def _poll_choice(catalog, submit, *, poll_operation, required, gaps, inputs=None
     if status is None:
         gaps.append(_gap(catalog, "/transport/delivery/pending" if other_state else "/transport/outcome",
                          "async_shape_unsupported" if other_state else "completion_missing",
-                         "The poll state is not a supported enum or presence object." if other_state else "The poll response documents no terminal state.",
+                         ("The documented state fields " + ", ".join(map(json.dumps, named)) + " can disagree about completion."
+                          if len(named) > 1 else "The poll state is not a supported enum or presence object." if other_state
+                          else "The poll response documents no terminal state."),
                          pointer=op.pointer, kind="unsupported_feature" if other_state else "documentation_gap"))
         return PollChoice(op.id, pairs, carried), reply, None
     (name, schema, style) = status
     unwritable = [(field, binding) for field, binding in [*(("/transport/delivery/ids", pair.submit) for pair in pairs),
                                                           ("/transport/outcome", Binding((name,), pointer_child(prefix, name)))]
                   if _field_path(binding.path) is None]
+    if style == "presence":
+        unwritable.extend(("/transport/outcome", Binding((name, value), pointer_child(pointer_child(prefix, name) + "/properties", value)))
+                          for value in status_values(schema, style) if _field_path((name, value)) is None)
     if unwritable:
         gaps.extend(_gap(catalog, field, "field_path_unwritable", f"No transport path can name the field {json.dumps(binding.path[-1])}.",
                          pointer=binding.pointer, kind="unsupported_feature") for field, binding in unwritable)
@@ -1329,26 +1346,35 @@ def _success_when(catalog, op, primary, field, gaps, *, signal_path):
     return ({"all": [primary, *present]} if present else primary), pointer + "/required"
 
 
-def _status_when(status, kind):
+def _presence_any(status, values):
+    predicates = [{"all": [{"path": _field_path(status.field.path + (value,)), "exists": True},
+                            {"not": {"path": _field_path(status.field.path + (value,)), "equals": None}}]} for value in values]
+    while len(predicates) > 32:
+        predicates = [{"any": predicates[i:i + 32]} for i in range(0, len(predicates), 32)]
+    return {"any": predicates}
+
+
+def _status_when(status, kind, unclassified):
     values = (status.field.value,) if kind == "succeeded" else getattr(status, kind)
     if status.style == "enum":
         return {"path": _field_path(status.field.path), **({"equals": values[0]} if kind == "succeeded" else {"one_of": list(values)})}
-    predicates = [{"all": [{"path": _field_path(status.field.path + (value,)), "exists": True},
-                            {"not": {"path": _field_path(status.field.path + (value,)), "equals": None}}]} for value in values]
-    return predicates[0] if kind == "succeeded" else {"any": predicates}
+    if kind != "succeeded":
+        return _presence_any(status, values)
+    return {"all": [{"path": _field_path(status.field.path + (status.field.value,)), "type": "object"},
+                    {"not": _presence_any(status, (*status.pending, *unclassified))}]}
 
 
-def _status_rules(catalog, op, status, statuses, field, gaps):
+def _status_rules(catalog, op, status, unclassified, statuses, field, gaps):
     """Success and failure rules for a status map read on op's 2xx body.
 
     202 means accepted and not finished (RFC 9110, 15.3.3), so it never matches success; a documented failure on any 2xx ends the run."""
-    when, required = _success_when(catalog, op, _status_when(status, "succeeded"), field, gaps,
+    when, required = _success_when(catalog, op, _status_when(status, "succeeded", unclassified), field, gaps,
                                    signal_path=status.field.path)
     finished = [code for code in statuses if code != 202]
     rules = [{"id": "completed", "priority": 10, "http_status": finished, "when": when, "outcome": "succeeded"}] if finished else []
     if status.failed:
         rules.append({"id": "failed", "priority": 20, "http_status": statuses,
-                      "when": _status_when(status, "failed"), "outcome": "target_error"})
+                      "when": _status_when(status, "failed", unclassified), "outcome": "target_error"})
     return rules, required
 
 
@@ -1438,7 +1464,9 @@ def _status_schema(catalog, operation, status):
         raise ValueError("Completion must name explicit documented properties")
     fields = _response_fields(operation)[0]
     named = [name for name in fields if name.lower() in {"state", "status"}]
-    if named and (len(named) != 1 or status.field.path[0] != named[0]):
+    shape = status_shape(fields) if len(named) > 1 else None
+    owner = named[0] if len(named) == 1 else shape[0] if shape else None
+    if named and (owner is None or status.field.path != (owner,)):
         raise ValueError("The named state owns completion")
     schema = _schema_at(catalog, chain[-1])
     values = status_values(schema, status.style)
@@ -1458,8 +1486,8 @@ def _status_schema(catalog, operation, status):
         for value in values:
             path = status.field.path + (value,)
             child = _walk(catalog, _root(operation, "status"), path)
-            if value in classified and _field_path(path) is None:
-                raise ValueError("A classified presence child has no transport path")
+            if _field_path(path) is None:
+                raise ValueError("A documented presence child has no transport path")
             read.update({pointer: _schema_at(catalog, pointer) for pointer in child})
     return values, read
 
@@ -1633,6 +1661,7 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
     operation = next((op for op in catalog.operations if op.id == choices.operation), None)
     auth = None
     read = {}
+    status_unclassified = ()
     result = operation
     if operation:
         result, poll_parameters = _poll_target(catalog, operation, choices, gaps)
@@ -1670,14 +1699,25 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                     gaps.append(_gap(catalog, "/transport/delivery/pending", "poll_status_proposed",
                                      "Success, pending and failure values were classified by a fixed word table.",
                                      pointer=binding.field.pointer, kind="proposal", blocking=False))
-                unclassified = [value for value in values if value not in classified]
+                status_unclassified = tuple(value for value in values if value not in classified)
+                unclassified = status_unclassified
                 if unclassified:
                     pointers = [_walk(catalog, _root(result, "status"), binding.field.path + (value,))[-1]
                                 for value in unclassified] if binding.style == "presence" else [binding.field.pointer]
                     gaps.append(Gap("/transport/outcome/unmatched",
-                                    "These documented values end the run as target errors: " + ", ".join(unclassified) + ".",
+                                    ("These documented children prevent success while present and non-null, and end the run as target errors when no pending child applies: "
+                                     if binding.style == "presence" else "These documented values end the run as target errors: ")
+                                    + ", ".join(json.dumps(value) if binding.style == "presence" or value == "" else value for value in unclassified) + ".",
                                     DECISIONS["poll_status_unclassified"], "poll_status_unclassified", "proposal", False,
                                     tuple(catalog.document.source(pointer) for pointer in pointers)))
+                if binding.style == "presence":
+                    omitted = tuple(name for name in _schema_at(catalog, binding.field.pointer)["properties"] if name not in values)
+                    if omitted:
+                        pointers = [_walk(catalog, _root(result, "status"), binding.field.path + (name,))[-1] for name in omitted]
+                        gaps.append(Gap("/transport/outcome", "These metadata children are omitted from completion rules: "
+                                        + ", ".join(map(json.dumps, omitted)) + ".",
+                                        DECISIONS["poll_status_metadata_omitted"], "poll_status_metadata_omitted", "documentation_gap", False,
+                                        tuple(catalog.document.source(pointer) for pointer in pointers)))
             elif isinstance(binding, ReplyPresence):
                 if choices.reply is None:
                     raise ValueError("Reply presence requires a selected reply field")
@@ -1911,7 +1951,7 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                                       for _, response in _success(result))
                     delivery = {"kind": "poll", "ids": {item.name: _id_selector(item) for item in choices.delivery.ids},
                                 "request": {"method": "GET", "url": server + poll_path, "headers": {"Accept": "application/json"}, "body": {"none": True}},
-                                "pending": _status_when(status, "pending"),
+                                "pending": _status_when(status, "pending", status_unclassified),
                                 **({"wait": {"from": "Retry-After", "default_s": POLL_INTERVAL_S, "max_s": RETRY_AFTER_MAX_S}} if retry_after
                                    else {"interval_s": POLL_INTERVAL_S}),
                                 "max_polls": MAX_POLLS, "submit_http_status": [int(code) for code, _ in _success(operation)],
@@ -1919,13 +1959,13 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
                     poll_query = {item.parameter: {"var": item.name} for item in choices.delivery.ids if item.location == "query"}
                     if poll_query:
                         delivery["request"]["query"] = poll_query
-                    rules, required = _status_rules(catalog, result, status, result_statuses, "/transport/outcome", gaps)
+                    rules, required = _status_rules(catalog, result, status, status_unclassified, result_statuses, "/transport/outcome", gaps)
                     # A submit that documents the poll's state and answer can end the run itself; otherwise every accepted submit is polled.
                     submitted, submitted_prefix = _response_fields(operation)
                     polled = _response_fields(result)[0]
                     if all(submitted.get(name) == polled[name] for name in (status.field.path[0], choices.reply.path[0])):
                         delivery["submit_outcome"]["rules"], submit_required = _status_rules(
-                            catalog, operation, status, delivery["submit_http_status"], "/transport/delivery/submit_outcome", gaps)
+                            catalog, operation, status, status_unclassified, delivery["submit_http_status"], "/transport/delivery/submit_outcome", gaps)
                         sources = [pointer_child(submitted_prefix, name) for name in (status.field.path[0], choices.reply.path[0])]
                         provenance["fields"]["/transport/delivery/submit_outcome"] = {
                             "source": [catalog.document.source(pointer).to_dict() for pointer in sources + ([submit_required] if submit_required else [])],
