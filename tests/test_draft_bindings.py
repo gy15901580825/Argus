@@ -96,7 +96,8 @@ def test_nested_prompt_and_reply_from_a_bindings_file_draft_a_spec_that_validate
     transport = spec["transport"]
     assert transport["request"]["body"] == {"json": {
         "inputs": {"object": {"question": {"object": {"text": {"context": "prompt"}}}}},
-        "mode": {"literal": "MODE_DRAFT"}}}
+        "mode": {"var": "input_literal_1"}}}
+    assert transport["let"]["run"]["input_literal_1"] == {"literal": "MODE_DRAFT"}
     assert transport["response"]["text"] == {"paths": ["$.result.text"], "cast": "string", "empty": "error"}
     assert transport["outcome"]["rules"][0]["when"] == {"all": [
         {"path": "$.result.text", "exists": True}, {"path": "$.run_id", "exists": True}, {"path": "$.result", "exists": True}]}
@@ -205,12 +206,14 @@ def test_a_typed_literal_is_sent_as_written(tmp_path, path, value):
     bindings = {**NESTED, "values": {**NESTED["values"], path: {"literal": value}}}
     result, out = draft(tmp_path, nested_document(), bindings)
     assert result.exit_code == 3, result.output
-    body = artifacts(out)[0]["transport"]["request"]["body"]["json"]
+    transport = artifacts(out)[0]["transport"]
+    body = transport["request"]["body"]["json"]
     node = body
     *parents, leaf = path.strip("/").split("/")
     for key in parents:
         node = node[key]["object"]
-    assert node[leaf] == {"literal": value}
+    assert set(node[leaf]) == {"var"}
+    assert transport["let"]["run"][node[leaf]["var"]] == {"literal": value}
 
 
 @pytest.mark.parametrize("path,value", [("/count", "2"), ("/count", 2.5), ("/count", True), ("/inputs/question/number", "x")])

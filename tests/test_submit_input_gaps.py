@@ -122,7 +122,9 @@ async def test_A2_literal_run_declaration_preserves_exact_request_bytes(tmp_path
     assert set(body_expression) == {'var'}
     variable = body_expression['var']
     assert transport['let']['run'][variable] == {'literal': value}
-    field = provenance['fields']['/transport/let/run/' + variable]
+    declaration_field = '/transport/let/run/' + variable
+    assert declaration_field in provenance['fields']
+    field = provenance['fields'][declaration_field]
     assert field['basis'] == 'user_selection'
     assert {'file': 'bindings.json', 'pointer': '/values/~1agent_id'} in field['source']
     result, calls, bodies = await exact_body_run(transport, 'r-1')
@@ -275,3 +277,65 @@ async def test_same_name_handwritten_client_run_agreement_is_preserved():
     result, calls, _, _ = await run(data, {'run_id': 'client-run-1'}, poll_path='/runs/client-run-1')
     assert result.outcome.value == 'succeeded' and result.response_text == 'own run r-1 answer'
     assert calls == [('POST', '/runs'), ('GET', '/runs/client-run-1')]
+
+
+def float_input_target(tmp_path, value, source):
+    if source == 'handwritten':
+        return spec(body={'agent_id': {'var': 'input_agent'}}, inputs={'input_agent': value})
+    doc = submitted_document()
+    doc['paths']['/runs']['post']['requestBody']['content']['application/json']['schema']['properties']['agent_id'] = {'type': 'number'}
+    doc['paths']['/runs']['post']['responses']['202']['content']['application/json']['schema']['properties']['run_id'] = {'type': 'integer'}
+    doc['paths']['/runs/{run_id}']['get']['parameters'][0]['schema'] = {'type': 'integer'}
+    target, report, _ = drafted(tmp_path, doc, literal_bindings(value))
+    assert target is not None and codes(report, True) == []
+    return target['transport']
+
+
+@pytest.mark.parametrize('source', ['drafted', 'handwritten'])
+@pytest.mark.parametrize('value,returned', [
+    (7.0, 7), (7.0, '7'), (7.0, '7.0'), (7.0, '7e0'),
+    (-0.0, 0), (-0.0, '0'), (-0.0, '-0.0'),
+    (1e20, 100000000000000000000), (1e20, '1e20'), (1e20, '1e+20'),
+])
+async def test_A2_float_numeric_parent_echo_is_submit_only(tmp_path, source, value, returned):
+    data = float_input_target(tmp_path, value, source)
+    result, calls, bodies = await exact_body_run(data, returned)
+    refused(result, calls)
+    assert result.response_text is None
+    payload = {'agent_id': value} if source == 'handwritten' else {'question': 'ping', 'agent_id': value}
+    assert bodies == [json.dumps(payload, ensure_ascii=False, allow_nan=False).encode()]
+
+
+@pytest.mark.parametrize('source', ['drafted', 'handwritten'])
+@pytest.mark.parametrize('value,returned', [(7.0, 8), (1e20, 100000000000000000001)])
+async def test_A2_float_distinct_numeric_run_returns_own_reply(tmp_path, source, value, returned):
+    result, calls, bodies = await exact_body_run(float_input_target(tmp_path, value, source), returned)
+    assert result.outcome.value == 'succeeded' and result.response_text == 'own run r-1 answer'
+    assert calls == [('POST', '/runs'), ('GET', '/runs/' + str(returned))]
+    payload = {'agent_id': value} if source == 'handwritten' else {'question': 'ping', 'agent_id': value}
+    assert bodies == [json.dumps(payload, ensure_ascii=False, allow_nan=False).encode()]
+
+
+@pytest.mark.parametrize('value,returned', [(7.0, 7), (7.0, '7.0'), (-0.0, 0), (1e20, '1e20')])
+async def test_same_name_handwritten_float_run_agreement_is_preserved(value, returned):
+    data = spec(body={'run_id': {'var': 'input_run'}}, inputs={'input_run': value})
+    result, calls, bodies = await exact_body_run(data, returned)
+    assert result.outcome.value == 'succeeded' and result.response_text == 'own run r-1 answer'
+    assert calls == [('POST', '/runs'), ('GET', '/runs/' + str(returned))]
+    assert bodies == [json.dumps({'run_id': value}, allow_nan=False).encode()]
+
+
+@pytest.mark.parametrize('value,returned', [('7.0', 7), ('007', 7), (7, '7.0'), (True, '1')])
+async def test_old_scalar_inputs_keep_lexical_identity(value, returned):
+    data = spec(body={'agent_id': {'var': 'input_agent'}}, inputs={'input_agent': value})
+    result, calls, _ = await exact_body_run(data, returned)
+    assert result.outcome.value == 'succeeded' and result.response_text == 'own run r-1 answer'
+    assert len(calls) == 2 and calls[-1][0] == 'GET'
+
+
+@pytest.mark.parametrize('returned', ['007', '+7', ' 7', '7 ', '7_0', 'NaN', 'Infinity', '７'])
+async def test_float_identity_does_not_parse_non_json_numeric_strings(returned):
+    data = spec(body={'agent_id': {'var': 'input_agent'}}, inputs={'input_agent': 7.0})
+    result, calls, _ = await exact_body_run(data, returned)
+    assert result.outcome.value == 'succeeded' and result.response_text == 'own run r-1 answer'
+    assert len(calls) == 2 and calls[-1][0] == 'GET'
