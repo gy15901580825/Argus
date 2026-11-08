@@ -48,6 +48,48 @@ def test_named_state_rejects_override_inside_executing(tmp_path):
     assert 'binding_unresolved' in blocking(out)
 
 
+@pytest.mark.parametrize('wrappers,name', [(('job',), 'state'), (('outer', 'job'), 'Status')])
+def test_nested_named_state_rejects_override_inside_executing(tmp_path, wrappers, name):
+    doc = presence_document()
+    fields = poll_schema(doc)['properties']
+    state = fields.pop('state')
+    state['properties']['executing']['properties'] = {
+        'completed': {'type': 'object'}, 'pending': {'type': 'object'},
+    }
+    nested = {name: state}
+    for wrapper in reversed(wrappers[1:]):
+        nested = {wrapper: {'type': 'object', 'properties': nested}}
+    fields[wrappers[0]] = {'type': 'object', 'properties': nested}
+    poll_schema(doc)['required'] = [wrappers[0]]
+    entry = completion(path='/' + '/'.join((*wrappers, name, 'executing')), pending=['pending'], failed=[])
+    result, out = run(tmp_path, doc, '--bindings', str(bindings(tmp_path, entry)))
+    assert result.exit_code == 3 and not out.exists(), result.output
+    assert 'binding_unresolved' in blocking(out)
+
+
+@pytest.mark.parametrize('wrappers,name', [(('job',), 'state'), (('outer', 'job'), 'Status')])
+async def test_nested_named_state_override_preserves_failure(tmp_path, wrappers, name):
+    doc = presence_document()
+    fields = poll_schema(doc)['properties']
+    state = fields.pop('state')
+    nested = {name: state}
+    for wrapper in reversed(wrappers[1:]):
+        nested = {wrapper: {'type': 'object', 'properties': nested}}
+    fields[wrappers[0]] = {'type': 'object', 'properties': nested}
+    poll_schema(doc)['required'] = [wrappers[0]]
+    _, artifact = compiled(tmp_path, doc, completion(path='/' + '/'.join((*wrappers, name))))
+    raw = presence_scenario(tmp_path, [{'completed': {}, 'failed': {}}], 'target_error', None)
+    body = {name: raw['operations'][1]['replies'][0]['body'].pop('state')}
+    for wrapper in reversed(wrappers):
+        body = {wrapper: body}
+    raw['operations'][1]['replies'][0]['body'].update(body)
+    result = await verify(artifact.spec, raw)
+    execution = result.as_dict()['execution']
+    assert execution['outcome'] == 'target_error'
+    assert execution['reply'] is None
+    assert execution['requests']['poll'] == 1
+
+
 @pytest.mark.parametrize('override', [False, True])
 @pytest.mark.parametrize('value', [False, 0, '', [], 'false'])
 async def test_malformed_completed_value_never_succeeds(tmp_path, override, value):
@@ -165,12 +207,34 @@ def test_enum_beside_inert_state_does_not_ignore_another_enum(tmp_path):
     assert result.exit_code == 3 and not out.exists(), result.output
 
 
-@pytest.mark.parametrize('kind', ['boolean', 'number', 'array'])
-def test_enum_restoration_does_not_add_other_sibling_kinds(tmp_path, kind):
+@pytest.mark.parametrize('empty_enum', [False, True])
+@pytest.mark.parametrize('sibling', [
+    {'type': 'string'}, {'type': 'integer'}, {'type': 'number'},
+    {'type': 'boolean'}, {'type': 'array'}, {}, {'description': 'Free text.'},
+    {'type': ['string', 'integer']},
+    {'type': 'object', 'properties': {'detail': {'type': 'object'}}},
+    {'properties': {'detail': {'type': 'object'}}},
+], ids=['string', 'integer', 'number', 'boolean', 'array', 'untyped',
+        'description-only', 'multi-type', 'inert-object', 'untyped-inert-object'])
+def test_enum_restoration_retains_other_sibling_kinds(tmp_path, sibling, empty_enum):
     doc = async_document(result={'type': 'string'})
-    poll_schema(doc)['properties']['state'] = {'type': kind}
+    if empty_enum:
+        poll_schema(doc)['properties']['status']['enum'].append('')
+    _, original = compiled(tmp_path, doc)
+    poll_schema(doc)['properties']['state'] = sibling
+    _, restored = compiled(tmp_path, doc)
+    assert restored.spec == original.spec
+    assert not any(g.code == 'completion_missing' for g in restored.gaps)
+
+
+@pytest.mark.parametrize('word', ['executing', 'completed', 'failed'])
+def test_enum_beside_untyped_object_with_class_word_stays_blocked(tmp_path, word):
+    doc = async_document(result={'type': 'string'})
+    poll_schema(doc)['properties']['state'] = {'properties': {word: {'type': 'object'}}}
     result, out = run(tmp_path, doc)
     assert result.exit_code == 3 and not out.exists(), result.output
+    row = next(g for g in gaps(out)['gaps'] if g['code'] == 'completion_missing')
+    assert 'status' in row['why'] and 'state' in row['why'] and 'disagree' in row['why']
 
 
 @pytest.mark.parametrize('schema', [
