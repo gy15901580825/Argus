@@ -202,11 +202,19 @@ async def propose_choices(catalog: OperationCatalog, *, operation=None, server_o
             if code == "model_blocked":
                 why = "The provider content filter blocked the model proposal; deterministic selections were retained."
                 decision = "Review the provider filter policy and deterministic draft before execution."
+            elif code == "model_no_candidates":
+                scope = "the chosen operation" if operation is not None else "the offered operations"
+                why = f"The document offers no string prompt field for {scope}; deterministic selections were retained."
+                decision = "Supply the prompt binding from a bindings file or a reviewer before execution."
             gap = Gap("/model_proposal", why, decision,
                       code, "ambiguous_choice", False, (catalog.document.source(""),))
             choices = replace(choices, gaps=choices.gaps + (gap,))
         return ProposalResult(choices, ProposalDisclosure(status, configured, actual_model, usage, refusals,
                                                         cost, estimate, error_type, application_calls, clipped))
+
+    if not any(roles["prompt"] for op_id, roles in _reference_index(catalog).items()
+               if operation is None or op_id == operation):
+        return finish("skipped", "model_no_candidates")
 
     try:
         user, clipped = _model_input(catalog, intent, operation=operation)
