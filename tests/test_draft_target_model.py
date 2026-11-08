@@ -86,6 +86,87 @@ def two_operation_document():
     return doc
 
 
+def mixed_prompt_document():
+    doc = two_operation_document()
+    request = doc["paths"]["/ask"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+    request["properties"]["utterance"] = {"type": "integer"}
+    return doc
+
+
+async def test_fixed_operation_without_prompt_candidates_skips_model(tmp_path, stub_model, monkeypatch):
+    from argus import llm
+    from argus.drafting.proposal import propose_choices
+    calls, _, _ = stub_model
+    configured = []
+    def forbidden_config():
+        configured.append(True)
+        raise AssertionError("configuration consulted without prompt candidates")
+    monkeypatch.setattr(llm, "text_config", forbidden_config)
+    catalog = catalog_operations(load_openapi(input_file(tmp_path, mixed_prompt_document())))
+    baseline = choose_without_model(catalog, operation="ask")
+    result = await propose_choices(catalog, operation="ask")
+    assert result.disclosure.status == "skipped"
+    assert calls == [] and configured == []
+    assert replace(result.choices, gaps=baseline.gaps) == baseline
+    assert result.choices.gaps[:-1] == baseline.gaps
+    gap = result.choices.gaps[-1]
+    assert gap.code == "model_no_candidates" and not gap.blocking
+    assert "string prompt field" in gap.why
+    assert "bindings file" in gap.decision and "reviewer" in gap.decision
+    disclosure = result.disclosure.to_dict()
+    assert disclosure["requested_mode"] == "model"
+    assert disclosure["effective_mode"] == "no-model"
+    assert disclosure["application_calls"] == 0 and disclosure["cost_usd"] == 0
+    assert disclosure["configured"] is None and disclosure["actual_model"] is None
+    assert disclosure["usage"] is None and disclosure["estimated_usd"] is None
+
+
+async def test_fixed_operation_with_one_prompt_candidate_calls_model(tmp_path, stub_model):
+    from argus.drafting.proposal import propose_choices
+    doc = mixed_prompt_document()
+    request = doc["paths"]["/ask"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+    request["properties"]["utterance"] = {"type": "string"}
+    catalog = catalog_operations(load_openapi(input_file(tmp_path, doc)))
+    result = await propose_choices(catalog, operation="ask")
+    assert len(stub_model[0]) == 1
+    assert result.disclosure.status == "accepted"
+    assert result.disclosure.application_calls == 1
+
+
+async def test_unfixed_operation_with_another_prompt_candidate_calls_model(tmp_path, stub_model):
+    from argus.drafting.proposal import propose_choices
+    calls, response, _ = stub_model
+    choice = proposal_document_choices()
+    choice["operation"] = "other"
+    for role in ("prompt", "reply"):
+        choice[role] = choice[role].replace("~1ask/", "~1other/")
+    response["text"] = json.dumps(choice)
+    catalog = catalog_operations(load_openapi(input_file(tmp_path, mixed_prompt_document())))
+    result = await propose_choices(catalog)
+    assert len(calls) == 1 and result.disclosure.application_calls == 1
+    assert result.disclosure.status == "accepted"
+    assert result.choices.operation == "other"
+
+
+def test_cli_no_prompt_candidates_records_skipped_model_and_deterministic_mode(tmp_path, stub_model):
+    from click.testing import CliRunner
+    from argus.cli.__main__ import main
+    source = input_file(tmp_path, mixed_prompt_document())
+    out = tmp_path / "target.json"
+    result = CliRunner().invoke(main, ["draft-target", "--openapi", str(source), "--out", str(out),
+                                      "--operation", "ask"])
+    assert result.exit_code == 3, result.output
+    assert "model.status: skipped" in result.output
+    assert stub_model[0] == []
+    provenance = json.loads(out.with_suffix(".provenance.json").read_text())
+    disclosure = provenance["model_proposal"]
+    assert disclosure["requested_mode"] == "model" and disclosure["effective_mode"] == "no-model"
+    assert disclosure["status"] == "skipped" and disclosure["application_calls"] == 0
+    assert disclosure["cost_usd"] == 0 and provenance["selection"]["mode"] == "no-model"
+    gaps = json.loads(out.with_suffix(".gaps.json").read_text())
+    assert any(gap["code"] == "model_no_candidates" for gap in gaps["gaps"])
+
+
 async def test_fixed_operation_is_the_only_offered_model_operation(tmp_path, stub_model):
     from argus.drafting.proposal import propose_choices
     calls, _, _ = stub_model
