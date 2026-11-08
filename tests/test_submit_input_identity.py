@@ -1,5 +1,6 @@
 import base64
-from urllib.parse import urlencode
+import json
+from urllib.parse import quote, urlencode
 
 import pytest
 from aiohttp import web
@@ -36,7 +37,8 @@ async def run(data, submitted, *, expected_json=None, expected_query=None, poll_
         return web.json_response(reply, status=202)
     async def own(request):
         if poll_path is not None:
-            assert request.raw_path == poll_path
+            expected_path = poll_path(payloads[-1]) if callable(poll_path) else poll_path
+            assert request.raw_path == expected_path
         return web.json_response({'status': 'COMPLETED', 'result': 'own run r-1 answer'})
     async def abort(request):
         return web.json_response({'stopped': True})
@@ -45,8 +47,7 @@ async def run(data, submitted, *, expected_json=None, expected_query=None, poll_
     async def deleted(request):
         return web.Response(status=204)
     app.route('POST', '/runs', submit)
-    app.route('GET', '/runs/{tail:.*}', own)
-    app.route('GET', '/runs', own)
+    app.route('GET', '/{tail:.*}', own)
     app.route('DELETE', '/runs/{tail:.*}', abort)
     app.route('POST', '/objects', created)
     app.route('DELETE', '/objects/{ref}', deleted)
@@ -116,7 +117,7 @@ async def test_distinct_child_returns_own_reply(location):
     assert calls == [('POST', '/runs?agent_id=ag-7' if location == 'query' else '/runs'), ('GET', '/runs/r-1')]
 
 
-@pytest.mark.parametrize('location', ['body', 'query', 'nested', 'array'])
+@pytest.mark.parametrize('location', ['body', 'query'])
 @pytest.mark.parametrize('returned,reason', [('ag-7', 'ok'), ('ag-8', 'submit_parent_changed')])
 async def test_exact_poll_query_key_requires_input_agreement(location, returned, reason):
     body = {'question': {'context': 'prompt'}}
@@ -125,10 +126,6 @@ async def test_exact_poll_query_key_requires_input_agreement(location, returned,
         body['agent_id'] = {'var': 'input_agent'}
     elif location == 'query':
         query = {'agent_id': {'var': 'input_agent'}}
-    elif location == 'nested':
-        body['agent'] = {'object': {'agent_id': {'var': 'input_agent'}}}
-    else:
-        body['agent_id'] = {'array': [{'var': 'input_agent'}]}
     data = spec(body=body, query=query, ids=['agent_id', 'run_id'],
                 poll_query={'agent_id': {'var': 'agent_id'}, 'run_id': {'var': 'run_id'}})
     path = '/runs?' + urlencode({'agent_id': returned, 'run_id': 'r-1'})
@@ -229,7 +226,7 @@ async def test_conflicting_same_named_input_occurrences_fail_closed():
                 inputs={'input_agent': 'ag-7', 'second': 'ag-8'},
                 poll_query={'agent_id': {'var': 'run_id'}})
     result, calls, _, _ = await run(data, {'run_id': 'ag-7'})
-    refused(result, calls, 'submit_parent_changed')
+    refused(result, calls)
 
 
 @pytest.mark.parametrize('location', ['body', 'query'])
@@ -264,3 +261,141 @@ async def test_text_body_does_not_extend_json_policy():
     data['request']['body'] = {'text': {'var': 'input_agent'}}
     result, calls, payloads, _ = await run(data, {'run_id': 'ag-7'})
     assert payloads == ['ag-7'] and result.outcome.value == 'succeeded' and len(calls) == 2
+
+
+async def test_s1_honest_top_level_body_parent_returns_own_reply():
+    data = spec(body={'thread_id': {'var': 'input_thread_id'}, 'q': {'context': 'prompt'}},
+                inputs={'input_thread_id': 't-1'}, ids=['thread_id', 'id'])
+    data['delivery']['request']['url'] = 'http://127.0.0.1/threads/{thread_id}/runs/{id}'
+    result, calls, _, _ = await run(data, {'thread_id': 't-1', 'id': 'r-1'},
+                                    expected_json={'thread_id': 't-1', 'q': 'ping'},
+                                    poll_path='/threads/t-1/runs/r-1')
+    assert result.outcome.value == 'succeeded' and result.response_text == 'own run r-1 answer'
+    assert calls == [('POST', '/runs'), ('GET', '/threads/t-1/runs/r-1')]
+
+
+async def test_s1b_changed_top_level_body_parent_is_post_only():
+    data = spec(body={'thread_id': {'var': 'input_thread_id'}, 'q': {'context': 'prompt'}},
+                inputs={'input_thread_id': 't-1'}, ids=['thread_id', 'id'])
+    data['delivery']['request']['url'] = 'http://127.0.0.1/threads/{thread_id}/runs/{id}'
+    result, calls, _, _ = await run(data, {'thread_id': 't-9', 'id': 'r-1'},
+                                    expected_json={'thread_id': 't-1', 'q': 'ping'})
+    refused(result, calls, 'submit_parent_changed')
+
+
+async def test_s2_client_named_run_id_returns_own_reply():
+    data = spec(body={'run_id': {'var': 'input_run'}}, inputs={'input_run': 'client-run-1'})
+    result, calls, _, _ = await run(data, {'run_id': 'client-run-1'},
+                                    expected_json={'run_id': 'client-run-1'},
+                                    poll_path='/runs/client-run-1')
+    assert result.outcome.value == 'succeeded' and result.response_text == 'own run r-1 answer'
+    assert calls == [('POST', '/runs'), ('GET', '/runs/client-run-1')]
+
+
+async def test_s3_renamed_body_parent_echo_remains_post_only():
+    data = spec(body={'agent_id': {'var': 'input_agent'}}, ids=['agent', 'id'])
+    data['delivery']['request']['url'] = 'http://127.0.0.1/agents/{agent}/runs/{id}'
+    result, calls, _, _ = await run(data, {'agent': 'ag-7', 'id': 'r-1'},
+                                    expected_json={'agent_id': 'ag-7'})
+    refused(result, calls)
+
+
+async def test_nested_body_id_echo_into_id_path_slot_remains_post_only():
+    data = spec(body={'agent': {'object': {'id': {'var': 'input_agent'}}}}, ids=['id'])
+    data['delivery']['request']['url'] = 'http://127.0.0.1/runs/{id}'
+    result, calls, _, _ = await run(data, {'id': 'ag-7'}, expected_json={'agent': {'id': 'ag-7'}})
+    refused(result, calls)
+
+
+@pytest.mark.parametrize('returned', ['t-1', 't-9'])
+async def test_top_level_submit_query_agrees_with_path_placeholder(returned):
+    data = spec(body={'q': {'context': 'prompt'}}, query={'thread_id': {'var': 'input_thread'}},
+                inputs={'input_thread': 't-1'}, ids=['thread_id', 'id'])
+    data['delivery']['request']['url'] = 'http://127.0.0.1/threads/{thread_id}/runs/{id}'
+    result, calls, _, _ = await run(data, {'thread_id': returned, 'id': 'r-1'},
+                                    expected_json={'q': 'ping'}, expected_query={'thread_id': 't-1'},
+                                    poll_path='/threads/t-1/runs/r-1')
+    if returned == 't-1':
+        assert result.outcome.value == 'succeeded' and result.response_text == 'own run r-1 answer'
+        assert calls[-1] == ('GET', '/threads/t-1/runs/r-1')
+    else:
+        refused(result, calls, 'submit_parent_changed')
+
+
+@pytest.mark.parametrize('kind', ['uuid4', 'now_iso8601', 'now_unix_ms'])
+@pytest.mark.parametrize('same_name', [True, False])
+async def test_generated_run_input_echo_follows_destination_name(kind, same_name):
+    destination = 'run_id' if same_name else 'id'
+    data = spec(body={'run_id': {'var': 'client_run'}}, ids=[destination])
+    data['let']['run'] = {'client_run': {'generate': kind}}
+    data['delivery']['request']['url'] = 'http://127.0.0.1/runs/{' + destination + '}'
+    result, calls, payloads, _ = await run(data, lambda payload: {destination: payload['run_id']},
+                                          poll_path=lambda payload: '/runs/' + quote(str(payload['run_id']), safe=''))
+    if same_name:
+        assert result.outcome.value == 'succeeded' and result.response_text == 'own run r-1 answer'
+        assert calls == [('POST', '/runs'), ('GET', '/runs/' + quote(str(payloads[0]['run_id']), safe=''))]
+    else:
+        refused(result, calls)
+
+
+@pytest.mark.parametrize('same_name', [True, False])
+async def test_env_run_input_echo_follows_destination_name(same_name):
+    destination = 'run_id' if same_name else 'id'
+    data = spec(body={'run_id': {'var': 'client_run'}}, ids=[destination])
+    data['let']['run'] = {'client_run': {'env': 'TARGET_INPUT_RUN_ID'}}
+    data['delivery']['request']['url'] = 'http://127.0.0.1/runs/{' + destination + '}'
+    result, calls, _, _ = await run(data, {destination: 'client-run-1'},
+                                    environ={'TARGET_INPUT_RUN_ID': 'client-run-1'},
+                                    expected_json={'run_id': 'client-run-1'}, poll_path='/runs/client-run-1')
+    if same_name:
+        assert result.outcome.value == 'succeeded' and result.response_text == 'own run r-1 answer'
+        assert calls == [('POST', '/runs'), ('GET', '/runs/client-run-1')]
+    else:
+        refused(result, calls)
+
+
+@pytest.mark.parametrize('location', ['nested', 'array'])
+@pytest.mark.parametrize('returned', ['ag-7', 'ag-8'])
+async def test_nested_values_never_have_top_level_query_name_agreement(location, returned):
+    body = ({'agent': {'object': {'agent_id': {'var': 'input_agent'}}}} if location == 'nested' else
+            {'agent_id': {'array': [{'var': 'input_agent'}]}})
+    data = spec(body=body, ids=['agent_id', 'run_id'],
+                poll_query={'agent_id': {'var': 'agent_id'}, 'run_id': {'var': 'run_id'}})
+    path = '/runs?' + urlencode({'agent_id': returned, 'run_id': 'r-1'})
+    result, calls, _, _ = await run(data, {'agent_id': returned, 'run_id': 'r-1'}, poll_path=path)
+    if returned == 'ag-7':
+        refused(result, calls)
+    else:
+        assert result.outcome.value == 'succeeded' and calls[-1] == ('GET', path)
+
+
+@pytest.mark.parametrize('body_key,poll_name', [('input_run_id', 'run_id'), ('run_id', 'input_run_id'),
+                                             ('RunId', 'runid'), ('run-id', 'run_id')])
+async def test_path_destination_names_preserve_literal_spelling(body_key, poll_name):
+    data = spec(body={body_key: {'var': 'input_agent'}}, ids=[poll_name])
+    data['delivery']['request']['url'] = 'http://127.0.0.1/runs/{' + poll_name + '}'
+    result, calls, _, _ = await run(data, {poll_name: 'ag-7'}, expected_json={body_key: 'ag-7'})
+    refused(result, calls)
+
+
+@pytest.mark.parametrize('key', ['agent.id', 'agent/id', 'agent_id'])
+async def test_top_level_json_keys_match_query_names_literally(key):
+    data = spec(body={key: {'var': 'input_agent'}}, poll_query={key: {'var': 'run_id'}})
+    path = '/runs?' + urlencode({key: 'ag-7'})
+    result, calls, _, _ = await run(data, {'run_id': 'ag-7'}, expected_json={key: 'ag-7'}, poll_path=path)
+    assert result.outcome.value == 'succeeded' and calls[-1] == ('GET', path)
+
+
+def test_json_observation_records_complete_paths_and_transmitted_array_indices():
+    from argus_transport.engine_v2 import render_body_v2
+    data = spec(body={'agent.id': {'var': 'input_agent'},
+                      'agents': {'array': [{'env': 'OPTIONAL', 'missing': 'omit'},
+                                           {'object': {'id': {'var': 'input_agent'}}},
+                                           {'array': [{'var': 'input_agent'}]}]}})
+    request = TransportSpecV2.from_dict(data).request
+    observed = []
+    encoded = render_body_v2(request, TransportContext(prompt='ping'), {'input_agent': 'ag-7'}, {},
+                             _observe_scalar=lambda path, expression, item: observed.append((path, item)))
+    assert json.loads(encoded) == {'agent.id': 'ag-7', 'agents': [{'id': 'ag-7'}, ['ag-7']]}
+    assert observed == [(('agent.id',), 'ag-7'), (('agents', 0, 'id'), 'ag-7'),
+                        (('agents', 1, 0), 'ag-7')]
