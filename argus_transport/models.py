@@ -303,6 +303,8 @@ class SafeReasonCode(str, Enum):
     MISSING_ID = "missing_id"
     POLL_WAIT_LIMIT = "poll_wait_limit"
     POLL_IDENTITY_CHANGED = "poll_identity_changed"
+    SUBMIT_PARENT_CHANGED = "submit_parent_changed"
+    SUBMIT_PARENT_ECHO = "submit_parent_echo"
     LOCATION_MISSING = "location_missing"
 
 
