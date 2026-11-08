@@ -709,9 +709,7 @@ def status_shape(fields):
             schema = _nullable(fields[name])
             if name == owner:
                 continue
-            if _type(schema) not in {"string", "object"}:
-                return None
-            if _type(schema) == "object" and any(key.lower() in STATUS_WORDS for key in schema.get("properties", {})):
+            if any(key.lower() in STATUS_WORDS for key in schema.get("properties", {})):
                 return None
         return enums[0]
     if named and _type(_nullable(fields[named[0]])) == "object":
@@ -1468,6 +1466,11 @@ def _status_schema(catalog, operation, status):
     owner = named[0] if len(named) == 1 else shape[0] if shape else None
     if named and (owner is None or status.field.path != (owner,)):
         raise ValueError("The named state owns completion")
+    for depth, pointer in enumerate(chain[1:-1], start=1):
+        fields = _nullable(_schema_at(catalog, pointer)).get("properties", {})
+        named = [name for name in fields if name.lower() in {"state", "status"}]
+        if named and (len(named) != 1 or status.field.path[depth:] != (named[0],)):
+            raise ValueError("The named state owns completion")
     schema = _schema_at(catalog, chain[-1])
     values = status_values(schema, status.style)
     if values is None:
