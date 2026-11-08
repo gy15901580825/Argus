@@ -487,7 +487,8 @@ def test_deep_run_with_jev_and_no_text_model_refuses_before_starting():
 
     with pytest.raises(LocalRunError) as exc:
         check_run(TARGET, ["owasp_01_prompt_injection_basic"], mode="deep", env=JEV)
-    assert exc.value.code == "config" and "--judge-explain-model" in str(exc.value)
+    assert exc.value.code == "usage" and "--judge-explain-model" in str(exc.value)
+    assert "--mode static" in str(exc.value)
     # A static jev run, or a deep one with a text model, starts.
     check_run(TARGET, ["owasp_01_prompt_injection_basic"], env=JEV)
 
@@ -539,7 +540,8 @@ def test_server_refuses_a_deep_jev_run_without_a_text_model(monkeypatch):
         monkeypatch.setenv(k, v)
     with patch("argus.api._run_probes") as run_probes:
         r = TestClient(app).post("/redteam/run", json={"target": TARGET, "probe_ids": [], "mode": "deep"})
-    assert r.status_code == 500 and "--judge-explain-model" in r.json()["detail"]
+    assert r.status_code == 422 and "--judge-explain-model" in r.json()["detail"]
+    assert "--mode static" in r.json()["detail"]
     run_probes.assert_not_called()
 
 

@@ -13,6 +13,7 @@ import functools
 import json
 import os
 import re
+import secrets
 from dataclasses import asdict, replace
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -30,6 +31,7 @@ from argus.probe import load_probe_library
 from argus.persona_strategy import (
     DEFAULT_DEEP_PAIRS,
     DEFAULT_MAX_ROUNDS,
+    PersonaStrategyProbe,
     build_deep_probes,
 )
 from argus.persona_loader import default_personas, default_strategies
@@ -81,10 +83,9 @@ class RunRequest(BaseModel):
     # probe in persona x strategy multi-turn threads — far more expensive, so it
     # requires an explicit probe selection (see _resolve_request_probe_ids).
     mode: str = "static"
-    # Below one, build_deep_probes samples zero threads (0, which reads as a
-    # clean run that executed nothing) or raises mid-stream (negative). The
-    # preflight estimate clamps with max(1, ...), so it cannot catch either.
     deep_pairs: int = Field(default=DEFAULT_DEEP_PAIRS, strict=True, ge=1)
+    max_rounds: int = Field(default=DEFAULT_MAX_ROUNDS, strict=True, ge=1, le=20)
+    seed: str | None = Field(default=None, strict=True)
     trials: int | None = Field(default=None, strict=True, ge=1, le=20)
     # Caller-supplied per-run cost cap (overrides singleton default when present).
     # A NaN cap compares false against every estimate and spend, silently
@@ -171,15 +172,12 @@ def _resolve_request_probe_ids(req: RunRequest, target_obj: Any = None) -> list[
             status_code=422,
             detail=f"unknown mode {req.mode!r}; valid modes: {sorted(_VALID_MODES)}",
         )
-    # Deep mode must never run the whole library. At ~$0.39/probe worst case it
-    # would cost roughly $65 across 167 probes and abort partway, leaving a partial
-    # report. Failing up front reads as a budget constraint; a mid-run abort reads
-    # as a broken product.
     if req.mode == "deep" and req.suite is None and not req.probe_ids:
         raise HTTPException(
             status_code=422,
             detail=(
                 "mode=deep requires an explicit probe selection (probe_ids or suite). "
+                "Pass --probes with named probe ids instead of all, or use --mode static. "
                 "Deep mode runs multi-turn persona x strategy threads per probe and "
                 "cannot be run across the whole library within the per-run cost cap."
             ),
@@ -209,14 +207,14 @@ def _resolve_request_probe_ids(req: RunRequest, target_obj: Any = None) -> list[
             raise HTTPException(
                 422,
                 "deep mode cannot run paired-run probes (sessions/control/trials): "
-                + ", ".join(phased),
+                + ", ".join(phased) + "; use --mode static for these probes",
             )
     return ids
 
 
 def _check_trials_mode(req: RunRequest) -> None:
     if req.mode == "deep" and req.trials is not None and req.trials > 1:
-        raise HTTPException(422, "trials above one are unsupported in deep mode")
+        raise HTTPException(422, "trials above one are unsupported in deep mode; use --trials 1 or --mode static")
 
 
 def _with_trials(probe, req: RunRequest):
@@ -230,7 +228,7 @@ def _estimate_exchanges(req: RunRequest, probe_ids: list[str]) -> int:
 
     A probe is not an exchange. `_run_static` sends every prompt the probe
     declares, and deep mode expands each probe into `deep_pairs` threads of up to
-    DEFAULT_MAX_ROUNDS rounds. Estimating one exchange per probe understated a
+    the requested max_rounds. Estimating one exchange per probe understated a
     deep run by ~60x, so the pre-run gate — the component whose only job is to
     refuse a run before money is spent — waved it through.
 
@@ -238,7 +236,7 @@ def _estimate_exchanges(req: RunRequest, probe_ids: list[str]) -> int:
     ceiling. That is the right side to err on for a gate.
     """
     if req.mode == "deep":
-        return len(probe_ids) * max(1, req.deep_pairs) * DEFAULT_MAX_ROUNDS
+        return len(probe_ids) * req.deep_pairs * req.max_rounds
     by_id = {p.id: _with_trials(p, req) for p in load_probe_library(PROBES_DIR)}
     # An id the library doesn't know runs nothing, but counting it as one
     # exchange keeps the estimate conservative rather than optimistic.
@@ -299,16 +297,34 @@ async def _run_probes(
 
         if req.mode == "deep":
             personas, strategies = default_personas(), default_strategies()
+            seed = req.seed if req.seed is not None else secrets.token_hex(16)
             to_run = []
+            static_material_probe_ids = []
             for base in selected:
                 if getattr(target, "material_channel", False) and base.indirect:
                     to_run.append(base)
+                    static_material_probe_ids.append(base.id)
                 else:
                     to_run.extend(build_deep_probes(
-                        base, personas, strategies, deep_pairs=req.deep_pairs
+                        base, personas, strategies, deep_pairs=req.deep_pairs,
+                        max_rounds=req.max_rounds, seed=seed,
                     ))
         else:
             to_run = selected
+
+        if req.mode == "deep":
+            yield {
+                "type": "deep_run",
+                "deep": {
+                    "seed": seed, "deep_pairs": req.deep_pairs, "max_rounds": req.max_rounds,
+                    "threads": [
+                        {"thread_id": probe.id, "base_probe_id": probe.base.id,
+                         "persona": probe.persona.id, "strategy": probe.strategy.id}
+                        for probe in to_run if isinstance(probe, PersonaStrategyProbe)
+                    ],
+                    "static_material_probe_ids": static_material_probe_ids,
+                },
+            }
 
         # Once a cap is hit, no further probe or deep thread starts: each remaining one is
         # reported as aborted_cost without another paid call, then the caller sees why.
@@ -450,7 +466,7 @@ async def run(req: RunRequest):
         and cfg.provider == llm.PROVIDER_JEV
         and llm.explain_config(cfg) is None
     ):
-        raise HTTPException(status_code=500, detail=llm.NEEDS_TEXT_MODEL)
+        raise HTTPException(status_code=422, detail=llm.NEEDS_TEXT_MODEL + "; or use --mode static")
 
     if not isinstance(req.target, dict):
         raise HTTPException(status_code=422, detail="target must be a JSON object")
@@ -505,7 +521,8 @@ async def run(req: RunRequest):
                         spent = _COST_METER.spent_in_current_run()
                 if finding_dict.get("type") == "target_cleanup":
                     continue
-                emitted.append(finding_dict)
+                if finding_dict.get("type") != "deep_run":
+                    emitted.append(finding_dict)
                 yield f"data: {json.dumps(finding_dict)}\n\n".encode()
             coverage_event = {
                 "type": "coverage",

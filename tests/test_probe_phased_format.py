@@ -150,7 +150,8 @@ def test_deep_mode_refuses_phased_probe_local_input_error(tmp_path, monkeypatch)
     }
     with pytest.raises(LocalRunError) as exc:
         check_run(spec, ["paired"], mode="deep", env={})
-    assert exc.value.code == "input"
+    assert exc.value.code == "usage"
+    assert "--mode static" in str(exc.value)
 
 
 def test_compatible_probe_ids_respects_multi_turn_sessions(tmp_path, monkeypatch):

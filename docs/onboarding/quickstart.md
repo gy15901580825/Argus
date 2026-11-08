@@ -88,9 +88,9 @@ In local mode, add `--local` to the same command and drop the server variables.
 
 The CLI submits the run to that server, polls for completion (typically ~10–30 s), then writes the chosen format to disk.
 
-Add `--per-run-cap 0.50` to limit what Argus spends on judge calls. A run whose estimate is above the cap does not start, in both modes; with `--local` the run also stops when spend reaches the cap. Either way the command exits 4.
+Add `--per-run-cap 0.50` to limit what Argus spends on judge and attacker calls. A run whose estimate is above the cap does not start, in both modes; with `--local` the run also stops when spend reaches the cap. Either way the command exits 4.
 
-The pre-run estimate counts a fast and a strong judge call for every prompt of every selected probe that needs the judge (and, in deep mode, every persona × strategy thread at its full round budget; the CLI has no deep-mode flag, and the engine server's `POST /redteam/run` takes `"mode": "deep"`). Requests to your agent are not counted. On 2026-10-29, `--probes all` against a chat target was estimated at $5.32 with the default Anthropic judge, so it needs `--per-run-cap 5.32`; when a run is over the cap, the error names a cap at or above the estimate. Most verdicts do not escalate to the strong model, so a run usually costs well under its estimate.
+The pre-run estimate counts a fast and a strong judge call for every prompt of every selected probe that needs the judge. Deep mode also counts attacker calls for every persona × strategy thread at the requested round budget. Use `--mode deep --deep-pairs 2 --max-rounds 3 --seed replay-1` with named probes for an adaptive run (the engine server's `POST /redteam/run` accepts the same settings). Requests to your agent are not counted. On 2026-10-29, `--probes all` against a chat target was estimated at $5.32 with the default Anthropic judge, so it needs `--per-run-cap 5.32`; when a run is over the cap, the error names a cap at or above the estimate. Most verdicts do not escalate to the strong model, so a run usually costs well under its estimate.
 
 ## 6. Read the report
 
@@ -149,7 +149,11 @@ Every subcommand is listed in [the CLI guide](../cli.md#subcommands), and each c
 | `--probes` | comma-separated probe ids OR `all` |
 | `--format` | `html` / `sarif` / `junit` |
 | `--out` | output report file path |
-| `--per-run-cap` | USD cap; over-budget runs exit with code 4 (default $0.50) |
+| `--per-run-cap` | USD cap; over-budget runs exit with code 4 (default $0.50 static, $5 deep) |
+| `--mode` | `static` (default) or adaptive `deep`; deep requires named probes and trials 1 |
+| `--deep-pairs` | positive persona × strategy pair count per base probe (default 3) |
+| `--max-rounds` | rounds per deep thread, 1–20 (default 20) |
+| `--seed` | repeat pair selection with the same probes and library; model replies may differ |
 | `--local` | run probes in this process, no `--api-url`/`--token`; needs a judge key when a selected probe is judged |
 | `--skip-judged` | with `--local` and no judge key, skip the judged probes and run the rest |
 | `--fail-on` | `info` / `low` / `medium` / `high` / `critical`; exit 3 when a failing finding is at or above it |

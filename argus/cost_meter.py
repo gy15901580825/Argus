@@ -137,6 +137,36 @@ def estimate_call_usd(model: str, input_chars: int, output_tokens: int) -> float
     return (input_tokens / 1_000_000) * prices["input"] + (output_tokens / 1_000_000) * prices["output"]
 
 
+def estimate_run_usd(exchanges: int, *, deep: bool = False) -> float:
+    """Estimate judge and attacker spend without applying admission caps."""
+    est_input_tokens = (_AVG_PROMPT_CHARS / _CHARS_PER_TOKEN) * _SAFETY_MARGIN
+    est_output_tokens = (_AVG_RESPONSE_CHARS / _CHARS_PER_TOKEN) * _SAFETY_MARGIN
+
+    def _call_usd(prices: dict) -> float:
+        return (est_input_tokens / 1_000_000) * prices["input"] + (
+            est_output_tokens / 1_000_000
+        ) * prices["output"]
+
+    from argus import llm
+    explain = None
+    try:
+        cfg = llm.resolve_config()
+        fast, strong = _price_for(cfg.fast_model), _price_for(cfg.strong_model)
+        escalates = cfg.escalation_is_meaningful
+        text_cfg = llm.explain_config(cfg)
+        explain = _price_for(text_cfg.fast_model) if text_cfg is not None else None
+    except ValueError:
+        fast = _PRICES_PER_M_TOKENS["claude-haiku-4-5-20251001"]
+        strong = _PRICES_PER_M_TOKENS["claude-sonnet-4-6"]
+        escalates = True
+    per_exchange = _call_usd(fast) + (_call_usd(strong) if escalates else 0.0)
+    if explain is not None:
+        per_exchange += _call_usd(explain)
+    if deep:
+        per_exchange += _call_usd(explain or fast)
+    return per_exchange * exchanges
+
+
 # Half a cent: below this a remaining budget is float residue, not money.
 _BUDGET_EPSILON_USD = 0.005
 
@@ -347,39 +377,8 @@ class CostMeter:
         LLM that drives every deep round.
         """
         self._maybe_reset_day()
-        # Only Argus's own LLM calls are counted: per judged exchange a fast judge
-        # call and, as if every verdict escalated, a strong one; deep mode adds the
-        # attacker (fast role). Sends to the target are the target's bill.
-        est_input_tokens = (_AVG_PROMPT_CHARS / _CHARS_PER_TOKEN) * _SAFETY_MARGIN
-        est_output_tokens = (_AVG_RESPONSE_CHARS / _CHARS_PER_TOKEN) * _SAFETY_MARGIN
-
-        def _call_usd(prices: dict) -> float:
-            return (est_input_tokens / 1_000_000) * prices["input"] + (
-                est_output_tokens / 1_000_000
-            ) * prices["output"]
-
-        # Price at the configured judge models; a bad provider setting falls back
-        # to the Anthropic defaults here and is reported by the credential check.
-        from argus import llm
-        explain = None
-        try:
-            cfg = llm.resolve_config()
-            fast, strong = _price_for(cfg.fast_model), _price_for(cfg.strong_model)
-            escalates = cfg.escalation_is_meaningful
-            # A jev run's text model explains fail/warn findings and drives deep mode's attacker.
-            text_cfg = llm.explain_config(cfg)
-            explain = _price_for(text_cfg.fast_model) if text_cfg is not None else None
-        except ValueError:
-            fast = _PRICES_PER_M_TOKENS["claude-haiku-4-5-20251001"]
-            strong = _PRICES_PER_M_TOKENS["claude-sonnet-4-6"]
-            escalates = True
-        per_exchange = _call_usd(fast) + (_call_usd(strong) if escalates else 0.0)
-        if explain is not None:
-            per_exchange += _call_usd(explain)  # as if every verdict were fail or warn
-        if deep:
-            per_exchange += _call_usd(explain or fast)
         exchanges = total_exchanges if total_exchanges is not None else len(probe_ids) * iterative_rounds
-        estimated = per_exchange * exchanges
+        estimated = estimate_run_usd(exchanges, deep=deep)
 
         cap = self.per_run_cap(deep, per_run_cap_override)
         if estimated > cap:

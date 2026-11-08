@@ -18,6 +18,7 @@ from argus import api, decider, llm
 from argus.cost_meter import CostExceededError
 from argus.coverage import build_coverage, build_summary
 from argus.probe import load_probe_library
+from argus.persona_strategy import DEFAULT_DEEP_PAIRS, DEFAULT_MAX_ROUNDS
 from argus.runner import NO_JUDGE_KEY, TargetUnreachableError, skipped_finding
 from argus.targets import build_target
 from argus.targets.browser_use import local_browser_mode
@@ -42,6 +43,7 @@ class _Plan(NamedTuple):
     skipped: list[dict]
     warnings: list[str]
     judged: list[str]
+    estimated_usd: float
 
 
 def check_run(
@@ -49,6 +51,9 @@ def check_run(
     probe_ids: list[str],
     *,
     mode: str = "static",
+    deep_pairs: int = DEFAULT_DEEP_PAIRS,
+    max_rounds: int = DEFAULT_MAX_ROUNDS,
+    seed: str | None = None,
     per_run_cap_usd: float | None = None,
     env: Mapping[str, str] | None = None,
     skip_judged: bool = False,
@@ -57,10 +62,12 @@ def check_run(
     """Raise LocalRunError when run_local would refuse to start (target, probe ids, key, cost).
 
     Calls nothing over the network, so a caller can run it before starting anything for the run."""
-    _prepare(target, probe_ids, mode=mode, per_run_cap_usd=per_run_cap_usd, env=env, skip_judged=skip_judged, trials=trials)
+    _prepare(target, probe_ids, mode=mode, deep_pairs=deep_pairs, max_rounds=max_rounds, seed=seed,
+             per_run_cap_usd=per_run_cap_usd, env=env, skip_judged=skip_judged, trials=trials)
 
 
-def _prepare(target, probe_ids, *, mode, per_run_cap_usd, env, skip_judged, trials=None) -> _Plan:
+def _prepare(target, probe_ids, *, mode, per_run_cap_usd, env, skip_judged, trials=None,
+             deep_pairs=DEFAULT_DEEP_PAIRS, max_rounds=DEFAULT_MAX_ROUNDS, seed=None) -> _Plan:
     env = os.environ if env is None else env
 
     # Same credential rule as POST /redteam/run: the configured provider decides
@@ -71,7 +78,7 @@ def _prepare(target, probe_ids, *, mode, per_run_cap_usd, env, skip_judged, tria
         raise LocalRunError(str(e), code="config") from e
     if mode == "deep" and llm.explain_config(cfg) is None and cfg.provider == llm.PROVIDER_JEV:
         # The attacker writes prompts; Jev cannot, and nothing may quietly stand in for it.
-        raise LocalRunError(llm.NEEDS_TEXT_MODEL, code="config")
+        raise LocalRunError(llm.NEEDS_TEXT_MODEL + "; or use --mode static", code="usage")
     anthropic_api_key = env.get("ANTHROPIC_API_KEY")
 
     if not isinstance(target, dict):
@@ -84,15 +91,17 @@ def _prepare(target, probe_ids, *, mode, per_run_cap_usd, env, skip_judged, tria
 
     try:
         req = api.RunRequest(
-            target=target, probe_ids=probe_ids, mode=mode, per_run_cap_usd=per_run_cap_usd, trials=trials
+            target=target, probe_ids=probe_ids, mode=mode, deep_pairs=deep_pairs, max_rounds=max_rounds,
+            seed=seed, per_run_cap_usd=per_run_cap_usd, trials=trials
         )
     except ValueError as e:  # pydantic ValidationError is a ValueError subclass
         raise LocalRunError(str(e), code="input") from e
     try:
         # "all" narrows to the probes this target can run, before any key or cost check.
         requested = api._resolve_request_probe_ids(req, target_obj)
+        api._check_trials_mode(req)
     except HTTPException as e:
-        raise LocalRunError(str(e.detail), code="input") from e
+        raise LocalRunError(str(e.detail), code="usage" if mode == "deep" else "input") from e
     if (unknown := api.unknown_probe_ids(requested)):
         raise LocalRunError(unknown, code="usage")
 
@@ -129,8 +138,7 @@ def _prepare(target, probe_ids, *, mode, per_run_cap_usd, env, skip_judged, tria
     req = req.model_copy(update={"probe_ids": requested})
 
     try:
-        api._check_trials_mode(req)
-        api._COST_METER.check_or_abort_pre_run(
+        estimated_usd = api._COST_METER.check_or_abort_pre_run(
             probe_ids=requested,
             target_kind=api._resolve_target_kind(target),
             # A probe the runner will skip for this target sends nothing and calls no judge.
@@ -144,7 +152,7 @@ def _prepare(target, probe_ids, *, mode, per_run_cap_usd, env, skip_judged, tria
     except HTTPException as e:
         raise LocalRunError(str(e.detail), code="input") from e
 
-    return _Plan(req, cfg, anthropic_api_key, skipped, warnings, judged)
+    return _Plan(req, cfg, anthropic_api_key, skipped, warnings, judged, estimated_usd)
 
 
 async def run_local(
@@ -152,6 +160,9 @@ async def run_local(
     probe_ids: list[str],
     *,
     mode: str = "static",
+    deep_pairs: int = DEFAULT_DEEP_PAIRS,
+    max_rounds: int = DEFAULT_MAX_ROUNDS,
+    seed: str | None = None,
     per_run_cap_usd: float | None = None,
     env: Mapping[str, str] | None = None,
     skip_judged: bool = False,
@@ -165,9 +176,12 @@ async def run_local(
     skip_judged: without a judge key, report the probes that need the judge as
     skipped and run the rest, instead of refusing the run.
     """
-    req, cfg, anthropic_api_key, skipped, warnings, judged = _prepare(
-        target, probe_ids, mode=mode, per_run_cap_usd=per_run_cap_usd, env=env, skip_judged=skip_judged, trials=trials)
+    req, cfg, anthropic_api_key, skipped, warnings, judged, estimated_usd = _prepare(
+        target, probe_ids, mode=mode, deep_pairs=deep_pairs, max_rounds=max_rounds, seed=seed,
+        per_run_cap_usd=per_run_cap_usd, env=env, skip_judged=skip_judged, trials=trials)
 
+    if mode == "deep":
+        yield {"type": "estimate", "estimated_usd": estimated_usd}
     if judged:
         yield {"type": "judge", "judge": llm.describe(cfg), "record": llm.judge_record(cfg),
                "disclosure": llm.disclosure(cfg, decider=decider.from_env() is not None)}
@@ -204,7 +218,7 @@ async def run_local(
                     break
                 finally:
                     spent = api._COST_METER.spent_in_current_run()
-            if finding.get("type") != "target_cleanup":
+            if finding.get("type") not in {"target_cleanup", "deep_run"}:
                 emitted.append(finding)
             yield finding
     except CostExceededError as e:

@@ -90,6 +90,44 @@ The trap page listens on `127.0.0.1` by default, which works when the agent runs
 
 The local judge uses `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY` when that is the only key set. To use another provider or model, see [Choosing a judge](#choosing-a-judge).
 
+### Adaptive deep runs
+
+`run` accepts these flags in local and server mode:
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--mode static\|deep` | `static` | Fixed probe prompts, or adaptive persona × strategy threads. |
+| `--deep-pairs N` | `3` | Positive pair count per selected base probe, capped by the available combinations. |
+| `--max-rounds N` | `20` | Maximum rounds per thread, from 1 to 20. |
+| `--seed TEXT` | generated per run | Seed for pair selection. An empty string is also a valid seed. |
+
+```bash
+argus-probe run --local --target target.json \
+  --probes owasp_01_prompt_injection_basic --mode deep \
+  --deep-pairs 2 --max-rounds 3 --seed replay-1 --format json --out run.json
+```
+
+Omit `--local` and use the server connection flags for a server run. Its
+request carries `mode`, `deep_pairs`, `max_rounds` and `seed`. Deep mode rejects
+`--probes all`, missing probe selection, phased probes and `--trials` above 1
+with a usage error. Choose named probes, use `--trials 1`, or use `--mode static`.
+A verdict-only judge also needs a configured text explanation model for the
+attacker; otherwise use static mode.
+
+The default per-run cap is $5 for deep mode and $0.50 for static mode. The
+estimate includes judge and attacker calls at the requested pair and round
+budgets; it excludes requests billed by your target. Local mode prints its
+preflight estimate before the attack starts and enforces its configured cap.
+Server mode prints a labeled client-side estimate, whose prices may differ
+from the server's; the server makes the admission decision and enforces the cap.
+
+The `deep` field in local [run.json](https://github.com/gy15901580825/Argus/blob/main/docs/run-json.md#deep-run-metadata) and the
+server's `deep_run` SSE event record the resolved seed and selected threads.
+Reusing a seed reproduces pair selection with the same probes and library;
+it does not promise identical model answers. Indirect probes using a material
+channel keep their static execution and appear in `static_material_probe_ids`.
+Each deep round currently produces its own finding.
+
 ### Choosing probes
 
 `--probes all` selects every probe the target can run: the probes whose `target_class` matches the target kind, less any `conversation` probe when the target cannot carry a conversation (for example an `mcp_agent` whose `inner` target is `grpc`). `argus-probe list-probes --target argus-target.json` prints the current list and count for your target spec. `argus-probe list-probes --target-class <class>` lists the probes that declare one class. A probe id you name yourself runs as given; one that does not fit the target is reported as `skipped`.
