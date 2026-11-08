@@ -98,6 +98,82 @@ def test_A1_S2_drafted_client_named_run_id_is_blocked(tmp_path):
     assert_run_input_collision(tmp_path, 'run_id', 'body')
 
 
+def renamed_run_document(name, location='body', *, fields=None, poll_path='/runs/{id}', poll_names=None):
+    doc = document('/runs', [], fields or [name], poll_path, poll_names or ['id'])
+    operation = doc['paths']['/runs']['post']
+    if location == 'body':
+        schema = operation['requestBody']['content']['application/json']['schema']
+        schema['required'].append(name)
+        schema['properties'][name] = {'type': 'string'}
+    else:
+        operation['parameters'] = [{'name': name, 'in': 'query', 'required': True,
+                                    'schema': {'type': 'string'}}]
+    return doc
+
+
+@pytest.mark.parametrize('case,name,location,fields,poll_name,bindings', [
+    ('A1h', 'agent_id', 'body', ['agent_id'], 'id', None),
+    ('A1hq', 'agent_id', 'query', ['agent_id'], 'id', None),
+    ('A1hb', 'agent_id', 'body', ['agent_id'], 'id', literal_bindings('ag-7')),
+    ('A1o', 'agent_id', 'body', ['agent_id', 'run_id'], 'run',
+     {'ids': {'agent_id': {'last_segment': False}}}),
+    ('S2h', 'run_id', 'body', ['run_id'], 'id', None),
+], ids=['A1h', 'A1hq', 'A1hb', 'A1o', 'S2h'])
+def test_renamed_poll_run_slot_cannot_be_a_submit_input(tmp_path, case, name, location, fields, poll_name, bindings):
+    doc = renamed_run_document(name, location, fields=fields,
+                               poll_path='/runs/{' + poll_name + '}', poll_names=[poll_name])
+    target, report, _ = drafted(tmp_path, doc, bindings)
+    assert target is None and 'poll_id_binding_missing' in codes(report, True)
+    [gap] = [g for g in report['gaps'] if g['code'] == 'poll_id_binding_missing']
+    assert gap['decision'] == ('Provide documentation for an independently created run ID distinct from the submit path inputs. '
+                               'A bindings file cannot establish that ownership.')
+
+
+@pytest.mark.parametrize('case,poll_path,poll_names,submitted,reason', [
+    ('C1', '/runs/{id}', ['id'], {'agent_id': 'ag-7', 'id': 'r-1'}, None),
+    ('C1b', '/runs/{id}', ['id'], {'agent_id': 'ag-7', 'id': 'ag-7'}, 'submit_parent_echo'),
+    ('P1', '/agents/{agent_id}/runs/{id}', ['agent_id', 'id'],
+     {'agent_id': 'ag-7', 'id': 'r-1'}, None),
+    ('P1b', '/agents/{agent_id}/runs/{id}', ['agent_id', 'id'],
+     {'agent_id': 'ag-9', 'id': 'r-1'}, 'submit_parent_changed'),
+])
+async def test_separate_run_and_parent_slots_preserve_identity_checks(tmp_path, case, poll_path, poll_names, submitted, reason):
+    doc = renamed_run_document('agent_id', fields=['agent_id', 'id'],
+                               poll_path=poll_path, poll_names=poll_names)
+    target, report, _ = drafted(tmp_path, doc)
+    assert target is not None and codes(report, True) == []
+    expected_poll = poll_path.replace('{agent_id}', 'ag-7').replace('{id}', 'r-1')
+    result, calls, _, _ = await run(target['transport'], submitted,
+                                    expected_json={'question': 'ping', 'agent_id': 'ag-7'},
+                                    environ={'TARGET_INPUT_AGENT_ID': 'ag-7'}, poll_path=expected_poll)
+    if reason:
+        refused(result, calls, reason)
+        assert result.response_text is None
+    else:
+        assert result.outcome.value == 'succeeded' and result.response_text == 'own run r-1 answer'
+        assert calls == [('POST', '/runs'), ('GET', expected_poll)]
+
+
+@pytest.mark.parametrize('returned_id,reason', [('ag-7', 'submit_parent_echo'), ('r-1', None)])
+async def test_nested_submit_input_keeps_runtime_echo_check(tmp_path, returned_id, reason):
+    doc = document('/runs', [], ['id'], '/runs/{id}', ['id'])
+    schema = doc['paths']['/runs']['post']['requestBody']['content']['application/json']['schema']
+    schema['properties']['agent'] = {'type': 'object', 'properties': {'id': {'type': 'string'}}}
+    bindings = {'prompt': {'path': '/question'}, 'reply': {'path': '/result'},
+                'values': {'/agent/id': {'env': 'TARGET_INPUT_AGENT'}}}
+    target, report, _ = drafted(tmp_path, doc, bindings)
+    assert target is not None and codes(report, True) == []
+    result, calls, _, _ = await run(target['transport'], {'id': returned_id},
+                                    expected_json={'question': 'ping', 'agent': {'id': 'ag-7'}},
+                                    environ={'TARGET_INPUT_AGENT': 'ag-7'}, poll_path='/runs/r-1')
+    if reason:
+        refused(result, calls, reason)
+        assert result.response_text is None
+    else:
+        assert result.outcome.value == 'succeeded' and result.response_text == 'own run r-1 answer'
+        assert calls == [('POST', '/runs'), ('GET', '/runs/r-1')]
+
+
 @pytest.mark.parametrize('case,name,location', [('A1', 'id', 'body'), ('A1q', 'id', 'query'), ('A1n', 'name', 'body')])
 async def test_A1_distinct_documented_run_slot_returns_own_reply(tmp_path, case, name, location):
     target, report, _ = drafted(tmp_path, submitted_document(name, location))
