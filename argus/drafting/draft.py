@@ -537,7 +537,7 @@ def _pair(poll, ids, submit, mappings=(), overrides=()):
         return None
     paths = dict(_path_parameters(submit) or ())
     explicit = {entry.parameter: entry for entry in mappings}
-    if set(explicit) - {name for (location, name), _ in parameters.declarations if location == "path"} or _unmapped_parents(poll, mappings, ids, response):
+    if set(explicit) - {name for (location, name), _ in parameters.declarations if location == "path"}:
         return None
     pairs, carried = [], []
     for (location, parameter), (poll_pointer, schema) in parameters.declarations:
@@ -594,11 +594,12 @@ def _resource_identity(catalog, poll, pairs, carried, overrides, gaps):
         tail = path_segments[-len(segments):]
         target = next((item for item in pairs if item.location == "path" and "{" + item.parameter + "}" == tail[-1]), None) if valid else None
         known = {"{" + item.parameter + "}": item for item in carried}
-        parts, literal = [], ""
+        parts, literal, missing_carries = [], "", []
         if target:
             for segment, parameter in zip(segments[:-1], tail[:-1]):
                 if placeholder(segment):
                     if parameter not in known:
+                        missing_carries.append(parameter[1:-1])
                         valid = False
                         break
                     if literal: parts.append(literal)
@@ -607,8 +608,11 @@ def _resource_identity(catalog, poll, pairs, carried, overrides, gaps):
                     literal += segment + "/"
             if literal: parts.append(literal)
         if not valid or target is None or not parts:
-            gaps.append(_gap(catalog, "/transport/delivery/ids", "poll_resource_format_unsupported",
-                             "The documented resource-name format does not uniquely match the poll path and carried parameters.",
+            why = ("The documented resource-name prefix requires an explicit "
+                   + ", ".join("poll.parameters." + parameter for parameter in missing_carries)
+                   + " mapping to a compatible submit path parameter." if missing_carries else
+                   "The documented resource-name format does not uniquely match the poll path and carried parameters.")
+            gaps.append(_gap(catalog, "/transport/delivery/ids", "poll_resource_format_unsupported", why,
                              pointer=pointer_child(prefix, "name"), kind="unsupported_feature"))
         else:
             identity = (target.name, PollIdentity(Binding(("name",), pointer_child(prefix, "name"), "document_fact"), tuple(parts)))
@@ -727,7 +731,13 @@ def _poll_choice(catalog, submit, *, poll_operation, required, gaps, inputs=None
                + " cannot be paired with a compatible owned submit response ID and supported parent bindings.")
         run = _poll_parameters(poll, response)
         pointer = dict(run.declarations)[run.run][0] if run.run else poll.pointer
-        gaps.append(_gap(catalog, "/transport/delivery/ids", "poll_id_binding_missing", why, pointer=pointer))
+        gap = _gap(catalog, "/transport/delivery/ids", "poll_id_binding_missing", why, pointer=pointer)
+        if run.run and run.run[1] in dict(_path_parameters(submit) or ()) and run.run[1] in ids:
+            name = run.run[1]
+            gap = replace(gap,
+                          why="The documented response field " + name + " also names a submit path input; no independently owned poll run ID is documented.",
+                          decision="Provide documentation for an independently created run ID distinct from the submit path inputs. A bindings file cannot establish that ownership.")
+        gaps.append(gap)
         return None, None, None
     if len(paired) > 1:
         gaps.append(_gap(catalog, "/transport/delivery", "poll_ambiguous", "Several GET operations can poll the submitted job.",

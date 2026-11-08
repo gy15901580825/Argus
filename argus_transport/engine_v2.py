@@ -16,7 +16,7 @@ from types import MappingProxyType
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Mapping
-from urllib.parse import quote, urlencode, urljoin, urlsplit, urlunsplit
+from urllib.parse import unquote, quote, urlencode, urljoin, urlsplit, urlunsplit
 
 import httpx
 
@@ -132,6 +132,56 @@ def render_url(
             parts.fragment,
         )
     )
+
+
+@dataclass(frozen=True)
+class _PathIdentity:
+    name: str
+    prefix: tuple[str, ...]
+    value: str | None
+
+
+def _path_identities(template: str, bound_url: str | None = None) -> tuple[_PathIdentity, ...]:
+    segments = urlsplit(template).path.split("/")
+    bound = urlsplit(bound_url).path.split("/") if bound_url is not None else None
+    if bound is not None and len(bound) != len(segments):
+        raise ValueError("Submit path does not match its template")
+    identities, prefix = [], []
+    for index, segment in enumerate(segments):
+        match = re.search(r"\{([^{}]+)\}", segment)
+        if match is not None:
+            before, after = segment[:match.start()], segment[match.end():]
+            value = None
+            if bound is not None:
+                actual = bound[index]
+                if not actual.startswith(before) or not actual.endswith(after):
+                    raise ValueError("Submit path does not match its template")
+                value = unquote(actual[len(before):len(actual) - len(after) if after else None])
+            identities.append(_PathIdentity(match.group(1), tuple(prefix + [before]), value))
+        prefix.append(re.sub(r"\{[^{}]+\}", "{}", segment))
+    return tuple(identities)
+
+
+def _response_parent_reason(submit: RequestSpecV2, submit_url: str, poll: RequestSpecV2,
+                            ids: Mapping[str, str | int]) -> SafeReasonCode | None:
+    inputs = _path_identities(submit.url, submit_url)
+    destinations = {slot.name: slot for slot in _path_identities(poll.url)}
+    queries = {expression["var"]: name for name, expression in poll.query.items()
+               if expression.get("var") in ids}
+    for name, captured in ids.items():
+        destination = destinations.get(name)
+        query_name = queries.get(name)
+        value = str(captured)
+        for parent in inputs:
+            parent_name = parent.name.removeprefix("input_")
+            destination_name = re.sub(r"[^a-z0-9_]", "_", query_name.lower()) if query_name is not None else name
+            same_name = destination_name == parent_name
+            same_path = destination is not None and destination.prefix == parent.prefix
+            if (same_path or query_name is not None and same_name) and value != parent.value:
+                return SafeReasonCode.SUBMIT_PARENT_CHANGED
+            if value == parent.value and not (same_name and (same_path or query_name is not None)):
+                return SafeReasonCode.SUBMIT_PARENT_ECHO
+    return None
 
 
 def render_body_v2(
@@ -724,6 +774,12 @@ class TransportEngineV2:
             except ValueError:
                 return self.failure(SafeReasonCode.MISSING_ID, start, status=status,
                                     diagnostics=redactor.clean(diagnostics))
+            try:
+                identity_error = _response_parent_reason(self.spec.request, request.url, delivery.request, ids)
+            except ValueError:
+                identity_error = SafeReasonCode.BINDING_ERROR
+            if identity_error is not None:
+                return self.failure(identity_error, start, status=status, diagnostics=redactor.clean(diagnostics))
             if not matched:
                 self._arm_abort(abort, context, {**scope, **ids}, headers)
             if 'run_id' in ids:
