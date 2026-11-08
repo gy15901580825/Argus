@@ -167,3 +167,106 @@ def test_multipart_without_scenario_keeps_setup_unverified(tmp_path):
     result, out = multipart_draft(tmp_path, None, None, "--verify-local")
     assert "local.status: schema_mock_only" in result.output, result.output
     assert "setup_step:note" in artifacts(out)[2]["validation"]["local"]["unverified"]
+
+
+@pytest.mark.parametrize("part", [
+    {"content": {"literal": 7}},
+    {"content": {"generate": "now_unix_s"}},
+    {"content": {"literal": "plain"}, "filename": ""},
+    {"content": {"literal": "plain"}, "filename": 'a"b.txt'},
+    {"content": {"literal": "plain"}, "filename": "a\nb.txt"},
+    {"content": {"literal": "plain"}, "content_type": "image/png"},
+])
+def test_multipart_rejects_known_unsendable_content_or_metadata(tmp_path, part):
+    _, out = multipart_draft(tmp_path, upload_step(multipart={"text": part}), multipart_document(False))
+    spec, report, _ = artifacts(out)
+    assert spec is None
+    assert any(gap["code"] == "binding_unresolved" for gap in blocking(report))
+
+
+def test_empty_documented_properties_do_not_allow_supplied_names(tmp_path):
+    document = multipart_document(False)
+    document["paths"]["/notes"]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"]["properties"] = {}
+    _, out = multipart_draft(tmp_path, document=document)
+    spec, report, _ = artifacts(out)
+    assert spec is None
+    assert any("not in the documented" in gap["why"] for gap in blocking(report))
+
+
+def test_multipart_env_content_reuses_run_declarations(tmp_path):
+    upload = upload_step(multipart={"text": {"content": {"env": "TARGET_INPUT_MATERIAL"}},
+                                   "source_id": {"content": {"var": "source_id"}}})
+    _, out = multipart_draft(tmp_path, upload)
+    transport = artifacts(out)[0]["transport"]
+    assert transport["let"]["run"]["input_material"] == {"env": "TARGET_INPUT_MATERIAL"}
+    part = transport["lifecycle"]["attempt"][0]["request"]["body"]["multipart"]["text"]
+    assert part["content"] == {"var": "input_material"}
+
+
+def test_multipart_capture_and_proposed_undo_share_existing_step_compiler(tmp_path):
+    document = multipart_document()
+    document["paths"]["/notes/{noteId}"]["delete"] = {
+        "operationId": "remove_uploaded_note",
+        "parameters": [{"name": "noteId", "in": "path", "required": True, "schema": {"type": "string"}}],
+        "responses": {"204": {"description": "Deleted"}},
+    }
+    upload = upload_step(capture={"note_id": "/noteId"})
+    upload.pop("undo")
+    _, out = multipart_draft(tmp_path, upload, document)
+    spec, report, _ = artifacts(out)
+    step = spec["transport"]["lifecycle"]["attempt"][0]
+    assert step["capture"] == {"note_id": {"path": "$.noteId"}}
+    assert step["undo"]["request"]["url"].endswith("/notes/{note_id}")
+    assert spec["transport"]["budget"]["cleanup_reserve"] == 2
+    assert any(gap["code"] == "setup_undo_proposed" for gap in report["gaps"])
+
+
+def test_multipart_nonobject_document_schema_blocks(tmp_path):
+    document = multipart_document(False)
+    document["paths"]["/notes"]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"] = {"type": "string"}
+    _, out = multipart_draft(tmp_path, document=document)
+    spec, report, _ = artifacts(out)
+    assert spec is None
+    assert any(gap["code"] == "binding_unresolved" for gap in blocking(report))
+
+
+def test_multipart_metadata_defaults_and_entry_origin_are_reviewable(tmp_path):
+    _, out = multipart_draft(tmp_path, upload_step(origin="doc_prose"), multipart_document(False))
+    _, _, provenance = artifacts(out)
+    fields = provenance["fields"]
+    prefix = "/transport/lifecycle/attempt/0/request/body/multipart/text/"
+    assert fields[prefix + "content"]["origin"] == "doc_prose"
+    assert fields[prefix + "content"]["source"][-1] == {"file": "bindings.json", "pointer": "/steps/1/multipart/text"}
+    assert fields[prefix + "filename"] == {"basis": "policy_default", "value": "material.txt"}
+    assert fields[prefix + "content_type"] == {"basis": "policy_default", "value": "text/plain"}
+
+
+def test_invalid_part_keeps_its_named_gap_when_an_earlier_capture_is_blocked(tmp_path):
+    upload = upload_step(multipart={"text": {}, "source_id": {"content": {"var": "source_id"}}})
+    _, out = draft(tmp_path, multipart_document(), steps(source_step(operation="unknown_source"), upload), "--operation", "ask")
+    _, report, _ = artifacts(out)
+    assert any(gap["code"] == "binding_unresolved" and gap["source"][0]["pointer"] == "/steps/1/multipart/text"
+               for gap in blocking(report))
+
+
+@pytest.mark.parametrize("required", [None, 7, ["text", 7]])
+def test_malformed_multipart_required_is_a_named_gap(tmp_path, required):
+    document = multipart_document()
+    document["paths"]["/notes"]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"]["required"] = required
+    result, out = multipart_draft(tmp_path, document=document)
+    assert result.exit_code == 3, result.output
+    spec, report, _ = artifacts(out)
+    assert spec is None
+    assert any(gap["code"] == "binding_unresolved" for gap in blocking(report))
+
+
+def test_supplied_multipart_metadata_has_its_file_source(tmp_path):
+    upload = upload_step(origin="doc_prose", multipart={"text": {"content": {"context": "material"}, "filename": "sample.csv", "content_type": "text/csv"},
+                                                          "source_id": {"content": {"var": "source_id"}}})
+    _, out = multipart_draft(tmp_path, upload)
+    fields = artifacts(out)[2]["fields"]
+    prefix = "/transport/lifecycle/attempt/0/request/body/multipart/text/"
+    for key in ("filename", "content_type"):
+        assert fields[prefix + key]["basis"] == "user_selection"
+        assert fields[prefix + key]["origin"] == "doc_prose"
+        assert fields[prefix + key]["source"] == [{"file": "bindings.json", "pointer": "/steps/1/multipart/text/" + key}]

@@ -467,6 +467,22 @@ A `run` step runs once before the first question and an `attempt` step before ev
 
 The command checks every step against the document. The operation must be a documented POST, PUT or PATCH with the same authentication and server as the ask, and the undo a documented DELETE. Each value must fit its field's type and value set; a field documented as a union takes the one branch the value fits. Every required body field and parameter needs a value, a path parameter takes only a `var` or `env`, material can only go to an `attempt` step, and each capture must name a returned string or integer field. A step that fails gets a blocking `binding_unresolved` gap that points at the step entry. A step that passes compiles into `lifecycle.run` or `lifecycle.attempt`; one that sends material runs only when the question has material. When a step has no undo and the document has exactly one DELETE on the created path, for example `DELETE /sources/{sourceId}` after `POST /sources`, the draft proposes it, fed by the response's one required identifier, and adds a `setup_undo_proposed` review gap. A step left without an undo gets a non-blocking `cleanup_mapping_missing` gap that names it. The request budget counts every step, the question and its polls, and the cleanup reserve holds one request per undo. Both are sized for one question, so a run with several questions needs a larger budget. `--verify-local` with a scenario checks the steps through its resource states and request checks. Without a scenario it lists each step as `setup_step:<id>` under `local.unverified`.
 
+A setup step can send multipart instead of JSON `values`. Use a `multipart` map of one to four named parts. Each part needs `content` with an existing step expression. `filename` and `content_type` are optional literal strings. They default to `material.txt` and `text/plain`, recorded as policy defaults. For example, replace a step's `values` with:
+
+```json
+"multipart": {
+  "file": {
+    "content": {"context": "material"},
+    "filename": "material.txt",
+    "content_type": "text/plain"
+  }
+}
+```
+
+Multipart requires a documented `multipart/form-data` body and POST or PUT. If the schema lists `properties`, every part name must appear there. If it does not name parts, the file supplies each name and the draft records a `binding_user_supplied` gap and provenance row with that reason. A step cannot include both `values` and `multipart`. Content must produce a string. Names use lowercase transport identifiers. The supported content types are `text/plain`, `text/markdown`, `application/json` and `text/csv`. Filenames must be nonempty and cannot contain a quote, line break or NUL.
+
+A secret-like literal in content, filename or content_type blocks the step. This uses case-insensitive substring matches for the existing words `key`, `token`, `secret`, `password`, `auth`, `header` and `cookie`, including nested literal values and concat literals. It can also reject ordinary text containing those substrings. Runtime material and environment values are not inspected by drafting. Invalid parts produce named `binding_unresolved` gaps; they never disappear from an otherwise runnable draft. Material parts use the same `if_present: "material"` guard as JSON material steps. Captures, undo proposals and budgets follow the existing setup rules. An independent scenario must prove material reached the ask; a successful upload alone does not prove that.
+
 ## Repeated trials
 
 ```bash
