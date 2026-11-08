@@ -35,7 +35,8 @@ if TYPE_CHECKING:
     from .runtime_v2 import V2Run
 
 
-_ScalarObserver = Callable[[str, dict, str | int], None]
+_InputPath = tuple[str | int, ...]
+_ScalarObserver = Callable[[_InputPath, dict, str | int], None]
 
 
 def bind_v2(
@@ -52,11 +53,11 @@ def _bind_v2(
     context: TransportContext,
     scope: Mapping[str, str | int],
     env: Mapping[str, str],
-    *, _observe_scalar: _ScalarObserver | None = None, _field_name: str | None = None,
+    *, _observe_scalar: _ScalarObserver | None = None, _field_path: _InputPath = (),
 ) -> object:
     def emitted(item):
-        if _observe_scalar is not None and _field_name is not None and type(item) in {str, int}:
-            _observe_scalar(_field_name, value, item)
+        if _observe_scalar is not None and _field_path and type(item) in {str, int}:
+            _observe_scalar(_field_path, value, item)
         return item
 
     if "literal" in value:
@@ -106,14 +107,15 @@ def _bind_v2(
             name: item
             for name, expr in value["object"].items()
             if (item := _bind_v2(expr, context, scope, env,
-                                 _observe_scalar=_observe_scalar, _field_name=name)) is not _OMIT
+                                 _observe_scalar=_observe_scalar, _field_path=(*_field_path, name))) is not _OMIT
         }
-    return [
-        item
-        for expr in value["array"]
-        if (item := _bind_v2(expr, context, scope, env,
-                             _observe_scalar=_observe_scalar, _field_name=_field_name)) is not _OMIT
-    ]
+    items = []
+    for expr in value["array"]:
+        item = _bind_v2(expr, context, scope, env,
+                        _observe_scalar=_observe_scalar, _field_path=(*_field_path, len(items)))
+        if item is not _OMIT:
+            items.append(item)
+    return items
 
 
 def render_url(
@@ -139,7 +141,7 @@ def render_url(
     query = []
     for name, expr in request.query.items():
         item = _bind_v2(expr, context, scope, env,
-                        _observe_scalar=_observe_scalar, _field_name=name)
+                        _observe_scalar=_observe_scalar, _field_path=(name,))
         if item is _OMIT:
             continue
         if type(item) not in {str, int}:
@@ -158,7 +160,7 @@ def render_url(
 
 @dataclass(frozen=True)
 class _SentRunInput:
-    field_name: str
+    path: _InputPath
     value: str
 
 
@@ -237,13 +239,13 @@ def _response_parent_reason(submit: RequestSpecV2, submit_url: str, poll: Reques
             if value == parent.value and not shared:
                 return SafeReasonCode.SUBMIT_PARENT_ECHO
     for name, captured in ids.items():
-        query_name = queries.get(name)
+        destination_name = queries.get(name, name)
         value = str(captured)
         for parent in sent_inputs:
-            same_query = query_name is not None and query_name == parent.field_name
-            if same_query and value != parent.value:
+            same_name = parent.path == (destination_name,)
+            if same_name and value != parent.value:
                 return SafeReasonCode.SUBMIT_PARENT_CHANGED
-            if not same_query and value == parent.value:
+            if not same_name and value == parent.value:
                 return SafeReasonCode.SUBMIT_PARENT_ECHO
     return None
 
@@ -262,7 +264,7 @@ def render_body_v2(
             name: item
             for name, expr in request.body["json"].items()
             if (item := _bind_v2(expr, context, scope, env,
-                                 _observe_scalar=_observe_scalar, _field_name=name)) is not _OMIT
+                                 _observe_scalar=_observe_scalar, _field_path=(name,))) is not _OMIT
         }
         return json.dumps(data, ensure_ascii=False, allow_nan=False).encode("utf-8")
     if "multipart" in request.body:
@@ -725,9 +727,9 @@ class TransportEngineV2:
                         sent_inputs = []
                         input_names = _run_input_names(self.spec.let.run)
 
-                        def observe(field_name, expression, item):
+                        def observe(field_path, expression, item):
                             if any(name in input_names for name in _expression_variables(expression)):
-                                sent_inputs.append(_SentRunInput(field_name, str(item)))
+                                sent_inputs.append(_SentRunInput(field_path, str(item)))
 
                         request, content = self._bind_request(self.spec.request, context, scope,
                                                              _observe_scalar=observe)
