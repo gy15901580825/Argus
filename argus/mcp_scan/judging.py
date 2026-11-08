@@ -19,6 +19,7 @@ JUDGE_MAX_TOKENS = 400  # what Judge._call asks for
 _PROMPT_FRAME_CHARS = 1000
 CAP_REASON = "not judged: cost cap"
 ERROR_REASON = "not judged: judge reply unusable"
+BLOCKED_REASON = "not judged: the provider content filter blocked the judge prompt"
 # A warn, such as a jev pass below its confidence floor: scan-mcp counts only pass and fail.
 UNSURE_REASON = "not judged: judge unsure, needs human review"
 OFF_REASON = "not judged: judge off"
@@ -33,6 +34,7 @@ class JudgeOutcome:
     reasoning: str = ""
     judge_model: str = ""
     escalated_model: str | None = None
+    error_code: Literal["content_filter"] | None = None
 
 
 def default_judge_factory(meter: CostMeter, config: llm.LLMConfig) -> Judge:
@@ -104,6 +106,10 @@ class JudgeGate:
             v = await judge.judge(cand.probe_id, attack, masked, self.rubric_text)
         except CostExceededError:
             return JudgeOutcome(cand, "cap", reasoning=CAP_REASON)
+        except llm.JudgeBlockedError as exc:
+            categories = ", ".join(show_text(mask(category)) for category in exc.categories)
+            reason = BLOCKED_REASON + (f"; categories: {categories}" if categories else "")
+            return JudgeOutcome(cand, "error", reasoning=reason, error_code="content_filter")
         except Exception as e:  # noqa: BLE001 — a provider failure or malformed reply leaves this text unjudged
             # The tool name is the server's text: shown safely, so it cannot drive the terminal.
             logger.warning("scan-mcp judge failed on %s %s: %s", cand.probe_id, show_text(cand.tool),

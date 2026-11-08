@@ -124,6 +124,8 @@ async def scan_mcp(cfg: ScanConfig, *, mask: Callable[[str], str], echo: Callabl
         notes.append(HOST_NOTE)
     if calls is not None and any(o.status != "called" and _ARGS_MARK in o.detail for o in calls.outcomes.values()):
         notes.append(ARGS_NOTE)
+    if blocked := sum(o.error_code == "content_filter" for o in outcomes):
+        notes.append(f"The provider content filter blocked {blocked} judge item(s); review the filter policy.")
     notes.append(SNYK_LINE)
     return ScanResult(findings=scan + server, notes=notes, server_info=server_info,
                       all_selected_unexercised=all_selected_unexercised(calls), unjudged=unjudged_count(scan),
