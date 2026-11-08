@@ -305,7 +305,8 @@ def test_local_stateless_deep_prints_one_independent_rounds_note(tmp_path, engin
 def test_server_stateless_deep_prints_one_independent_rounds_note(tmp_path, engine, monkeypatch):
     monkeypatch.setattr(api_client, 'post_run', lambda *a, **k: {'run_id': 'run-1'})
     finding = {'probe_id': 'deep_fixture::persona::strategy', 'verdict': 'pass', 'severity': 'info',
-               'evidence': {'history': False, 'thread_id': 'deep_fixture::persona::strategy', 'transcript': []}}
+               'evidence': {'history': False, 'thread_id': 'deep_fixture::persona::strategy',
+                            'persona': 'persona', 'strategy': 'strategy', 'transcript': []}}
     monkeypatch.setattr(api_client, 'poll_until_complete', lambda *a, **k: {
         'status': 'completed', 'findings': [finding, finding]})
     monkeypatch.setattr(api_client, 'get_report', lambda *a, **k: 'report')
@@ -313,3 +314,17 @@ def test_server_stateless_deep_prints_one_independent_rounds_note(tmp_path, engi
     assert result.exit_code == 0, result.output
     assert result.output.count('target keeps no conversation') == 1
     assert 'rounds are independent' in result.output
+
+
+def test_server_static_fallback_does_not_print_deep_rounds_note(tmp_path, engine, monkeypatch):
+    monkeypatch.setattr(api_client, 'post_run', lambda *a, **k: {'run_id': 'run-1'})
+    finding = {'probe_id': 'deep_fixture', 'verdict': 'pass', 'severity': 'info',
+               'evidence': {'history': False, 'thread_id': 'deep_fixture::persona::strategy',
+                            'persona': 'persona', 'strategy': 'strategy', 'transcript': []}}
+    monkeypatch.setattr(api_client, 'poll_until_complete', lambda *a, **k: {
+        'status': 'completed', 'findings': [finding]})
+    monkeypatch.setattr(api_client, 'get_report', lambda *a, **k: 'report')
+    result = CliRunner().invoke(main, arguments(tmp_path, local_run=False, extra=['--mode', 'deep']))
+    assert result.exit_code == 0, result.output
+    assert 'target keeps no conversation' not in result.output
+    assert 'rounds are independent' not in result.output

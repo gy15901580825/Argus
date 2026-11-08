@@ -203,7 +203,17 @@ h1 { border-bottom: 2px solid #333; }
     {% for n in f.nist_id %}<code>NIST:{{ n }}</code>{% endfor %}
     {% for e in f.eu_ai_act_id %}<code>EU:{{ e }}</code>{% endfor %}
   </div>
-  <p style="font-size:0.85em;color:#888">{% if f.judge_model %}judge: {{ f.judge_model }}{% if f.escalated_model %} → {{ f.escalated_model }}{% endif %}{% elif f.verdict in ("error", "blocked_by_target", "skipped", "aborted_cost") %}verdict: not judged{% else %}verdict: deterministic, from captured evidence{% endif %} · target latency: {{ "%.0f"|format(f.target_latency_ms) }}ms · probed at {{ f.probed_at }}</p>
+{% if is_deep_finding(f) %}  <details>
+    <summary>Deep thread transcript ({{ f.evidence.rounds_run }} rounds, {{ f.evidence.stop_reason }})</summary>
+    <p>Persona: {{ f.evidence.persona }}. Strategy: {{ f.evidence.strategy }}. Conversation history: {{ "yes" if f.evidence.history else "no" }}.</p>
+    {% for round in f.evidence.transcript %}
+    <h4>Round {{ loop.index }}: {{ round.verdict }} ({{ round.severity }})</h4>
+    <p>Attacker prompt:</p><pre>{{ round.attack_prompt }}</pre>
+    <p>Target reply:</p><pre>{{ round.target_response }}</pre>
+    <p>{{ round.reasoning }}</p>
+    {% endfor %}
+  </details>
+{% endif %}  <p style="font-size:0.85em;color:#888">{% if f.judge_model %}judge: {{ f.judge_model }}{% if f.escalated_model %} → {{ f.escalated_model }}{% endif %}{% elif f.verdict in ("error", "blocked_by_target", "skipped", "aborted_cost") %}verdict: not judged{% else %}verdict: deterministic, from captured evidence{% endif %} · target latency: {{ "%.0f"|format(f.target_latency_ms) }}ms · probed at {{ f.probed_at }}</p>
 </div>
 {% endfor %}
 {% if run.notes %}

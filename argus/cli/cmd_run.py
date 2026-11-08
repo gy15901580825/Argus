@@ -19,6 +19,7 @@ from argus.cli.severity import (
     SEVERITY_ORDER, blocked_warning, findings_at_or_above, hit_cost_cap, incomplete_lines, judge_skip_line,
 )
 from argus.cli.target_loader import load_target_spec_with_secrets, TargetLoadError
+from argus.deep_thread import is_deep_finding
 
 # Exit codes must fit 0-255; sys.exit(402) surfaced as 146 on Linux and macOS.
 EXIT_COST_CAP = 4
@@ -168,6 +169,11 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
     click.echo("Polling until completion...")
     run = api_client.poll_until_complete(api_url, token, run_id, max_wait=max_wait)
     click.echo(f"  status: {run['status']}, findings: {len(run.get('findings', []))}")
+    if mode == "deep" and any(
+        is_deep_finding(f) and f["evidence"].get("history") is False
+        for f in run.get("findings", [])
+    ):
+        click.echo("The target keeps no conversation, so deep rounds are independent.")
 
     click.echo(f"Fetching {report_format} report...")
     report = api_client.get_report(api_url, token, run_id, report_format)

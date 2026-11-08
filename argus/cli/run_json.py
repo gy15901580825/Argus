@@ -8,6 +8,7 @@ from typing import Any, Iterable
 from uuid import UUID
 
 from argus.coverage import build_summary
+from argus.deep_thread import THREAD_STRUCTURE_FIELDS, ROUND_STRUCTURE_FIELDS, ROUND_FIELDS, is_deep_finding
 from argus.events import EVENT_STRUCTURE_FIELDS, normalize_redacted_event
 
 SCHEMA_VERSION = "argus.run/1"
@@ -163,6 +164,18 @@ def scrub_run(run: dict, secret_values: Iterable[str] = ()) -> dict:
     for clean, orig in zip(out.get("findings") or [], plain.get("findings") or []):
         if isinstance(clean, dict) and isinstance(orig, dict):
             _restore(clean, orig, _FINDING_FIELDS)
+            evidence = orig.get("evidence")
+            if is_deep_finding(orig):
+                freeform = {k: v for k, v in evidence.items() if k not in (*THREAD_STRUCTURE_FIELDS, "transcript")}
+                preserved = _scrub(freeform, secrets, keys=True)
+                _restore(preserved, evidence, THREAD_STRUCTURE_FIELDS)
+                preserved["transcript"] = []
+                for row in evidence["transcript"]:
+                    if isinstance(row, dict):
+                        safe = {key: _scrub(row[key], secrets) for key in ROUND_FIELDS if key in row}
+                        _restore(safe, row, ROUND_STRUCTURE_FIELDS)
+                        preserved["transcript"].append(safe)
+                clean["evidence"] = preserved
             for clean_event, orig_event in zip(clean.get("events") or [], orig.get("events") or []):
                 if isinstance(clean_event, dict) and isinstance(orig_event, dict):
                     _restore(clean_event, orig_event, _EVENT_FIELDS)

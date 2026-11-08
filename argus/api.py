@@ -323,6 +323,7 @@ async def _run_probes(
                         for probe in to_run if isinstance(probe, PersonaStrategyProbe)
                     ],
                     "static_material_probe_ids": static_material_probe_ids,
+                    "history": bool(getattr(target, "supports_history", False)),
                 },
             }
 
@@ -335,6 +336,7 @@ async def _run_probes(
                     aborted_finding(
                         probe,
                         f"{NOT_STARTED_AT_CAP}: the run had stopped at the cost cap ({cap_hit})",
+                        history=bool(getattr(target, "supports_history", False)),
                     ),
                     probe,
                 )
@@ -355,7 +357,8 @@ async def _run_probes(
             except CostExceededError as e:
                 if not emitted_for_probe:
                     yield finding_dict(
-                        aborted_finding(probe, f"cost cap reached: {e}"), probe
+                        aborted_finding(probe, f"cost cap reached: {e}",
+                                        history=bool(getattr(target, "supports_history", False))), probe
                     )
                 cap_hit = e
         if cap_hit is not None:

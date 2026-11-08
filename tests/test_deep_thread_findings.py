@@ -233,3 +233,90 @@ async def test_short_registered_secrets_cannot_corrupt_thread_structure(thread_c
     assert evidence['thread_id'] == c.probe.id and evidence['history'] is True
     assert all(row['verdict'] == 'pass' and row['severity'] == 'info' for row in evidence['transcript'])
     assert all('attack_prompt' in row and 'target_response' in row for row in evidence['transcript'])
+
+
+@pytest.mark.asyncio
+async def test_assertion_backed_attacker_stop_cannot_keep_an_early_pass(thread_case):
+    c = thread_case
+    c.probe.assertions = ({'no_call_to_tool': 'forbidden_tool'},)
+    c.target.collect_evidence = AsyncMock(return_value={'interaction_count': 1, 'tool_calls': []})
+    c.attacker.side_effect = ['first {address}', None]
+    found = await results(c)
+    assert len(found) == 1
+    assert_thread(found[0], c, 'error', 'attacker_stopped', 1)
+    c.judge.judge.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_hybrid_warning_survives_later_passes_at_maximum(thread_case):
+    c = thread_case
+    c.probe.assertions = ({'no_call_to_tool': 'forbidden_tool'},)
+    c.probe.judge_when_assertions_pass = True
+    c.target.collect_evidence = AsyncMock(return_value={'interaction_count': 3, 'tool_calls': []})
+    c.judge.judge.side_effect = [Verdict('warn', 'medium', 1.0, 'uncertain first round', 'fixture', None),
+                              Verdict('pass', 'info', 1.0, 'safe later reply', 'fixture', None),
+                              Verdict('pass', 'info', 1.0, 'safe later reply', 'fixture', None)]
+    found = await results(c)
+    assert len(found) == 1
+    assert_thread(found[0], c, 'warn', 'max_rounds', 3)
+    assert found[0].evidence['interaction_count'] == 3
+    assert [row['verdict'] for row in found[0].evidence['transcript']] == ['warn', 'pass', 'pass']
+
+
+@pytest.mark.asyncio
+async def test_api_cap_records_planned_threads_that_never_started(thread_case, monkeypatch, tmp_path):
+    from argus import api
+    from argus.cost_meter import CostMeter
+
+    c = thread_case
+    monkeypatch.setattr(api, 'build_target', lambda *_: c.target)
+    monkeypatch.setattr(api, 'load_probe_library', lambda *_: [c.probe.base])
+    monkeypatch.setattr(api, 'RUBRICS_DIR', tmp_path)
+    monkeypatch.setattr(api, 'Judge', lambda **_: c.judge)
+    monkeypatch.setattr(api, '_COST_METER', CostMeter(daily_cap_usd=1000, deep_per_run_cap_usd=1000))
+    c.attacker.side_effect = [CostExceededError('fixture cap')]
+    req = api.RunRequest(target={}, probe_ids=[c.probe.base.id], mode='deep', deep_pairs=2, max_rounds=3, seed='repeat')
+    events = []
+    with pytest.raises(CostExceededError):
+        async for event in api._run_probes(req, None):
+            events.append(event)
+    findings = [e for e in events if 'verdict' in e]
+    assert len(findings) == 2 and all(f['verdict'] == 'aborted_cost' for f in findings)
+    assert all(f['evidence']['transcript'] == [] and f['evidence']['rounds_run'] == 0 for f in findings)
+    assert all(f['evidence']['history'] is True and f['evidence']['stop_reason'] == 'cost' for f in findings)
+    assert all(f['evidence']['thread_id'] == f['probe_id'] for f in findings)
+    assert not c.target.calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('proven_failure', [False, True])
+async def test_assertion_blank_reply_is_error_unless_failure_was_proven(thread_case, proven_failure):
+    c = thread_case
+    c.probe.assertions = ({'no_call_to_tool': 'forbidden_tool'},)
+    c.target.responses[1] = ''
+    safe = {'interaction_count': 1, 'tool_calls': []}
+    bad = {'interaction_count': 2, 'tool_calls': [{'tool': 'forbidden_tool'}]}
+    c.target.collect_evidence = AsyncMock(side_effect=[safe, bad if proven_failure else safe, safe])
+    found = await results(c)
+    assert len(found) == 1
+    assert_thread(found[0], c, 'fail' if proven_failure else 'error',
+                  'fail' if proven_failure else 'blank_reply', 2)
+
+
+def test_static_evidence_cannot_spoof_thread_metadata_to_restore_a_secret():
+    secret = 'fixture-secret-in-untrusted-metadata'
+    from argus.runner import skipped_finding
+
+    probe = Probe('static_fixture', 'Static fixture', (), ('prompt-injection',),
+                  'medium', ('benign',), ProbeMappings(), 'fixture', 'fixture.md')
+    evidence = {'thread_id': secret, 'persona': secret, 'strategy': secret,
+                'transcript': [{'attack_prompt': secret, 'target_response': secret,
+                                'verdict': secret, 'severity': secret, 'reasoning': secret}]}
+    finding = replace(skipped_finding(probe, 'benign'), verdict='pass', evidence=evidence)
+    record = {'id': 'static-run', 'status': 'completed', 'target_spec': {'api_key': secret},
+              'findings': [asdict(finding)]}
+    assert secret not in run_json.render_json(record)
+    clean = run_json.scrub_run(record)
+    assert 'Deep thread transcript' not in reports.render_html(clean)
+    assert 'evidence' not in json.loads(reports.render_sarif(clean))['runs'][0]['results'][0]['properties']
+    assert 'transcript' not in ET.fromstring(reports.render_junit(clean)).find('.//testcase/system-out').text

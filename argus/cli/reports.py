@@ -10,6 +10,7 @@ from xml.etree import ElementTree as ET
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from argus import remediation
+from argus.deep_thread import is_deep_finding
 
 _TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "templates")
 _jinja = Environment(
@@ -36,6 +37,7 @@ def render_html(run: dict) -> str:
         counts=_verdict_counts(run.get("findings", [])),
         coverage=run.get("coverage"),
         atlas_names=remediation.atlas_mitigations(),
+        is_deep_finding=is_deep_finding,
     )
 
 
@@ -123,6 +125,7 @@ def render_sarif(run: dict) -> str:
                 "confidence": f.get("confidence"),
                 "attack_prompt": f.get("attack_prompt", ""),
                 "target_response": f.get("target_response", "")[:1000],
+                **({"evidence": f["evidence"]} if is_deep_finding(f) else {}),
                 "judge_model": f.get("judge_model"),
                 "escalated_model": f.get("escalated_model"),
                 "owasp_agentic": f.get("owasp_agentic", []),
@@ -211,6 +214,8 @@ def render_junit(run: dict) -> str:
             "time": f"{(f.get('target_latency_ms', 0) or 0) / 1000:.3f}",
         })
         output = [json.dumps({"owasp_agentic": f.get("owasp_agentic", [])})]
+        if is_deep_finding(f):
+            output.append(json.dumps({"evidence": f["evidence"]}, ensure_ascii=False))
         if f.get("verdict") == "fail":
             failure = ET.SubElement(case, "failure", attrib={
                 "type": f.get("severity", "info"),
