@@ -56,8 +56,8 @@ class MultipartIssue:
 class UserPart:
     name: str
     content: dict
-    filename: str
-    content_type: str
+    filename: str | None
+    content_type: str | None
     source: Source
     defaults: tuple[str, ...]
 
@@ -242,7 +242,9 @@ def _secret_literal(value):
 def _part_secret(expression):
     if "literal" in expression:
         return _secret_literal(expression["literal"])
-    return any(_part_secret(part) for part in expression.get("concat", ()))
+    parts = expression.get("concat", ())
+    return (any(_part_secret(part) for part in parts)
+            or _secret_literal("".join(str(part["literal"]) for part in parts if "literal" in part)))
 
 
 def _multipart(data, where, file, visible, has_values):
@@ -258,6 +260,8 @@ def _multipart(data, where, file, visible, has_values):
         return UserMultipart((), tuple(issues))
     for name, raw in data.items():
         at = pointer_child(where, name)
+        if CREDENTIAL_NAME.search(name):
+            raise ValueError(f"{at} names a credential; credentials never enter a bindings file, use TARGET_API_KEY")
         if not NAME_RE.fullmatch(name) or any(word in name.lower() for word in SECRET_WORDS):
             reject(at, "A multipart part needs a lowercase transport name without a secret word.")
             continue
@@ -269,11 +273,11 @@ def _multipart(data, where, file, visible, has_values):
         except ValueError:
             reject(at + "/content", "The multipart content is not a supported step expression.")
             continue
-        filename, content_type = raw.get("filename", "material.txt"), raw.get("content_type", "text/plain")
-        if not isinstance(filename, str) or not filename or any(char in filename for char in '\r\n\x00"'):
+        filename, content_type = raw.get("filename"), raw.get("content_type")
+        if "filename" in raw and (not isinstance(filename, str) or not filename or any(char in filename for char in '\r\n\x00"')):
             reject(at + "/filename", "The multipart filename must be a nonempty literal without a quote, line break or NUL.")
             continue
-        if content_type not in ("text/plain", "text/markdown", "application/json", "text/csv"):
+        if "content_type" in raw and content_type not in ("text/plain", "text/markdown", "application/json", "text/csv"):
             reject(at + "/content_type", "The multipart content_type must be a supported literal media type.")
             continue
         if _part_secret(content) or _secret_literal(filename) or _secret_literal(content_type):
