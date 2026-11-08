@@ -2,6 +2,8 @@
 
 import contextlib
 import os
+from pathlib import Path
+import re
 import shlex
 import sys
 import types
@@ -121,30 +123,39 @@ def _printed_commands(output):
     return [shlex.split(line) for line in output.splitlines() if line.startswith("  argus-probe ")]
 
 
-def test_quickstart_next_commands_parse_and_init_writes_the_file_run_reads(tmp_path, monkeypatch):
-    from argus.cli.cmd_init import init_command
-    from argus.cli.cmd_list_probes import _local_probes
+def test_quickstart_hands_off_to_init_for_the_selected_kind(tmp_path, monkeypatch):
     from argus.cli.target_loader import load_target_spec
 
-    probe_ids = {p.id for p in _local_probes()}
     _install(monkeypatch, _ok_run)
     result, _ = _invoke(tmp_path)
     assert result.exit_code == 0, result.output
     commands = _printed_commands(result.output)
-    assert [c[:2] for c in commands] == [["argus-probe", "init"], ["argus-probe", "run"]]
-
-    parsed = {}
-    for argv in commands:
-        sub = main.commands[argv[1]]
-        # make_context checks required options and choices without running the command.
-        parsed[argv[1]] = sub.make_context(argv[1], argv[2:]).params
-
-    init_output = next(p.default for p in init_command.params if p.name == "output")
-    assert parsed["run"]["target"] == init_output
-    assert set(parsed["run"]["probe_ids"].split(",")) <= probe_ids
+    assert commands == [["argus-probe", "init"]]
+    assert "prints the run command for the kind you pick" in result.output
+    assert "owasp_07_system_prompt_leakage" not in result.output
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("argus.cli.cmd_init._stdin_is_tty", lambda: True)
-    init = CliRunner().invoke(main, commands[0][1:], input="\n\nmy-model\n\nn\n")
+    init = CliRunner().invoke(main, commands[0][1:], input="mcp_server\nhttp://127.0.0.1:3001/mcp\nn\n")
     assert init.exit_code == 0, init.output
-    assert load_target_spec(str(tmp_path / parsed["run"]["target"]))["kind"] == "openai_compat"
+    run_line = next(line for line in init.output.splitlines() if line.startswith("Next: "))
+    argv = shlex.split(run_line.removeprefix("Next: "))
+    assert argv[:2] == ["argus-probe", "run"]
+    with main.commands["run"].make_context("run", argv[2:]) as ctx:
+        assert ctx.params["probe_ids"] == "all"
+        spec = load_target_spec(str(tmp_path / ctx.params["target"]))
+        assert spec["kind"] == "mcp_server"
+        assert spec["url"] == "http://127.0.0.1:3001/mcp"
+
+
+def test_quickstart_documented_kinds_match_the_registry():
+    from argus.cli.target_loader import _KNOWN_KINDS
+
+    text = (Path(__file__).resolve().parents[1] / "docs/onboarding/quickstart.md").read_text()
+    step_two = text.split("## 2. Generate a target spec\n", 1)[1].split("\n## ", 1)[0]
+    match = re.search(r"^The (\d+) supported `kind` values: (.+?)\.", step_two, re.MULTILINE)
+    assert match is not None
+    kinds = re.findall(r"`([^`]+)`", match.group(2))
+    assert int(match.group(1)) == len(kinds) == len(_KNOWN_KINDS)
+    assert len(kinds) == len(set(kinds))
+    assert set(kinds) == _KNOWN_KINDS
