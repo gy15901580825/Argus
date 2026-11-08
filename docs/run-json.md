@@ -16,7 +16,7 @@ If a run stops partway, for example when the daily cost cap is crossed, the targ
 
 ## Fields
 
-The top-level keys always appear in this order. `incomplete_reason`, `notes`, `judge` and `target_cleanup` appear only when they apply:
+The top-level keys always appear in this order. `incomplete_reason`, `notes`, `judge`, `deep` and `target_cleanup` appear only when they apply:
 
 | Key | Type | Meaning |
 |---|---|---|
@@ -33,7 +33,22 @@ The top-level keys always appear in this order. `incomplete_reason`, `notes`, `j
 | `findings` | array | One object per probe result. |
 | `notes` | array of strings | Only when there is something to say: the incomplete reasons, and the warning when almost every probe was blocked with one HTTP code. `run` writes it; `mcp-trap` and `scan-mcp` do not. |
 | `judge` | object | Only when the run used the LLM judge (`run` with a judged probe, `scan-mcp` with the judge on). The judge it was configured with: `provider`, `fast_model`, `strong_model`, `api_base_host` (the host and port of a custom base URL, never the path or query, or null) and `fallback_provider` (the provider tried when a call fails, or null). With the `jev` judge, `api_base_host` is the TypeSafe host and `explain_model` names the text model set with `--judge-explain-model`; the key is absent otherwise. Each finding's `judge_model` says which model gave that verdict. |
+| `deep` | object | Deep runs only. Resolved selection seed, requested limits and planned persona × strategy threads. See below. |
 | `target_cleanup` | object | When the target has configured undo requests, delivery abort, or tracked lifecycle-created resources. Final run and attempt cleanup summary. See below. |
+
+### Deep run metadata
+
+`deep` contains `seed`, `deep_pairs`, `max_rounds`, `threads` and
+`static_material_probe_ids`. Each thread records `thread_id`, `base_probe_id`,
+`persona` and `strategy`. The seed is generated once when omitted; an explicit
+empty string is valid. Reuse it with the same selected probes and library to
+reproduce pair selection. Model replies can still differ.
+
+`threads` records the selected plan, not proof that every thread ran or reached
+its round limit. Findings remain per round. Indirect probes with a material
+channel run statically and are listed in `static_material_probe_ids`. Static
+runs omit `deep`. Metadata events do not count as findings or coverage. The
+schema remains `argus.run/1` under its additive optional-field policy.
 
 ### Target cleanup
 

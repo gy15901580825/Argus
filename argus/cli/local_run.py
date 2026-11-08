@@ -65,6 +65,10 @@ def run_local_and_render(
     fail_on: str | None = None,
     skip_judged: bool = False,
     trials: int | None = None,
+    mode: str = "static",
+    deep_pairs: int = 3,
+    max_rounds: int = 20,
+    seed: str | None = None,
 ) -> LocalRunResult:
     """Run the probes, print one line per finding, return the rendered report and findings.
 
@@ -73,12 +77,14 @@ def run_local_and_render(
     `secret_values` are masked in every format. A spec with `testbed_url: "local"` runs against
     the bundled testbed, started on 127.0.0.1 for this call only.
     """
+    options = run_options(mode, deep_pairs, max_rounds, seed)
     if isinstance(spec, dict) and spec.get("testbed_url") == "local":
         from argus.demo import servers
         from argus.local import check_run
 
         # A run the engine would refuse (bad spec, no key, over the cap) must not start a testbed.
-        check_run(spec, probe_ids, per_run_cap_usd=per_run_cap, skip_judged=skip_judged, **({"trials": trials} if trials is not None else {}))
+        check_run(spec, probe_ids, per_run_cap_usd=per_run_cap, skip_judged=skip_judged,
+                  **options, **({"trials": trials} if trials is not None else {}))
         env, testbed = servers.local_environment(spec), servers.local_testbed(spec)
     else:
         # Nothing to start, so the demo servers stay unimported.
@@ -102,7 +108,16 @@ def run_local_and_render(
             fail_on,
             skip_judged,
             trials,
+            **options,
         )
+
+
+def run_options(
+    mode: str, deep_pairs: int, max_rounds: int, seed: str | None,
+) -> dict[str, str | int | None]:
+    if mode == "static" and deep_pairs == 3 and max_rounds == 20 and seed is None:
+        return {}
+    return {"mode": mode, "deep_pairs": deep_pairs, "max_rounds": max_rounds, "seed": seed}
 
 
 def _run_and_render(
@@ -114,6 +129,10 @@ def _run_and_render(
     fail_on: str | None,
     skip_judged: bool,
     trials: int | None = None,
+    mode: str = "static",
+    deep_pairs: int = 3,
+    max_rounds: int = 20,
+    seed: str | None = None,
 ) -> LocalRunResult:
     from argus.local import LocalRunError, run_local
     from argus_transport.runtime_v2 import TargetRunStopped
@@ -123,13 +142,22 @@ def _run_and_render(
     coverage: dict | None = None
     judge: dict | None = None
     target_cleanup: dict | None = None
+    deep: dict | None = None
 
     async def _consume() -> None:
-        nonlocal coverage, judge, target_cleanup
+        nonlocal coverage, judge, target_cleanup, deep
         try:
             async for event in run_local(
-                spec, probe_ids, per_run_cap_usd=per_run_cap, skip_judged=skip_judged, **({"trials": trials} if trials is not None else {})
+                spec, probe_ids, per_run_cap_usd=per_run_cap, skip_judged=skip_judged,
+                **run_options(mode, deep_pairs, max_rounds, seed),
+                **({"trials": trials} if trials is not None else {})
             ):
+                if event.get("type") == "estimate":
+                    click.echo(f"Estimated judge/attacker cost: ${event['estimated_usd']:.4f}. Target costs are separate.")
+                    continue
+                if event.get("type") == "deep_run":
+                    deep = event["deep"]
+                    continue
                 if event.get("type") == "target_cleanup":
                     target_cleanup = event["target_cleanup"]
                     continue
@@ -212,6 +240,8 @@ def _run_and_render(
         "coverage": coverage,
         "findings": findings,
     }
+    if deep is not None:
+        run["deep"] = deep
     if target_cleanup is not None:
         run["target_cleanup"] = target_cleanup
     if judge:

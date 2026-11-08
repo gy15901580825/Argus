@@ -13,7 +13,7 @@ from click.core import ParameterSource
 from argus.cli import api_client, git_context, run_json
 from argus.cli.baseline_key import baseline_key
 from argus.cli.judge_options import judge_options
-from argus.cli.local_run import StopSignalReceived, cleanup_lines, run_local_and_render
+from argus.cli.local_run import StopSignalReceived, cleanup_lines, run_local_and_render, run_options
 from argus.cli.mcp_sdk import STOP_MESSAGES
 from argus.cli.severity import (
     SEVERITY_ORDER, blocked_warning, findings_at_or_above, hit_cost_cap, incomplete_lines, judge_skip_line,
@@ -47,9 +47,16 @@ def _finite_cap(_ctx: click.Context, _param: click.Parameter, value: float | Non
 @click.option("--out", "out_file", type=click.Path(), required=True, help="Output report file path.")
 @click.option("--token", envvar="ARGUS_API_TOKEN", default=None, help="API token for --api-url (or env ARGUS_API_TOKEN). Not used with --local.")
 @click.option("--api-url", envvar="ARGUS_API_URL", default=None, help="Base URL of a server implementing the /api/v1/redteam API (or env ARGUS_API_URL). Not used with --local.")
+@click.option("--mode", type=click.Choice(["static", "deep"]), default="static", show_default=True,
+              help="Static prompts or adaptive persona/strategy threads.")
+@click.option("--deep-pairs", type=click.IntRange(min=1), default=3, show_default=True,
+              help="Persona/strategy pairings per base probe; capped at the available pairings.")
+@click.option("--max-rounds", type=click.IntRange(1, 20), default=20, show_default=True,
+              help="Maximum rounds per adaptive thread.")
+@click.option("--seed", default=None, help="Replay persona/strategy pairings; omitted means a fresh seed.")
 @click.option("--trials", type=click.IntRange(1, 20), default=None, help="Repeat each whole static probe 1-20 times, replacing its YAML trials count.")
 @click.option("--max-wait", type=float, default=1800.0, help="Max seconds to wait for run completion. Ignored with --local.")
-@click.option("--per-run-cap", "per_run_cap", type=float, callback=_finite_cap, default=None, help="Maximum USD judge/attacker spend for this run. A run whose estimate is above it does not start; the run also stops when a completed call takes spend past it. Default: $0.50.")
+@click.option("--per-run-cap", "per_run_cap", type=float, callback=_finite_cap, default=None, help="Maximum USD judge/attacker spend for this run. A run whose estimate is above it does not start; the run also stops when a completed call takes spend past it. Default: $0.50 static, $5.00 deep.")
 @click.option("--fail-on", "fail_on", type=click.Choice(SEVERITY_ORDER), default=None,
               help="Exit 3 when any finding has verdict=fail and severity at or above this level.")
 @click.option("--local", "local", is_flag=True, default=False,
@@ -62,7 +69,7 @@ def _finite_cap(_ctx: click.Context, _param: click.Parameter, value: float | Non
 @click.option("--compare-to", "compare_to", default=None,
               help="Base branch: report and gate only on failures that are new relative to the latest run on it. Needs run history on a server implementing the /api/v1/redteam API.")
 @judge_options
-def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, token: str | None, api_url: str | None, max_wait: float, per_run_cap: float | None, fail_on: str | None, local: bool, compare_to: str | None, skip_judged: bool = False, trials: int | None = None):
+def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, token: str | None, api_url: str | None, max_wait: float, per_run_cap: float | None, fail_on: str | None, local: bool, compare_to: str | None, skip_judged: bool = False, trials: int | None = None, mode: str = "static", deep_pairs: int = 3, max_rounds: int = 20, seed: str | None = None):
     """Submit a red-team run and write the report to disk."""
     try:
         spec, secret_values = load_target_spec_with_secrets(target)
@@ -85,6 +92,11 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
         # Empty probe_ids means "all" per orchestrator convention.
         tokens = []
     _check_out_dir(out_file)
+    if mode == "deep" and not tokens:
+        raise click.UsageError("--mode deep needs named --probes instead of all; or use --mode static")
+    if mode == "deep" and trials is not None and trials > 1:
+        raise click.UsageError("--mode deep cannot repeat trials; use --trials 1 or --mode static")
+    options = run_options(mode, deep_pairs, max_rounds, seed)
 
     if local:
         if compare_to:
@@ -96,7 +108,7 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
         ]
         if typed:
             raise click.UsageError(f"--local runs in this process; do not pass {' or '.join(typed)}")
-        _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, secret_values, skip_judged, trials)
+        _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, secret_values, skip_judged, trials, **options)
         return
     if _uses_python(spec):
         raise click.UsageError("a python target runs a local function; it needs --local")
@@ -118,6 +130,7 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
     body = {
         "target": spec,
         "probe_ids": tokens,
+        **options,
     }
     if per_run_cap is not None:
         body["per_run_cap_usd"] = per_run_cap
@@ -126,6 +139,12 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
         raise click.UsageError("--compare-to needs the repository name; run inside a git checkout with an origin remote, or set GITHUB_REPOSITORY")
     body["baseline_key"] = baseline_key(spec)
 
+    if mode == "deep":
+        from argus.cost_meter import estimate_run_usd
+
+        estimated = estimate_run_usd(len(tokens) * deep_pairs * max_rounds, deep=True)
+        click.echo(f"Estimated client-side judge/attacker cost: ${estimated:.4f}. "
+                   "The server chooses its judge and pricing; target costs are separate.")
     click.echo(f"Submitting run to {api_url}/api/v1/redteam/runs ...")
     try:
         if trials is not None:
@@ -270,13 +289,15 @@ def _write_report(out_file: str, report: str, encoding: str | None = None, echo=
 
 
 def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, secret_values=(),
-                 skip_judged=False, trials=None) -> None:
+                 skip_judged=False, trials=None, mode="static", deep_pairs=3, max_rounds=20, seed=None) -> None:
     from argus_transport.runtime_v2 import TargetRunStopped
 
     click.echo(f"Running {('all probes that fit this target' if not tokens else f'{len(tokens)} probe(s)')} locally ...")
     try:
+        options = run_options(mode, deep_pairs, max_rounds, seed)
         result = run_local_and_render(spec, tokens, per_run_cap, report_format, secret_values, fail_on,
-                                      skip_judged=skip_judged, **({"trials": trials} if trials is not None else {}))
+                                      skip_judged=skip_judged, **options,
+                                      **({"trials": trials} if trials is not None else {}))
     except StopSignalReceived as e:
         click.echo(f"{STOP_MESSAGES[e.signum]}: the run was stopped before it finished; no report was written.", file=sys.stderr)
         if e.target_cleanup is not None:

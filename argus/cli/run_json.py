@@ -197,5 +197,6 @@ def render_json(run: dict, secret_values: Iterable[str] = (), include_notes: boo
         **({"notes": plain["notes"]} if include_notes and plain.get("notes") else {}),
         **({"judge": plain["judge"]} if plain.get("judge") else {}),
         **({"target_cleanup": plain["target_cleanup"]} if plain.get("target_cleanup") is not None else {}),
+        **({"deep": plain["deep"]} if plain.get("deep") is not None else {}),
     }
     return json.dumps(record, indent=2, ensure_ascii=False)

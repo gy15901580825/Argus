@@ -22,7 +22,7 @@ from urllib.parse import urljoin
 import httpx
 from jsonpath_ng import parse as jsonpath_parse
 
-from argus.targets._base import Target
+from argus.targets._base import Target, Turn
 from argus.targets._template import compile_template, render
 
 
@@ -86,7 +86,7 @@ class HTTPUploadTarget(Target):
     def _render_group(self, group: str) -> dict[str, str]:
         return {k: render(tpl, field, self._ctx()) for k, field, tpl in self._tpls[group]}
 
-    async def send_prompt(self, prompt: str) -> tuple[str, float]:
+    async def send_prompt(self, prompt: str, history: tuple[Turn, ...] = ()) -> tuple[str, float]:
         # The probe's prompt IS the file body — encode as bytes for upload.
         file_bytes = prompt.encode("utf-8")
         files = {

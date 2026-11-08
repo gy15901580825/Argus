@@ -185,6 +185,22 @@ What Argus does **not** do:
   `PromptGuard` integration) are for **defense control experiments**, not
   for putting Argus inline as a runtime gate.
 
+## Adaptive deep runs
+
+`run --mode deep` runs selected probes as persona × strategy conversation
+threads in local or server mode. Set the pair count, round limit and seed:
+
+```bash
+argus-probe run --local --target target.json \
+  --probes owasp_01_prompt_injection_basic --mode deep \
+  --deep-pairs 2 --max-rounds 3 --seed replay-1 --format json --out run.json
+```
+
+The default limits are three pairs per base probe and 20 rounds per thread.
+The default cost cap is $5 for deep runs and $0.50 for static runs. Deep mode
+requires named probes and `--trials 1`; phased probes require static mode.
+The [CLI guide](docs/cli.md#adaptive-deep-runs) explains estimates and replay.
+
 ## In the engine, not yet exposed
 
 These exist in `argus/` with tests, but no CLI flag starts them yet:
@@ -195,9 +211,6 @@ These exist in `argus/` with tests, but no CLI flag starts them yet:
   search. The GCG one mutates a random suffix with no gradient and never
   reverts to its best suffix. Only tests construct them, and no API field
   starts them.
-- **Deep mode**: each probe re-run as persona × strategy multi-turn
-  threads (`persona_strategy.py`). The engine server's `POST /redteam/run`
-  takes `"mode": "deep"`.
 
 ## Quick start (no API keys required)
 

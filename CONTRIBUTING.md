@@ -66,6 +66,13 @@ Do **not** add `garak` to the runtime dependencies. It lives in
 wrapper probes; its transitive dependency graph conflicts with the
 runtime pins.
 
+## Deep mode
+
+The CLI and server API both support adaptive deep runs. Use named probes with
+`--mode deep`, `--deep-pairs`, `--max-rounds` and `--seed`; see the
+[CLI guide](docs/cli.md#adaptive-deep-runs). Tests must stub attacker and judge
+calls. The generic iterative attacker sketches remain test-only.
+
 ## Running the tests
 
 Run the suite from the repository root (running it from `tests/` works too):
