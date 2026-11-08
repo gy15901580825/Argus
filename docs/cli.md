@@ -97,9 +97,9 @@ The local judge uses `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY` when that is the o
 | Flag | Default | Meaning |
 |---|---|---|
 | `--mode static\|deep` | `static` | Fixed probe prompts, or adaptive persona × strategy threads. |
-| `--deep-pairs N` | `3` | Positive pair count per selected base probe, capped by the available combinations. |
+| `--deep-pairs N` | `3` | Pair count from 1 to 36 per selected base probe, capped by the available combinations. |
 | `--max-rounds N` | `20` | Maximum rounds per thread, from 1 to 20. |
-| `--seed TEXT` | generated per run | Seed for pair selection. An empty string is also a valid seed. |
+| `--seed TEXT` | generated per run | Seed for pair selection, at most 256 characters. An empty string is also valid. |
 
 ```bash
 argus-probe run --local --target target.json \
@@ -108,7 +108,9 @@ argus-probe run --local --target target.json \
 ```
 
 Omit `--local` and use the server connection flags for a server run. Its
-request carries `mode`, `deep_pairs`, `max_rounds` and `seed`. Deep mode rejects
+request carries `mode`, `deep_pairs`, `max_rounds` and `seed`. The CLI generates
+and prints the seed when omitted. Older servers ignore `max_rounds` and `seed`.
+Passing `--deep-pairs`, `--max-rounds` or `--seed` with `--mode static` is a usage error. Deep mode rejects
 `--probes all`, missing probe selection, phased probes and `--trials` above 1
 with a usage error. Choose named probes, use `--trials 1`, or use `--mode static`.
 A verdict-only judge also needs a configured text explanation model for the

@@ -160,6 +160,8 @@ def scrub_run(run: dict, secret_values: Iterable[str] = ()) -> dict:
         if isinstance(f, dict) and "evidence" in f:
             f["evidence"] = _scrub(f["evidence"], secrets, keys=True)
     _restore(out, plain, _RUN_FIELDS)
+    if isinstance(plain.get("deep"), dict):
+        _restore(out, plain, ("deep",))
     _restore(out["target_spec"], plain["target_spec"], ("kind",))
     for clean, orig in zip(out.get("findings") or [], plain.get("findings") or []):
         if isinstance(clean, dict) and isinstance(orig, dict):

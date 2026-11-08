@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import secrets
 import sys
 from pathlib import Path
 
@@ -38,6 +39,12 @@ def _finite_cap(_ctx: click.Context, _param: click.Parameter, value: float | Non
     return value
 
 
+def _seed_length(_ctx, _param, value):
+    if value is not None and len(value) > 256:
+        raise click.BadParameter("must be at most 256 characters")
+    return value
+
+
 @click.command()
 @click.option("--target", required=True, help="Target spec: JSON object (inline) or path to JSON file.")
 @click.option("--probes", "probe_ids", required=True,
@@ -50,11 +57,11 @@ def _finite_cap(_ctx: click.Context, _param: click.Parameter, value: float | Non
 @click.option("--api-url", envvar="ARGUS_API_URL", default=None, help="Base URL of a server implementing the /api/v1/redteam API (or env ARGUS_API_URL). Not used with --local.")
 @click.option("--mode", type=click.Choice(["static", "deep"]), default="static", show_default=True,
               help="Static prompts or adaptive persona/strategy threads.")
-@click.option("--deep-pairs", type=click.IntRange(min=1), default=3, show_default=True,
+@click.option("--deep-pairs", type=click.IntRange(1, 36), default=3, show_default=True,
               help="Persona/strategy pairings per base probe; capped at the available pairings.")
 @click.option("--max-rounds", type=click.IntRange(1, 20), default=20, show_default=True,
               help="Maximum rounds per adaptive thread.")
-@click.option("--seed", default=None, help="Replay persona/strategy pairings; omitted means a fresh seed.")
+@click.option("--seed", default=None, callback=_seed_length, help="Replay persona/strategy pairings; omitted means a fresh seed.")
 @click.option("--trials", type=click.IntRange(1, 20), default=None, help="Repeat each whole static probe 1-20 times, replacing its YAML trials count.")
 @click.option("--max-wait", type=float, default=1800.0, help="Max seconds to wait for run completion. Ignored with --local.")
 @click.option("--per-run-cap", "per_run_cap", type=float, callback=_finite_cap, default=None, help="Maximum USD judge/attacker spend for this run. A run whose estimate is above it does not start; the run also stops when a completed call takes spend past it. Default: $0.50 static, $5.00 deep.")
@@ -97,6 +104,15 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
         raise click.UsageError("--mode deep needs named --probes instead of all; or use --mode static")
     if mode == "deep" and trials is not None and trials > 1:
         raise click.UsageError("--mode deep cannot repeat trials; use --trials 1 or --mode static")
+    if mode == "static":
+        ctx = click.get_current_context()
+        typed = ["--" + name.replace("_", "-") for name in ("deep_pairs", "max_rounds", "seed")
+                 if ctx.get_parameter_source(name) == ParameterSource.COMMANDLINE]
+        if typed:
+            raise click.UsageError(f"{', '.join(typed)} requires --mode deep")
+    if mode == "deep":
+        seed = seed if seed is not None else secrets.token_hex(16)
+        click.echo(f"Deep selection seed: {seed}")
     options = run_options(mode, deep_pairs, max_rounds, seed)
 
     if local:

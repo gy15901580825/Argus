@@ -87,10 +87,9 @@ def test_deep_pairs_below_one_is_rejected_at_the_request(value):
     assert "deep_pairs" in str(failure.value)
 
 
-def test_deep_pairs_above_the_pairing_space_is_still_accepted():
-    """build_deep_probes clamps to the available pairs, so a large value is valid."""
-    req = RunRequest(target=TARGET, mode="deep", probe_ids=["x"], deep_pairs=99)
-    assert req.deep_pairs == 99
+def test_deep_pairs_cannot_exceed_the_pairing_space():
+    with pytest.raises(ValidationError, match="deep_pairs"):
+        RunRequest(target=TARGET, mode="deep", probe_ids=["x"], deep_pairs=99)
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf"), -0.01])

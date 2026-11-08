@@ -370,7 +370,7 @@ def test_server_cli_generates_and_echoes_replay_seed(tmp_path, engine, monkeypat
 def test_deep_transport_stop_ends_run_and_keeps_cleanup(tmp_path, engine):
     from argus_transport.runtime_v2 import TargetRunStopped
     engine.target.send_prompt = AsyncMock(side_effect=[('first reply', 1), TargetRunStopped('credential_echo')])
-    engine.target.close = AsyncMock()
+    engine.target.aclose = AsyncMock()
     cleanup = {'complete': True, 'done': 1, 'open': [], 'stop_reason': 'credential_echo'}
     engine.target.cleanup_report = lambda: cleanup
     result = CliRunner().invoke(main, arguments(tmp_path, extra=['--mode', 'deep', '--deep-pairs', '10']))
@@ -378,5 +378,5 @@ def test_deep_transport_stop_ends_run_and_keeps_cleanup(tmp_path, engine):
     assert 'Target stopped the run: credential_echo' in result.output
     assert 'cleanup included' in result.output
     assert engine.completion.await_count == engine.target.send_prompt.await_count == 2
-    engine.target.close.assert_awaited_once()
+    engine.target.aclose.assert_awaited_once()
     assert json.loads((tmp_path / 'run.json').read_text())['target_cleanup'] == cleanup

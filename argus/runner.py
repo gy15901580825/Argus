@@ -375,20 +375,27 @@ class Runner:
         )
         state = DeepThread(probe, bool(getattr(self._target, 'supports_history', False)), template)
         try:
-            async for finding in self._run_probe(probe):
+            async for finding in self._run_probe(probe, deep_state=state):
                 if 'transcript' in (finding.evidence or {}):
                     yield finding
                 elif finding.verdict == VERDICT_SKIPPED:
-                    yield state.annotate(finding, 'attacker_stopped')
+                    yield state.annotate(finding, 'not_started')
                 else:
-                    stop = 'judge_unusable' if 'rubric' in finding.reasoning else 'send_error'
-                    yield state.annotate(finding, stop)
+                    yield state.annotate(finding, 'not_started')
         except CostExceededError as exc:
-            yield state.finish('cost', f'cost cap hit at round 0: {exc}')
-        except ValueError as exc:
-            yield state.finish('judge_unusable', f'thread could not start: {_named(exc)}')
+            yield state.finish('cost', f'cost cap hit at round {len(state.rounds)}: {exc}')
+        except (TargetRunStopped, TargetUnreachableError):
+            raise
+        except Exception as exc:
+            if state.rounds:
+                finding = state.finish('post_round', f'post-round step failed: {_named(exc)}')
+                yield replace(finding, evidence={**finding.evidence, 'evidence_error': _named(exc)})
+            elif isinstance(exc, ValueError):
+                yield state.finish('not_started', f'thread could not start: {_named(exc)}')
+            else:
+                raise
 
-    async def _run_probe(self, probe) -> AsyncIterator[Finding]:
+    async def _run_probe(self, probe, *, deep_state: DeepThread | None = None) -> AsyncIterator[Finding]:
         # Template slots ({generator.name}) must never reach the target as literals.
         name = target_model_name(self._target)
         if isinstance(probe, Probe) and any(needs_rendering(p) for p in probe.prompts):
@@ -495,12 +502,12 @@ class Runner:
         if not getattr(probe, "iterative", False) and probe.trials > 1:
             inner = self._run_static_trials(probe, rubric_text)
         else:
-            inner = self._run_once(probe, rubric_text)
+            inner = self._run_once(probe, rubric_text, deep_state=deep_state)
         async for finding in inner:
             yield finding
         self._check_breaker()
 
-    async def _run_once(self, probe, rubric_text) -> AsyncIterator[Finding]:
+    async def _run_once(self, probe, rubric_text, *, deep_state: DeepThread | None = None) -> AsyncIterator[Finding]:
         from argus.persona_strategy import PersonaStrategyProbe
 
         # The probe is going to run: tell a stateful adapter where the previous
@@ -567,7 +574,7 @@ class Runner:
 
         # Dispatch on iterative flag
         if isinstance(probe, PersonaStrategyProbe):
-            inner = self._run_deep(probe, rubric_text)
+            inner = self._run_deep(probe, rubric_text, state=deep_state)
         elif getattr(probe, "iterative", False):
             inner = self._run_iterative(probe, rubric_text)
         else:
@@ -598,15 +605,25 @@ class Runner:
                 if inspect.iscoroutinefunction(collector):
                     try:
                         observed = await collector()
+                    except (CostExceededError, TargetRunStopped):
+                        raise
                     except Exception as e:
                         # The verdict was decided without evidence, so a testbed
                         # blip only loses the attachment; say so and keep going.
-                        if not _is_transport_failure(e):
+                        if thread_only:
+                            evidence = {**(f.evidence or {}), 'evidence_error': _named(e)}
+                            if f.verdict != VERDICT_FAIL:
+                                evidence['stop_reason'] = 'collect_evidence'
+                                f = replace(f, verdict=VERDICT_ERROR, severity='info')
+                            f = replace(f, evidence=evidence,
+                                        reasoning=f'{f.reasoning} | collect_evidence failed: {_named(e)}')
+                        elif not _is_transport_failure(e):
                             raise
-                        f = replace(
-                            f,
-                            reasoning=f"{f.reasoning} | evidence unavailable: {_short(e)}",
-                        )
+                        else:
+                            f = replace(
+                                f,
+                                reasoning=f"{f.reasoning} | evidence unavailable: {_short(e)}",
+                            )
                     else:
                         if observed:
                             evidence = (
@@ -620,6 +637,7 @@ class Runner:
             # Same gate as _assertion_finding: only evidence-judged probes that need the testbed.
             if (
                 f.verdict == VERDICT_BLOCKED_BY_TARGET
+                and not isinstance(probe, PersonaStrategyProbe)
                 and probe.assertions
                 and probe.requires_interaction
                 and not (f.evidence or {}).get("interaction_count")
@@ -632,7 +650,11 @@ class Runner:
                 metadata = {**f.evidence["transport"], "exposure": "not_exercised"}
                 f = replace(f, evidence={**f.evidence, "transport": metadata},
                             reasoning="target API refused the request; scenario was not exercised")
-            if f.verdict == VERDICT_PASS and _no_contact(probe, f.target_response):
+            contact_responses = (
+                [row['target_response'] for row in (f.evidence or {}).get('transcript', [])]
+                if isinstance(probe, PersonaStrategyProbe) else [f.target_response]
+            )
+            if f.verdict == VERDICT_PASS and all(_no_contact(probe, text) for text in contact_responses):
                 f = replace(f, verdict=VERDICT_SKIPPED, severity="info", confidence=1.0,
                             evidence={**(f.evidence or {}), "exposure": "not_exercised"},
                             reasoning=_NO_CONTACT)
@@ -1192,7 +1214,7 @@ class Runner:
                 evidence=indirect_evidence or None,
             )
 
-    async def _run_deep(self, probe: PersonaStrategyProbe, rubric_text) -> AsyncIterator[Finding]:
+    async def _run_deep(self, probe: PersonaStrategyProbe, rubric_text, *, state: DeepThread | None = None) -> AsyncIterator[Finding]:
         from argus import llm
         from argus.assertions import trap_canaries
         from argus.iterative import IterationContext
@@ -1203,7 +1225,7 @@ class Runner:
             probe, '', '', 0.0, datetime.now(timezone.utc), verdict=VERDICT_ERROR,
             severity='info', confidence=1.0, reasoning='thread did not complete', evidence=None,
         )
-        state = DeepThread(probe, bool(getattr(self._target, 'supports_history', False)), template)
+        state = state or DeepThread(probe, bool(getattr(self._target, 'supports_history', False)), template)
         prior_prompts, prior_responses, prior_verdicts, history = [], [], [], []
         while True:
             round_n = len(state.rounds)
@@ -1226,7 +1248,7 @@ class Runner:
             except Exception as exc:
                 yield state.finish('attacker_stopped', f'attacker could not produce the next prompt: {_named(exc)}')
                 return
-            if prompt is None:
+            if prompt is None or not str(prompt).strip():
                 yield state.finish('attacker_stopped', 'attacker stopped before the round limit')
                 return
             probed_at = datetime.now(timezone.utc)
@@ -1242,13 +1264,15 @@ class Runner:
                 return
             except Exception as exc:
                 failure = _send_failure(exc)
-                reason = failure[1] if failure else f'target request failed: {_named(exc)}'
-                self._note_send(reason)
+                if failure is None:
+                    raise
+                verdict_name, reason = failure
+                self._note_send(None if verdict_name == VERDICT_BLOCKED_BY_TARGET else reason)
                 state.observe(self._finding(
-                    probe, self._shown(prompt), '', 0.0, probed_at, verdict=VERDICT_ERROR,
+                    probe, self._shown(prompt), '', 0.0, probed_at, verdict=verdict_name,
                     severity='info', confidence=1.0, reasoning=reason, evidence=_transport_failure_evidence(exc),
                 ))
-                yield state.finish('send_error')
+                yield state.finish('blocked_by_target' if verdict_name == VERDICT_BLOCKED_BY_TARGET else 'send_error')
                 return
             shown = self._shown(prompt)
             self._note_send(None)
@@ -1264,8 +1288,12 @@ class Runner:
                 if probe.assertions:
                     current = await self._assertion_finding(probe, shown, response, latency, probed_at)
                     missing = [value for value in trap_canaries(probe.assertions) if value not in prompt]
+                    if (current.verdict == VERDICT_ERROR and probe.requires_interaction
+                            and not (current.evidence or {}).get('interaction_count')
+                            and not self._evidence_failed):
+                        current = replace(current, verdict='not_exercised')
                     if missing and current.verdict != VERDICT_FAIL:
-                        current = replace(current, verdict=VERDICT_ERROR, severity='info', confidence=1.0,
+                        current = replace(current, verdict='not_exercised', severity='info', confidence=1.0,
                                           reasoning=f'the attack prompt did not carry the canary {missing[0]!r}; the probe did not run')
                     elif current.verdict == VERDICT_PASS and _is_hybrid(probe):
                         current = await self._hybrid_finding(probe, rubric_text, current, round_n=round_n)
@@ -1305,7 +1333,7 @@ class Runner:
             if _blank(response):
                 yield state.finish('blank_reply', _no_text_reason(self._target))
                 return
-            if current.verdict not in {VERDICT_PASS, VERDICT_WARN}:
+            if current.verdict not in {VERDICT_PASS, VERDICT_WARN, 'not_exercised'}:
                 yield state.finish('judge_unusable')
                 return
             prior_prompts.append(shown)

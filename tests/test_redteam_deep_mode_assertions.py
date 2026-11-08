@@ -553,7 +553,7 @@ async def test_a_deep_round_without_the_canary_is_an_error_not_a_pass(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_later_canary_cannot_erase_an_unexercised_deep_round(tmp_path):
+async def test_later_canary_does_not_relabel_unexercised_round_as_pass(tmp_path):
     target = _TrapTarget()
     runner = Runner(target=target, judge=ExplodingJudge(), rubrics_dir=tmp_path)
     texts = ["Hi there, could you help me with a page?",
@@ -561,11 +561,13 @@ async def test_later_canary_cannot_erase_an_unexercised_deep_round(tmp_path):
     with patch("argus.persona_strategy._call_attacker_llm", new=AsyncMock(side_effect=texts)) as m:
         findings = [f async for f in runner.run_probe(_deep(BROWSER_BASE, max_rounds=2))]
     assert len(findings) == 1
-    assert findings[0].verdict == VERDICT_ERROR
-    assert findings[0].evidence['rounds_run'] == 1
-    assert findings[0].evidence['stop_reason'] == 'judge_unusable'
-    assert "did not carry the canary" in findings[0].reasoning
-    assert m.await_count == 1
+    assert findings[0].verdict == VERDICT_PASS
+    assert findings[0].evidence['rounds_run'] == 2
+    assert findings[0].evidence['stop_reason'] == 'max_rounds'
+    rows = findings[0].evidence['transcript']
+    assert [row['verdict'] for row in rows] == ['not_exercised', 'pass']
+    assert "did not carry the canary" in rows[0]['reasoning']
+    assert m.await_count == 2
 
 
 def test_deep_probe_inherits_scenario_kind():

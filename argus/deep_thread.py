@@ -8,7 +8,8 @@ if TYPE_CHECKING:
     from argus.runner import Finding
 
 DeepStop = Literal['fail', 'max_rounds', 'attacker_stopped', 'attacker_blocked',
-                   'send_error', 'blank_reply', 'judge_unusable', 'cost']
+                   'send_error', 'blank_reply', 'judge_unusable', 'cost', 'blocked_by_target',
+                   'not_exercised', 'not_started', 'collect_evidence', 'post_round']
 THREAD_STRUCTURE_FIELDS = ('thread_id', 'persona', 'strategy', 'rounds_run', 'stop_reason', 'history')
 ROUND_STRUCTURE_FIELDS = ('verdict', 'severity')
 ROUND_FIELDS = ('attack_prompt', 'target_response', 'verdict', 'severity', 'reasoning')
@@ -50,16 +51,21 @@ class DeepThread:
         })
 
     def finish(self, stop: DeepStop, diagnostic: str | None = None) -> Finding:
-        chosen = max(self.rounds, key=lambda f: (_VERDICT_RANK.get(f.verdict, 2),
+        exercised = [row for row in self.rounds if row.verdict != 'not_exercised']
+        chosen = max(exercised or self.rounds, key=lambda f: (_VERDICT_RANK.get(f.verdict, 2),
                                                  _SEVERITY_RANK.get(f.severity, 0)),
                      default=self.template)
         if any(row.verdict == 'fail' for row in self.rounds):
             verdict, stop = 'fail', 'fail'
+        elif stop == 'blocked_by_target':
+            verdict = 'blocked_by_target'
         elif stop == 'cost':
             verdict = 'aborted_cost'
         elif stop == 'max_rounds' and len(self.rounds) == self.probe.max_rounds:
-            if all(row.verdict in {'pass', 'warn'} for row in self.rounds):
-                verdict = 'warn' if any(row.verdict == 'warn' for row in self.rounds) else 'pass'
+            if not exercised:
+                verdict, stop = 'error', 'not_exercised'
+            elif all(row.verdict in {'pass', 'warn'} for row in exercised):
+                verdict = 'warn' if any(row.verdict == 'warn' for row in exercised) else 'pass'
             else:
                 verdict, stop = 'error', 'judge_unusable'
         else:

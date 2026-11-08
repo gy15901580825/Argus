@@ -83,9 +83,9 @@ class RunRequest(BaseModel):
     # probe in persona x strategy multi-turn threads — far more expensive, so it
     # requires an explicit probe selection (see _resolve_request_probe_ids).
     mode: str = "static"
-    deep_pairs: int = Field(default=DEFAULT_DEEP_PAIRS, strict=True, ge=1)
+    deep_pairs: int = Field(default=DEFAULT_DEEP_PAIRS, strict=True, ge=1, le=36)
     max_rounds: int = Field(default=DEFAULT_MAX_ROUNDS, strict=True, ge=1, le=20)
-    seed: str | None = Field(default=None, strict=True)
+    seed: str | None = Field(default=None, strict=True, max_length=256)
     trials: int | None = Field(default=None, strict=True, ge=1, le=20)
     # Caller-supplied per-run cost cap (overrides singleton default when present).
     # A NaN cap compares false against every estimate and spend, silently
@@ -177,7 +177,7 @@ def _resolve_request_probe_ids(req: RunRequest, target_obj: Any = None) -> list[
             status_code=422,
             detail=(
                 "mode=deep requires an explicit probe selection (probe_ids or suite). "
-                "Pass --probes with named probe ids instead of all, or use --mode static. "
+                "Set probe_ids to named probes (CLI: --probes), or set mode=static (CLI: --mode static). "
                 "Deep mode runs multi-turn persona x strategy threads per probe and "
                 "cannot be run across the whole library within the per-run cost cap."
             ),
@@ -207,14 +207,14 @@ def _resolve_request_probe_ids(req: RunRequest, target_obj: Any = None) -> list[
             raise HTTPException(
                 422,
                 "deep mode cannot run paired-run probes (sessions/control/trials): "
-                + ", ".join(phased) + "; use --mode static for these probes",
+                + ", ".join(phased) + "; set mode=static for these probes (CLI: --mode static)",
             )
     return ids
 
 
 def _check_trials_mode(req: RunRequest) -> None:
     if req.mode == "deep" and req.trials is not None and req.trials > 1:
-        raise HTTPException(422, "trials above one are unsupported in deep mode; use --trials 1 or --mode static")
+        raise HTTPException(422, "trials above one are unsupported in deep mode; set trials=1 or mode=static (CLI: --trials 1 or --mode static)")
 
 
 def _with_trials(probe, req: RunRequest):

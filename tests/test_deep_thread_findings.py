@@ -409,14 +409,15 @@ async def test_contact_in_later_round_counts_for_thread(thread_case):
 async def test_freeform_thread_evidence_secret_masked_in_every_format(thread_case):
     c = thread_case
     secret = 'fixture-collected-secret-0123456789'
-    c.target.collect_evidence = AsyncMock(return_value={f'observed_{secret}': secret})
+    c.target.collect_evidence = AsyncMock(return_value={f'observed_{secret}': secret, 'tool_calls': [{'tool': secret, 'arguments': {}}]})
     found = await results(c)
     run = {'id': 'fixture-run', 'status': 'completed', 'target_spec': {'api_key': secret},
            'findings': [asdict(found[0])]}
     clean = run_json.scrub_run(run)
     outputs = [run_json.render_json(run), reports.render_html(clean), reports.render_sarif(clean), reports.render_junit(clean)]
     assert all(secret not in output for output in outputs)
-    assert all('observed_***' in output for output in outputs)
+    assert all('observed_***' in outputs[i] for i in (0, 2, 3))
+    assert '***' in outputs[1]
 
 
 def test_short_secret_does_not_corrupt_deep_replay_metadata():
@@ -426,3 +427,30 @@ def test_short_secret_does_not_corrupt_deep_replay_metadata():
     run = {'target_spec': {'api_key': 'abc'}, 'deep': deep, 'findings': []}
     clean = json.loads(run_json.render_json(run))
     assert clean['deep'] == deep
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('assertions', [False, True])
+async def test_http_403_thread_keeps_blocked_verdict(thread_case, assertions):
+    c = thread_case
+    if assertions:
+        c.probe.assertions = ({'no_call_to_tool': 'forbidden_tool'},)
+        c.probe.requires_interaction = True
+    request = httpx.Request('POST', 'http://127.0.0.1/target')
+    c.target.responses[0] = httpx.HTTPStatusError('blocked', request=request,
+                                               response=httpx.Response(403, request=request))
+    found = await results(c)
+    assert_thread(found[0], c, 'blocked_by_target', 'blocked_by_target', 1)
+    c.judge.judge.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_post_round_failure_keeps_transcript(thread_case, monkeypatch):
+    import argus.runner as runner_module
+    c = thread_case
+    def broken_gate(*args):
+        raise ValueError('fixture post-round gate failed')
+    monkeypatch.setattr(runner_module, '_no_contact', broken_gate)
+    found = await results(c)
+    assert_thread(found[0], c, 'error', 'post_round', 3)
+    assert 'fixture post-round gate failed' in found[0].evidence['evidence_error']

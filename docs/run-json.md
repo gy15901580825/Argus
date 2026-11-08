@@ -69,14 +69,24 @@ from the representative worst round; the transcript retains every round.
 | Stop reason | Final verdict |
 |---|---|
 | `fail` | `fail`, after the first failed round. |
-| `max_rounds` | `warn` if any round warned; `pass` only when every round passed. |
+| `max_rounds` | `warn` if any exercised round warned; `pass` only when at least one round was exercised and every exercised round passed. |
 | `attacker_stopped`, `attacker_blocked`, `send_error`, `blank_reply`, `judge_unusable` | `error`. Earlier passes do not make an unfinished thread safe. |
+| `not_exercised` | `error`, when no assertion-backed round reached the testbed or carried the required canary by the round limit. |
+| `blocked_by_target` | `blocked_by_target`. Target blocks do not count toward the unreachable breaker. |
+| `not_started` | `skipped` for incompatible or inapplicable threads, or `error` for setup trouble; no round ran. |
+| `collect_evidence`, `post_round` | `error` after an evidence or post-round step failed, unless a judged round proved `fail`. The transcript is retained and `evidence_error` records the exception. |
 | `cost` | `aborted_cost`. Completed and interrupted send rounds remain recorded. |
 
 A failed send counts as an attempted round with its prompt and an empty reply.
 An attacker that stops or is blocked before sending adds no round. A thread
 that never starts after a cost cap has an empty transcript and `rounds_run: 0`.
-An incompatible thread remains explicitly `skipped` with an empty transcript.
+An incompatible thread remains explicitly `skipped`, with `not_started` and an empty transcript.
+Empty, whitespace-only and null attacker prompts stop as `attacker_stopped`
+without a target or judge call. Assertion-backed rounds that do not reach the
+testbed or omit the required canary have transcript verdict `not_exercised`.
+They remain in the transcript and the attacker continues; later contact cannot
+relabel an earlier unexercised round as a pass. Exercised rounds decide the
+thread verdict. A transport run stop ends the whole run and retains its cleanup report.
 A failure proven by assertions remains `fail` even when the reply is blank.
 
 `attacker_blocked` reuses the provider content-filter `JudgeBlockedError` path
@@ -213,7 +223,7 @@ A target spec can reference environment variables as `$VAR` or `${VAR}` in any s
 
 This rule does not know which variables are secret. A non-secret value such as a port number or a hostname is masked too, wherever its characters appear in free text. This over-redaction is deliberate. These fields are always written as the engine produced them, never masked:
 
-- run: `schema_version`, `argus_version`, `id`, `status`, `started_at`, `finished_at`, `coverage`, `summary` and `target_spec.kind`
+- run: `schema_version`, `argus_version`, `id`, `status`, `started_at`, `finished_at`, `coverage`, `summary`, the deep replay metadata block and `target_spec.kind`
 - each finding: `id`, `probe_id`, `verdict`, `severity`, `probed_at`, `created_at`, `confidence`, `target_latency_ms`, `atlas_id`, `owasp_id`, `owasp_agentic`, `nist_id`, `eu_ai_act_id`, `judge_model`, `escalated_model`, `remediation` and `remediation_actions`
 - each `events` entry: `event_id`, `parent_event_ids`, `ts`, `operation`, `basis`, `source`, `atlas_technique` and `seq`
 
