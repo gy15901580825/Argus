@@ -8,7 +8,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from argus.drafting.draft import STATUS_WORDS
+from argus.drafting.draft import classify_status, status_shape, status_values
 from argus.drafting.openapi import OperationCatalog
 from argus_transport.models import path as transport_path
 from argus_transport.spec_v2 import ENV_NAME_RE, SECRET_WORDS
@@ -93,7 +93,7 @@ class ScenarioV1:
 class OutcomeCase:
     """Another fixed reply sequence and the outcome it must end in.
 
-    Declared cases come from the scenario author and derived cases from the poll's documented status enum.
+    Declared cases come from the scenario author and derived cases from the poll's documented state names.
     `scenario` is None when the oracle cannot know what a documented value means."""
     name: str
     origin: str
@@ -360,7 +360,7 @@ def parse_scenario(data, *, catalog: OperationCatalog | None = None) -> Scenario
 
 
 def document_cases(scenario: ScenarioV1, catalog: OperationCatalog | None) -> tuple[OutcomeCase, ...] | None:
-    """One case per other value of the documented status enum in the scenario's terminal poll reply.
+    """One case per other value of the documented state in the scenario's terminal poll reply.
 
     A failed value replaces the terminal reply's status and must end as target_error. A pending value is inserted,
     without effects, before the terminal reply and must not change the scenario's outcome. None means no single
@@ -378,19 +378,41 @@ def document_cases(scenario: ScenarioV1, catalog: OperationCatalog | None) -> tu
     properties = schema.get('properties') if isinstance(schema, dict) else None
     if not isinstance(properties, dict) or not isinstance(terminal.body, dict):
         return None
-    fields = [(name, field['enum']) for name, field in properties.items()
-              if isinstance(field, dict) and isinstance(field.get('enum'), list) and all(isinstance(v, str) for v in field['enum'])
-              and terminal.body.get(name) in field['enum']]
-    if len(fields) != 1:
+    shape = status_shape(properties)
+    if shape is None:
         return None
-    name, values = fields[0]
-    others = [value for value in dict.fromkeys(values) if value != terminal.body[name]]
+    name, state_schema, style = shape
+    values = status_values(state_schema, style)
+    classes = classify_status(values)
+    current = terminal.body.get(name)
+    if style == 'enum':
+        if current not in values:
+            return None
+        selected = current
+    else:
+        if not isinstance(current, dict):
+            return None
+        active = [value for value in values if value in current and current[value] is not None]
+        if len(active) != 1 or active[0] not in classes['succeeded'] or not isinstance(current[active[0]], dict):
+            return None
+        selected = active[0]
+    others = [value for value in dict.fromkeys(values) if value != selected]
     if len(others) > MAX_DOCUMENTED_STATUSES:
         return None
     cases = []
     for value in others:
-        kind = STATUS_WORDS.get(value.lower())
-        swapped = replace(terminal, body={**terminal.body, name: value})
+        kind = next((kind for kind, names in classes.items() if value in names), None)
+        replacement = value
+        if style == 'presence':
+            branch = state_schema['properties'][value]
+            allowed = {'type', 'properties', 'required', 'additionalProperties', 'nullable', 'description', 'title',
+                       'deprecated', 'readOnly', 'writeOnly'}
+            if kind not in {'pending', 'failed'} or branch.get('required') or set(branch) - allowed:
+                cases.append(OutcomeCase(f'status:{value}', 'document', None, value, kind or 'unclassified'))
+                continue
+            replacement = {key: item for key, item in current.items() if key not in values}
+            replacement[value] = {}
+        swapped = replace(terminal, body={**terminal.body, name: replacement})
         if kind == 'pending':
             replies = poll.replies[:index] + (replace(swapped, effects=()), terminal)
             variant = replace(scenario, cases=())

@@ -72,8 +72,8 @@ def test_a_submit_documenting_only_202_with_the_poll_body_never_succeeds_at_subm
     delivery = transport(out)["delivery"]
     assert delivery["submit_http_status"] == [202]
     assert delivery["submit_outcome"]["rules"] == [
-        {"id": "failed", "priority": 5, "http_status": [202],
-         "when": {"path": "$.status", "one_of": ["failed"]}, "outcome": "target_error"}]
+        {"id": "failed", "priority": 20, "http_status": [202],
+         "when": {"path": "$.status", "one_of": ["failed", "stopped"]}, "outcome": "target_error"}]
 
 
 def test_a_poll_documenting_only_202_cannot_report_a_finished_job(tmp_path):
@@ -97,7 +97,8 @@ def test_success_requires_every_documented_required_field(tmp_path):
     assert succeeded["when"] == {"all": [{"path": "$.status", "equals": "COMPLETED"}, {"path": "$.id", "exists": True},
                                          {"path": "$.output", "exists": True}, {"path": "$.generatedAt", "exists": True}]}
     assert "success_conditions_minimal" not in codes(out)
-    provenance = json.loads(out.with_suffix(".provenance.json").read_text())["fields"]["/transport/outcome/rules/0"]
+    index = next(i for i, rule in enumerate(transport(out)["outcome"]["rules"]) if rule["outcome"] == "succeeded")
+    provenance = json.loads(out.with_suffix(".provenance.json").read_text())["fields"][f"/transport/outcome/rules/{index}"]
     assert any(source["pointer"].endswith("/schema/required") for source in provenance["source"])
     validation = CliRunner().invoke(main, ["validate-target", "--target", str(out), "--offline"])
     assert validation.exit_code == 0, validation.output
@@ -218,14 +219,20 @@ def unrelated_enum_document(stage, state):
 def test_an_unrelated_enum_without_a_success_word_never_hides_a_presence_state(tmp_path):
     result, out = run(tmp_path, unrelated_enum_document(["STAGE_DRAFT", "STAGE_PUBLISHED"], PRESENCE_STATE))
     assert result.exit_code == 3, result.output
-    assert not out.exists()
-    assert blocking(out) & {"async_shape_unsupported", "completion_missing"}
+    assert out.exists()
+    assert "state" in json.dumps(transport(out)["delivery"]["pending"])
+    assert not blocking(out)
 
 
 @pytest.mark.parametrize("state", [PRESENCE_STATE, {"type": "string"}], ids=["presence_object", "plain_string"])
 def test_an_unrelated_enum_with_success_words_is_not_read_as_the_run_state(tmp_path, state):
     result, out = run(tmp_path, unrelated_enum_document(["pending", "done"], state))
     assert result.exit_code == 3, result.output
-    assert not out.exists()
-    assert "async_shape_unsupported" in blocking(out)
+    if state == PRESENCE_STATE:
+        assert out.exists()
+        assert "state" in json.dumps(transport(out)["delivery"]["pending"])
+        assert not blocking(out)
+    else:
+        assert not out.exists()
+        assert "async_shape_unsupported" in blocking(out)
 

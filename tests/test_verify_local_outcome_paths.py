@@ -81,7 +81,9 @@ def pending_without(value):
 
 
 def success_also_on_failed(spec):
-    rule(spec, "succeeded")["when"] = {"path": "$.status", "one_of": ["COMPLETED", "FAILED"]}
+    success = rule(spec, "succeeded")
+    success["when"] = {"path": "$.status", "one_of": ["COMPLETED", "FAILED"]}
+    success["priority"] = rule(spec, "target_error")["priority"] + 1
 
 
 @pytest.mark.parametrize("mutate, check, first", [
@@ -119,6 +121,17 @@ async def test_correct_draft_passes_every_derived_case(tmp_path):
         assert rows[name]["class"] == "pending" and rows[name]["passed"]
         assert rows[name]["expected"] == rows[name]["outcome"] == "succeeded"
         assert rows[name]["requests"] == {"submit": 1, "poll": 3}
+
+
+async def test_failure_wins_when_success_also_matches_without_outranking(tmp_path):
+    catalog, spec = drafted(tmp_path)
+    rule(spec, "succeeded")["when"] = {"path": "$.status", "one_of": ["COMPLETED", "FAILED"]}
+    result = await verify(spec, raw_scenario(), catalog=catalog)
+    assert result.status == "verified", result.as_dict()
+    assert result.semantic_success and result.cleanup_complete
+    rows = {row["name"]: row for row in result.as_dict()["cases"]}
+    assert rows["status:FAILED"]["outcome"] == "target_error"
+    assert rows["status:FAILED"]["passed"] is True
 
 
 async def test_failure_case_swaps_only_the_terminal_status(tmp_path):
