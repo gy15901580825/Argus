@@ -62,6 +62,7 @@ async def test_malformed_completed_value_never_succeeds(tmp_path, override, valu
 async def test_completed_with_pending_keeps_polling_to_bound(tmp_path, override, value, pending):
     _, artifact = compiled(tmp_path, entry=completion() if override else None)
     artifact.spec['transport']['delivery']['max_polls'] = 2
+    artifact.spec['transport']['delivery']['interval_s'] = 0.001
     state = {'completed': value, pending: {}}
     result = await verify(artifact.spec, presence_scenario(tmp_path, [state] * 2, 'target_error', None))
     execution = result.as_dict()['execution']
@@ -91,12 +92,12 @@ def test_submit_completion_uses_same_type_and_exclusion_rules(tmp_path, override
     doc = presence_document()
     submit = doc['paths']['/jobs']['post']['responses']['202']['content']['application/json']['schema']
     submit['properties'].update(copy.deepcopy(poll_schema(doc)['properties']))
-    doc['paths']['/jobs']['post']['responses']['200'] = doc['paths']['/jobs']['post']['responses'].pop('202')
+    doc['paths']['/jobs']['post']['responses']['200'] = copy.deepcopy(doc['paths']['/jobs']['post']['responses']['202'])
     _, artifact = compiled(tmp_path, doc, completion() if override else None)
     rule = next(r for r in artifact.spec['transport']['delivery']['submit_outcome']['rules'] if r['id'] == 'completed')
-    assert matches_predicate({'state': {'completed': {}}, 'result': 'pong'}, rule['when'])
+    assert matches_predicate({'job_id': 'job-7', 'state': {'completed': {}}, 'result': 'pong'}, rule['when'])
     for state in [{'completed': False}, {'completed': {}, 'executing': {}}, {'completed': {}, 'mystery': {}}]:
-        assert not matches_predicate({'state': state, 'result': 'partial'}, rule['when'])
+        assert not matches_predicate({'job_id': 'job-7', 'state': state, 'result': 'partial'}, rule['when'])
 
 
 @pytest.mark.parametrize('sibling', [{'type': 'string'}, {'type': 'object', 'properties': {'a': {'type': 'object'}, 'b': {'type': 'object'}}}])
@@ -154,3 +155,38 @@ def test_success_excludes_all_unknown_children_with_bounded_fan_in(tmp_path):
     for name in names[2:]:
         assert not matches_predicate({'state': {'completed': {}, name: {}}}, rule['when'])
     predicate(rule['when'])
+
+
+def test_enum_beside_inert_state_does_not_ignore_another_enum(tmp_path):
+    doc = async_document(result={'type': 'string'})
+    poll_schema(doc)['properties']['state'] = {'type': 'string'}
+    poll_schema(doc)['properties']['stage'] = {'type': 'string', 'enum': ['PENDING', 'COMPLETED']}
+    result, out = run(tmp_path, doc)
+    assert result.exit_code == 3 and not out.exists(), result.output
+
+
+@pytest.mark.parametrize('kind', ['boolean', 'number', 'array'])
+def test_enum_restoration_does_not_add_other_sibling_kinds(tmp_path, kind):
+    doc = async_document(result={'type': 'string'})
+    poll_schema(doc)['properties']['state'] = {'type': kind}
+    result, out = run(tmp_path, doc)
+    assert result.exit_code == 3 and not out.exists(), result.output
+
+
+@pytest.mark.parametrize('schema', [
+    {'type': 'string', 'format': 'date-time'},
+    {'type': 'object', 'writeOnly': True},
+    {'type': 'string'},
+])
+def test_enum_conflict_uses_all_raw_child_class_words(tmp_path, schema):
+    doc = async_document(result={'type': 'string'})
+    poll_schema(doc)['properties']['state'] = {'type': 'object', 'properties': {'failed': schema}}
+    result, out = run(tmp_path, doc)
+    assert result.exit_code == 3 and not out.exists(), result.output
+
+
+def test_unwritable_unknown_presence_child_blocks_instead_of_disappearing(tmp_path):
+    doc = presence_document()
+    poll_schema(doc)['properties']['state']['properties']["unknown'child"] = {'type': 'object'}
+    result, out = run(tmp_path, doc)
+    assert result.exit_code == 3 and not out.exists(), result.output
