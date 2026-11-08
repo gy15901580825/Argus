@@ -65,6 +65,9 @@ DECISIONS = {
     "binding_user_supplied": "Confirm that this bindings file entry is right; the draft took it from the file, not the document.",
     "binding_unresolved": "Correct the bindings file entry so it names a documented field whose schema accepts it.",
     "setup_undo_proposed": "Confirm that this DELETE removes what the step creates and that the captured field identifies it.",
+    "step_response_ambiguous": "Provide a documented unambiguous successful response for this setup operation.",
+    "step_multipart_text_unsupported": "Use an operation whose multipart fields the transport can represent without changing their documented kind.",
+    "step_multipart_filename_on_text": "Remove the filename from the documented text field; a filename cannot change its documented kind.",
 }
 _INDEPENDENT_RUN_ID_DECISION = (
     "Provide documentation for an independently created run ID distinct from the submit path inputs. "
@@ -195,13 +198,30 @@ class OperationSelection:
 
 
 @dataclass(frozen=True)
+class FilePart:
+    name: str
+    filename: str
+    content_type: str
+    defaults: tuple[str, ...]
+    kind_basis: Literal["document_fact", "user_selection"]
+    schema_annotations: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SendabilityRefusal:
+    why: str
+    code: str = "binding_unresolved"
+
+
+@dataclass(frozen=True)
 class StepValue:
     """A checked value of a setup step or its undo: where it is sent, its expression and the schema that accepts it."""
-    location: str  # body, path or query
+    location: Literal["body", "multipart", "path", "query"]
     path: tuple[str, ...]  # body path, or the one parameter name
     expression: dict
     leaf: str
     source: Source | None  # None when the draft proposed it
+    part: FilePart | None = None
 
 
 @dataclass(frozen=True)
@@ -946,20 +966,30 @@ def _auth_or_none(catalog, operation):
         return None
 
 
-def _sendable(catalog, operation, auth, methods):
+def _sendable(catalog, operation, auth, methods, *, multipart=False):
     """Why the draft cannot send operation beside the ask, or None."""
     if operation.method not in methods:
-        return ("An undo must be a documented DELETE; anything else would report cleanup it never did." if methods == {"DELETE"}
-                else "A setup step must create or change something with POST, PUT or PATCH.")
+        return SendabilityRefusal("An undo must be a documented DELETE; anything else would report cleanup it never did." if methods == {"DELETE"}
+                                  else "A setup step must create or change something with POST, PUT or PATCH.")
     if operation.path_data.get("servers") or operation.data.get("servers") or operation.data.get("callbacks"):
-        return "The operation overrides the server or declares callbacks, which the draft does not follow."
+        return SendabilityRefusal("The operation overrides the server or declares callbacks, which the draft does not follow.")
     if _auth_or_none(catalog, operation) != auth:
-        return "The operation's authentication differs from the ask's."
-    if _unsafe_path(operation.path) or _parameters(operation) is None or _success(operation) is None:
-        return "The operation's path, parameters or successful response cannot be compiled."
+        return SendabilityRefusal("The operation's authentication differs from the ask's.")
+    if _unsafe_path(operation.path) or _parameters(operation) is None:
+        return SendabilityRefusal("The operation's path, parameters or successful response cannot be compiled.")
+    if _success(operation) is None:
+        responses = operation.data.get("responses", {})
+        statuses = sorted(str(status) for status in responses if re.fullmatch(r"2\d\d", str(status))) if isinstance(responses, dict) else []
+        if len(statuses) > 1 and all(isinstance(responses[status], dict) for status in statuses):
+            return SendabilityRefusal("The documented successful statuses " + ", ".join(statuses)
+                                      + " do not identify one supported response shape; the draft cannot tell which response carries the result. "
+                                      "Several successful responses require 202 and identical bodies.", "step_response_ambiguous")
+        return SendabilityRefusal("The operation's path, parameters or successful response cannot be compiled.")
     request = operation.data.get("requestBody")
-    if isinstance(request, dict) and request.get("required") and (operation.method == "DELETE" or _root(operation, "step") is None):
-        return "The operation requires a request body this draft cannot send."
+    root = _multipart_root(operation) if multipart else _root(operation, "step")
+    if isinstance(request, dict) and request.get("required") and (operation.method == "DELETE" or root is None):
+        return SendabilityRefusal("The operation does not document a multipart/form-data body schema." if multipart and root is None
+                                  else "The operation requires a request body this draft cannot send.")
     return None
 
 
@@ -1039,6 +1069,99 @@ def _proposed_undo(catalog, operation, entry, auth, captures, captured):
     return None if blocked else (StepUndo(target.id, values, None), captures)
 
 
+def _multipart_root(operation):
+    request = operation.data.get("requestBody", {})
+    content = request.get("content", {}) if isinstance(request, dict) else {}
+    media = content.get("multipart/form-data") if isinstance(content, dict) else None
+    if isinstance(media, dict) and isinstance(media.get("schema"), dict):
+        return operation.pointer + "/requestBody/content/multipart~1form-data/schema"
+    return None
+
+
+def _multipart_values(catalog, operation, entry, captured, block, field, gaps):
+    root = _multipart_root(operation)
+    if root is None:
+        block(Source(entry.source.file, entry.source.pointer + "/multipart"), "The operation does not document a multipart/form-data body schema.")
+        return [], set()
+    if operation.method not in {"POST", "PUT"}:
+        block(entry.source, "Multipart setup steps require POST or PUT, as supported by the transport.")
+        return [], {root}
+    schema = _schema_at(catalog, root)
+    unsupported = _unsupported_reads(catalog, {root: schema})
+    if unsupported:
+        gaps.extend(_unsupported_gap(catalog, pointer, keywords) for pointer, keywords in unsupported.items())
+        return [], {root}
+    if "type" in schema and schema["type"] != "object":
+        block(entry.source, "The documented multipart schema must describe an object of named parts.")
+        return [], {root}
+    if "properties" in schema and not isinstance(schema["properties"], dict):
+        block(entry.source, "The documented multipart properties must be an object.")
+        return [], {root}
+    required = schema.get("required", [])
+    if not isinstance(required, list) or not all(isinstance(name, str) for name in required):
+        block(entry.source, "The documented multipart required names must be a list of strings.")
+        return [], {root}
+    properties = schema.get("properties")
+    values, reads = [], {root}
+    for part in entry.multipart.parts:
+        leaf = root
+        if properties is not None:
+            if part.name not in properties:
+                block(part.source, "The part name is not in the documented multipart properties.")
+                continue
+            leaf = pointer_child(root + "/properties", part.name)
+            kinds = _value_kinds(part.content, captured)
+            leaf = _leaf(catalog, leaf, kinds) or leaf
+            documented = _schema_at(catalog, leaf)
+            if _type(documented) != "string" or kinds != ("string",) or documented.get("readOnly"):
+                block(part.source, "Multipart content must produce a string accepted by the documented writable property.")
+                continue
+            why = _value_set(catalog, leaf, part.content)
+            if why:
+                block(part.source, why)
+                continue
+            annotations = tuple(key for key in ("contentMediaType", "contentEncoding")
+                                if key in documented and catalog.document.data["openapi"].startswith("3.1"))
+            if any(not isinstance(documented[key], str) or not documented[key] for key in annotations):
+                block(part.source, "The documented multipart file annotations must be nonempty strings.")
+                continue
+            file_format = documented.get("format")
+            if "format" in documented and not isinstance(file_format, str):
+                block(part.source, "The documented multipart format must be a string.")
+                continue
+            is_file = file_format in ("binary", "byte") or bool(annotations)
+            if not is_file and part.filename is not None:
+                block(part.source, "The document defines this part as text; a supplied filename cannot turn it into a file.", "step_multipart_filename_on_text")
+                continue
+            if not is_file:
+                block(part.source, "The document defines this part as text without a filename, which this transport cannot send.", "step_multipart_text_unsupported")
+                continue
+            kind_basis = "document_fact"
+        elif schema.get("additionalProperties") is False:
+            block(part.source, "The documented multipart schema forbids additional parts and names no allowed part.")
+            continue
+        elif _value_kinds(part.content, captured) != ("string",):
+            block(part.source, "Multipart content must produce a string.")
+            continue
+        else:
+            if part.filename is None:
+                block(part.source, "The bindings file chooses a text part without a filename, which this transport cannot send.", "step_multipart_text_unsupported")
+                continue
+            annotations, kind_basis = (), "user_selection"
+            gaps.append(Gap(field + "/request/body/multipart/" + part.name + "/content",
+                            "The document does not name multipart parts; the bindings file supplies this part name and chooses a file with its filename.",
+                            DECISIONS["binding_user_supplied"], "binding_user_supplied", "documentation_gap", False,
+                            (catalog.document.source(root), part.source)))
+        file_part = FilePart(part.name, part.filename or "material.txt", part.content_type or "text/plain",
+                             part.defaults, kind_basis, annotations)
+        values.append(StepValue("multipart", (part.name,), part.content, leaf, part.source, file_part))
+        reads.add(leaf)
+    missing = [name for name in required if name not in {part.name for part in entry.multipart.parts}]
+    if missing:
+        block(entry.source, "These required multipart parts have no value: " + _unbound(missing))
+    return values, reads
+
+
 def _setup_steps(catalog, invoke, inputs, gaps):
     """Check each bindings file step against the document; a step that fails adds blocking gaps and is left out."""
     auth = _auth_or_none(catalog, invoke)
@@ -1048,22 +1171,28 @@ def _setup_steps(catalog, invoke, inputs, gaps):
         field = f"/transport/lifecycle/{entry.scope}/{counts[entry.scope]}"
         counts[entry.scope] += 1
         found = []
+        def block(source, why, code="binding_unresolved"):
+            found.append(Gap(field, why, DECISIONS[code], code, "documentation_gap", True, (source,)))
+
+        if entry.multipart:
+            for issue in entry.multipart.issues:
+                block(issue.source, issue.why)
         own_names = {capture.name for capture in entry.capture or ()}
-        reads_from = set().union(*(_variables(item.value) for item in (*entry.values, *entry.parameters)),
+        part_fields = tuple(UserField((part.name,), part.source, None, part.content) for part in entry.multipart.parts) if entry.multipart else ()
+        reads_from = set().union(*(_variables(item.value) for item in (*entry.values, *part_fields, *entry.parameters)),
                                  *(_variables(item.value) - own_names for item in (entry.undo.parameters if entry.undo else ())))
         if not reads_from <= set(captured):
+            gaps.extend(found)
             continue  # it reads a capture of an earlier step that already blocks the draft
 
-        def block(source, why):
-            found.append(Gap(field, why, DECISIONS["binding_unresolved"], "binding_unresolved", "documentation_gap", True, (source,)))
-
         op = operations.get(entry.operation)
-        why = "The operation is not documented." if op is None else _sendable(catalog, op, auth, {"POST", "PUT", "PATCH"})
-        if why:
-            block(Source(entry.source.file, entry.source.pointer + "/operation"), why)
+        refusal = SendabilityRefusal("The operation is not documented.") if op is None else _sendable(catalog, op, auth, {"POST", "PUT", "PATCH"}, multipart=entry.multipart is not None)
+        if refusal:
+            block(Source(entry.source.file, entry.source.pointer + "/operation"), refusal.why, refusal.code)
             gaps.extend(found)
             continue
-        values, reads = [], set()
+        values, reads = (_multipart_values(catalog, op, entry, captured, block, field, found)
+                         if entry.multipart and not entry.multipart.issues else ([], set()))
         for value in entry.values:
             chain, why = _resolve(catalog, op, value.path, "step", _value_kinds(value.value, captured))
             why = why or _value_set(catalog, chain[-1], value.value)
@@ -1072,12 +1201,12 @@ def _setup_steps(catalog, invoke, inputs, gaps):
                 continue
             values.append(StepValue("body", value.path, value.value, chain[-1], value.source))
             reads.update(chain)
-        root = _root(op, "step")
+        root = _root(op, "step") if entry.multipart is None else None
         missing = _unbound_required(catalog, root, [value.path for value in values]) if root and len(values) == len(entry.values) else []
         if missing:
             block(entry.source, "These required request fields have no value: " + _unbound(missing))
         values += _parameter_values(catalog, op, entry.parameters, captured, block, entry.source)
-        if entry.scope == "run" and any(_material(value.value) for value in (*entry.values, *entry.parameters)):
+        if entry.scope == "run" and any(_material(value.value) for value in (*entry.values, *part_fields, *entry.parameters)):
             block(entry.source, "Material changes with every ask, so only an attempt step can send it.")
         captures = []
         for capture in entry.capture or ():
@@ -1090,9 +1219,9 @@ def _setup_steps(catalog, invoke, inputs, gaps):
         undo = None
         if entry.undo is not None and not any(gap.blocking for gap in found):
             target = operations.get(entry.undo.operation)
-            why = "The operation is not documented." if target is None else _sendable(catalog, target, auth, {"DELETE"})
-            if why:
-                block(Source(entry.undo.source.file, entry.undo.source.pointer + "/operation"), why)
+            refusal = SendabilityRefusal("The operation is not documented.") if target is None else _sendable(catalog, target, auth, {"DELETE"})
+            if refusal:
+                block(Source(entry.undo.source.file, entry.undo.source.pointer + "/operation"), refusal.why, refusal.code)
             else:
                 undo = StepUndo(target.id, _parameter_values(catalog, target, entry.undo.parameters, own, block, entry.undo.source), entry.undo.source)
         elif entry.undo is None and not any(gap.blocking for gap in found):
@@ -1100,7 +1229,7 @@ def _setup_steps(catalog, invoke, inputs, gaps):
             if proposed:
                 undo, proposal = proposed
                 captures = list(proposal)
-        gaps.extend(found)
+        gaps.extend(gap for gap in found if not any(item.blocking for item in found) or gap.code != "binding_user_supplied")
         if any(gap.blocking for gap in found):
             continue
         captured.update({capture.name: _capture_kinds(catalog, capture) for capture in captures})
@@ -1603,6 +1732,25 @@ def _step_records(catalog, step):
     record = {"source": [document(operations[step.entry.operation].pointer).to_dict(), step.entry.source.to_dict(),
                          *(document(value.leaf).to_dict() for value in step.values)], "basis": "user_selection"}
     records = {step.field: {**record, "origin": step.entry.origin} if step.entry.origin is not None else record}
+    for value in step.values:
+        if value.part is None:
+            continue
+        field = step.field + "/request/body/multipart/" + value.part.name + "/content"
+        row = {"source": [document(value.leaf).to_dict(), value.source.to_dict()], "basis": "user_selection"}
+        row["part_kind"] = "file"
+        row["part_kind_basis"] = value.part.kind_basis
+        if step.entry.origin is not None:
+            row["origin"] = step.entry.origin
+        schema = _schema_at(catalog, _multipart_root(operations[step.entry.operation]))
+        if "properties" not in schema:
+            row["why"] = "The document does not name multipart parts; the bindings file supplies this part name and chooses a file with its filename."
+        records[field] = row
+        for key in ("filename", "content_type"):
+            metadata = {"basis": "policy_default", "value": getattr(value.part, key)} if key in value.part.defaults else {
+                "basis": "user_selection", "source": [Source(value.source.file, value.source.pointer + "/" + key).to_dict()]}
+            if key not in value.part.defaults and step.entry.origin is not None:
+                metadata["origin"] = step.entry.origin
+            records[field.removesuffix("content") + key] = metadata
     for capture in step.capture:
         records[f"{step.field}/capture/{capture.name}"] = {
             "source": [document(capture.leaf).to_dict(), *([capture.source.to_dict()] if capture.source else [])],
@@ -1620,7 +1768,7 @@ def _sent(catalog, server, operation_id, values, declarations):
 
     An environment value becomes a run variable, so a missing one stops the run before any request."""
     operation = next(op for op in catalog.operations if op.id == operation_id)
-    url, query, body = operation.path, {}, []
+    url, query, body, multipart = operation.path, {}, [], {}
     for value in values:
         expression = value.expression
         if "env" in expression:
@@ -1631,11 +1779,14 @@ def _sent(catalog, server, operation_id, values, declarations):
             url = url.replace("{" + value.path[0] + "}", "{" + expression["var"] + "}")
         elif value.location == "query":
             query[value.path[0]] = expression
+        elif value.location == "multipart":
+            multipart[value.path[0]] = {"content": expression, "filename": {"literal": value.part.filename}, "content_type": value.part.content_type}
         else:
             body.append((value.path, expression))
     request = {"method": operation.method, "url": server + url, "headers": {"Accept": "application/json"},
                **({"query": query} if query else {}),
-               "body": {"json": _nest(body)} if operation.method != "DELETE" and _root(operation, "step") else {"none": True}}
+               "body": ({"multipart": multipart} if multipart else
+                        {"json": _nest(body)} if operation.method != "DELETE" and _root(operation, "step") else {"none": True})}
     return request, [int(code) for code, _ in _success(operation)]
 
 
@@ -1812,6 +1963,9 @@ def compile_draft(catalog: OperationCatalog, choices: DraftChoices) -> DraftArti
             provenance["fields"][field] = record
         for step in choices.steps:
             read.update({pointer: _schema_at(catalog, pointer) for pointer in step.reads})
+            for value in step.values:
+                if value.part and value.part.schema_annotations:
+                    read[value.leaf] = {key: item for key, item in read[value.leaf].items() if key not in value.part.schema_annotations}
             provenance["fields"].update(_step_records(catalog, step))
         if choices.delivery and auth is not None:
             try:

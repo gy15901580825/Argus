@@ -18,7 +18,7 @@ MAX_SEGMENTS = 16
 ENV_NAME = re.compile(r"TARGET_INPUT_[A-Z0-9_]{1,26}")
 CREDENTIAL_NAME = re.compile(r"key|token|password|secret|auth|credential", re.I)
 MAX_STEPS = 8
-STEP_KEYS = {"id", "operation", "scope", "values", "parameters", "capture", "undo"}
+STEP_KEYS = {"id", "operation", "scope", "values", "parameters", "capture", "undo", "multipart"}
 # Each kind yields one string or number the document can type-check; nested objects are written as nested paths.
 STEP_KINDS = {"literal", "env", "var", "generate", "concat", "context"}
 
@@ -47,6 +47,28 @@ class UserUndo:
 
 
 @dataclass(frozen=True)
+class MultipartIssue:
+    source: Source
+    why: str
+
+
+@dataclass(frozen=True)
+class UserPart:
+    name: str
+    content: dict
+    filename: str | None
+    content_type: str | None
+    source: Source
+    defaults: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class UserMultipart:
+    parts: tuple[UserPart, ...]
+    issues: tuple[MultipartIssue, ...]
+
+
+@dataclass(frozen=True)
 class UserStep:
     """A prerequisite call before the ask; the file names it because no document says the ask needs it."""
     id: str
@@ -58,6 +80,7 @@ class UserStep:
     undo: UserUndo | None  # None lets the draft propose one
     source: Source
     origin: str | None = None
+    multipart: UserMultipart | None = None
 
 
 @dataclass(frozen=True)
@@ -206,6 +229,68 @@ def _named(data, where, file, visible):
                            _step_expression(item, pointer_child(where, name), visible)) for name, item in data.items())
 
 
+def _secret_literal(value):
+    if isinstance(value, str):
+        return any(word in value.lower() for word in SECRET_WORDS)
+    if isinstance(value, dict):
+        return any(_secret_literal(key) or _secret_literal(item) for key, item in value.items())
+    if isinstance(value, list):
+        return any(_secret_literal(item) for item in value)
+    return False
+
+
+def _part_secret(expression):
+    if "literal" in expression:
+        return _secret_literal(expression["literal"])
+    parts = expression.get("concat", ())
+    return (any(_part_secret(part) for part in parts)
+            or _secret_literal("".join(str(part["literal"]) for part in parts if "literal" in part)))
+
+
+def _multipart(data, where, file, visible, has_values):
+    parts, issues = [], []
+
+    def reject(pointer, why):
+        issues.append(MultipartIssue(Source(file, pointer), why))
+
+    if has_values:
+        reject(where, "A step cannot send both JSON values and multipart parts.")
+    if not isinstance(data, dict) or not 1 <= len(data) <= 4:
+        reject(where, "A multipart body must map one to four part names to parts.")
+        return UserMultipart((), tuple(issues))
+    for name, raw in data.items():
+        at = pointer_child(where, name)
+        if CREDENTIAL_NAME.search(name):
+            raise ValueError(f"{at} names a credential; credentials never enter a bindings file, use TARGET_API_KEY")
+        if not NAME_RE.fullmatch(name) or any(word in name.lower() for word in SECRET_WORDS):
+            reject(at, "A multipart part needs a lowercase transport name without a secret word.")
+            continue
+        if not isinstance(raw, dict) or not set(raw) <= {"content", "filename", "content_type"} or "content" not in raw:
+            reject(at, "A multipart part needs content and only optional filename and content_type literals.")
+            continue
+        try:
+            content = _step_expression(raw["content"], at + "/content", visible)
+        except ValueError:
+            reject(at + "/content", "The multipart content is not a supported step expression.")
+            continue
+        filename, content_type = raw.get("filename"), raw.get("content_type")
+        if "filename" in raw and (not isinstance(filename, str) or not filename or any(char in filename for char in '\r\n\x00"')):
+            reject(at + "/filename", "The multipart filename must be a nonempty literal without a quote, line break or NUL.")
+            continue
+        if "content_type" in raw and content_type not in ("text/plain", "text/markdown", "application/json", "text/csv"):
+            reject(at + "/content_type", "The multipart content_type must be a supported literal media type.")
+            continue
+        if _part_secret(content) or _secret_literal(filename) or _secret_literal(content_type):
+            reject(at, "A multipart part cannot contain a secret-like literal.")
+            continue
+        if "literal" in content and not isinstance(content["literal"], str):
+            reject(at + "/content", "Multipart content must produce a string.")
+            continue
+        parts.append(UserPart(name, content, filename, content_type, Source(file, at),
+                              tuple(key for key in ("filename", "content_type") if key not in raw)))
+    return UserMultipart(tuple(parts), tuple(issues))
+
+
 def _step(data, index, file, visible, taken):
     where = f"/steps/{index}"
     _object(data, where, STEP_KEYS | {"origin"}, {"id", "operation", "scope"})
@@ -227,6 +312,7 @@ def _step(data, index, file, visible, taken):
         if any(other.path[:len(path)] == path or path[:len(other.path)] == other.path for other in fields):
             raise ValueError(f"{at} overlaps another value path")
         fields.append(UserField(path, Source(file, at), None, _step_expression(item, at, visible)))
+    multipart = _multipart(data["multipart"], where + "/multipart", file, visible, "values" in data) if "multipart" in data else None
     parameters = _named(data.get("parameters", {}), where + "/parameters", file, visible)
     captures = None
     if "capture" in data:
@@ -245,7 +331,7 @@ def _step(data, index, file, visible, taken):
         undo = UserUndo(data["undo"]["operation"], _named(data["undo"].get("parameters", {}), where + "/undo/parameters", file, own),
                         Source(file, where + "/undo"))
     visible.update(own - visible)
-    return UserStep(step_id, data["operation"], data["scope"], tuple(fields), parameters, captures, undo, Source(file, where), origin)
+    return UserStep(step_id, data["operation"], data["scope"], tuple(fields), parameters, captures, undo, Source(file, where), origin, multipart)
 
 
 def _steps(data, file):
