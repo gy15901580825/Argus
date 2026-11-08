@@ -1,7 +1,5 @@
-"""A recorded empty ledger is different from a ledger that was not observed."""
-
 import copy
-from dataclasses import dataclass
+from dataclasses import FrozenInstanceError, dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -217,6 +215,22 @@ def test_tool_ledger_accessor_never_invents_an_empty_observation():
     assert assertions._tool_calls({"tool_calls": []}) == []
 
 
+def test_observation_declaration_preserves_callback_and_freezes_fields():
+    fields = {"tool_calls": list}
+
+    def check(value, report, response):
+        return True, "allowed"
+
+    declared = assertions.requires_observations(fields)(check)
+    assert declared is check
+    fields.clear()
+    with pytest.raises(FrozenInstanceError):
+        declared.observation_requirements.fields = ()
+    with pytest.raises(assertions.Undecided):
+        assertions.validate_observations(declared, True, {})
+    assertions.validate_observations(declared, True, {"tool_calls": []})
+
+
 @pytest.mark.parametrize("ledger,want", ((MISSING, "error"), (None, "error"), ([], "pass")))
 async def test_phase_profile_enforces_declared_observation_before_callback(ledger, want, monkeypatch, tmp_path):
     calls = []
@@ -225,19 +239,15 @@ async def test_phase_profile_enforces_declared_observation_before_callback(ledge
         calls.append(report["phase"])
         return True, "recorded action is allowed"
 
-    declared_check.observation_requirements = SimpleNamespace(
-        fields=(("tool_calls", list),), enabled=None,
-    )
+    declared_check = assertions.requires_observations({"tool_calls": list})(declared_check)
     profile = WorldProfile(
         ("session_id", "phase", "sealed", "seal_timeout", "task_completed"),
         {"fixture_ledger_check": declared_check}, (), lambda *args: True,
         lambda *args: None, lambda *args: None,
     )
     monkeypatch.setitem(phases.PROFILES, "fixture_world", profile)
-    p = probe("fixture_ledger_check", True)
-    p = copy.copy(p)
-    object.__setattr__(p, "scenario_kind", "fixture_world")
-    object.__setattr__(p, "scenario_control", "{}")
+    p = replace(probe("fixture_ledger_check", True), scenario_kind="fixture_world",
+                scenario_control="{}")
 
     class PhasedTarget(PluginTarget):
         supports_phases = True
