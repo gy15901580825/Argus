@@ -52,7 +52,7 @@ async def run(data, submitted, *, expected_json=None, expected_query=None, poll_
     app.route('DELETE', '/objects/{ref}', deleted)
     async with serve(app) as origin:
         if setup:
-            with_attempt_undo(data, origin)
+            with_attempt_undo(data, 'http://127.0.0.1')
         data = with_origin(data, origin)
         parsed = TransportSpecV2.from_dict(data)
         runtime = V2Run(parsed, policy=ExecutionPolicy.local(parsed), environ=environ or {})
