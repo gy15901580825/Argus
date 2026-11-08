@@ -101,8 +101,9 @@ def test_local_cli_runs_deep_flags_and_records_run_metadata(tmp_path, engine):
     assert len(record['deep']['threads']) == 2
     assert all(t['base_probe_id'] == 'deep_fixture' and t['thread_id'] ==
                f"deep_fixture::{t['persona']}::{t['strategy']}" for t in record['deep']['threads'])
-    assert len(record['findings']) == 6
-    assert record['summary']['total'] == 6
+    assert len(record['findings']) == 2
+    assert record['summary']['total'] == 2
+    assert all(len(f['evidence']['transcript']) == 3 for f in record['findings'])
     assert 'Estimated' in result.output
     assert result.output.index('Estimated') < result.output.index('pass')
 
@@ -278,9 +279,37 @@ def test_cli_deep_adapts_after_refusals_to_three_turn_precondition(tmp_path, eng
         '--mode', 'deep', '--deep-pairs', '1', '--max-rounds', '3', '--seed', 'adaptivity']))
     assert deep.exit_code == 0, deep.output
     findings = json.loads((tmp_path / 'run.json').read_text())['findings']
-    assert [f['verdict'] for f in findings] == ['pass', 'pass', 'fail']
+    assert [f['verdict'] for f in findings] == ['fail']
+    assert len(findings[0]['evidence']['transcript']) == 3
+    assert [r['verdict'] for r in findings[0]['evidence']['transcript']] == ['pass', 'pass', 'fail']
     assert [call[0] for call in target.calls] == [
         'introduce benign task', 'confirm benign scope', 'execute benign task']
     assert len(target.calls[-1][1]) == 4
     assert [turn.content for turn in target.calls[-1][1] if turn.role == 'assistant'] == [
         'refused: benign precondition missing', 'refused: benign precondition missing']
+
+
+def test_local_stateless_deep_prints_one_independent_rounds_note(tmp_path, engine):
+    engine.target.supports_history = False
+    result = CliRunner().invoke(main, arguments(tmp_path, extra=[
+        '--mode', 'deep', '--deep-pairs', '2', '--max-rounds', '3', '--seed', 'repeat']))
+    assert result.exit_code == 0, result.output
+    assert result.output.count('target keeps no conversation') == 1
+    assert 'rounds are independent' in result.output
+    record = json.loads((tmp_path / 'run.json').read_text())
+    assert len(record['findings']) == 2
+    assert all(f['evidence']['history'] is False for f in record['findings'])
+    assert all(not call[1] for call in engine.target.calls)
+
+
+def test_server_stateless_deep_prints_one_independent_rounds_note(tmp_path, engine, monkeypatch):
+    monkeypatch.setattr(api_client, 'post_run', lambda *a, **k: {'run_id': 'run-1'})
+    finding = {'probe_id': 'deep_fixture::persona::strategy', 'verdict': 'pass', 'severity': 'info',
+               'evidence': {'history': False, 'thread_id': 'deep_fixture::persona::strategy', 'transcript': []}}
+    monkeypatch.setattr(api_client, 'poll_until_complete', lambda *a, **k: {
+        'status': 'completed', 'findings': [finding, finding]})
+    monkeypatch.setattr(api_client, 'get_report', lambda *a, **k: 'report')
+    result = CliRunner().invoke(main, arguments(tmp_path, local_run=False, extra=['--mode', 'deep']))
+    assert result.exit_code == 0, result.output
+    assert result.output.count('target keeps no conversation') == 1
+    assert 'rounds are independent' in result.output
