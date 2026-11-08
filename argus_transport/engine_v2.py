@@ -225,28 +225,29 @@ def _response_parent_reason(submit: RequestSpecV2, submit_url: str, poll: Reques
         return SafeReasonCode.BINDING_ERROR
     queries = {expression["var"]: name for name, expression in poll.query.items()
                if expression.get("var") in ids}
+    settled = set()
     for name, captured in ids.items():
         destination = destinations.get(name)
         query_name = queries.get(name)
+        destination_name = queries.get(name, name)
         value = str(captured)
         for parent in inputs:
             parent_name = parent.name.removeprefix("input_")
             same_query = query_name is not None and query_name == parent_name
             same_path = destination is not None and destination.slot == parent.slot
-            shared = same_path or same_query
-            if shared and value != parent.value:
-                return SafeReasonCode.SUBMIT_PARENT_CHANGED
-            if value == parent.value and not shared:
-                return SafeReasonCode.SUBMIT_PARENT_ECHO
-    for name, captured in ids.items():
-        destination_name = queries.get(name, name)
-        value = str(captured)
+            if same_path or same_query:
+                if value != parent.value:
+                    return SafeReasonCode.SUBMIT_PARENT_CHANGED
+                settled.add(name)
         for parent in sent_inputs:
-            same_name = parent.path == (destination_name,)
-            if same_name and value != parent.value:
-                return SafeReasonCode.SUBMIT_PARENT_CHANGED
-            if not same_name and value == parent.value:
-                return SafeReasonCode.SUBMIT_PARENT_ECHO
+            if parent.path == (destination_name,):
+                if value != parent.value:
+                    return SafeReasonCode.SUBMIT_PARENT_CHANGED
+                settled.add(name)
+    input_values = {parent.value for parent in inputs} | {parent.value for parent in sent_inputs}
+    for name, captured in ids.items():
+        if name not in settled and str(captured) in input_values:
+            return SafeReasonCode.SUBMIT_PARENT_ECHO
     return None
 
 
