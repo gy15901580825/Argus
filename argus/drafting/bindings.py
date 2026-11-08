@@ -6,6 +6,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from argus_transport.spec_v2 import CONTEXT_KEYS_V2, NAME_RE, SECRET_WORDS, value_expr_v2
 
@@ -82,6 +83,17 @@ class UserId:
 
 
 @dataclass(frozen=True)
+class UserCompletion:
+    path: tuple[str, ...]
+    style: Literal["enum", "presence"]
+    succeeded: str
+    pending: tuple[str, ...]
+    failed: tuple[str, ...]
+    source: Source
+    origin: str | None = None
+
+
+@dataclass(frozen=True)
 class DraftInputs:
     source: dict  # {"file", "sha256"} of the raw bytes, appended to provenance inputs
     prompt: UserField | None
@@ -90,6 +102,7 @@ class DraftInputs:
     steps: tuple[UserStep, ...] = ()
     poll: UserPoll | None = None
     ids: tuple[UserId, ...] = ()
+    completion: UserCompletion | None = None
 
 
 def _unique(pairs):
@@ -283,6 +296,29 @@ def _id_inputs(data, file):
     return tuple(result)
 
 
+def _completion_input(data, file):
+    where = "/completion"
+    keys = {"path", "style", "succeeded", "pending", "failed"}
+    _object(data, where, keys | {"origin"}, keys)
+    if not isinstance(data.get("origin", ""), str):
+        raise ValueError("/completion/origin must be a string")
+    origin = data.get("origin")
+    if data["style"] not in ("enum", "presence"):
+        raise ValueError("/completion/style must be enum or presence")
+    limit = 32 if data["style"] == "presence" else 128
+    for key in ("pending", "failed"):
+        values = data[key]
+        if not isinstance(values, list) or len(values) > limit or any(not isinstance(v, str) or not v for v in values):
+            raise ValueError(f"/completion/{key} must be a list of at most {limit} non-empty names")
+    if not isinstance(data["succeeded"], str) or not data["succeeded"] or not data["pending"]:
+        raise ValueError("/completion needs one success name and at least one pending name")
+    names = [data["succeeded"], *data["pending"], *data["failed"]]
+    if len(set(names)) != len(names):
+        raise ValueError("/completion classes must be disjoint and contain no duplicates")
+    return UserCompletion(_path(data["path"], where + "/path"), data["style"], data["succeeded"],
+                          tuple(data["pending"]), tuple(data["failed"]), Source(file, where), origin)
+
+
 def read_bindings(path: Path) -> DraftInputs:
     """Parse a version 1 bindings file; any structural problem raises ValueError before the document is read."""
     path = Path(path)
@@ -293,8 +329,8 @@ def read_bindings(path: Path) -> DraftInputs:
         data = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique, parse_constant=_constant)
     except (UnicodeError, json.JSONDecodeError, RecursionError):
         raise ValueError("file must be UTF-8 JSON") from None
-    if not isinstance(data, dict) or not set(data) <= {"version", "prompt", "reply", "values", "steps", "poll", "ids"}:
-        raise ValueError("file must be an object with only version, prompt, reply, values, steps, poll and ids")
+    if not isinstance(data, dict) or not set(data) <= {"version", "prompt", "reply", "values", "steps", "poll", "ids", "completion"}:
+        raise ValueError("file must be an object with only version, prompt, reply, values, steps, poll, ids and completion")
     if type(data.get("version")) is not int or data["version"] != 1:
         raise ValueError("version must be 1")
     values = data.get("values", {})
@@ -308,4 +344,5 @@ def read_bindings(path: Path) -> DraftInputs:
         tuple(_value(pointer, entry, file) for pointer, entry in values.items()),
         _steps(data.get("steps", []), file),
         _poll_input(data["poll"], file) if "poll" in data else None,
-        _id_inputs(data.get("ids", {}), file))
+        _id_inputs(data.get("ids", {}), file),
+        _completion_input(data["completion"], file) if "completion" in data else None)

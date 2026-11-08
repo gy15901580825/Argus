@@ -365,7 +365,7 @@ Only schemas the draft binds are checked: the request and response objects, the 
 
 Only local document inputs are accepted. Internal references and bounded adjacent JSON/YAML files within the input directory are supported. Referenced symlinks, directory escapes, known credential filenames, network references and YAML aliases are rejected. The main input path is resolved, including directory symlinks; the credential filename filter applies only to references. The loader enforces byte, depth and node limits. Filename checks do not establish that an arbitrary file is safe; provide only authorized document files. Examples and defaults are omitted from the model catalog. Policy timeouts and budgets have separate provenance.
 
-Exit code `0` means ready after offline validation. `1` means a read, parse, compile, validation or write error; `2` means invalid command usage; `3` means review or input is needed. Inferred bindings in either mode require review. There is no `--execute` or `--docs` option. `--verify-local` checks a temporary copy against a fake on one randomly assigned `127.0.0.1` port. It removes authentication and leaves the delivered spec unchanged. Without an independent `--scenario FILE`, it reports `schema_mock_only` and exits 3, even if the schema mock returns a successful response. A failed local check exits 1 and names the failed check. Independent business success with documented cleanup residue remains review, exits 3, and reports `cleanup_complete: false`. Only a ready draft with full independent verification and complete cleanup can exit 0. Existing draft gaps remain in every case. A version 2 scenario can supply synthetic values for `TARGET_INPUT_*` bindings so such drafts can pass. With a scenario, local verification also runs a failure or pending case for each other value of the poll's documented status enum and fails if a failure status ends as success or a pending status is not polled again. It prints the aspects it cannot check, such as authentication and the server origin, as `local.unverified:` lines. See [local scenarios](https://github.com/gy15901580825/Argus/blob/main/docs/draft-local-scenarios.md) for the versioned format and its limits.
+Exit code `0` means ready after offline validation. `1` means a read, parse, compile, validation or write error; `2` means invalid command usage; `3` means review or input is needed. Inferred bindings in either mode require review. There is no `--execute` or `--docs` option. `--verify-local` checks a temporary copy against a fake on one randomly assigned `127.0.0.1` port. It removes authentication and leaves the delivered spec unchanged. Without an independent `--scenario FILE`, it reports `schema_mock_only` and exits 3, even if the schema mock returns a successful response. A failed local check exits 1 and names the failed check. Independent business success with documented cleanup residue remains review, exits 3, and reports `cleanup_complete: false`. Only a ready draft with full independent verification and complete cleanup can exit 0. Existing draft gaps remain in every case. A version 2 scenario can supply synthetic values for `TARGET_INPUT_*` bindings so such drafts can pass. With a scenario, local verification also runs a failure or pending case for each other value of the poll's documented enum or presence state and fails if a failure status ends as success or a pending status is not polled again. It prints the aspects it cannot check, such as authentication and the server origin, as `local.unverified:` lines. See [local scenarios](https://github.com/gy15901580825/Argus/blob/main/docs/draft-local-scenarios.md) for the versioned format and its limits.
 
 ### Bindings file
 
@@ -415,7 +415,28 @@ The submit identity guard also checks values actually sent from referenced `let.
 
 Explicit parent mappings are trusted input. They can feed two poll parameters from one submit parameter, override a same-named submit parameter, select the wrong renamed parameter, swap two renamed parameters, or map parameters outside the `Format:` tail. Review these relationships. The draft checks their names and types, but does not prove that they identify the intended parent. A mapping aimed at the run slot blocks. Ambiguous or unusable resource-name formats block. A prose `Format:` declaration also blocks when it cannot match a resource path, and `last_segment: false` does not lift that block.
 
-Use an independent scenario with `--verify-local` to check resource-name relationships. Schema mocks cannot prove them. Presence-style completion remains unsupported.
+Use an independent scenario with `--verify-local` to check resource-name relationships. Schema mocks cannot prove them.
+
+A top-level `state` or `status` object can describe presence completion. Its nonmetadata children must be documented objects. One recognized success name and at least one pending name produce a draft. A branch is active only when it exists and is not null. Failure takes priority when completed and failed branches appear together. Unknown children are listed for review and, when returned alone, end as `target_error`. `executing`, `stopping`, and `awaiting_guidance` are pending. Repeated `awaiting_guidance` ends with reason `poll_limit` when polling reaches its bound. `stopped` is failed.
+
+A reviewed bindings file can select completion for an ambiguous documented state:
+
+```json
+{
+  "version": 1,
+  "completion": {
+    "path": "/state",
+    "style": "presence",
+    "succeeded": "completed",
+    "pending": ["pending", "executing", "awaiting_guidance"],
+    "failed": ["failed", "stopped"],
+    "origin": "doc_prose"
+  }
+}
+```
+
+`style` is `enum` or `presence`. `succeeded` names one documented value or child. `pending` is nonempty, and `failed` is required even when empty. Names must be unique across the classes. Each list accepts at most 32 presence names or 128 enum values. The override preserves every documented pending and failure word in its canonical class. It can classify unknown documented names or select among success candidates. Other success candidates remain unclassified review rows. The path must name readable, explicit schema properties, and cannot replace a named state with an unrelated enum or bypass poll identity checks. Malformed entries exit 2 before artifacts. Document incompatibilities write blocking `binding_unresolved` gaps and provenance without a target. Valid entries retain their file hash, document sources, and optional origin in provenance.
+
 
 Some agents answer only after prerequisite calls, for example a source created once and a document added to it before each question. The document lists those operations but cannot say the ask needs them, so `steps` names them in order:
 

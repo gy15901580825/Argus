@@ -21,7 +21,7 @@ from argus.drafting.scenario import read_scenario
 @click.option("--server-origin", help="Select one origin declared in root servers.")
 @click.option("--poll-operation", help="Select the documented GET operation that polls an asynchronous submit.")
 @click.option("--bindings", "bindings_path", type=click.Path(exists=True, dir_okay=False, path_type=Path),
-              help="Version 1 JSON file of reviewed prompt, reply, request value, poll ID and setup step bindings the document cannot supply.")
+              help="Version 1 JSON file of reviewed prompt, reply, completion, request value, poll ID and setup step bindings the document cannot supply.")
 @click.option("--intent", default="Ask an agent a question, optionally with third-party material.", show_default=True)
 @click.option("--no-model", is_flag=True, help="Use only deterministic local document extraction.")
 @click.option("--verify-local", is_flag=True, help="Verify a temporary copy on an isolated loopback fake.")

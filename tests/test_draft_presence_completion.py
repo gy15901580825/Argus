@@ -63,6 +63,7 @@ async def test_presence_pending_executing_then_completed(tmp_path):
     provenance = artifact.provenance['fields']
     rules = artifact.spec['transport']['outcome']['rules']
     at = next(i for i, r in enumerate(rules) if r['id'] == 'completed')
+    assert f'/transport/outcome/rules/{at}' in provenance
     assert any(s['pointer'].endswith('/properties/completed') for s in provenance[f'/transport/outcome/rules/{at}']['source'])
 
 
@@ -93,7 +94,7 @@ async def test_stopping_can_progress_to_completed(tmp_path):
 @pytest.mark.parametrize('valid', [True, False])
 def test_named_state_owns_inference_beside_unrelated_enum(tmp_path, valid):
     doc = presence_document()
-    poll_schema(doc)['properties']['stage'] = {'type': 'string', 'enum': ['PENDING', 'COMPLETED', 'FAILED']}
+    poll_schema(doc)['properties']['stage'] = {'type': 'string', 'enum': ['PENDING', 'RUNNING', 'COMPLETED', 'FAILED']}
     if not valid:
         poll_schema(doc)['properties']['state'] = {'type': 'string'}
     result, out = run(tmp_path, doc)
@@ -116,7 +117,7 @@ def test_reviewed_completion_is_sourced_and_hashed(tmp_path, style):
     rules = json.loads(out.read_text())['transport']['outcome']['rules']
     at = next(i for i, rule in enumerate(rules) if rule['id'] == 'completed')
     record = provenance['fields'][f'/transport/outcome/rules/{at}']
-    assert record['basis'] == 'user_selection' and record['origin'] == 'doc_prose'
+    assert record['basis'] == 'user_selection' and record.get('origin') == 'doc_prose'
     assert {'file': 'bindings.json', 'pointer': '/completion'} in record['source']
     assert {'file': 'bindings.json', 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()} in provenance['inputs']
     assert not any(g['code'] == 'poll_status_proposed' for g in gaps(out)['gaps'])
@@ -124,7 +125,7 @@ def test_reviewed_completion_is_sourced_and_hashed(tmp_path, style):
 
 @pytest.mark.parametrize('change', [
     {'style': 'other'}, {'succeeded': ''}, {'pending': []}, {'pending': ['pending', 'pending']},
-    {'failed': ['completed']}, {'origin': 1}, {'path': 'state'}, {'pending': 'pending'},
+    {'failed': ['completed']}, {'origin': 1}, {'path': 'state'}, {'pending': 'run'},
     {'pending': list(map(str, range(33)))}, {'extra': True}, {'failed': None},
 ])
 def test_completion_structure_is_usage_error_without_artifacts(tmp_path, change):
@@ -288,7 +289,7 @@ def test_completion_does_not_bypass_ownership_or_named_state(tmp_path, alter):
         poll_schema(doc)['properties']['status'] = copy.deepcopy(poll_schema(doc)['properties']['state'])
     elif alter == 'write_only_container': poll_schema(doc)['properties']['state']['writeOnly'] = True
     else:
-        poll_schema(doc)['properties']['stage'] = {'type': 'string', 'enum': ['PENDING', 'COMPLETED', 'FAILED']}
+        poll_schema(doc)['properties']['stage'] = {'type': 'string', 'enum': ['PENDING', 'RUNNING', 'COMPLETED', 'FAILED']}
         entry = completion('enum', path='/stage')
     result, out = run(tmp_path, doc, '--bindings', str(bindings(tmp_path, entry)))
     assert result.exit_code == 3, result.output
@@ -307,3 +308,151 @@ def test_compound_success_keeps_31_required_checks_and_reports_overflow(tmp_path
     assert len(rule['when']['all'][0]['all']) == 2
     row = next(g for g in artifact.gaps if g.code == 'required_fields_unchecked')
     assert 'field_31' in row.why and 'field_32' in row.why
+
+
+def test_cli_presence_draft_runs_independent_and_derived_cases(tmp_path):
+    doc = presence_document(('pending', 'executing', 'completed', 'failed'))
+    raw = presence_scenario(tmp_path, [{'pending': {}}, {'executing': {}}, {'completed': {}}])
+    path = tmp_path / 'presence-scenario.json'
+    path.write_text(json.dumps(raw))
+    result, out = run(tmp_path, doc, '--verify-local', '--scenario', str(path))
+    assert result.exit_code == 3, result.output
+    local = json.loads(out.with_suffix('.provenance.json').read_text())['validation']['local']
+    assert local['status'] == 'verified', local
+    assert local['semantic_success'] is True
+    assert local['execution']['requests']['poll'] == 3
+    assert 'local.case: status:failed' in result.output
+
+
+@pytest.mark.parametrize('keyword', ['minProperties', 'enum', 'const'])
+def test_presence_derived_case_never_invents_schema_invalid_empty_object(tmp_path, keyword):
+    doc = presence_document(('pending', 'completed', 'failed'))
+    branch = poll_schema(doc)['properties']['state']['properties']['failed']
+    branch[keyword] = 1 if keyword == 'minProperties' else [{'message': 'only documented value'}] if keyword == 'enum' else {'message': 'required value'}
+    catalog = catalog_for(tmp_path, doc)
+    raw = presence_scenario(tmp_path, [{'completed': {}}])
+    cases = document_cases(parse_scenario(raw), catalog)
+    assert cases is not None
+    failed = next(case for case in cases if case.status == 'failed')
+    assert failed.scenario is None and failed.status_class == 'failed'
+
+
+def test_completion_file_duplicate_key_is_usage_error(tmp_path):
+    path = tmp_path / 'bindings.json'
+    path.write_text('{"version":1,"completion":' + json.dumps(completion())[:-1] + ',"style":"enum"}}')
+    result, out = run(tmp_path, presence_document(), '--bindings', str(path))
+    assert result.exit_code == 2, result.output
+    assert not out.with_suffix('.gaps.json').exists()
+
+
+@pytest.mark.parametrize('change', [{'succeeded': True}, {'pending': [1]}, {'failed': ['']}, {'style': True}])
+def test_completion_names_and_style_require_strings(tmp_path, change):
+    result, out = run(tmp_path, presence_document(), '--bindings', str(bindings(tmp_path, completion(**change))))
+    assert result.exit_code == 2, result.output
+    assert not out.with_suffix('.gaps.json').exists()
+
+
+def test_two_named_presence_states_are_not_inferred(tmp_path):
+    doc = presence_document()
+    poll_schema(doc)['properties']['status'] = copy.deepcopy(poll_schema(doc)['properties']['state'])
+    result, out = run(tmp_path, doc)
+    assert result.exit_code == 3 and not out.exists(), result.output
+    assert 'async_shape_unsupported' in blocking(out)
+
+
+@pytest.mark.parametrize('explicit', [True, False])
+def test_nested_override_requires_explicit_documented_container(tmp_path, explicit):
+    doc = presence_document()
+    state = poll_schema(doc)['properties'].pop('state')
+    poll_schema(doc)['required'] = []
+    wrapper = {'type': 'object', 'properties': {'state': state}} if explicit else {'type': 'object', 'additionalProperties': state}
+    poll_schema(doc)['properties']['wrapper'] = wrapper
+    result, out = run(tmp_path, doc, '--bindings', str(bindings(tmp_path, completion(path='/wrapper/state'))))
+    assert result.exit_code == 3, result.output
+    assert out.exists() is explicit
+    if not explicit:
+        assert 'binding_unresolved' in blocking(out)
+
+
+@pytest.mark.parametrize('state', [None, {}, {'completed': None}, {'completed': {}, 'failed': {}}, {'completed': {}, 'pending': {}}])
+def test_derived_presence_cases_need_unambiguous_active_terminal_success(tmp_path, state):
+    catalog = catalog_for(tmp_path, presence_document())
+    raw = presence_scenario(tmp_path, [state])
+    assert document_cases(parse_scenario(raw), catalog) is None
+
+
+def test_derived_cases_use_exact_terminal_http_schema(tmp_path):
+    doc = presence_document(('pending', 'completed', 'failed'))
+    response = doc['paths']['/jobs/{id}']['get']['responses']
+    response['201'] = copy.deepcopy(response['200'])
+    response['201']['content']['application/json']['schema']['properties']['state']['properties']['awaiting_guidance'] = {'type': 'object'}
+    catalog = catalog_for(tmp_path, doc)
+    raw = presence_scenario(tmp_path, [{'completed': {}}])
+    raw['operations'][1]['replies'][0]['status'] = 201
+    cases = document_cases(parse_scenario(raw), catalog)
+    assert cases is not None and 'awaiting_guidance' in {case.status for case in cases}
+
+
+@pytest.mark.parametrize('style', ['enum', 'presence'])
+def test_unselected_recognized_success_cannot_be_reclassified(tmp_path, style):
+    doc = presence_document() if style == 'presence' else async_document(result={'type': 'string'})
+    if style == 'presence': entry = completion(succeeded='mystery', failed=['failed', 'stopped', 'completed'])
+    else:
+        poll_schema(doc)['properties']['status']['enum'].append('FINISHED_OK')
+        entry = completion('enum', succeeded='FINISHED_OK', failed=['FAILED', 'COMPLETED'])
+    result, out = run(tmp_path, doc, '--bindings', str(bindings(tmp_path, entry)))
+    assert result.exit_code == 3, result.output
+    assert not out.exists() and 'binding_unresolved' in blocking(out)
+
+
+def test_named_enum_beside_other_eligible_enum_stays_ambiguous(tmp_path):
+    doc = async_document(result={'type': 'string'})
+    poll_schema(doc)['properties']['stage'] = {'type': 'string', 'enum': ['DRAFT', 'READY']}
+    result, out = run(tmp_path, doc)
+    assert result.exit_code == 3, result.output
+    assert not out.exists() and 'completion_missing' in blocking(out)
+
+
+def test_reviewed_override_resolves_named_enum_beside_other_enum(tmp_path):
+    doc = async_document(result={'type': 'string'})
+    poll_schema(doc)['properties']['stage'] = {'type': 'string', 'enum': ['DRAFT', 'READY']}
+    _, artifact = compiled(tmp_path, doc, completion('enum'))
+    assert artifact.spec is not None
+
+
+def test_single_presence_child_is_an_unsupported_shape(tmp_path):
+    doc = presence_document(('completed',))
+    result, out = run(tmp_path, doc)
+    assert result.exit_code == 3, result.output
+    assert not out.exists() and 'async_shape_unsupported' in blocking(out)
+
+
+@pytest.mark.parametrize('kind', ['pending', 'failed'])
+def test_public_compile_rejects_presence_classes_above_predicate_limit(tmp_path, kind):
+    from argus.drafting.bindings import DraftInputs, UserCompletion
+    from argus.drafting.openapi import Source
+    doc = presence_document(('pending', 'completed', 'failed', *(f'custom_{i}' for i in range(33))))
+    catalog = catalog_for(tmp_path, doc)
+    pending = ('pending', *(f'custom_{i}' for i in range(32))) if kind == 'pending' else ('pending',)
+    failed = ('failed', *(f'custom_{i}' for i in range(32))) if kind == 'failed' else ('failed',)
+    entry = UserCompletion(('state',), 'presence', 'completed', pending, failed, Source('reviewed.json', '/completion'))
+    inputs = DraftInputs({'file': 'reviewed.json', 'sha256': '0' * 64}, None, None, (), completion=entry)
+    artifacts = None
+    error = None
+    try:
+        artifacts = compile_draft(catalog, choose_without_model(catalog, inputs=inputs))
+    except ValueError as exc:
+        error = exc
+    assert error is None, 'Document-incompatible reviewed completion must return blocking artifacts'
+    assert artifacts.spec is None
+    rows = [gap for gap in artifacts.gaps if gap.code == 'binding_unresolved']
+    assert rows and all(gap.blocking for gap in rows)
+    assert any(entry.source in gap.source for gap in rows)
+
+
+def test_write_only_presence_container_is_not_inferred(tmp_path):
+    doc = presence_document()
+    poll_schema(doc)['properties']['state']['writeOnly'] = True
+    result, out = run(tmp_path, doc)
+    assert result.exit_code == 3 and not out.exists(), result.output
+    assert 'async_shape_unsupported' in blocking(out)

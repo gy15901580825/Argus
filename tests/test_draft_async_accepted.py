@@ -141,8 +141,8 @@ def test_submit_documenting_200_and_202_with_one_body_compiles_a_single_id_poll(
     completed = {"id": "completed", "priority": 10, "http_status": [200],
                  "when": {"all": [{"path": "$.status", "equals": "completed"}, {"path": "$.threadId", "exists": True},
                                   {"path": "$.runId", "exists": True}]}, "outcome": "succeeded"}
-    failed = {"id": "failed", "priority": 5, "http_status": [200, 202],
-              "when": {"path": "$.status", "one_of": ["failed"]}, "outcome": "target_error"}
+    failed = {"id": "failed", "priority": 20, "http_status": [200, 202],
+              "when": {"path": "$.status", "one_of": ["failed", "stopped"]}, "outcome": "target_error"}
     assert transport["delivery"] == {
         "kind": "poll",
         "ids": {"runid": {"path": "$.runId", "poll": {"path": "$.runId"}}},
@@ -152,17 +152,17 @@ def test_submit_documenting_200_and_202_with_one_body_compiles_a_single_id_poll(
         "wait": {"from": "Retry-After", "default_s": 5, "max_s": 60},
         "max_polls": 60,
         "submit_http_status": [200, 202],
-        "submit_outcome": {"kind": "rules", "unmatched": "accepted", "rules": [completed, failed]},
+        "submit_outcome": {"kind": "rules", "unmatched": "accepted", "rules": [failed, completed]},
     }
-    assert transport["outcome"] == {"kind": "rules", "unmatched": "target_error", "rules": [completed, failed]}
+    assert transport["outcome"] == {"kind": "rules", "unmatched": "target_error", "rules": [failed, completed]}
     assert transport["response"]["text"] == {"paths": ["$.output"], "cast": "string", "empty": "error"}
     assert transport["auth"]["kind"] == "bearer"
     report = gaps(out)
     assert report["state"] == "needs_review" and report["spec_written"] is True
     assert not blocking(out)
     codes = {gap["code"] for gap in report["gaps"]}
-    assert {"poll_proposed", "poll_id_binding_proposed", "poll_status_proposed", "poll_status_unclassified"} <= codes
-    assert "stopped" in next(gap["why"] for gap in report["gaps"] if gap["code"] == "poll_status_unclassified")
+    assert {"poll_proposed", "poll_id_binding_proposed", "poll_status_proposed"} <= codes
+    assert "poll_status_unclassified" not in codes
     provenance = json.loads(out.with_suffix(".provenance.json").read_text())["fields"]
     assert provenance["/transport/delivery/submit_outcome"]["basis"] == "proposal"
     validation = CliRunner().invoke(main, ["validate-target", "--target", str(out), "--offline"])
