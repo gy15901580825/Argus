@@ -402,3 +402,22 @@ def test_explicit_null_multipart_metadata_is_not_an_omitted_default(tmp_path, me
     spec, report, _ = artifacts(out)
     assert spec is None
     assert any(gap["code"] == "binding_unresolved" for gap in blocking(report))
+
+
+@pytest.mark.parametrize("annotation", [
+    {"format": {}}, {"format": []},
+    {"contentMediaType": None}, {"contentMediaType": {}},
+    {"contentEncoding": None}, {"contentEncoding": []},
+])
+def test_malformed_file_annotations_block_without_crashing(tmp_path, annotation):
+    document = file_document()
+    document["openapi"] = "3.1.0"
+    schema = document["paths"]["/notes"]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"]["properties"]["text"]
+    schema.pop("format")
+    schema.update(annotation)
+    result, out = multipart_draft(tmp_path, document=document)
+    assert result.exit_code == 3, result.exception
+    spec, report, _ = artifacts(out)
+    assert spec is None
+    assert blocking(report)
+    assert not any(gap["code"] == "binding_user_supplied" and "/multipart/" in gap["field"] for gap in report["gaps"])
