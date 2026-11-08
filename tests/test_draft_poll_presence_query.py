@@ -221,7 +221,11 @@ def test_unfillable_optional_run_query_blocks_with_named_gap(tmp_path, kind):
 
 @pytest.mark.parametrize('query_name', ['id', 'session_id', 'agentId'])
 def test_identity_query_with_unresolved_role_blocks(tmp_path, query_name):
-    report = compiled(tmp_path, query_document(query_name=query_name, query_only=True))
+    doc = query_document(query_name=query_name, query_only=True)
+    schema = doc['paths']['/jobs']['post']['responses']['202']['content']['application/json']['schema']
+    del schema['properties'][query_name]
+    schema['required'].remove(query_name)
+    report = compiled(tmp_path, doc)
     assert report.spec is None
     assert any(gap.blocking and gap.code == 'poll_parameter_role_ambiguous' for gap in report.gaps)
 
@@ -550,8 +554,11 @@ async def test_sync_submit_ignores_related_status_and_list_queries(tmp_path, cas
 
 
 @pytest.mark.parametrize('query_name', ['run', 'job', 'execution'])
-async def test_exact_name_run_query_reads_own_reply(tmp_path, query_name):
+@pytest.mark.parametrize('source_format', [None, 'uuid'])
+async def test_exact_name_run_query_reads_own_reply(tmp_path, query_name, source_format):
     doc = query_document(query_name=query_name)
+    if source_format:
+        doc['paths']['/jobs']['post']['responses']['202']['content']['application/json']['schema']['properties'][query_name]['format'] = source_format
     parameter = doc['paths']['/agents/{agent_id}/status']['get']['parameters'][-1]
     parameter['description'] = {'run': 'The run to fetch.', 'job': 'The job to read.', 'execution': 'Execution to read.'}[query_name]
     report = compiled(tmp_path, doc)
@@ -587,6 +594,27 @@ def test_unusable_exact_name_query_source_blocks_instead_of_omission(tmp_path, k
     report = compiled(tmp_path, doc)
     assert report.spec is None
     assert any(gap.blocking and gap.code == 'poll_id_binding_missing' for gap in report.gaps)
+
+
+@pytest.mark.parametrize('name,schema', [
+    ('verbose', {'type': 'boolean'}),
+    ('createdAt', {'type': 'string'}),
+    ('updated_at', {'type': 'string'}),
+    ('last_seen', {'type': 'string', 'format': 'date-time'}),
+])
+async def test_matching_nonidentity_filters_do_not_replace_run_query(tmp_path, name, schema):
+    doc = query_document()
+    submit = doc['paths']['/jobs']['post']['responses']['202']['content']['application/json']['schema']
+    submit['properties'][name] = schema
+    poll = doc['paths']['/agents/{agent_id}/status']['get']
+    poll['parameters'].append({'name': name, 'in': 'query', 'schema': schema})
+    report = compiled(tmp_path, doc)
+    assert report.spec is not None, [gap.to_dict() for gap in report.gaps]
+    assert report.spec['transport']['delivery']['request']['query'] == {'run_id': {'var': 'run_id'}}
+    result, calls = await execute(report.spec, {'agent_id': 'agent-1', 'run_id': 'own-1'},
+                                  {'status': 'COMPLETED', 'result': 'own reply'})
+    assert result.outcome == 'succeeded' and result.response_text == 'own reply'
+    assert calls[1][1] == '/agents/agent-1/status?run_id=own-1'
 
 
 def test_multiple_exact_name_query_captures_are_ambiguous(tmp_path):
