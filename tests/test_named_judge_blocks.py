@@ -73,10 +73,10 @@ async def test_filter_gate_keeps_error_and_continues_distinct_text(monkeypatch):
     assert "content filter" in outcomes[0].reasoning.lower() and "jailbreak" in outcomes[0].reasoning
 
 
-async def test_cached_filtered_items_count_in_real_scan_and_cli(monkeypatch, tmp_path):
+def test_cached_filtered_items_count_in_real_scan_and_cli(monkeypatch, tmp_path):
     cfg, calls = scripted_model(monkeypatch, [_azure_block(), None])
-    result = await run_scan(monkeypatch, cfg, [candidate("blocked text"), candidate("blocked text", seq=2),
-                                              candidate("normal text", "other")])
+    result = asyncio.run(run_scan(monkeypatch, cfg, [candidate("blocked text"), candidate("blocked text", seq=2),
+                                                    candidate("normal text", "other")]))
     assert len(calls) == 2
     assert result.unjudged == 1
     errors = [f for f in result.findings if f["probe_id"] == checks.DESCRIPTION and f["verdict"] == "error"]
@@ -93,7 +93,7 @@ async def test_cached_filtered_items_count_in_real_scan_and_cli(monkeypatch, tmp
     monkeypatch.setattr(scan, "scan_mcp", completed_scan)
     monkeypatch.setattr(cmd_scan_mcp, "sdk_problem", lambda extra: None)
     monkeypatch.chdir(tmp_path)
-    cli = await asyncio.to_thread(CliRunner().invoke, main, ["scan-mcp", "http://127.0.0.1:9/mcp"])
+    cli = CliRunner().invoke(main, ["scan-mcp", "http://127.0.0.1:9/mcp"])
     assert cli.exit_code == 1, cli.output
     assert "content filter" in cli.output.lower() and "policy" in cli.output.lower()
     assert "check the judge provider and its key" not in cli.output
