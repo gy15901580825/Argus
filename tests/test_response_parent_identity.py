@@ -1,4 +1,3 @@
-import copy
 from pathlib import Path
 
 import pytest
@@ -6,7 +5,7 @@ from aiohttp import web
 
 from argus_transport import ExecutionPolicy, TransportContext, TransportSpecV2, V2Run, with_origin
 from test_draft_bindings import artifacts, codes, draft
-from test_transport_v2_poll import poll_spec
+from test_transport_v2_poll import poll_spec, with_attempt_undo
 from transport_v2_fakes import RecordingApp, serve
 
 
@@ -203,3 +202,44 @@ def test_docs_describe_parent_echo_limits():
     assert "misspelled parent" in cli and "ids" in cli
     assert "submit_parent_echo" in reference and "submit_parent_changed" in reference
     assert "same-named query" in reference and "legitimate" in reference
+
+
+@pytest.mark.parametrize("captured,reason", [("ag-7", "submit_parent_echo"), ("r-1", "submit_parent_changed")])
+async def test_parent_rejection_keeps_setup_cleanup_without_arming_abort(captured, reason):
+    app = RecordingApp()
+    async def created(request):
+        return web.json_response({"ref": "obj-1"}, status=201)
+    async def submitted(request):
+        return web.json_response({"id": captured, "agent": "ag-9"}, status=202)
+    async def polled(request):
+        return web.Response(status=404)
+    async def aborted(request):
+        return web.json_response({"stopped": True})
+    async def deleted(request):
+        return web.Response(status=204)
+    app.route("POST", "/objects", created)
+    app.route("POST", "/agents/{agent}/runs", submitted)
+    app.route("GET", "/{tail:.*}", polled)
+    app.route("DELETE", "/runs/{id}", aborted)
+    app.route("DELETE", "/objects/{ref}", deleted)
+    async with serve(app) as origin:
+        ids = ["id"] if reason == "submit_parent_echo" else ["agent", "id"]
+        poll_path = "/runs/{id}" if reason == "submit_parent_echo" else "/agents/{agent}/runs/{id}"
+        data = handwritten("/agents/{input_agent}/runs", poll_path, {"input_agent": "ag-7"}, ids)
+        data = with_origin(data, origin)
+        with_attempt_undo(data, origin)
+        data["delivery"]["abort"] = {
+            "request": {"method": "DELETE", "url": origin + "/runs/{id}", "body": {"none": True}},
+            "expect": {"http_status": [200], "when": {"path": "$.stopped", "equals": True}},
+        }
+        parsed = TransportSpecV2.from_dict(with_origin(data, origin))
+        runtime = V2Run(parsed, policy=ExecutionPolicy.local(parsed))
+        try:
+            result = await runtime.attempt(TransportContext(prompt="ping"))
+        finally:
+            await runtime.close()
+        report = runtime.cleanup_report()
+    assert [(call[0], call[1]) for call in app.calls] == [
+        ("POST", "/objects"), ("POST", "/agents/ag-7/runs"), ("DELETE", "/objects/obj-1")]
+    assert report["complete"] is True and report["done"] == 1 and report["open"] == []
+    assert result.outcome.value == "target_error" and result.reason_code.value == reason
