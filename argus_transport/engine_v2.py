@@ -29,10 +29,14 @@ from .models import (
     TransportResult,
 )
 from .security import redacted_transport_logs, resolve_secret
-from .spec_v2 import CaptureSpec, PollSpecV2, RequestSpecV2, TransportSpecV2
+from .spec_v2 import CaptureSpec, PollSpecV2, RequestSpecV2, TransportSpecV2, _expression_variables
 
 if TYPE_CHECKING:
     from .runtime_v2 import V2Run
+
+
+_InputPath = tuple[str | int, ...]
+_ScalarObserver = Callable[[_InputPath, dict, str | int], None]
 
 
 def bind_v2(
@@ -41,8 +45,23 @@ def bind_v2(
     scope: Mapping[str, str | int],
     env: Mapping[str, str],
 ) -> object:
+    return _bind_v2(value, context, scope, env)
+
+
+def _bind_v2(
+    value: dict,
+    context: TransportContext,
+    scope: Mapping[str, str | int],
+    env: Mapping[str, str],
+    *, _observe_scalar: _ScalarObserver | None = None, _field_path: _InputPath = (),
+) -> object:
+    def emitted(item):
+        if _observe_scalar is not None and _field_path and type(item) in {str, int}:
+            _observe_scalar(_field_path, value, item)
+        return item
+
     if "literal" in value:
-        return copy.deepcopy(value["literal"])
+        return emitted(copy.deepcopy(value["literal"]))
     if "context" in value or "var" in value or "env" in value:
         if "context" in value:
             item = getattr(context, value["context"])
@@ -54,20 +73,20 @@ def bind_v2(
             if value.get("missing") == "omit":
                 return _OMIT
             raise ValueError("Binding value missing")
-        return list(item) if isinstance(item, tuple) else item
+        return emitted(list(item) if isinstance(item, tuple) else item)
     if "generate" in value:
         kind = value["generate"]
         if kind == "uuid4":
-            return str(uuid.uuid4())
+            return emitted(str(uuid.uuid4()))
         if kind == "now_iso8601":
-            return (
+            return emitted(
                 datetime.now(timezone.utc)
                 .isoformat(timespec="milliseconds")
                 .replace("+00:00", "Z")
             )
-        return time.time_ns() // 1_000_000
+        return emitted(time.time_ns() // 1_000_000)
     if "concat" in value:
-        items = [bind_v2(part, context, scope, env) for part in value["concat"]]
+        items = [_bind_v2(part, context, scope, env) for part in value["concat"]]
         if any(item is _OMIT for item in items):
             return _OMIT
         if any(type(item) not in {str, int} for item in items):
@@ -75,25 +94,28 @@ def bind_v2(
         result = "".join(str(item) for item in items)
         if len(result.encode("utf-8")) > 8192:
             raise ValueError("Concat exceeds byte limit")
-        return result
+        return emitted(result)
     if "base64" in value:
-        item = bind_v2(value["base64"], context, scope, env)
+        item = _bind_v2(value["base64"], context, scope, env)
         if item is _OMIT:
             return _OMIT
         if not isinstance(item, str):
             raise ValueError("Base64 requires a string")
-        return base64.b64encode(item.encode("utf-8")).decode("ascii")
+        return emitted(base64.b64encode(item.encode("utf-8")).decode("ascii"))
     if "object" in value:
         return {
             name: item
             for name, expr in value["object"].items()
-            if (item := bind_v2(expr, context, scope, env)) is not _OMIT
+            if (item := _bind_v2(expr, context, scope, env,
+                                 _observe_scalar=_observe_scalar, _field_path=(*_field_path, name))) is not _OMIT
         }
-    return [
-        item
-        for expr in value["array"]
-        if (item := bind_v2(expr, context, scope, env)) is not _OMIT
-    ]
+    items = []
+    for expr in value["array"]:
+        item = _bind_v2(expr, context, scope, env,
+                        _observe_scalar=_observe_scalar, _field_path=(*_field_path, len(items)))
+        if item is not _OMIT:
+            items.append(item)
+    return items
 
 
 def render_url(
@@ -101,6 +123,7 @@ def render_url(
     context: TransportContext,
     scope: Mapping[str, str | int],
     env: Mapping[str, str],
+    *, _observe_scalar: _ScalarObserver | None = None,
 ) -> str:
     parts = urlsplit(request.url)
 
@@ -117,7 +140,8 @@ def render_url(
     path = "/".join(segment(value) for value in parts.path.split("/"))
     query = []
     for name, expr in request.query.items():
-        item = bind_v2(expr, context, scope, env)
+        item = _bind_v2(expr, context, scope, env,
+                        _observe_scalar=_observe_scalar, _field_path=(name,))
         if item is _OMIT:
             continue
         if type(item) not in {str, int}:
@@ -132,6 +156,35 @@ def render_url(
             parts.fragment,
         )
     )
+
+
+@dataclass(frozen=True)
+class _SentRunInput:
+    path: _InputPath
+    value: str
+
+
+def _run_input_names(declarations: Mapping[str, dict]) -> frozenset[str]:
+    origins = {}
+
+    def sources(expression):
+        if "literal" in expression:
+            return set()
+        if "var" in expression:
+            return origins[expression["var"]]
+        if "context" in expression:
+            return {"prompt" if expression["context"] == "prompt" else "input"}
+        if "env" in expression or "generate" in expression:
+            return {"input"}
+        if "base64" in expression:
+            return sources(expression["base64"])
+        children = (expression["object"].values() if "object" in expression else
+                    expression.get("concat", expression.get("array", [])))
+        return set().union(*(sources(child) for child in children))
+
+    for name, expression in declarations.items():
+        origins[name] = sources(expression) or {"input"}
+    return frozenset(name for name, source in origins.items() if "input" in source)
 
 
 @dataclass(frozen=True)
@@ -163,7 +216,8 @@ def _path_identities(template: str, bound_url: str | None = None) -> tuple[_Path
 
 
 def _response_parent_reason(submit: RequestSpecV2, submit_url: str, poll: RequestSpecV2,
-                            ids: Mapping[str, str | int]) -> SafeReasonCode | None:
+                            ids: Mapping[str, str | int], *,
+                            sent_inputs: tuple[_SentRunInput, ...] = ()) -> SafeReasonCode | None:
     try:
         inputs = _path_identities(submit.url, submit_url)
         destinations = {slot.name: slot for slot in _path_identities(poll.url)}
@@ -171,19 +225,29 @@ def _response_parent_reason(submit: RequestSpecV2, submit_url: str, poll: Reques
         return SafeReasonCode.BINDING_ERROR
     queries = {expression["var"]: name for name, expression in poll.query.items()
                if expression.get("var") in ids}
+    settled = set()
     for name, captured in ids.items():
         destination = destinations.get(name)
         query_name = queries.get(name)
+        destination_name = queries.get(name, name)
         value = str(captured)
         for parent in inputs:
             parent_name = parent.name.removeprefix("input_")
             same_query = query_name is not None and query_name == parent_name
             same_path = destination is not None and destination.slot == parent.slot
-            shared = same_path or same_query
-            if shared and value != parent.value:
-                return SafeReasonCode.SUBMIT_PARENT_CHANGED
-            if value == parent.value and not shared:
-                return SafeReasonCode.SUBMIT_PARENT_ECHO
+            if same_path or same_query:
+                if value != parent.value:
+                    return SafeReasonCode.SUBMIT_PARENT_CHANGED
+                settled.add(name)
+        for parent in sent_inputs:
+            if parent.path == (destination_name,):
+                if value != parent.value:
+                    return SafeReasonCode.SUBMIT_PARENT_CHANGED
+                settled.add(name)
+    input_values = {parent.value for parent in inputs} | {parent.value for parent in sent_inputs}
+    for name, captured in ids.items():
+        if name not in settled and str(captured) in input_values:
+            return SafeReasonCode.SUBMIT_PARENT_ECHO
     return None
 
 
@@ -192,7 +256,7 @@ def render_body_v2(
     context: TransportContext,
     scope: Mapping[str, str | int],
     env: Mapping[str, str],
-    *, boundary: str | None = None,
+    *, boundary: str | None = None, _observe_scalar: _ScalarObserver | None = None,
 ) -> bytes | None:
     if "none" in request.body:
         return None
@@ -200,7 +264,8 @@ def render_body_v2(
         data = {
             name: item
             for name, expr in request.body["json"].items()
-            if (item := bind_v2(expr, context, scope, env)) is not _OMIT
+            if (item := _bind_v2(expr, context, scope, env,
+                                 _observe_scalar=_observe_scalar, _field_path=(name,))) is not _OMIT
         }
         return json.dumps(data, ensure_ascii=False, allow_nan=False).encode("utf-8")
     if "multipart" in request.body:
@@ -413,7 +478,7 @@ class TransportEngineV2:
         except (ValueError, TypeError, AttributeError, OverflowError, RecursionError):
             intent.failure_reason = 'binding'
 
-    def _bind_request(self, request, context, scope):
+    def _bind_request(self, request, context, scope, *, _observe_scalar=None):
         boundary = None
         if "multipart" in request.body:
             if any(name.lower() == "content-type" for name in request.headers):
@@ -421,8 +486,10 @@ class TransportEngineV2:
             boundary = uuid.uuid4().hex
             request = replace(request, headers={**request.headers,
                               "Content-Type": "multipart/form-data; boundary=" + boundary})
-        bound = replace(request, url=render_url(request, context, scope, self.runtime.env))
-        return bound, render_body_v2(bound, context, scope, self.runtime.env, boundary=boundary)
+        bound = replace(request, url=render_url(request, context, scope, self.runtime.env,
+                                                _observe_scalar=_observe_scalar))
+        return bound, render_body_v2(bound, context, scope, self.runtime.env, boundary=boundary,
+                                     _observe_scalar=_observe_scalar)
 
     def _bind_undo(self, intent, context, scope):
         intent._bindings = MappingProxyType(dict(scope))
@@ -658,11 +725,19 @@ class TransportEngineV2:
                     result = await self._steps(self.spec.lifecycle.attempt, 'attempt', stack,
                                                client, context, scope, start, diagnostics)
                     if result is None:
-                        request, content = self._bind_request(self.spec.request, context, scope)
+                        sent_inputs = []
+                        input_names = _run_input_names(self.spec.let.run)
+
+                        def observe(field_path, expression, item):
+                            if any(name in input_names for name in _expression_variables(expression)):
+                                sent_inputs.append(_SentRunInput(field_path, str(item)))
+
+                        request, content = self._bind_request(self.spec.request, context, scope,
+                                                             _observe_scalar=observe)
                         headers = self._headers(request)
                         diagnostics['request_url'] = request.url
                         result = await self._operate(client, headers, content, start, self.redactor,
-                                                     diagnostics, request, context, scope, abort)
+                                                     diagnostics, request, context, scope, abort, tuple(sent_inputs))
         except asyncio.CancelledError as exc:
             interrupted = exc
             if isinstance(self.spec.delivery, PollSpecV2) and diagnostics.get('run_id'):
@@ -719,6 +794,7 @@ class TransportEngineV2:
         context,
         scope,
         abort=None,
+        sent_inputs: tuple[_SentRunInput, ...] = (),
     ):
         submitted = await self._exchange(
             client,
@@ -777,7 +853,8 @@ class TransportEngineV2:
             except ValueError:
                 return self.failure(SafeReasonCode.MISSING_ID, start, status=status,
                                     diagnostics=redactor.clean(diagnostics))
-            identity_error = _response_parent_reason(self.spec.request, request.url, delivery.request, ids)
+            identity_error = _response_parent_reason(self.spec.request, request.url, delivery.request, ids,
+                                                     sent_inputs=sent_inputs)
             if identity_error is not None:
                 return self.failure(identity_error, start, status=status, diagnostics=redactor.clean(diagnostics))
             if not matched:

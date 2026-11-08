@@ -92,12 +92,9 @@ async def test_handwritten_honest_local_slots(submit_path, poll_path, inputs, re
 @pytest.mark.parametrize("data,returned,reason,submit_sent,owned", [
     (handwritten("/agents/{input_agent}/runs", "/runs/{id}", {"input_agent": 3}, ["id"]),
      {"id": 3}, "submit_parent_echo", "/agents/3/runs", "/runs/3"),
-    (handwritten("/orgs/{input_org}/agents/{input_agent}/runs", "/orgs/{org}/agents/{agent}/runs/{id}",
-                 {"input_org": "x", "input_agent": "x"}, ["org", "agent", "id"]),
-     {"org": "x", "agent": "x", "id": "r-1"}, "submit_parent_echo", "/orgs/x/agents/x/runs", "/orgs/x/agents/x/runs/r-1"),
     (handwritten("/agents/{input_id}/runs", "/runs", {"input_id": "ag-7"}, ["id"], query={"id": {"var": "id"}}),
      {"id": "r-1"}, "submit_parent_changed", "/agents/ag-7/runs", "/runs?id=r-1"),
-], ids=["D7_integer_collision", "H8_duplicate_parents", "same_name_query_new_resource"])
+], ids=["D7_integer_collision", "same_name_query_new_resource"])
 async def test_conservative_identity_refusals(data, returned, reason, submit_sent, owned):
     response, calls = await execute_at_owned_path(data, returned, owned)
     assert response.reason_code.value == reason and response.outcome.value == "target_error"
@@ -144,3 +141,13 @@ def test_docs_state_local_slots_and_capture_limits():
         assert "last_segment" in text and "full resource name" in text
         assert "/runs/{agent_id}" in text and "/runs/{run_id}" in text
     assert "https://github.com/gy15901580825/Argus/blob/main/docs/transport-spec.md#polling-with-multiple-ids" in cli
+
+
+async def test_duplicate_parents_agree_in_own_path_slots():
+    data = handwritten("/orgs/{input_org}/agents/{input_agent}/runs", "/orgs/{org}/agents/{agent}/runs/{id}",
+                       {"input_org": "x", "input_agent": "x"}, ["org", "agent", "id"])
+    owned = "/orgs/x/agents/x/runs/r-1"
+    response, calls = await execute_at_owned_path(data, {"org": "x", "agent": "x", "id": "r-1"}, owned)
+    assert response.outcome.value == "succeeded" and response.reason_code.value == "ok"
+    assert response.response_text == "own answer"
+    assert calls == [("POST", "/orgs/x/agents/x/runs"), ("GET", owned)]
