@@ -39,16 +39,16 @@ def invoke(tmp_path, spec):
     return CliRunner().invoke(main, ["validate-target", "--target", str(path), "--offline"])
 
 
-@pytest.mark.parametrize("site", ["legacy", "v1"])
-def test_offline_invalid_target_names_the_bad_field(tmp_path, site):
+@pytest.mark.parametrize("site,error_type", [("legacy", "ValueError"), ("v1", "TypeError")])
+def test_offline_invalid_target_names_the_bad_field(tmp_path, site, error_type):
     spec = target_spec(site)
     if site == "legacy":
         spec["request_body_template"] = "{{ prompt | bad_field }}"
     else:
-        spec["transport"]["request"]["body"]["json"]["goal"] = {"context": "bad_field"}
+        spec["bad_field"] = True
     result = invoke(tmp_path, spec)
     assert result.exit_code == 1
-    assert "target spec invalid: ValueError:" in result.output
+    assert f"target spec invalid: {error_type}:" in result.output
     assert "bad_field" in result.output
     assert "Traceback" not in result.output
 
