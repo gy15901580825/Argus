@@ -231,13 +231,14 @@ async def test_conflicting_same_named_input_occurrences_fail_closed():
 
 @pytest.mark.parametrize('location', ['body', 'query'])
 @pytest.mark.parametrize('scope', ['run', 'attempt'])
-async def test_lifecycle_capture_is_not_a_run_input(location, scope):
+async def test_lifecycle_capture_sent_as_input_refuses_echo(location, scope):
     data = spec(body={'ref': {'var': 'object_ref'}} if location == 'body' else {'question': {'context': 'prompt'}},
                 query={'ref': {'var': 'object_ref'}} if location == 'query' else None)
     result, calls, _, cleanup = await run(data, {'run_id': 'obj-1'}, setup=scope)
-    assert result.outcome.value == 'succeeded'
+    assert result.outcome.value == 'target_error'
+    assert result.reason_code.value == 'submit_parent_echo'
     assert calls == [('POST', '/objects'), ('POST', '/runs?ref=obj-1' if location == 'query' else '/runs'),
-                     ('GET', '/runs/obj-1'), ('DELETE', '/objects/obj-1')]
+                     ('DELETE', '/objects/obj-1')]
     assert cleanup['complete'] is True
 
 
