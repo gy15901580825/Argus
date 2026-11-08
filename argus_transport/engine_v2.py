@@ -174,7 +174,7 @@ def _response_parent_reason(submit: RequestSpecV2, submit_url: str, poll: Reques
         value = str(captured)
         for parent in inputs:
             parent_name = parent.name.removeprefix("input_")
-            destination_name = re.sub(r"[^a-z0-9_]", "_", query_name.lower()) if query_name is not None else name
+            destination_name = query_name if query_name is not None else name
             same_name = destination_name == parent_name
             same_path = destination is not None and destination.prefix == parent.prefix
             if (same_path or query_name is not None and same_name) and value != parent.value:
