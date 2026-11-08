@@ -24,7 +24,7 @@ def spec(*, body=None, query=None, inputs=None, poll_query=None, ids=None):
 
 
 async def run(data, submitted, *, expected_json=None, expected_query=None, poll_path=None,
-              environ=None, setup=False):
+              environ=None, setup=False, submit_path='/runs'):
     app = RecordingApp()
     payloads = []
     async def submit(request):
@@ -46,7 +46,7 @@ async def run(data, submitted, *, expected_json=None, expected_query=None, poll_
         return web.json_response({'ref': 'obj-1'}, status=201)
     async def deleted(request):
         return web.Response(status=204)
-    app.route('POST', '/runs', submit)
+    app.route('POST', submit_path, submit)
     app.route('GET', '/{tail:.*}', own)
     app.route('DELETE', '/runs/{tail:.*}', abort)
     app.route('POST', '/objects', created)
@@ -399,3 +399,161 @@ def test_json_observation_records_complete_paths_and_transmitted_array_indices()
     assert json.loads(encoded) == {'agent.id': 'ag-7', 'agents': [{'id': 'ag-7'}, ['ag-7']]}
     assert observed == [(('agent.id',), 'ag-7'), (('agents', 0, 'id'), 'ag-7'),
                         (('agents', 1, 0), 'ag-7')]
+
+
+@pytest.mark.parametrize('path_parent', [False, True], ids=['dd4-body', 'dd2-path'])
+async def test_drafted_agreed_parent_with_nested_copy_returns_own_reply(tmp_path, path_parent):
+    submit_template = '/threads/{thread_id}/runs' if path_parent else '/runs'
+    doc = document(submit_template, ['thread_id'] if path_parent else [], ['thread_id', 'run_id'],
+                   '/threads/{thread_id}/runs/{run_id}', ['thread_id', 'run_id'])
+    schema = doc['paths'][submit_template]['post']['requestBody']['content']['application/json']['schema']
+    schema['properties']['config'] = {'type': 'object', 'properties': {
+        'configurable': {'type': 'object', 'properties': {'thread_id': {'type': 'string'}}}}}
+    if not path_parent:
+        schema['required'].append('thread_id')
+        schema['properties']['thread_id'] = {'type': 'string'}
+    bindings = {'prompt': {'path': '/question'}, 'reply': {'path': '/result'},
+                'values': {'/config/configurable/thread_id': {'env': 'TARGET_INPUT_CFG_THREAD'}}}
+    cli, out = draft(tmp_path, doc, bindings, '--operation', 'invoke', '--poll-operation', 'get_run')
+    target, report, _ = artifacts(out)
+    assert cli.exit_code == 3 and target is not None and codes(report, True) == []
+    expected = {'question': 'ping', 'config': {'configurable': {'thread_id': 't-1'}}}
+    if not path_parent:
+        expected['thread_id'] = 't-1'
+    submit_path = '/threads/t-1/runs' if path_parent else '/runs'
+    result, calls, _, _ = await run(target['transport'], {'thread_id': 't-1', 'run_id': 'r-1'},
+                                    expected_json=expected, expected_query={}, submit_path=submit_path,
+                                    environ={'TARGET_INPUT_THREAD_ID': 't-1', 'TARGET_INPUT_CFG_THREAD': 't-1'},
+                                    poll_path='/threads/t-1/runs/r-1')
+    assert result.outcome.value == 'succeeded' and result.response_text == 'own run r-1 answer'
+    assert calls == [('POST', submit_path), ('GET', '/threads/t-1/runs/r-1')]
+
+
+@pytest.mark.parametrize('returned', ['t-1', 't-9'])
+async def test_path_agreed_parent_with_nested_copy_returns_own_reply(returned):
+    data = spec(body={'config': {'object': {'configurable': {'object': {
+        'thread_id': {'var': 'input_thread'}}}}}}, inputs={'input_thread': 't-1'},
+                ids=['thread_id', 'run_id'])
+    data['request']['url'] = 'http://127.0.0.1/threads/{input_thread}/runs'
+    data['delivery']['request']['url'] = 'http://127.0.0.1/threads/{thread_id}/runs/{run_id}'
+    result, calls, _, _ = await run(data, {'thread_id': returned, 'run_id': 'r-1'},
+                                    expected_json={'config': {'configurable': {'thread_id': 't-1'}}},
+                                    expected_query={}, submit_path='/threads/t-1/runs',
+                                    poll_path='/threads/t-1/runs/r-1')
+    if returned == 't-1':
+        assert result.outcome.value == 'succeeded' and result.response_text == 'own run r-1 answer'
+        assert calls == [('POST', '/threads/t-1/runs'), ('GET', '/threads/t-1/runs/r-1')]
+    else:
+        refused(result, calls, 'submit_parent_changed')
+
+
+@pytest.mark.parametrize('destination', ['path', 'query'])
+@pytest.mark.parametrize('copy_first', [False, True])
+@pytest.mark.parametrize('copy_shape', ['nested', 'other_name'])
+async def test_named_agreed_parent_with_duplicate_returns_own_reply(copy_first, copy_shape, destination):
+    copy = ('config', {'object': {'configurable': {'object': {'thread_id': {'var': 'input_thread'}}}}})
+    expected_copy = ('config', {'configurable': {'thread_id': 't-1'}})
+    if copy_shape == 'other_name':
+        copy, expected_copy = ('thread', {'var': 'input_thread'}), ('thread', 't-1')
+    fields = [('thread_id', {'var': 'input_thread'}), copy]
+    expected_fields = [('thread_id', 't-1'), expected_copy]
+    if copy_first:
+        fields.reverse()
+        expected_fields.reverse()
+    data = spec(body=dict(fields), inputs={'input_thread': 't-1'}, ids=['thread_id', 'run_id'])
+    data['delivery']['request']['url'] = 'http://127.0.0.1/threads/{thread_id}/runs/{run_id}'
+    poll_path = '/threads/t-1/runs/r-1'
+    if destination == 'query':
+        data['delivery']['request']['url'] = 'http://127.0.0.1/runs'
+        data['delivery']['request']['query'] = {'thread_id': {'var': 'thread_id'}, 'run_id': {'var': 'run_id'}}
+        poll_path = '/runs?thread_id=t-1&run_id=r-1'
+    result, calls, _, _ = await run(data, {'thread_id': 't-1', 'run_id': 'r-1'},
+                                    expected_json=dict(expected_fields), expected_query={}, poll_path=poll_path)
+    assert result.outcome.value == 'succeeded' and result.response_text == 'own run r-1 answer'
+    assert calls == [('POST', '/runs'), ('GET', poll_path)]
+
+
+@pytest.mark.parametrize('copy_first', [False, True])
+@pytest.mark.parametrize('matching_source', ['body', 'query'])
+async def test_agreement_and_copy_cannot_hide_conflicting_same_name(copy_first, matching_source):
+    fields = [('thread_id', {'var': 'matching' if matching_source == 'body' else 'changed'}),
+              ('copy', {'var': 'matching'})]
+    if copy_first:
+        fields.reverse()
+    query_value = 'changed' if matching_source == 'body' else 'matching'
+    data = spec(body=dict(fields), query={'thread_id': {'var': query_value}},
+                inputs={'matching': 't-1', 'changed': 't-9'}, ids=['thread_id', 'run_id'])
+    data['delivery']['request']['url'] = 'http://127.0.0.1/threads/{thread_id}/runs/{run_id}'
+    result, calls, _, _ = await run(data, {'thread_id': 't-1', 'run_id': 'r-1'},
+                                    expected_json={'thread_id': 't-1' if matching_source == 'body' else 't-9',
+                                                   'copy': 't-1'},
+                                    expected_query={'thread_id': 't-9' if matching_source == 'body' else 't-1'})
+    refused(result, calls, 'submit_parent_changed')
+
+
+@pytest.mark.parametrize('agreement', ['body', 'path'])
+@pytest.mark.parametrize('echo_first', [False, True])
+async def test_agreed_parent_does_not_settle_other_captured_run_id(agreement, echo_first):
+    ids = ['run_id', 'thread_id'] if echo_first else ['thread_id', 'run_id']
+    data = spec(body={'thread_id': {'var': 'input_thread'}, 'copy': {'var': 'input_thread'}},
+                inputs={'input_thread': 't-1'}, ids=ids)
+    submit_path = '/runs'
+    if agreement == 'path':
+        data['request']['url'] = 'http://127.0.0.1/threads/{input_thread}/runs'
+        submit_path = '/threads/t-1/runs'
+    data['delivery']['request']['url'] = 'http://127.0.0.1/threads/{thread_id}/runs/{run_id}'
+    result, calls, _, _ = await run(data, {'thread_id': 't-1', 'run_id': 't-1'},
+                                    expected_json={'thread_id': 't-1', 'copy': 't-1'}, expected_query={},
+                                    submit_path=submit_path)
+    refused(result, calls)
+
+
+@pytest.mark.parametrize('echo_final', [False, True])
+async def test_generated_value_with_prompt_alias_is_input(monkeypatch, echo_final):
+    import argus_transport.engine_v2 as engine
+    monkeypatch.setattr(engine.uuid, 'uuid4', lambda: 'client-1')
+    data = spec(body={'value': {'var': 'mixed'}})
+    data['let']['run'] = {'mixed': {'concat': [{'generate': 'uuid4'}, {'context': 'prompt'}]}}
+    result, calls, _, _ = await run(data, {'run_id': 'client-1ping' if echo_final else 'client-1'},
+                                    expected_json={'value': 'client-1ping'}, expected_query={},
+                                    poll_path='/runs/client-1')
+    if echo_final:
+        refused(result, calls)
+    else:
+        assert result.outcome.value == 'succeeded' and result.response_text == 'own run r-1 answer'
+        assert calls == [('POST', '/runs'), ('GET', '/runs/client-1')]
+
+
+async def test_body_agreement_settles_earlier_different_path_slot_echo():
+    data = spec(body={'thread_id': {'var': 'input_thread'}}, inputs={'input_thread': 't-1'},
+                ids=['thread_id', 'run_id'])
+    data['request']['url'] = 'http://127.0.0.1/parents/{input_thread}/runs'
+    data['delivery']['request']['url'] = 'http://127.0.0.1/threads/{thread_id}/runs/{run_id}'
+    result, calls, _, _ = await run(data, {'thread_id': 't-1', 'run_id': 'r-1'},
+                                    expected_json={'thread_id': 't-1'}, expected_query={},
+                                    submit_path='/parents/t-1/runs', poll_path='/threads/t-1/runs/r-1')
+    assert result.outcome.value == 'succeeded' and result.response_text == 'own run r-1 answer'
+    assert calls == [('POST', '/parents/t-1/runs'), ('GET', '/threads/t-1/runs/r-1')]
+
+
+async def test_agreed_path_slot_cannot_hide_later_conflicting_path_slot():
+    data = spec(body={'copy': {'var': 'first'}}, inputs={'first': 't-1', 'second': 't-9'},
+                ids=['thread_id', 'run_id'])
+    data['request']['url'] = 'http://127.0.0.1/threads/{first}/scopes/threads/{second}/runs'
+    data['delivery']['request']['url'] = 'http://127.0.0.1/threads/{thread_id}/runs/{run_id}'
+    result, calls, _, _ = await run(data, {'thread_id': 't-1', 'run_id': 'r-1'},
+                                    expected_json={'copy': 't-1'}, expected_query={},
+                                    submit_path='/threads/t-1/scopes/threads/t-9/runs')
+    refused(result, calls, 'submit_parent_changed')
+
+
+@pytest.mark.parametrize('returned,body_parent', [('t-1', 't-9'), ('t-9', 't-9')])
+async def test_path_and_named_body_disagreements_precede_settlement(returned, body_parent):
+    data = spec(body={'thread_id': {'var': 'body_parent'}, 'copy': {'var': 'path_parent'}},
+                inputs={'path_parent': 't-1', 'body_parent': body_parent}, ids=['thread_id', 'run_id'])
+    data['request']['url'] = 'http://127.0.0.1/threads/{path_parent}/runs'
+    data['delivery']['request']['url'] = 'http://127.0.0.1/threads/{thread_id}/runs/{run_id}'
+    result, calls, _, _ = await run(data, {'thread_id': returned, 'run_id': 'r-1'},
+                                    expected_json={'thread_id': body_parent, 'copy': 't-1'}, expected_query={},
+                                    submit_path='/threads/t-1/runs')
+    refused(result, calls, 'submit_parent_changed')
