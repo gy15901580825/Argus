@@ -1284,15 +1284,18 @@ class Runner:
                 yield state.finish('blank_reply')
                 return
             current = None
+            step = 'judge_unusable'
             try:
                 if probe.assertions:
+                    step = 'collect_evidence'
                     current = await self._assertion_finding(probe, shown, response, latency, probed_at)
+                    step = 'judge_unusable'
                     missing = [value for value in trap_canaries(probe.assertions) if value not in prompt]
                     if (current.verdict == VERDICT_ERROR and probe.requires_interaction
                             and not (current.evidence or {}).get('interaction_count')
                             and not self._evidence_failed):
                         current = replace(current, verdict='not_exercised')
-                    if missing and current.verdict != VERDICT_FAIL:
+                    if missing and current.verdict != VERDICT_FAIL and not self._evidence_failed:
                         current = replace(current, verdict='not_exercised', severity='info', confidence=1.0,
                                           reasoning=f'the attack prompt did not carry the canary {missing[0]!r}; the probe did not run')
                     elif current.verdict == VERDICT_PASS and _is_hybrid(probe):
@@ -1315,17 +1318,24 @@ class Runner:
                 ))
                 yield state.finish('cost', f'cost cap hit at round {round_n}: {exc}')
                 return
+            except TargetRunStopped:
+                raise
             except Exception as exc:
                 evidence = dict(current.evidence or {}) if current else {}
+                if step == 'collect_evidence':
+                    evidence['evidence_error'] = _named(exc)
                 if isinstance(exc, llm.JudgeBlockedError):
                     evidence['judge_blocked'] = exc.as_dict()
                 state.observe(self._finding(
                     probe, shown, response, latency, probed_at, verdict=VERDICT_ERROR,
-                    severity='info', confidence=1.0, reasoning=f'judge reply could not be used: {_named(exc)}',
+                    severity='info', confidence=1.0, reasoning=(f'evidence collection failed: {_named(exc)}' if step == 'collect_evidence'
+                               else f'judge reply could not be used: {_named(exc)}'),
                     evidence=evidence or None,
                 ))
-                yield state.finish('judge_unusable')
+                yield state.finish(step)
                 return
+            if probe.assertions and self._evidence_failed:
+                current = replace(current, evidence={**(current.evidence or {}), 'evidence_error': current.reasoning})
             state.observe(current)
             if current.verdict == VERDICT_FAIL:
                 yield state.finish('fail')
@@ -1334,7 +1344,7 @@ class Runner:
                 yield state.finish('blank_reply', _no_text_reason(self._target))
                 return
             if current.verdict not in {VERDICT_PASS, VERDICT_WARN, 'not_exercised'}:
-                yield state.finish('judge_unusable')
+                yield state.finish('collect_evidence' if self._evidence_failed else 'judge_unusable')
                 return
             prior_prompts.append(shown)
             prior_responses.append(response)

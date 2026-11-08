@@ -469,7 +469,7 @@ async def run(req: RunRequest):
         and cfg.provider == llm.PROVIDER_JEV
         and llm.explain_config(cfg) is None
     ):
-        raise HTTPException(status_code=422, detail=llm.NEEDS_TEXT_MODEL + "; or use --mode static")
+        raise HTTPException(status_code=422, detail=llm.NEEDS_TEXT_MODEL + "; set mode=static (CLI: --mode static)")
 
     if not isinstance(req.target, dict):
         raise HTTPException(status_code=422, detail="target must be a JSON object")

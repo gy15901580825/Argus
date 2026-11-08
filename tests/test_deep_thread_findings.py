@@ -454,3 +454,15 @@ async def test_post_round_failure_keeps_transcript(thread_case, monkeypatch):
     found = await results(c)
     assert_thread(found[0], c, 'error', 'post_round', 3)
     assert 'fixture post-round gate failed' in found[0].evidence['evidence_error']
+
+
+@pytest.mark.asyncio
+async def test_assertion_collection_error_names_step_and_keeps_prior_round(thread_case):
+    c = thread_case
+    c.probe.assertions = ({'no_call_to_tool': 'forbidden_tool'},)
+    c.target.collect_evidence = AsyncMock(side_effect=[{'interaction_count': 1, 'tool_calls': []},
+                                                     ValueError('fixture assertion evidence broken')])
+    found = await results(c)
+    assert_thread(found[0], c, 'error', 'collect_evidence', 2)
+    assert found[0].evidence['transcript'][0]['verdict'] == 'pass'
+    assert 'fixture assertion evidence broken' in found[0].evidence['evidence_error']
