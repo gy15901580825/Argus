@@ -784,6 +784,8 @@ class TransportEngineV2:
                     poll_selector = delivery.poll_selectors.get(name)
                     if poll_selector is not None:
                         raw = select(body, poll_selector.path)
+                        if raw is _MISSING and not poll_selector.required:
+                            continue
                         valid = type(raw) is type(ids[name]) and raw == ids[name]
                         if poll_selector.expect_prefix is not None:
                             try:

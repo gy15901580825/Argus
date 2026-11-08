@@ -69,11 +69,11 @@ class TransportContextV2(TransportContext):
     material: str | None = None
 
 
-def _name(value):
+def _name(value, *, allow_run_id=False):
     if (
         not isinstance(value, str)
         or not NAME_RE.fullmatch(value)
-        or value in CONTEXT_KEYS_V2
+        or value in CONTEXT_KEYS_V2 and not (allow_run_id and value == 'run_id')
         or any(word in value.lower() for word in SECRET_WORDS)
     ):
         raise ValueError("Invalid transport variable name")
@@ -98,7 +98,7 @@ def value_expr_v2(value: dict, depth: int = 0, *, visible: frozenset[str]) -> di
     elif kind == "literal":
         value_expr(value, depth)
     elif kind == "var":
-        _name(item)
+        _name(item, allow_run_id=True)
         if not isinstance(item, str) or item not in visible:
             raise ValueError("Transport variable is not visible")
     elif kind == "env":
@@ -588,14 +588,18 @@ class PollIdentitySpec(FrozenModel):
     path: str
     last_segment: bool = False
     expect_prefix: dict | None = None
+    required: bool = True
 
     @classmethod
     def from_dict(cls, data, *, visible):
-        object_fields(data, {'path', 'last_segment', 'expect_prefix'}, {'path'})
-        selector = CaptureSpec.from_dict(data, visible=visible)
+        object_fields(data, {'path', 'last_segment', 'expect_prefix', 'required'}, {'path'})
+        required = data.get('required', True)
+        if type(required) is not bool:
+            raise ValueError('Poll identity required must be boolean')
+        selector = CaptureSpec.from_dict({key: value for key, value in data.items() if key != 'required'}, visible=visible)
         if selector.last_segment and selector.expect_prefix is None:
             raise ValueError('Poll last_segment requires expect_prefix')
-        return cls(selector.path, selector.last_segment, selector.expect_prefix)
+        return cls(selector.path, selector.last_segment, selector.expect_prefix, required)
 
 
 @dataclass(frozen=True)
@@ -613,6 +617,19 @@ class PollSpecV2(FrozenModel):
     _run_id_sugar: bool = field(default=False, compare=False, repr=False)
     poll_selectors: dict[str, PollIdentitySpec] = field(default_factory=dict)
     abort: AbortSpec | None = None
+
+
+def _expression_variables(expression):
+    if 'var' in expression:
+        yield expression['var']
+    elif 'base64' in expression:
+        yield from _expression_variables(expression['base64'])
+    elif 'concat' in expression or 'array' in expression:
+        for item in expression.get('concat', expression.get('array', [])):
+            yield from _expression_variables(item)
+    elif 'object' in expression:
+        for item in expression['object'].values():
+            yield from _expression_variables(item)
 
 
 @dataclass(frozen=True)
@@ -760,8 +777,15 @@ class TransportSpecV2(FrozenModel):
                 request.url
             ):
                 raise ValueError("Poll origin or method mismatch")
-            if any(poll_request.placeholders.count(name) != 1 for name in ids):
-                raise ValueError('Poll URL requires each ID exactly once')
+            placements = {name: poll_request.placeholders.count(name) for name in ids}
+            for expression in poll_request.query.values():
+                consumed = set(_expression_variables(expression)) & set(ids)
+                if consumed and (set(expression) != {'var'} or expression['var'] not in ids):
+                    raise ValueError('Poll query IDs require direct variable bindings')
+                for name in consumed:
+                    placements[name] += 1
+            if any(count != 1 for count in placements.values()):
+                raise ValueError('Poll request requires each ID exactly once in path or direct query')
             if auth_names & {k.lower() for k in poll_request.headers}:
                 raise ValueError("Poll auth and public headers conflict")
             max_polls = delivery_data["max_polls"]

@@ -303,7 +303,8 @@ def test_unsupported_async_shapes_block(tmp_path, alter):
     result, out = run(tmp_path, document)
     assert result.exit_code == 3, result.output
     assert not out.exists()
-    assert "async_shape_unsupported" in blocking(out)
+    expected = "poll_parameter_unsupported" if alter == "query" else "async_shape_unsupported"
+    assert expected in blocking(out)
 
 
 def test_async_draft_reads_the_poll_response_not_the_submit_response(tmp_path):

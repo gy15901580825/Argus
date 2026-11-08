@@ -127,7 +127,9 @@ def test_nested_response_ids_fill_documented_parent_and_run(tmp_path):
     assert result.exit_code == 3, result.output
     assert out.exists()
     transport = json.loads(out.read_text())["transport"]
-    assert transport["delivery"]["ids"] == {"threadid": {"path": "$.threadId"}, "runid": {"path": "$.runId"}}
+    assert transport["delivery"]["ids"] == {
+        "threadid": {"path": "$.threadId", "poll": {"path": "$.threadId"}},
+        "runid": {"path": "$.runId", "poll": {"path": "$.runId"}}}
     assert transport["delivery"]["request"]["url"].endswith("/v1/questions/{threadid}/{runid}")
 
 
@@ -143,7 +145,7 @@ def test_submit_documenting_200_and_202_with_one_body_compiles_a_single_id_poll(
               "when": {"path": "$.status", "one_of": ["failed"]}, "outcome": "target_error"}
     assert transport["delivery"] == {
         "kind": "poll",
-        "ids": {"runid": {"path": "$.runId"}},
+        "ids": {"runid": {"path": "$.runId", "poll": {"path": "$.runId"}}},
         "request": {"method": "GET", "url": "http://127.0.0.1:8123/v1/questions/{runid}",
                     "headers": {"Accept": "application/json"}, "body": {"none": True}},
         "pending": {"path": "$.status", "one_of": ["running"]},
