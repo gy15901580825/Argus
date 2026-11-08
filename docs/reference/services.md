@@ -101,7 +101,13 @@ Request errors on `/redteam/run` and `/redteam/run/preflight` use FastAPI's `{"d
 
 A 200 response is a Server-Sent Events stream (`Content-Type: text/event-stream`). Each frame ends with a blank line. A frame is either one `data:` line, or an `event:` line followed by one `data:` line. Every `data:` line holds one JSON object.
 
-The frames come in this order:
+Deep mode first emits a bare `data:` frame with `type: "deep_run"` and `deep`
+selection metadata. It then emits one finding per persona/strategy thread,
+instead of one finding per round; `evidence.transcript` holds all rounds.
+Static finding frames remain unchanged. Consumers must distinguish metadata
+from findings before computing counts.
+
+After the optional deep metadata frame, the remaining frames come in this order:
 
 1. Zero or more finding frames, one per finding, as bare `data:` lines. The object has exactly the keys of a run.json finding, listed in [the run.json format](../run-json.md#run-summary), and no others.
 2. One coverage frame, a bare `data:` line whose `type` is `"coverage"`.

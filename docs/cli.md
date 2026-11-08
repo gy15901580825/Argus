@@ -126,7 +126,20 @@ server's `deep_run` SSE event record the resolved seed and selected threads.
 Reusing a seed reproduces pair selection with the same probes and library;
 it does not promise identical model answers. Indirect probes using a material
 channel keep their static execution and appear in `static_material_probe_ids`.
-Each deep round currently produces its own finding.
+Each deep thread produces one finding, with every sent prompt, reply and round
+verdict in `evidence.transcript`. HTML keeps the transcript collapsed. SARIF
+and JUnit carry one result per thread, including its transcript.
+
+A failed round ends the thread with `fail`. Reaching the round limit yields
+`warn` if any round warned, or `pass` only if every round passed. A cost stop
+is `aborted_cost`. An early attacker stop or content-filter block, send failure,
+blank reply or unusable judge result is `error`, even if earlier rounds passed.
+A proven failure remains a failure when its target reply is blank.
+
+Stateless targets still run deep threads. Each round is a fresh cold message,
+while the attacker still sees prior replies. The CLI prints one line saying
+the target keeps no conversation and rounds are independent; each thread
+records `evidence.history: false`.
 
 ### Choosing probes
 
