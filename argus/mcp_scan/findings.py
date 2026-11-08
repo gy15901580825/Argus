@@ -119,7 +119,7 @@ def unjudged_count(findings: list[dict], reasons: Sequence[str] = (CAP_REASON, E
 
     A judge that is off is not counted: the spec keeps that case out of the exit code."""
     return sum(f["verdict"] == VERDICT_ERROR and
-               (BLOCKED_REASON if f["evidence"].get("error_code") == "content_filter" else f["reasoning"]) in reasons
+               (BLOCKED_REASON if f.get("evidence", {}).get("error_code") == "content_filter" else f["reasoning"]) in reasons
                for f in findings)
 
 
