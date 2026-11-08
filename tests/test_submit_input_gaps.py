@@ -129,6 +129,13 @@ def test_renamed_poll_run_slot_cannot_be_a_submit_input(tmp_path, case, name, lo
                                'A bindings file cannot establish that ownership.')
 
 
+def test_A1_original_parameter_name_still_blocks_a_renamed_run_slot(tmp_path):
+    doc = renamed_run_document('id', fields=['run_id'])
+    target, report, _ = drafted(tmp_path, doc)
+    assert target is None
+    assert 'poll_id_binding_missing' in codes(report, True)
+
+
 @pytest.mark.parametrize('case,poll_path,poll_names,submitted,reason', [
     ('C1', '/runs/{id}', ['id'], {'agent_id': 'ag-7', 'id': 'r-1'}, None),
     ('C1b', '/runs/{id}', ['id'], {'agent_id': 'ag-7', 'id': 'ag-7'}, 'submit_parent_echo'),
