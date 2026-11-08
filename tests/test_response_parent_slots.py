@@ -129,6 +129,7 @@ def test_reason_function_maps_mismatched_submit_url_to_binding_error():
     data = handwritten("/agents/{input_agent}/runs", "/runs/{id}", {"input_agent": "ag-7"}, ["id"])
     spec = TransportSpecV2.from_dict(data)
     reason = _response_parent_reason(spec.request, "http://127.0.0.1/runs", spec.delivery.request, {"id": "r-1"})
+    assert reason is not None
     assert reason.value == "binding_error"
 
 

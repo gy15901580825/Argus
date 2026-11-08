@@ -137,7 +137,7 @@ def render_url(
 @dataclass(frozen=True)
 class _PathIdentity:
     name: str
-    prefix: tuple[str, ...]
+    slot: tuple[str, ...]
     value: str | None
 
 
@@ -146,7 +146,7 @@ def _path_identities(template: str, bound_url: str | None = None) -> tuple[_Path
     bound = urlsplit(bound_url).path.split("/") if bound_url is not None else None
     if bound is not None and len(bound) != len(segments):
         raise ValueError("Submit path does not match its template")
-    identities, prefix = [], []
+    identities = []
     for index, segment in enumerate(segments):
         match = re.search(r"\{([^{}]+)\}", segment)
         if match is not None:
@@ -157,15 +157,18 @@ def _path_identities(template: str, bound_url: str | None = None) -> tuple[_Path
                 if not actual.startswith(before) or not actual.endswith(after):
                     raise ValueError("Submit path does not match its template")
                 value = unquote(actual[len(before):len(actual) - len(after) if after else None])
-            identities.append(_PathIdentity(match.group(1), tuple(prefix + [before]), value))
-        prefix.append(re.sub(r"\{[^{}]+\}", "{}", segment))
+            preceding = [re.sub(r"\{[^{}]+\}", "{}", segments[index - 1])] if index else []
+            identities.append(_PathIdentity(match.group(1), tuple(preceding + [before]), value))
     return tuple(identities)
 
 
 def _response_parent_reason(submit: RequestSpecV2, submit_url: str, poll: RequestSpecV2,
                             ids: Mapping[str, str | int]) -> SafeReasonCode | None:
-    inputs = _path_identities(submit.url, submit_url)
-    destinations = {slot.name: slot for slot in _path_identities(poll.url)}
+    try:
+        inputs = _path_identities(submit.url, submit_url)
+        destinations = {slot.name: slot for slot in _path_identities(poll.url)}
+    except ValueError:
+        return SafeReasonCode.BINDING_ERROR
     queries = {expression["var"]: name for name, expression in poll.query.items()
                if expression.get("var") in ids}
     for name, captured in ids.items():
@@ -174,12 +177,12 @@ def _response_parent_reason(submit: RequestSpecV2, submit_url: str, poll: Reques
         value = str(captured)
         for parent in inputs:
             parent_name = parent.name.removeprefix("input_")
-            destination_name = query_name if query_name is not None else name
-            same_name = destination_name == parent_name
-            same_path = destination is not None and destination.prefix == parent.prefix
-            if (same_path or query_name is not None and same_name) and value != parent.value:
+            same_query = query_name is not None and query_name == parent_name
+            same_path = destination is not None and destination.slot == parent.slot
+            shared = same_path or same_query
+            if shared and value != parent.value:
                 return SafeReasonCode.SUBMIT_PARENT_CHANGED
-            if value == parent.value and not (same_name and (same_path or query_name is not None)):
+            if value == parent.value and not shared:
                 return SafeReasonCode.SUBMIT_PARENT_ECHO
     return None
 
@@ -774,10 +777,7 @@ class TransportEngineV2:
             except ValueError:
                 return self.failure(SafeReasonCode.MISSING_ID, start, status=status,
                                     diagnostics=redactor.clean(diagnostics))
-            try:
-                identity_error = _response_parent_reason(self.spec.request, request.url, delivery.request, ids)
-            except ValueError:
-                identity_error = SafeReasonCode.BINDING_ERROR
+            identity_error = _response_parent_reason(self.spec.request, request.url, delivery.request, ids)
             if identity_error is not None:
                 return self.failure(identity_error, start, status=status, diagnostics=redactor.clean(diagnostics))
             if not matched:
