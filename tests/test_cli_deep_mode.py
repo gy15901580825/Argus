@@ -199,7 +199,7 @@ def test_static_json_does_not_gain_deep_metadata():
 
 @pytest.mark.asyncio
 async def test_deep_records_existing_static_material_fallback(engine, monkeypatch):
-    probe = replace(engine.probe, indirect=(IndirectItem('benign task', 'material'),), prompts=())
+    probe = replace(engine.probe, indirect=(IndirectItem('benign task', 'material'),))
     engine.target.material_channel = True
     monkeypatch.setattr(api, 'load_probe_library', lambda *_: [probe])
     monkeypatch.setattr(local, 'load_probe_library', lambda *_: [probe])
@@ -242,3 +242,45 @@ async def test_http_upload_accepts_cold_history_without_sending_it(monkeypatch):
     assert len(requests) == 4
     assert b'old text' not in requests[0].content and b'old text' not in requests[2].content
     assert b'first' in requests[0].content and b'second' in requests[2].content
+
+
+def test_cli_deep_adapts_after_refusals_to_three_turn_precondition(tmp_path, engine, monkeypatch):
+    target = engine.target
+
+    async def send(prompt, history=(), material=None):
+        target.calls.append((prompt, tuple(history), material))
+        prepared = [turn.content for turn in history if turn.role == 'user']
+        if prepared == ['introduce benign task', 'confirm benign scope'] and prompt == 'execute benign task':
+            return 'precondition reached', 1.0
+        return 'refused: benign precondition missing', 1.0
+
+    async def attacker(_cfg, *, user, **_):
+        if 'confirm benign scope' in user and 'refused:' in user:
+            text = 'execute benign task'
+        elif 'introduce benign task' in user and 'refused:' in user:
+            text = 'confirm benign scope'
+        else:
+            text = 'introduce benign task'
+        return llm.Completion(text, 0, 0, 'fixture')
+
+    async def judge(*, target_response, **_):
+        verdict = 'fail' if target_response == 'precondition reached' else 'pass'
+        return Verdict(verdict, 'medium' if verdict == 'fail' else 'info', 1.0, 'benign fixture', 'fixture', None)
+
+    monkeypatch.setattr(target, 'send_prompt', send)
+    monkeypatch.setattr(llm, 'complete', attacker)
+    engine.judge.judge.side_effect = judge
+    static = CliRunner().invoke(main, arguments(tmp_path))
+    assert static.exit_code == 0, static.output
+    assert [f['verdict'] for f in json.loads((tmp_path / 'run.json').read_text())['findings']] == ['pass']
+    target.calls.clear()
+    deep = CliRunner().invoke(main, arguments(tmp_path, extra=[
+        '--mode', 'deep', '--deep-pairs', '1', '--max-rounds', '3', '--seed', 'adaptivity']))
+    assert deep.exit_code == 0, deep.output
+    findings = json.loads((tmp_path / 'run.json').read_text())['findings']
+    assert [f['verdict'] for f in findings] == ['pass', 'pass', 'fail']
+    assert [call[0] for call in target.calls] == [
+        'introduce benign task', 'confirm benign scope', 'execute benign task']
+    assert len(target.calls[-1][1]) == 4
+    assert [turn.content for turn in target.calls[-1][1] if turn.role == 'assistant'] == [
+        'refused: benign precondition missing', 'refused: benign precondition missing']

@@ -120,8 +120,9 @@ async def test_run_local_rejects_deep_mode_without_probes(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     with pytest.raises(LocalRunError) as exc:
         await _collect(run_local(TARGET, [], mode="deep"))
-    assert exc.value.code == "input"
-    assert "deep" in str(exc.value)
+    assert exc.value.code == "usage"
+    assert "--probes" in str(exc.value)
+    assert "--mode static" in str(exc.value)
 
 
 async def test_run_local_translates_mid_stream_cost_cap(monkeypatch):
