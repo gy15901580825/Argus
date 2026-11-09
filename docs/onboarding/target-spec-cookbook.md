@@ -10,6 +10,42 @@ argus-probe init --kind <one of those 15>
 
 Below are copy-paste templates for each supported agent shape, plus the gotchas we've run into in real deployments.
 
+## Input limits shared by all target kinds
+
+Add an optional top-level `input_limits` object to your target spec when the
+endpoint caps message or history size:
+
+```json
+{
+  "input_limits": {
+    "max_message_chars": 4000,
+    "max_history_chars": 32000
+  }
+}
+```
+
+Both fields are optional positive integers. Omit either field to leave that
+limit unset; omit the object or use `{}` to keep the existing behavior.
+Unknown fields, strings, booleans, null, zero and negative values are rejected
+by spec validation, including `validate-target`.
+
+`max_message_chars` limits generated messages in deep persona threads. Argus
+tells the attacker the limit, retries once if its message is too long, then
+cuts a second oversized message to the limit. Static probe prompts and the
+closing direct ask are sent unchanged, even if they exceed it.
+
+`max_history_chars` counts the summed content of prior history turns, excluding
+the current message. Before each send, Argus drops the oldest user/assistant
+pairs until the history fits. A pair larger than the budget can leave an empty
+history; the current message still goes out. The attacker context, judge results
+and report retain the full conversation. This controls the history Argus sends;
+it does not shrink conversation state stored by the endpoint itself.
+
+Counts use Python string characters, not tokens or UTF-8 bytes, and exclude
+protocol overhead. Set limits for the fields your endpoint accepts. For a
+wrapper target, put the limits on the outer target spec that the runner uses.
+PAIR/TAP attackers do not use the message limit yet.
+
 ---
 
 ## openai_compat

@@ -11,7 +11,8 @@ DeepStop = Literal['fail', 'max_rounds', 'attacker_stopped', 'attacker_blocked',
                    'send_error', 'blank_reply', 'judge_unusable', 'cost', 'blocked_by_target',
                    'not_exercised', 'not_started', 'collect_evidence', 'post_round']
 THREAD_STRUCTURE_FIELDS = ('thread_id', 'persona', 'strategy', 'rounds_run', 'stop_reason', 'history')
-ROUND_STRUCTURE_FIELDS = ('verdict', 'severity', 'kind')
+INPUT_ACTION_FIELDS = ('message_regenerated', 'message_cut', 'history_turns_dropped')
+ROUND_STRUCTURE_FIELDS = ('verdict', 'severity', 'kind', *INPUT_ACTION_FIELDS)
 ROUND_FIELDS = ('attack_prompt', 'target_response', 'verdict', 'severity', 'reasoning')
 _VERDICT_RANK = {'pass': 0, 'warn': 1, 'error': 2, 'aborted_cost': 3, 'fail': 4}
 _SEVERITY_RANK = {'info': 0, 'low': 1, 'medium': 2, 'high': 3, 'critical': 4}
@@ -34,9 +35,11 @@ class DeepThread:
     history: bool
     template: Finding
     rounds: list[Finding] = field(default_factory=list)
+    round_input_actions: list[dict] = field(default_factory=list)
 
-    def observe(self, finding: Finding) -> None:
+    def observe(self, finding: Finding, *, input_actions: dict | None = None) -> None:
         self.rounds.append(finding)
+        self.round_input_actions.append(dict(input_actions or {}))
 
     def annotate(self, finding: Finding, stop: DeepStop) -> Finding:
         observed = dict(finding.evidence or {})
@@ -49,6 +52,7 @@ class DeepThread:
             'stop_reason': stop, 'history': self.history,
             'transcript': [
                 {**{key: getattr(row, key) for key in ROUND_FIELDS},
+                 **self.round_input_actions[i],
                  'kind': 'closing_direct' if self.probe.is_closing_round(i) else 'adaptive'}
                 for i, row in enumerate(self.rounds)
             ],

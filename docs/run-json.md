@@ -64,6 +64,21 @@ identify the pairing. `rounds_run` equals the transcript length. `history` is
 false for a stateless target, whose rounds are independent cold messages.
 The attacker still receives prior replies when the target keeps no history.
 
+When a configured target `input_limits` budget acts, the affected round also
+records these optional fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `message_regenerated` | boolean | True when the generated message exceeded `max_message_chars` and the attacker was asked once more. |
+| `message_cut` | boolean | True when the second generated message still exceeded the limit and was cut to it. |
+| `history_turns_dropped` | integer | Number of prior turns omitted from this send, oldest user/assistant pairs first. The current message is excluded. |
+
+Fields are absent when no limit acts, including when `input_limits` is unset.
+These fields survive report redaction. `attack_prompt` contains the message
+actually sent after any retry or cut; `transcript` still includes all rounds,
+including those omitted from the target's wire history. A failed send retains
+its limit actions. Fixed static and closing direct prompts are never cut.
+
 The top-level `attack_prompt`, `target_response` and judge attribution come
 from the representative worst round; the transcript retains every round.
 `target_latency_ms` is the sum of recorded latency across attempted rounds.

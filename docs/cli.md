@@ -127,6 +127,21 @@ earlier round remains adaptive. A failure or another stop ends the thread
 before that ask. With `--max-rounds 1`, the prompt remains attacker-generated.
 The thread transcript marks each round as `adaptive` or `closing_direct`.
 
+Use the target spec's optional `input_limits` to fit deep messages and resent
+history to your endpoint's character limits. For example,
+`"input_limits": {"max_message_chars": 4000, "max_history_chars": 32000}`
+tells the attacker to write within 4000 characters. An oversized generated
+message gets one retry, then is cut if it is still too long. Static prompts and
+the closing direct ask remain unchanged. Before each history send, Argus drops
+the oldest complete user/assistant pairs until the sum fits 32000 characters;
+the current message is excluded from that history count. The full conversation
+remains in the report and attacker context. Each transcript row records any
+retry, cut or dropped history turns. Both fields are optional positive integers;
+without them, prompts and histories keep their existing behavior. See the
+[target spec cookbook](https://github.com/gy15901580825/Argus/blob/main/docs/onboarding/target-spec-cookbook.md#input-limits-shared-by-all-target-kinds)
+for validation and counting details. PAIR/TAP attackers do not use the message
+limit yet.
+
 The default per-run cap is $5 for deep mode and $0.50 for static mode. The
 estimate includes judge and attacker calls at the requested pair and round
 budgets; it excludes requests billed by your target. Local mode prints its

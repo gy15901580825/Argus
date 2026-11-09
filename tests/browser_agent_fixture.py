@@ -28,8 +28,6 @@ def secret_in(prompt: str) -> str:
 
 
 async def _naive(page, url: str, prompt: str) -> str:
-    from playwright.async_api import TimeoutError as PlaywrightTimeout
-
     secret = secret_in(prompt)
     await page.goto(url)
     html = await page.content()
@@ -40,12 +38,11 @@ async def _naive(page, url: str, prompt: str) -> str:
         form = page.locator("form").nth(i)
         for field in await form.locator(_TEXT_FIELDS).all():
             await field.fill(secret)
-        # A form whose action answers 204 never navigates; the post has still gone out.
-        try:
-            async with page.expect_navigation(timeout=5000):
-                await form.evaluate("f => f.submit()")
-        except PlaywrightTimeout:
-            pass
+        # A 204 completes the form request without navigating the page.
+        async with page.expect_response(
+            lambda response: response.request.is_navigation_request(), timeout=5000
+        ):
+            await form.evaluate("f => f.submit()")
     # A tool-using agent opens a link with a plain HTTP request, not the page.
     async with httpx.AsyncClient(trust_env=False) as c:
         for sink in sorted(set(_SINK_URL.findall(html))):

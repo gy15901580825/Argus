@@ -17,6 +17,7 @@ from uuid import UUID, uuid4
 import httpx
 
 from argus import llm
+from argus.input_budget import InputLimits, fit_history
 
 from argus.placeholders import needs_rendering, render_generator_name, target_model_name
 from argus.a2a.events import events_from_trials
@@ -334,6 +335,8 @@ def aborted_finding(probe, reasoning: str, *, history: bool = False) -> Finding:
 class Runner:
     def __init__(self, target, judge, rubrics_dir: Path) -> None:
         self._target = target
+        input_limits = getattr(target, "input_limits", None)
+        self._input_limits = input_limits if isinstance(input_limits, InputLimits) else InputLimits()
         self._judge = judge
         self._rubrics_dir = Path(rubrics_dir)
         # Set when this probe's evidence fetch failed; reset per probe in run_probe.
@@ -974,7 +977,7 @@ class Runner:
                     prompts.append(self._shown(prompt))
                     try:
                         response, latency = await self._target.send_prompt(
-                            prompt, history=tuple(transcript)
+                            prompt, history=fit_history(tuple(transcript), self._input_limits.max_history_chars)[0]
                         )
                     except Exception as exc:
                         if isinstance(exc, CostExceededError):
@@ -1117,11 +1120,11 @@ class Runner:
             try:
                 if use_material:
                     response_text, latency_ms = await self._target.send_prompt(
-                        indirect[idx].task, history=tuple(transcript), material=indirect[idx].material
+                        indirect[idx].task, history=fit_history(tuple(transcript), self._input_limits.max_history_chars)[0], material=indirect[idx].material
                     )
                 else:
                     response_text, latency_ms = await self._target.send_prompt(
-                        prompt, history=tuple(transcript)
+                        prompt, history=fit_history(tuple(transcript), self._input_limits.max_history_chars)[0]
                     )
             except Exception as e:
                 failure = _send_failure(e)
@@ -1265,6 +1268,7 @@ class Runner:
             severity='info', confidence=1.0, reasoning='thread did not complete', evidence=None,
         )
         state = state or DeepThread(probe, bool(getattr(self._target, 'supports_history', False)), template)
+        probe.input_limits = self._input_limits
         prior_prompts, prior_responses, prior_verdicts, history = [], [], [], []
         while True:
             round_n = len(state.rounds)
@@ -1290,15 +1294,19 @@ class Runner:
             if prompt is None or not str(prompt).strip():
                 yield state.finish('attacker_stopped', 'attacker stopped before the round limit')
                 return
+            input_actions = dict(probe.input_actions)
+            wire_history, dropped = fit_history(tuple(history), self._input_limits.max_history_chars)
+            if dropped:
+                input_actions['history_turns_dropped'] = dropped
             probed_at = datetime.now(timezone.utc)
             response, latency = '', 0.0
             try:
-                response, latency = await self._target.send_prompt(prompt, history=tuple(history))
+                response, latency = await self._target.send_prompt(prompt, history=wire_history)
             except CostExceededError as exc:
                 state.observe(self._finding(
                     probe, self._shown(prompt), '', 0.0, probed_at, verdict=VERDICT_ABORTED,
                     severity='info', confidence=1.0, reasoning=f'cost cap hit during send: {exc}', evidence=None,
-                ))
+                ), input_actions=input_actions)
                 yield state.finish('cost', f'cost cap hit at round {round_n}: {exc}')
                 return
             except Exception as exc:
@@ -1310,7 +1318,7 @@ class Runner:
                 state.observe(self._finding(
                     probe, self._shown(prompt), '', 0.0, probed_at, verdict=verdict_name,
                     severity='info', confidence=1.0, reasoning=reason, evidence=_transport_failure_evidence(exc),
-                ))
+                ), input_actions=input_actions)
                 yield state.finish('blocked_by_target' if verdict_name == VERDICT_BLOCKED_BY_TARGET else 'send_error')
                 return
             shown = self._shown(prompt)
@@ -1319,7 +1327,7 @@ class Runner:
                 state.observe(self._finding(
                     probe, shown, response or '', latency, probed_at, verdict=VERDICT_ERROR,
                     severity='info', confidence=1.0, reasoning=_no_text_reason(self._target), evidence=None,
-                ))
+                ), input_actions=input_actions)
                 yield state.finish('blank_reply')
                 return
             current = None
@@ -1354,7 +1362,7 @@ class Runner:
                     probe, shown, response, latency, probed_at, verdict=VERDICT_ABORTED,
                     severity='info', confidence=1.0, reasoning=f'cost cap hit while judging: {exc}',
                     evidence=current.evidence if current else None,
-                ))
+                ), input_actions=input_actions)
                 yield state.finish('cost', f'cost cap hit at round {round_n}: {exc}')
                 return
             except TargetRunStopped:
@@ -1370,12 +1378,12 @@ class Runner:
                     severity='info', confidence=1.0, reasoning=(f'evidence collection failed: {_named(exc)}' if step == 'collect_evidence'
                                else f'judge reply could not be used: {_named(exc)}'),
                     evidence=evidence or None,
-                ))
+                ), input_actions=input_actions)
                 yield state.finish(step)
                 return
             if probe.assertions and self._evidence_failed:
                 current = replace(current, evidence={**(current.evidence or {}), 'evidence_error': current.reasoning})
-            state.observe(current)
+            state.observe(current, input_actions=input_actions)
             if current.verdict == VERDICT_FAIL:
                 yield state.finish('fail')
                 return
@@ -1449,7 +1457,7 @@ class Runner:
                 probed_at = datetime.now(timezone.utc)
                 try:
                     response_text, latency_ms = await self._target.send_prompt(
-                        prompt, history=tuple(transcript)
+                        prompt, history=fit_history(tuple(transcript), self._input_limits.max_history_chars)[0]
                     )
                 except Exception as e:
                     failure = _send_failure(e)
