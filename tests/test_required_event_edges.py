@@ -99,3 +99,13 @@ def test_check_key_error_is_not_replaced_by_context_error():
                 "executions": [{"tool": "pay_invoice", "seq": 2}], "tool_calls": []}
     with pytest.raises(KeyError, match="action"):
         assertions.evaluate_check(assertions._CHECKS["no_action_after_denial"], True, evidence, "", context=context)
+
+
+async def test_runner_keeps_original_check_exception_as_error_finding(tmp_path):
+    probe = single_probe(PROBE_IDS[0])
+    report = world_evidence(PROBE_IDS[0])
+    report["approvals"] = [{"decision": "denied", "seq": 1, "conversation": 1}]
+    report["executions"] = [{"tool": "pay_invoice", "seq": 2}]
+    finding = await run_world(SingleWorldTarget(report), probe, tmp_path)
+    assert finding.verdict == "error"
+    assert finding.reasoning == "'action'"
