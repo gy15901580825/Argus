@@ -99,7 +99,7 @@ Request errors on `/redteam/run` and `/redteam/run/preflight` use FastAPI's `{"d
 
 ### Stream contract: `POST /redteam/run`
 
-A 200 response is a Server-Sent Events stream (`Content-Type: text/event-stream`). Each frame ends with a blank line. A frame is either one `data:` line, or an `event:` line followed by one `data:` line. Every `data:` line holds one JSON object.
+A 200 response is a Server-Sent Events stream (`Content-Type: text/event-stream`). Each frame ends with a blank line. A frame is either one `data:` line, or an `event:` line followed by one `data:` line. Every `data:` line holds one JSON object. Every stream payload masks registered target-spec secret values with the same function and `***` token as run.json. This includes findings, deep transcripts, `deep_run` metadata, coverage, error details, and cleanup reports. Masking happens at the stream boundary before JSON serialization.
 
 Deep mode first emits a bare `data:` frame with `type: "deep_run"` and `deep`
 selection metadata. It then emits one finding per persona/strategy thread,
@@ -129,6 +129,7 @@ A finding object never has a `type` key, so `type == "coverage"` tells the cover
 | `coverage` | object | The per-standard coverage table, the same object `GET /redteam/coverage` returns, with this run's results filled in. |
 | `summary` | object | Counts of this run's findings, described below. |
 | `cost` | object | `spent_usd` and `per_run_cap_usd`, both numbers, described below. |
+| `target_cleanup` | object | Optional target cleanup report, described below. Omitted when the target returns no report. |
 
 `summary` counts this run's findings:
 
@@ -159,11 +160,25 @@ A finding object never has a `type` key, so `type == "coverage"` tells the cover
 | Field | Type | Meaning |
 |-------|------|---------|
 | `detail` | string | The error message. |
-| `type` | string | The exception class name. `CostExceededError` means the run stopped at a cost cap. Probes that did not start are sent first as `aborted_cost` findings. |
+| `type` | string | The exception class name. `CostExceededError` means the run stopped at a cost cap. Probes that did not start are sent first as `aborted_cost` findings. `CleanupStateUnknown` means the cleanup report could not be read or validated; its detail is "cleanup state unknown". |
 | `cost` | object | The same shape as the coverage frame's `cost`. |
+| `target_cleanup` | object | Optional target cleanup report, described below. Omitted when the target returns no report or its report is invalid. |
 | `judge_blocked` | object | Only when `type` is `JudgeBlockedError`: a provider content filter refused a judge or attacker prompt. It holds `provider` (string), `model` (string, the model or deployment), `categories` (array of strings, empty when the provider names none) and `fallback` (`"off"` when a fallback provider exists but a block does not use it, `"<provider>/<model>: <error type>"` when the other attempt failed too, or null). |
 
-Run streams include `target_cleanup` in the existing coverage payload on success and the existing error payload on failure when the target provides a cleanup report. Spec secrets are masked, and targets with no cleanup report omit the key.
+#### `target_cleanup`
+
+The existing coverage payload on success and error payload on failure can include this object. It adds no frame. Targets with no cleanup report omit the key; it is never null.
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `complete` | boolean | True only when `open` is empty and every abort is `done` or `not_needed`. |
+| `done` | integer | Completed undo intents and delivery aborts. |
+| `open` | array of objects | Unfinished records with `scope`, `step`, `status`, `method`, `url` (string or null), and `http_status` (integer or null). Abort records also have `attempt` (integer) and optional `failure_reason` (string). |
+| `stop_reason` | string or null | The transport stop reason, if any. |
+| `leftover` | array of strings | Required list of resources for manual review, including resources with no undo. |
+| `aborts` | array of objects | Optional delivery abort records with the same fields as an open abort record. |
+
+See [target cleanup in run.json](../run-json.md#target-cleanup) for statuses and completion rules. An invalid report omits `target_cleanup` and produces the "cleanup state unknown" diagnostic introduced with the public cleanup contract. When another exception already stopped the run, its type and original detail remain, and the diagnostic is appended to `detail`.
 
 #### Stability policy
 

@@ -239,6 +239,8 @@ async def test_abort_status_done_unconfirmed_failed(status, stopped, expected):
         assert report['complete'] is (expected == 'done')
         assert report['done'] == int(expected == 'done')
         assert len(report['open']) == int(expected != 'done')
+        from argus_transport.cleanup import validate_cleanup_report
+        assert validate_cleanup_report(report) == report
 
 
 def test_abort_roundtrip_and_validation():

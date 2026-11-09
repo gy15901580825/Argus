@@ -58,7 +58,7 @@ def test_run_json_records_target_cleanup_and_marks_incomplete_when_open(tmp_path
             assert '/v1/sources/source-one' in result.stderr
 
 
-def test_server_stream_drops_target_cleanup_event(local_library, monkeypatch):
+def test_server_stream_keeps_cleanup_in_coverage_without_extra_frame(local_library, monkeypatch):
     async def events(*args, **kwargs):
         yield api.finding_dict(replace(skipped_finding(local_library, 'ok'), verdict='pass'), local_library)
         yield {'type': 'target_cleanup', 'target_cleanup': {'complete': True, 'done': 1, 'open': [], 'stop_reason': None}}
@@ -72,6 +72,8 @@ def test_server_stream_drops_target_cleanup_event(local_library, monkeypatch):
     assert not any(event.get('type') == 'target_cleanup' for event in data)
     coverage = next(event for event in data if event.get('type') == 'coverage')
     assert coverage['summary']['total'] == 1
+    assert coverage['target_cleanup']['complete'] is True
+    assert len(data) == 3
 
 
 @pytest.mark.parametrize('probe_error', [None, RuntimeError('probe failed')])

@@ -79,10 +79,14 @@ def validate_cleanup_report(value: object) -> CleanupReport | None:
             or type(value['open']) is not list or type(value['leftover']) is not list
             or any(type(name) is not str for name in value['leftover'])
             or (value['stop_reason'] is not None and type(value['stop_reason']) is not str)
-            or value['complete'] != (not value['open'])
             or ('aborts' in value and type(value['aborts']) is not list)):
         raise CleanupStateUnknown()
     result = dict(value, open=[_record(item) for item in value['open']], leftover=list(value['leftover']))
     if 'aborts' in value:
         result['aborts'] = [_record(item, abort=True) for item in value['aborts']]
+    complete = not result['open'] and all(
+        item['status'] in {'done', 'not_needed'} for item in result.get('aborts', [])
+    )
+    if result['complete'] != complete:
+        raise CleanupStateUnknown()
     return result
