@@ -8,6 +8,7 @@ from typing import ClassVar, Optional
 
 import httpx
 
+from argus import llm
 from argus.targets._base import Target, TargetBlockedError, Turn
 
 
@@ -19,6 +20,7 @@ class OpenAICompatSpec:
     api_key: Optional[str] = None
     extra_headers: tuple[tuple[str, str], ...] = ()
     timeout_s: float = 120.0
+    max_tokens: int = llm.TEXT_MAX_TOKENS
 
     def __post_init__(self) -> None:
         # Allow callers to pass headers as dict OR list-of-2-element-lists
@@ -57,7 +59,7 @@ class OpenAICompatTarget(Target):
             headers.setdefault("Authorization", f"Bearer {self.spec.api_key}")
         messages = [{"role": t.role, "content": t.content} for t in history]
         messages.append({"role": "user", "content": prompt})
-        body = {"model": self.spec.model, "messages": messages}
+        body = {"model": self.spec.model, "messages": messages, "max_tokens": self.spec.max_tokens}
         start = time.monotonic()
         async with httpx.AsyncClient(timeout=self.spec.timeout_s) as client:
             resp = await client.post(self.spec.endpoint_url, headers=headers, json=body)
@@ -83,6 +85,9 @@ class OpenAICompatTarget(Target):
         if not text.strip() and isinstance(first, dict) and first.get("finish_reason") == "content_filter":
             # Azure's output filter: the target answered and its gateway withheld the text.
             raise TargetBlockedError("target's content filter withheld the reply")
+        usage = data.get("usage") if isinstance(data, dict) else None
+        tokens = usage.get("completion_tokens", 0) if isinstance(usage, dict) else 0
+        llm.check_completion(llm.Completion(text, 0, tokens or 0, self.spec.model), self.spec.max_tokens)
         return text, latency_ms
 
 

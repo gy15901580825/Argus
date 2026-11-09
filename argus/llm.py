@@ -261,6 +261,23 @@ class Completion:
     refusals: tuple = ()
 
 
+# Reasoning used all 600 output tokens in an observed empty attacker reply.
+# Text calls reserve 4000 so the same budget covers reasoning and visible text.
+TEXT_MAX_TOKENS = 4000
+
+
+class CompletionTruncated(RuntimeError):
+    """A model exhausted its output budget without producing usable text."""
+
+
+def check_completion(out: Completion, max_tokens: int) -> None:
+    """Reject an exhausted blank completion after the caller records its usage."""
+    if not out.text.strip() and out.output_tokens >= max_tokens:
+        raise CompletionTruncated(
+            f"empty completion exhausted output budget ({out.output_tokens} >= {max_tokens})"
+        )
+
+
 def missing_text(cfg: LLMConfig) -> Optional[str]:
     """`<NAME> is not set`, naming the model for litellm; None when nothing is missing."""
     name = cfg.missing_credential()

@@ -324,7 +324,7 @@ async def test_single_model_proposal_records_usage_cost_limits_and_sources(tmp_p
     result = await propose_choices(catalog)
     artifacts = compile_draft(catalog, result.choices)
     assert artifacts.spec and artifacts.state.value == "needs_review"
-    assert len(calls) == 1 and calls[0]["max_tokens"] == 2048
+    assert len(calls) == 1 and calls[0]["max_tokens"] == 4000
     assert len((calls[0]["system"]+calls[0]["user"]).encode("utf-8")) <= 65536
     disclosure = result.disclosure.to_dict()
     assert disclosure["status"] == "accepted" and disclosure["application_calls"] == 1

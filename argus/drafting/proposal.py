@@ -102,7 +102,7 @@ def parse_proposal(text: str, catalog: OperationCatalog) -> OperationSelection:
 
 INPUT_LIMIT_BYTES = 64 * 1024
 DESCRIPTION_LIMIT_BYTES = 2048
-OUTPUT_TOKENS = 2048
+OUTPUT_TOKENS = llm.TEXT_MAX_TOKENS
 RUN_CAP_USD = 0.50
 SYSTEM = (
     "Select documented agent operation and business fields from the supplied catalog. "
@@ -257,6 +257,10 @@ async def propose_choices(catalog: OperationCatalog, *, operation=None, server_o
                 usage = {"input_tokens": output.input_tokens, "output_tokens": output.output_tokens}
                 refusals = _refusals(output.refusals)
                 llm.record_completion(meter, output)
+                llm.check_completion(output, OUTPUT_TOKENS)
+        except llm.CompletionTruncated as exc:
+            error_type = type(exc).__name__
+            status, code = "failed", "model_completion_truncated"
         except CostExceededError as exc:
             error_type = type(exc).__name__
             status, code = "cost_exceeded", "model_cost_exceeded"

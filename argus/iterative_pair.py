@@ -36,13 +36,14 @@ async def _call_attacker_llm(system_prompt: str, user_prompt: str) -> str:
             role="fast",
             system=system_prompt,
             user=user_prompt,
-            max_tokens=400,
+            max_tokens=llm.TEXT_MAX_TOKENS,
         )
     except llm.AllProvidersFailed as e:
         llm.record_refusals(_cost_meter, e.refusals)
         raise
     # Bill the model that answered (a provider fallback may have changed it) with the refusals.
     llm.record_completion(_cost_meter, out)
+    llm.check_completion(out, llm.TEXT_MAX_TOKENS)
     return out.text
 
 

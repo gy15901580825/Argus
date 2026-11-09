@@ -135,7 +135,7 @@ def rubric_text(rubric: str) -> str:
     return (RUBRICS_DIR / rubric).read_text(encoding="utf-8")
 
 
-_OUTPUT_TOKENS = 200  # judge replies are ~100 tokens; the estimate leans high
+_OUTPUT_TOKENS = llm.TEXT_MAX_TOKENS
 _AZURE_KEYS = ("AZURE_API_KEY", "AZURE_OPENAI_API_KEY")
 
 

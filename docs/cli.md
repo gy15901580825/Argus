@@ -451,7 +451,7 @@ The model can select only documented operation IDs and field pointers. It cannot
 
 When no offered operation has an eligible string prompt field, the command skips model configuration and completion. With `--operation`, only that operation counts. It retains deterministic choices and adds the `model_no_candidates` gap. Supply the prompt binding through `--bindings` or a reviewer. Disclosure records `requested_mode: model`, `effective_mode: no-model`, `status: skipped`, zero `application_calls` and zero cost. Other offered operations with prompt candidates still allow a model call when no operation is fixed.
 
-The proposal has a 64 KiB input bound, 16 KiB response bound, 2048 output-token limit and $0.50 generation run cap. Descriptions are bounded to 2048 bytes; oversized reference catalogs skip the call rather than silently omit candidates. These limits are tool policies. Provenance records configuration, actual model, available usage, costs and fallback status. One application completion can include provider fallback or SDK retries. The cost meter records completed usage, so a completed call can already have exceeded the cap; unreported attempt costs remain unknown.
+The proposal has a 64 KiB input bound, 16 KiB response bound, 4000 output-token limit and $0.50 generation run cap. An exhausted empty proposal is recorded as `model_completion_truncated` with error type `CompletionTruncated`. Descriptions are bounded to 2048 bytes; oversized reference catalogs skip the call rather than silently omit candidates. These limits are tool policies. Provenance records configuration, actual model, available usage, costs and fallback status. One application completion can include provider fallback or SDK retries. The cost meter records completed usage, so a completed call can already have exceeded the cap; unreported attempt costs remain unknown.
 
 The command writes `target.gaps.json` and `target.provenance.json`. It writes `target.json` only after the selected fields compile into a valid target and that exact spec passes the existing offline validator. It checks destinations before a model call and refuses to overwrite any artifact. Missing invoke, server, prompt or answer choices leave `spec_written: false` and `needs_input`. A valid draft does not prove real-agent compatibility or authorize execution.
 
@@ -761,6 +761,36 @@ v1 limits:
 - Tools only. The scan does not read resources or prompts.
 - One server per run. The scan does not read an agent's MCP config file.
 - The command payloads target POSIX shells.
+
+## Output budgets
+
+Every judge call (fast and strong), verdict explanation, draft proposal, and
+PAIR, TAP or deep attacker call allows 4000 output tokens, shared between
+reasoning and the reply. This leaves room for reasoning before the model writes
+text. An empty or whitespace reply that uses at least that budget is a named
+`CompletionTruncated` outcome. Deep mode retains the `AttackerTruncated` name.
+The judge returns `error`; a truncated strong judge cannot reach the decider.
+`scan-mcp` leaves the text unjudged and exits inconclusive. A verdict explanation
+keeps the structured verdict and adds the truncation reason. Truncation causes
+no retry or provider fallback.
+
+Direct chat target adapters also default to 4000 output tokens and accept
+`max_tokens` in the target spec. Their exhausted empty replies raise
+`CompletionTruncated` for the runner's target-error path. Tool calls count as
+non-empty replies. The structured judge and decider answer typed questions and
+have no caller-set output-token budget.
+
+Cost estimates price 4000 output tokens for each text call. For a text model
+priced at $0.10 input and $0.50 output per million tokens, the pre-run estimate
+uses 1000 / 4 * 1.2 = 300 input tokens and costs
+(300 * 0.10 + 4000 * 0.50) / 1,000,000 = $0.00203 per exchange when both judge
+roles use one model. Deep mode adds a 4000-token attacker call, so 60 exchanges
+cost an estimated 60 * ($0.00203 + $0.00203) = $0.24360. A distinct strong model
+adds its own 4000-token call. A configured explanation adds its own 4000-token
+call. Input lengths and actual output usage can differ; usage is billed even
+when a completion is truncated. The structured judge retains its usage estimate.
+The larger allowance raises admission estimates, so a small run cap may refuse
+a large scan before any model call.
 
 ## OWASP Agentic mappings and coverage
 

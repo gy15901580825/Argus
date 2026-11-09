@@ -47,7 +47,7 @@ Below are copy-paste templates for each supported agent shape, plus the gotchas 
   "kind": "anthropic_native",
   "model": "claude-sonnet-4-6",
   "api_key": "${ANTHROPIC_API_KEY}",
-  "max_tokens": 1024
+  "max_tokens": 4000
 }
 ```
 

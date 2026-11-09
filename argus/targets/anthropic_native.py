@@ -8,6 +8,7 @@ from typing import ClassVar
 
 from anthropic import AsyncAnthropic
 
+from argus import llm
 from argus.targets._base import Target, TargetBlockedError, Turn
 
 
@@ -16,7 +17,7 @@ class AnthropicNativeSpec:
     kind: str = "anthropic_native"
     model: str = ""
     api_key: str = ""
-    max_tokens: int = 1024
+    max_tokens: int = llm.TEXT_MAX_TOKENS
     timeout_s: float = 120.0
 
     def __post_init__(self) -> None:
@@ -65,4 +66,8 @@ class AnthropicNativeTarget(Target):
             )
         if not text.strip() and getattr(resp, "stop_reason", None) == "refusal":
             raise TargetBlockedError("target refused to answer (stop_reason: refusal)")
+        llm.check_completion(
+            llm.Completion(text, 0, getattr(resp.usage, "output_tokens", 0) or 0, self.spec.model),
+            self.spec.max_tokens,
+        )
         return text, latency_ms
