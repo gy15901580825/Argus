@@ -560,6 +560,7 @@ argus-probe run --local --target a2a-target.json --probes all --format json --ou
 | `entry` | Required. `module.path:func` or `path/to/file.py:func`. A value that contains `/` or ends in `.py` before the last `:` is a file path; anything else is a module name. A relative file path is relative to the spec file's directory (to the working directory for inline JSON). A module must be importable from the CI job: installed, or on `PYTHONPATH`. |
 | `history` | Default `true`. Set `false` when the function keeps no conversation, so Argus skips probes that need one. |
 | `timeout_s` | Default `300`. |
+| `cleanup`, `close` | Optional function entries resolved like `entry`. See the [Python target guide](../python-target.md) for hook signatures and cleanup reports. |
 | `material` | Default `false`. Set `true` only when your function passes `material` to the model on its own channel, such as a retrieved document, a file or a tool result. With `false`, a probe that carries third-party content sends it inside `prompt`, and `material` is always `None`. |
 
 The function can be `def` or `async def`:
@@ -571,7 +572,7 @@ def call(prompt: str, material: str | None, context: dict) -> dict:
 ```
 
 - `prompt` is the attack text. `material` is `None` unless the spec sets `"material": true`. Then, for a probe that carries third-party content (a document or web page the user asks the agent to read), `prompt` is the user's request alone and `material` is that content. A function that drops `material` in that mode never shows the attack to the agent, and the probe can pass without testing anything. `context` is `{"history": [{"role", "content"}, ...], "conversation_id": str, "probe_id": str}`.
-- Return a dict. `output` (a string) is the reply. `error` marks the call as failed, and the finding is an error with the message `python_target_error`. `run_log` takes the same shape as `custom_http`'s run log. Any other key is a mapping error. Argus measures latency itself.
+- Return a dict. `output` (a string) is the reply. `error` marks the call as failed, and the finding is an error with the message `python_target_error`. `run_log` takes the same shape as `custom_http`'s run log. Optional `evidence` supplies observed actions under the [Python evidence contract](../python-target.md#return-output-and-evidence). Any other key is a mapping error. Argus measures latency itself.
 - An exception from your function is reported as its class name only, never its message, so a secret in the message does not reach the report. A call that runs past `timeout_s` is a timeout error. A synchronous function runs in a worker thread, and Python cannot stop a thread: after a timeout Argus stops waiting, but the function keeps running until it returns.
 - `validate-target --offline` checks the spec and does not import your module, because importing runs its top-level code. `--execute` and `run` import it.
 - The baseline identity of the run hashes the spec, not the function's source file. Changing the function does not start a new baseline.

@@ -143,13 +143,14 @@ def _is_transport_failure(exc: Exception) -> bool:
     """The request did not produce a usable reply: network, timeout, or a body that is not JSON."""
     import json
 
-    from argus.targets._base import TargetDeliveryError
+    from argus.targets._base import TargetDeliveryError, TargetTransportError
 
     if isinstance(
         exc,
         (
             httpx.HTTPError,
             TargetDeliveryError,
+            TargetTransportError,
             TimeoutError,
             ConnectionError,
             json.JSONDecodeError,
@@ -729,7 +730,11 @@ class Runner:
     ) -> Finding:
         """Build a Finding whose verdict comes from captured evidence."""
         from argus.assertions import evaluate_assertions
+        from argus.targets.python_target import PythonTarget
+        from argus.targets.python_evidence import evaluate_python_assertions
 
+        if isinstance(self._target, PythonTarget):
+            evaluate_assertions = evaluate_python_assertions
         evidence = {}
         collector = getattr(self._target, "collect_evidence", None)
         if inspect.iscoroutinefunction(collector):
@@ -741,6 +746,7 @@ class Runner:
                 # No evidence means no verdict. A testbed blip or an expired
                 # session errors this probe only; it must never read as a pass.
                 self._evidence_failed = True
+                evidence_source = "target" if isinstance(self._target, PythonTarget) else "testbed"
                 return self._finding(
                     probe,
                     prompt,
@@ -750,7 +756,7 @@ class Runner:
                     verdict=VERDICT_ERROR,
                     severity="info",
                     confidence=1.0,
-                    reasoning=f"could not read evidence from the testbed: {_short(e)}",
+                    reasoning=f"could not read evidence from the {evidence_source}: {_short(e)}",
                     evidence=None,
                 )
 
