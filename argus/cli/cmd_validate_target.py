@@ -32,11 +32,28 @@ def _failure(exc: Exception) -> str:
 
 
 async def _ping(target) -> str:
+    primary = None
     try:
         text, _ = await target.send_prompt("ping")
         return text
+    except BaseException as exc:
+        primary = exc
+        raise
     finally:
-        await target.aclose()  # web_chat holds a browser
+        from argus.targets._base import TargetTransportError
+        from argus_transport.cleanup import validate_cleanup_report
+
+        try:
+            await target.aclose()  # web_chat holds a browser
+            getter = getattr(target, "cleanup_report", None)
+            report = validate_cleanup_report(getter()) if callable(getter) else None
+            if report is not None and (not report['complete'] or report['leftover']):
+                raise TargetTransportError("target cleanup incomplete: unfinished resources remain")
+        except Exception as exc:
+            if primary is None:
+                if isinstance(exc, TargetTransportError):
+                    raise
+                raise TargetTransportError(f"target cleanup failed: {type(exc).__name__}") from None
 
 
 def _parse(text: str):

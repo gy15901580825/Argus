@@ -187,10 +187,11 @@ async def test_evidence_utf8_exact_limit_and_one_byte_over(tmp_path):
     target._fn = lambda *args: {'output': 'Done', 'evidence': evidence}
     await target.send_prompt('Task')
     assert len(json.dumps(await target.collect_evidence(), ensure_ascii=False, separators=(',', ':')).encode()) == 256 * 1024
+    saved = await target.collect_evidence()
     evidence['report'] += 'x'
     with pytest.raises(TargetTransportError, match='mapping_error: evidence_too_large'):
         await target.send_prompt('Task')
-    assert await target.collect_evidence() == {}
+    assert await target.collect_evidence() == saved
 
 
 async def test_depth_cycle_and_shared_acyclic_value(tmp_path):
@@ -215,7 +216,7 @@ async def test_depth_cycle_and_shared_acyclic_value(tmp_path):
         await target.send_prompt('Task')
 
 
-async def test_evidence_reset_before_failed_call(tmp_path):
+async def test_failed_call_preserves_probe_evidence(tmp_path):
     target = PythonTarget(PythonSpec(entry=entry(tmp_path, '''
         calls = 0
         def call(prompt, material, context):
@@ -229,7 +230,7 @@ async def test_evidence_reset_before_failed_call(tmp_path):
     assert (await target.collect_evidence())['interaction_count'] == 1
     with pytest.raises(TargetTransportError):
         await target.send_prompt('second')
-    assert await target.collect_evidence() == {}
+    assert await target.collect_evidence() == {'executions': [], 'interaction_count': 1}
 
 
 async def test_evidence_reset_on_probe_and_mapping_failure(tmp_path):
@@ -422,7 +423,7 @@ def test_shared_observation_plain_type_preserves_isinstance_behavior():
 
 
 @pytest.mark.parametrize('failure', ['error_result', 'unknown_output', 'load', 'timeout', 'stop'])
-async def test_evidence_reset_for_every_failed_call(tmp_path, failure):
+async def test_every_failed_call_preserves_probe_evidence(tmp_path, failure):
     from dataclasses import replace
     target = target_with(tmp_path, {'executions': [], 'interaction_count': 1})
     await target.send_prompt('first')
@@ -444,7 +445,7 @@ async def test_evidence_reset_for_every_failed_call(tmp_path, failure):
         target._fn = lambda *args: {'error': 'unavailable'}
     with pytest.raises((TargetTransportError, TimeoutError, RunStopped)):
         await target.send_prompt('second')
-    assert await target.collect_evidence() == {}
+    assert await target.collect_evidence() == {'executions': [], 'interaction_count': 1}
 
 
 @pytest.mark.parametrize('name,value,aux', [

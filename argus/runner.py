@@ -728,7 +728,11 @@ class Runner:
     ) -> Finding:
         """Build a Finding whose verdict comes from captured evidence."""
         from argus.assertions import evaluate_assertions
+        from argus.targets.python_target import PythonTarget
+        from argus.targets.python_evidence import evaluate_python_assertions
 
+        if isinstance(self._target, PythonTarget):
+            evaluate_assertions = evaluate_python_assertions
         evidence = {}
         collector = getattr(self._target, "collect_evidence", None)
         if inspect.iscoroutinefunction(collector):
@@ -749,7 +753,7 @@ class Runner:
                     verdict=VERDICT_ERROR,
                     severity="info",
                     confidence=1.0,
-                    reasoning=f"could not read evidence from the testbed: {_short(e)}",
+                    reasoning=f"could not read evidence from the target: {_short(e)}",
                     evidence=None,
                 )
 

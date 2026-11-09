@@ -23,7 +23,7 @@ from argus_transport.cleanup import CleanupReport, CleanupStateUnknown, validate
 
 from argus.targets._base import Target, TargetTransportError, Turn
 from argus.targets.custom_http import CustomHTTPTarget, run_log_from_metadata
-from argus.targets.python_evidence import validate_python_evidence, validate_python_observations
+from argus.targets.python_evidence import accumulate_python_evidence, validate_python_evidence, validate_python_observations
 
 _RESULT_KEYS = frozenset({"output", "error", "run_log", "evidence"})
 
@@ -52,8 +52,10 @@ class PythonSpec:
     def __post_init__(self) -> None:
         if self.kind != "python":
             raise ValueError(f"kind must be 'python', got {self.kind!r}")
-        entries = (self.entry, *(hook for hook in (self.cleanup, self.close) if hook is not None))
-        for entry in entries:
+        entries = (("entry", self.entry), ("cleanup", self.cleanup), ("close", self.close))
+        for name, entry in entries:
+            if name != "entry" and entry is None:
+                continue
             if not isinstance(entry, str):
                 raise ValueError("entry must be 'module:func' or 'path/to/file.py:func'")
             target, _ = split_entry(entry)
@@ -61,7 +63,7 @@ class PythonSpec:
                 if not target.endswith(".py"):
                     raise ValueError("a file entry must end in .py")
                 if Path(target).is_absolute() and not Path(target).is_file():
-                    raise ValueError(f"entry file not found: {target}")
+                    raise ValueError(f"{name} file not found: {target}")
         if not isinstance(self.timeout_s, (int, float)) or self.timeout_s <= 0:
             raise ValueError("timeout_s must be positive")
         if not isinstance(self.material, bool):
@@ -124,7 +126,6 @@ class PythonTarget(Target):
     async def send_prompt(
         self, prompt: str, history: tuple[Turn, ...] = (), *, material: str | None = None
     ) -> tuple[str, float]:
-        self._evidence = {}
         self._last_run_log = None
         if self._close_task is not None:
             raise TargetTransportError("python target is closed")
@@ -184,6 +185,7 @@ class PythonTarget(Target):
                     "mapping_error: python target run_log is invalid"
                 ) from None
         evidence = validate_python_evidence(result["evidence"]) if "evidence" in result else {}
+        evidence = accumulate_python_evidence(self._evidence, evidence)
         self._last_run_log = run_log
         self._evidence = evidence
         return output
@@ -261,6 +263,8 @@ class PythonTarget(Target):
         await asyncio.shield(self._close_task)
 
     def cleanup_report(self) -> CleanupReport | None:
+        if self.spec.cleanup is not None and self._close_task is None:
+            raise CleanupStateUnknown()
         if self._close_task is not None and not self._close_task.done():
             raise CleanupStateUnknown()
         if isinstance(self._cleanup_result, CleanupStateUnknown):
