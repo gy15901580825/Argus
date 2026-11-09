@@ -284,6 +284,8 @@ For `python` targets, see [the Python function, evidence, and cleanup contract](
 
 ### Installed target plugins
 
+See the [target plugin guide](https://github.com/gy15901580825/Argus/blob/main/docs/plugins.md) for runnable examples and the target contract.
+
 The CLI accepts kinds registered in the `argus.targets` entry-point group.
 An entry point loads a `(SpecClass, TargetClass)` pair. `argus.targets.kinds()`
 returns each kind's `KindInfo`. A plugin can declare `TargetClass.kind_info`
