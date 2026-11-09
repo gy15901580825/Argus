@@ -21,11 +21,12 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import Literal
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from openai import AzureOpenAI, OpenAI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -71,8 +72,21 @@ async def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONR
     )
 
 
+class HistoryTurn(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(..., max_length=4000)
+
+
 class ChatRequest(BaseModel):
     message: str = Field(..., max_length=4000)
+    history: list[HistoryTurn] = Field(default_factory=list, max_length=40)
+
+    @field_validator("history")
+    @classmethod
+    def check_history_size(cls, history: list[HistoryTurn]) -> list[HistoryTurn]:
+        if sum(len(turn.content) for turn in history) > 32000:
+            raise ValueError("Total history content must not exceed 32000 characters")
+        return history
 
 
 class ChatResponse(BaseModel):
@@ -139,7 +153,7 @@ def _maybe_leak(user_msg: str) -> str | None:
     return None
 
 
-def _call_azure_openai(user_msg: str) -> str:
+def _call_azure_openai(messages: list[dict[str, str]]) -> str:
     api_key = os.environ.get("AZURE_API_KEY")
     api_base = os.environ.get("AZURE_API_BASE")
     api_version = os.environ.get("AZURE_API_VERSION", "2024-12-01-preview")
@@ -149,16 +163,13 @@ def _call_azure_openai(user_msg: str) -> str:
     client = AzureOpenAI(api_key=api_key, azure_endpoint=api_base, api_version=api_version)
     completion = client.chat.completions.create(
         model=model,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_msg},
-        ],
-        max_completion_tokens=300,
+        messages=messages,
+        max_completion_tokens=int(os.environ.get("DEMO_MAX_COMPLETION_TOKENS", "300")),
     )
     return completion.choices[0].message.content or ""
 
 
-def _call_foundry(user_msg: str) -> str:
+def _call_foundry(messages: list[dict[str, str]]) -> str:
     """Azure AI Foundry serverless inference (OpenAI-compatible).
 
     Endpoint shape:
@@ -179,20 +190,22 @@ def _call_foundry(user_msg: str) -> str:
     )
     completion = client.chat.completions.create(
         model=model,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_msg},
-        ],
-        max_tokens=300,
+        messages=messages,
+        max_tokens=int(os.environ.get("DEMO_MAX_COMPLETION_TOKENS", "300")),
     )
     return completion.choices[0].message.content or ""
 
 
-def _call_llm(user_msg: str) -> str:
+def _call_llm(user_msg: str, history: list[HistoryTurn]) -> str:
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        *(turn.model_dump() for turn in history),
+        {"role": "user", "content": user_msg},
+    ]
     provider = os.environ.get("LLM_PROVIDER", "azure").lower()
     if provider == "foundry":
-        return _call_foundry(user_msg)
-    return _call_azure_openai(user_msg)
+        return _call_foundry(messages)
+    return _call_azure_openai(messages)
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -206,7 +219,7 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
             return ChatResponse(reply=leaked)
 
     try:
-        reply = _call_llm(user_msg)
+        reply = _call_llm(user_msg, body.history)
     except Exception as e:
         logger.warning("LLM call failed (%s)", type(e).__name__)
         # Three fallback modes when the LLM is unreachable:

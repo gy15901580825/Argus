@@ -60,6 +60,7 @@ scan-mcp = ["mcp>=2.3,<3"]
 # `web_chat` targets and `argus-probe web-login`: Playwright drives Chromium; run `playwright install chromium` too.
 web = ["playwright>=1.49"]
 dev = [
+    "slowapi>=0.1.9,<1.0",
     "websockets>=12",
     "pytest>=8.3,<10",
     "pytest-asyncio>=0.23",

@@ -163,6 +163,10 @@ class CustomHTTPTarget(Target):
         self._indirect = ()
         self.supports_history = (
             spec.transport is None or spec.transport.session.mode != "none"
+            or (
+                isinstance(spec.transport, TransportSpecV2)
+                and _v2_uses_context(spec.transport, "history")
+            )
         )
         if spec.transport is None:
             warnings.warn(
