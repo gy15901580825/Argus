@@ -555,6 +555,7 @@ async def run(req: RunRequest):
             return {"spent_usd": round(spent, 6), "per_run_cap_usd": cap}
 
         def frame(payload: dict, event: str | None = None) -> bytes:
+            payload = json.loads(json.dumps(payload))
             prefix = f"event: {event}\n" if event is not None else ""
             return f"{prefix}data: {json.dumps(_scrub(payload, secrets))}\n\n".encode()
 

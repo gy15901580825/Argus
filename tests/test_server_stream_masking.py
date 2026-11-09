@@ -128,3 +128,23 @@ def test_nonfinding_payloads_mask_at_stream_boundary(engine, server, monkeypatch
     if payload == 'detail':
         assert stream == [('error', {'detail': f'quota: {run_json.MASK}', 'type': 'TargetRunStopped',
                                      'cost': {'spent_usd': 0.0, 'per_run_cap_usd': 0.5}})]
+
+
+def test_tuple_evidence_masks_like_run_json(engine, server, monkeypatch):
+    from argus.runner import skipped_finding
+    engine.target = Plugin('normal')
+    finding = api.finding_dict(skipped_finding(engine.probes[0], 'generic fixture'), engine.probes[0])
+    finding['evidence'] = {'nested': (SECRET, {'value': SECRET})}
+
+    async def events(*args, **kwargs):
+        yield finding
+
+    monkeypatch.setattr(api, '_run_probes', events)
+    response = httpx.post(server + '/redteam/run', json={
+        'target': SPEC, 'probe_ids': [engine.probes[0].id]}, timeout=10)
+    stream = frames(response)
+    record = json.loads(run_json.render_json({'target_spec': SPEC, 'findings': [finding]}))
+    assert SECRET not in json.dumps(record)
+    assert SECRET not in response.text
+    assert stream[0][1] == record['findings'][0]
+    assert stream[0][1]['evidence']['nested'] == [run_json.MASK, {'value': run_json.MASK}]

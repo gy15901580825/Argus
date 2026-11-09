@@ -99,7 +99,7 @@ Request errors on `/redteam/run` and `/redteam/run/preflight` use FastAPI's `{"d
 
 ### Stream contract: `POST /redteam/run`
 
-A 200 response is a Server-Sent Events stream (`Content-Type: text/event-stream`). Each frame ends with a blank line. A frame is either one `data:` line, or an `event:` line followed by one `data:` line. Every `data:` line holds one JSON object. Every stream payload masks registered target-spec secret values with the same function and `***` token as run.json. This includes findings, deep transcripts, `deep_run` metadata, coverage, error details, and cleanup reports. Masking happens at the stream boundary before JSON serialization.
+A 200 response is a Server-Sent Events stream (`Content-Type: text/event-stream`). Each frame ends with a blank line. A frame is either one `data:` line, or an `event:` line followed by one `data:` line. Every `data:` line holds one JSON object. Every stream payload masks registered target-spec secret values with the same function and `***` token as run.json. This includes findings, deep transcripts, `deep_run` metadata, coverage, error details, and cleanup reports. Payloads are normalized to JSON values, as run.json does, then masked at the stream boundary before the frame is encoded. This also masks tuples that JSON converts to arrays.
 
 Deep mode first emits a bare `data:` frame with `type: "deep_run"` and `deep`
 selection metadata. It then emits one finding per persona/strategy thread,
