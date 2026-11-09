@@ -38,6 +38,8 @@ def test_loader_rejects_agent_world_without_json_object_payload(payload, tmp_pat
     source = Path(__file__).parents[1] / "argus/probes/mcp_world" / f"{PROBE_IDS[1]}.yaml"
     raw = yaml.safe_load(source.read_text())
     raw["id"] = "fixture_invalid_payload"
+    raw["prompts"] = [prompt for session in raw.pop("sessions") for prompt in session]
+    raw.pop("decision_point")
     raw["scenario"].pop("control")
     if payload is None:
         raw["scenario"].pop("payload")
