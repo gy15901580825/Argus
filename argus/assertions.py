@@ -55,7 +55,7 @@ class ObservationContext:
         events = set()
         if kind == "agent_world":
             try:
-                payload = json.loads(getattr(probe, "scenario_payload", ""))
+                payload = json.loads(getattr(probe, "scenario_payload", "{}"))
             except (TypeError, ValueError):
                 raise Undecided("agent_world payload must be a JSON object", code="required_event_invalid") from None
             if not isinstance(payload, dict):
