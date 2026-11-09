@@ -15,6 +15,8 @@ from uuid import UUID, uuid4
 
 import httpx
 
+from argus import llm
+
 from argus.placeholders import needs_rendering, render_generator_name, target_model_name
 from argus.a2a.events import events_from_trials
 from argus.cost_meter import CostExceededError
@@ -1389,7 +1391,16 @@ class Runner:
                 )
                 if probe.should_halt(ctx):
                     break
-                prompt = await probe.next_prompt(ctx)
+                try:
+                    prompt = await probe.next_prompt(ctx)
+                except llm.CompletionTruncated as exc:
+                    yield self._finding(
+                        probe, "", "", 0.0, datetime.now(timezone.utc),
+                        verdict=VERDICT_ERROR, severity="info", confidence=0.0,
+                        reasoning=f"attacker could not produce the next prompt: {_named(exc)}",
+                        evidence={"stop_reason": "attacker_stopped", "rounds_run": round_n},
+                    )
+                    return
                 if prompt is None:
                     break
                 probed_at = datetime.now(timezone.utc)

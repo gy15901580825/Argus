@@ -118,8 +118,9 @@ def unjudged_count(findings: list[dict], reasons: Sequence[str] = (CAP_REASON, E
     inconclusive.
 
     A judge that is off is not counted: the spec keeps that case out of the exit code."""
+    named_reasons = {"content_filter": BLOCKED_REASON, "completion_truncated": ERROR_REASON}
     return sum(f["verdict"] == VERDICT_ERROR and
-               (BLOCKED_REASON if f.get("evidence", {}).get("error_code") == "content_filter" else f["reasoning"]) in reasons
+               named_reasons.get(f.get("evidence", {}).get("error_code"), f["reasoning"]) in reasons
                for f in findings)
 
 
@@ -316,11 +317,11 @@ def _unjudged(ctx: _Ctx, probe: Probe, name: str | None) -> dict:
     items = [{"tool": shown_name, "call_seq": o.candidate.call_seq, "source": o.candidate.source,
               "excerpt": show_text(rules.redact(o.candidate.text, ctx.decoys))} for o in left[:ITEMS_MAX]]
     for item, outcome in zip(items, left):
-        if outcome.error_code == "content_filter":
+        if outcome.error_code is not None:
             item.update(error_code=outcome.error_code, reasoning=outcome.reasoning)
     reasoning = OFF_REASON if left[0].status == "off" else left[0].reasoning
     evidence = ctx.evidence(tool=shown_name, tools=[shown_name] if shown_name else [], items=items)
-    if left[0].error_code == "content_filter":
+    if left[0].error_code is not None:
         evidence["error_code"] = left[0].error_code
     return finding(probe, verdict=VERDICT_ERROR, severity="info", reasoning=reasoning, evidence=evidence)
 

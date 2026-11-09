@@ -165,7 +165,7 @@ def test_validate_target_reports_adapter_failures(tmp_path, exc, expected):
     ('{"kind": "nope"}', "unknown target.kind"),
     ('{"kind": ["openai_compat"]}', "unknown target.kind"),
     (json.dumps({**CUSTOM_HTTP, "response_jsonpath": "$[["}), "target spec invalid"),
-    (f"endpoint_url: {URL}\nmodel: m\nmax_tokens: 10\n", "target spec invalid"),
+    (f"endpoint_url: {URL}\nmodel: m\nunsupported_option: 10\n", "target spec invalid"),
 ])
 def test_validate_target_reports_bad_specs_without_a_traceback(tmp_path, content, expected, httpx_mock):
     target_file = tmp_path / "t.json"

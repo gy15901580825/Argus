@@ -19,6 +19,7 @@ class OpenAICompatSpec:
     api_key: Optional[str] = None
     extra_headers: tuple[tuple[str, str], ...] = ()
     timeout_s: float = 120.0
+    max_tokens: Optional[int] = None
 
     def __post_init__(self) -> None:
         # Allow callers to pass headers as dict OR list-of-2-element-lists
@@ -58,6 +59,8 @@ class OpenAICompatTarget(Target):
         messages = [{"role": t.role, "content": t.content} for t in history]
         messages.append({"role": "user", "content": prompt})
         body = {"model": self.spec.model, "messages": messages}
+        if self.spec.max_tokens is not None:
+            body["max_tokens"] = self.spec.max_tokens
         start = time.monotonic()
         async with httpx.AsyncClient(timeout=self.spec.timeout_s) as client:
             resp = await client.post(self.spec.endpoint_url, headers=headers, json=body)

@@ -124,7 +124,7 @@ def test_deep_preflight_is_capped_by_the_deep_per_run_cap():
     with pytest.raises(CostExceededError, match="per_run_cap"):
         m.check_or_abort_pre_run(probe_ids=["p1"], target_kind="openai_compat", total_exchanges=200)
     estimated = m.check_or_abort_pre_run(
-        probe_ids=["p1"], target_kind="openai_compat", total_exchanges=100, deep=True
+        probe_ids=["p1"], target_kind="openai_compat", total_exchanges=40, deep=True
     )
     assert 0.50 < estimated < 5.00
 
@@ -149,10 +149,10 @@ def _big_run(m, **kw):
 
 
 def test_preflight_default_estimate_is_haiku_rated(monkeypatch):
-    m = CostMeter(daily_cap_usd=13.50, per_run_cap_usd=0.50)
-    # 1000/4*1.2=300 in, 2000/4*1.2=600 out tokens per call; per exchange a Haiku fast call
+    m = CostMeter(daily_cap_usd=13.50, per_run_cap_usd=2.00)
+    # 1000/4*1.2=300 in, 4000 out tokens per text call; per exchange a Haiku fast call
     # ($1/$5 per M) and, as if it escalated, a Sonnet strong call ($3/$15 per M).
-    expected = ((300 / 1e6 * 1.0 + 600 / 1e6 * 5.0) + (300 / 1e6 * 3.0 + 600 / 1e6 * 15.0)) * 10
+    expected = ((300 / 1e6 * 1.0 + 4000 / 1e6 * 5.0) + (300 / 1e6 * 3.0 + 4000 / 1e6 * 15.0)) * 10
     assert m.check_or_abort_pre_run(
         probe_ids=["p"], target_kind="custom_http", total_exchanges=10
     ) == pytest.approx(expected)
@@ -167,8 +167,8 @@ def test_preflight_ollama_fast_model_is_free(monkeypatch):
 
 def test_preflight_openai_default_uses_luna_rates(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-fake")
-    m = CostMeter(daily_cap_usd=13.50, per_run_cap_usd=0.50)
-    expected = ((300 / 1e6 * 0.20 + 600 / 1e6 * 1.20) + (300 / 1e6 * 2.00 + 600 / 1e6 * 12.00)) * 10
+    m = CostMeter(daily_cap_usd=13.50, per_run_cap_usd=2.00)
+    expected = ((300 / 1e6 * 0.20 + 4000 / 1e6 * 1.20) + (300 / 1e6 * 2.00 + 4000 / 1e6 * 12.00)) * 10
     assert m.check_or_abort_pre_run(
         probe_ids=["p"], target_kind="custom_http", total_exchanges=10
     ) == pytest.approx(expected)
@@ -191,8 +191,8 @@ def test_estimate_call_usd_uses_price_table_with_margin():
     assert estimate_call_usd("no-such-model", 4000, 400) == pytest.approx(1200 * 15 / 1e6 + 400 * 75 / 1e6)
 
 
-_HAIKU = 300 / 1e6 * 1.0 + 600 / 1e6 * 5.0
-_SONNET = 300 / 1e6 * 3.0 + 600 / 1e6 * 15.0
+_HAIKU = 300 / 1e6 * 1.0 + 4000 / 1e6 * 5.0
+_SONNET = 300 / 1e6 * 3.0 + 4000 / 1e6 * 15.0
 
 
 @pytest.mark.parametrize("kind", ["openai_compat", "anthropic_native", "custom_http", "mcp_agent"])
@@ -200,7 +200,7 @@ def test_estimate_counts_only_argus_llm_calls(kind, monkeypatch):
     """Sends to the target are not Argus's spend. Per exchange: a fast judge call plus
     a strong one (every verdict assumed to escalate), and the attacker in deep mode."""
     monkeypatch.delenv("REDTEAM_MODEL_PROVIDER", raising=False)
-    m = CostMeter(daily_cap_usd=13.50, per_run_cap_usd=0.50, deep_per_run_cap_usd=5.00)
+    m = CostMeter(daily_cap_usd=13.50, per_run_cap_usd=2.00, deep_per_run_cap_usd=5.00)
     assert m.check_or_abort_pre_run(
         probe_ids=["p"], target_kind=kind, total_exchanges=10
     ) == pytest.approx((_HAIKU + _SONNET) * 10)
@@ -213,7 +213,7 @@ def test_estimate_skips_escalation_when_fast_and_strong_are_one_model(monkeypatc
     # Azure ships one deployment for both roles; the judge does not escalate then.
     monkeypatch.setenv("REDTEAM_MODEL_PROVIDER", "azure")
     m = CostMeter(daily_cap_usd=13.50, per_run_cap_usd=0.50)
-    one_call = 300 / 1e6 * 0.10 + 600 / 1e6 * 0.50  # gpt-6-luna
+    one_call = 300 / 1e6 * 0.10 + 4000 / 1e6 * 0.50  # gpt-6-luna
     assert m.check_or_abort_pre_run(
         probe_ids=["p"], target_kind="custom_http", total_exchanges=10
     ) == pytest.approx(one_call * 10)

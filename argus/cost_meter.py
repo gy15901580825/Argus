@@ -140,26 +140,29 @@ def estimate_call_usd(model: str, input_chars: int, output_tokens: int) -> float
 def estimate_run_usd(exchanges: int, *, deep: bool = False) -> float:
     """Estimate judge and attacker spend without applying admission caps."""
     est_input_tokens = (_AVG_PROMPT_CHARS / _CHARS_PER_TOKEN) * _SAFETY_MARGIN
-    est_output_tokens = (_AVG_RESPONSE_CHARS / _CHARS_PER_TOKEN) * _SAFETY_MARGIN
-
-    def _call_usd(prices: dict) -> float:
-        return (est_input_tokens / 1_000_000) * prices["input"] + (
-            est_output_tokens / 1_000_000
-        ) * prices["output"]
 
     from argus import llm
+
+    def _call_usd(prices: dict, output_tokens: int = llm.TEXT_MAX_TOKENS) -> float:
+        return (est_input_tokens / 1_000_000) * prices["input"] + (
+            output_tokens / 1_000_000
+        ) * prices["output"]
+
     explain = None
+    judge_tokens = llm.TEXT_MAX_TOKENS
     try:
         cfg = llm.resolve_config()
         fast, strong = _price_for(cfg.fast_model), _price_for(cfg.strong_model)
         escalates = cfg.escalation_is_meaningful
+        if cfg.provider == llm.PROVIDER_JEV:
+            judge_tokens = int((_AVG_RESPONSE_CHARS / _CHARS_PER_TOKEN) * _SAFETY_MARGIN)
         text_cfg = llm.explain_config(cfg)
         explain = _price_for(text_cfg.fast_model) if text_cfg is not None else None
     except ValueError:
         fast = _PRICES_PER_M_TOKENS["claude-haiku-4-5-20251001"]
         strong = _PRICES_PER_M_TOKENS["claude-sonnet-4-6"]
         escalates = True
-    per_exchange = _call_usd(fast) + (_call_usd(strong) if escalates else 0.0)
+    per_exchange = _call_usd(fast, judge_tokens) + (_call_usd(strong) if escalates else 0.0)
     if explain is not None:
         per_exchange += _call_usd(explain)
     if deep:

@@ -26,6 +26,8 @@ SONNET_MODEL = "claude-sonnet-4-6"
 
 logger = logging.getLogger(__name__)
 
+JUDGE_MAX_TOKENS = llm.TEXT_MAX_TOKENS
+
 ESCALATION_SEVERITIES = {"high", "critical"}
 ESCALATION_MIN_CONFIDENCE = 0.7
 
@@ -167,6 +169,10 @@ class Judge:
                 if self._decider is None:
                     raise
                 strong_error = str(e)[:200]
+            strong_unusable = strong_v is not None and strong_v.verdict == "error"
+            if strong_unusable:
+                strong_error = strong_v.reasoning
+                strong_v = None
             if self._decider is not None and (strong_v is None or strong_v.verdict != fast_v.verdict):
                 decision = await self._decider.decide(
                     probe_name=probe_name,
@@ -180,6 +186,11 @@ class Judge:
                 if decision is not None:
                     return _with_decision(fast_v, strong_v, decision)
             if strong_v is None:
+                if strong_unusable:
+                    return replace(
+                        fast_v,
+                        reasoning=f"{fast_v.reasoning} | strong judge reply could not be used: {strong_error}; fast verdict kept",
+                    )
                 raise ValueError(strong_error)
             return Verdict(
                 verdict=strong_v.verdict,
@@ -204,7 +215,7 @@ class Judge:
         )
         try:
             out = await llm.complete(
-                self._cfg, role=role, system=system_prompt, user=user_prompt, max_tokens=400
+                self._cfg, role=role, system=system_prompt, user=user_prompt, max_tokens=JUDGE_MAX_TOKENS
             )
         except llm.AllProvidersFailed as e:
             llm.record_refusals(self._cost_meter, e.refusals)
@@ -212,6 +223,10 @@ class Judge:
         # Bill the model that actually answered (a fallback may have changed it) with the refusals.
         model = out.model
         llm.record_completion(self._cost_meter, out)
+        try:
+            llm.check_completion(out, JUDGE_MAX_TOKENS)
+        except llm.CompletionTruncated as exc:
+            return Verdict("error", "info", 0.0, f"CompletionTruncated: {exc}", model)
         text = out.text
         if text.startswith("```"):
             text = text.strip("`").lstrip("json").strip()

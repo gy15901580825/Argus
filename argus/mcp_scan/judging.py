@@ -8,13 +8,13 @@ from typing import Callable, Literal
 
 from argus import llm
 from argus.cost_meter import CostExceededError, CostMeter, estimate_call_usd
-from argus.judge import Judge
+from argus.judge import Judge, JUDGE_MAX_TOKENS
+from argus.jev_judge import EXPLAIN_MAX_TOKENS
 from argus.mcp_scan.calls import show_text
 from argus.mcp_scan.models import Candidate
 
 logger = logging.getLogger(__name__)
 
-JUDGE_MAX_TOKENS = 400  # what Judge._call asks for
 # Judge._call's fixed framing (system header, untrusted notice, output contract, user headings) is about 830 characters.
 _PROMPT_FRAME_CHARS = 1000
 CAP_REASON = "not judged: cost cap"
@@ -34,7 +34,7 @@ class JudgeOutcome:
     reasoning: str = ""
     judge_model: str = ""
     escalated_model: str | None = None
-    error_code: Literal["content_filter"] | None = None
+    error_code: Literal["content_filter", "completion_truncated"] | None = None
 
 
 def default_judge_factory(meter: CostMeter, config: llm.LLMConfig) -> Judge:
@@ -58,7 +58,7 @@ def call_estimate_usd(config: llm.LLMConfig, chars: int) -> float:
     usd = _role_usd(config, "fast", chars)
     usd += _role_usd(config, "strong", chars) if config.escalation_is_meaningful else 0.0
     text_cfg = llm.explain_config(config)  # a jev explain model writes a reason for a fail
-    return usd + (estimate_call_usd(text_cfg.fast_model, chars, JUDGE_MAX_TOKENS) if text_cfg else 0.0)
+    return usd + (estimate_call_usd(text_cfg.fast_model, chars, EXPLAIN_MAX_TOKENS) if text_cfg else 0.0)
 
 
 class JudgeGate:
@@ -115,6 +115,9 @@ class JudgeGate:
             logger.warning("scan-mcp judge failed on %s %s: %s", cand.probe_id, show_text(cand.tool),
                            type(e).__name__)
             return JudgeOutcome(cand, "error", reasoning=ERROR_REASON)
+        if v.verdict == "error" and "CompletionTruncated" in v.reasoning:
+            return JudgeOutcome(cand, "error", reasoning=f"not judged: {v.reasoning}",
+                                error_code="completion_truncated")
         if v.verdict == "warn":
             return JudgeOutcome(cand, "error", reasoning=UNSURE_REASON)
         if v.verdict not in ("pass", "fail"):

@@ -40,7 +40,7 @@ DEFAULT_MAX_ROUNDS = 20
 DEFAULT_DEEP_PAIRS = 3
 
 # Reasoning can exhaust 600 tokens before any text; 4000 leaves room for the reply.
-ATTACKER_MAX_TOKENS = 4000
+ATTACKER_MAX_TOKENS = llm.TEXT_MAX_TOKENS
 
 # Only the testbed url_keys count: other braces (`{param}`) are not substituted.
 # Placeholder tokens a probe writes for the adapter to substitute at send time
@@ -80,8 +80,10 @@ async def _call_attacker_llm(system_prompt: str, user_prompt: str) -> str:
         raise
     # Bill the model that answered (a provider fallback may have changed it) with the refusals.
     llm.record_completion(_cost_meter, out)
-    if not out.text.strip() and out.output_tokens >= ATTACKER_MAX_TOKENS:
-        raise AttackerTruncated
+    try:
+        llm.check_completion(out, ATTACKER_MAX_TOKENS)
+    except llm.CompletionTruncated as exc:
+        raise AttackerTruncated(str(exc)) from None
     return out.text
 
 

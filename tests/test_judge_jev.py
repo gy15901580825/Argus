@@ -525,7 +525,7 @@ def test_deep_estimate_prices_the_explain_model_as_attacker(monkeypatch):
     monkeypatch.setenv("REDTEAM_EXPLAIN_MODEL", "gpt-test-explain")
     static_explained = meter.check_or_abort_pre_run(["p"], "openai_compat", total_exchanges=10)
     deep = meter.check_or_abort_pre_run(["p"], "openai_compat", total_exchanges=10, deep=True)
-    per_call = (300 + 600) / 1_000_000  # 1000/4*1.2 input and 2000/4*1.2 output tokens at $1 per 1M
+    per_call = (300 + 4000) / 1_000_000  # 300 estimated input and 4000 output tokens at $1 per 1M
     assert static_jev == pytest.approx(10 * 300 * 0.042 / 1_000_000)
     assert static_explained == pytest.approx(static_jev + 10 * per_call)
     assert deep == pytest.approx(static_explained + 10 * (300 + 4000) / 1_000_000)
@@ -721,7 +721,7 @@ def test_judge_check_estimate_includes_the_explain_call_for_cases_not_expected_t
         if c.expect_verdict != "pass":
             system, user = build_judge_prompts(c.probe_name, c.attack_prompt, c.target_response,
                                                judge_bench.rubric_text(c.rubric))
-            extra += estimate_call_usd("claude-sonnet-4-6", len(system) + len(user), 200)
+            extra += estimate_call_usd("claude-sonnet-4-6", len(system) + len(user), 4000)
     plain = judge_bench.estimate_usd(_cfg(), cases)
     explained = judge_bench.estimate_usd(_cfg(REDTEAM_EXPLAIN_MODEL="claude-sonnet-4-6"), cases)
     assert extra > 0 and explained == pytest.approx(plain + extra)
@@ -796,7 +796,7 @@ def test_judge_check_with_an_explain_price_has_no_dearest_rate_estimate():
     after = CliRunner().invoke(main, [*args, "--judge-explain-price", "0.30,2.50"])
     assert before.exit_code == after.exit_code == 1  # no key; stops after the estimate
     est = [float(r.output.split("Estimated cost: $")[1].split()[0]) for r in (before, after)]
-    assert est[1] < 0.05 < est[0]
+    assert est[1] < 0.50 < est[0]
     bad = CliRunner().invoke(main, ["judge-check", "--judge-provider", "jev", "--judge-explain-price", "0.3,2.5"])
     assert bad.exit_code == 2 and "--judge-explain-model" in bad.output
 
