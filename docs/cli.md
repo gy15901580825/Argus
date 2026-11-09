@@ -115,7 +115,9 @@ usage error. Deep mode rejects
 `--probes all`, missing probe selection, phased probes and `--trials` above 1
 with a usage error. Choose named probes, use `--trials 1`, or use `--mode static`.
 A verdict-only judge also needs a configured text explanation model for the
-attacker; otherwise use static mode.
+attacker; otherwise use static mode. Deep mode needs a text model with enough
+output budget for reasoning and the attack prompt. Each attacker call allows
+4000 output tokens.
 
 The default per-run cap is $5 for deep mode and $0.50 for static mode. The
 estimate includes judge and attacker calls at the requested pair and round
@@ -140,7 +142,10 @@ reach the testbed or carry the required canary are recorded as `not_exercised`
 and the attacker continues. If none was exercised by the limit, the thread is
 `error` with stop reason `not_exercised`. A cost stop is `aborted_cost`. An early
 attacker stop or content-filter block, send failure, blank reply or unusable
-judge result is `error`, even if earlier rounds passed. A target block remains
+judge result is `error`, even if earlier rounds passed. If an attacker returns
+empty text after exhausting its output budget, `AttackerTruncated` ends the
+thread as `error` with stop reason `attacker_stopped`; the reason names
+`AttackerTruncated`. A target block remains
 `blocked_by_target` and does not count toward the unreachable breaker. A
 transport run stop ends the whole run and retains its cleanup note. Evidence
 errors retain the transcript and any proven failure. A proven failure also

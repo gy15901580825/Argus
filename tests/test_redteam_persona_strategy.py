@@ -270,3 +270,57 @@ def test_real_data_files_produce_working_pairings():
     for p in got:
         assert p.mappings.owasp_llm == ("LLM01",)
         assert p.judge_rubric_path == "rubrics/prompt_injection.md"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["", " \n\t"])
+@pytest.mark.parametrize("output_tokens", [4000, 4001])
+async def test_exhausted_blank_attacker_raises_named_error(monkeypatch, text, output_tokens):
+    from argus import llm, persona_strategy
+
+    monkeypatch.setattr(persona_strategy, "_cost_meter", None)
+    completion = AsyncMock(return_value=llm.Completion(text, 100, output_tokens, "fixture"))
+    monkeypatch.setattr(llm, "complete", completion)
+    with pytest.raises(persona_strategy.AttackerTruncated):
+        await _probe().next_prompt(IterationContext(round_n=0))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text, output_tokens", [("  next prompt\n", 4000), ("", 3999)])
+async def test_attacker_preserves_text_with_reasoning_budget(monkeypatch, text, output_tokens):
+    from argus import llm, persona_strategy
+
+    monkeypatch.setattr(persona_strategy, "_cost_meter", None)
+    completion = AsyncMock(return_value=llm.Completion(text, 100, output_tokens, "fixture"))
+    monkeypatch.setattr(llm, "complete", completion)
+    assert await _probe().next_prompt(IterationContext(round_n=0)) == text
+    assert completion.await_args.kwargs["max_tokens"] == 4000
+
+
+@pytest.mark.asyncio
+async def test_truncated_attacker_after_pass_ends_thread_as_error(monkeypatch):
+    from types import SimpleNamespace
+    from argus import llm
+    from argus.runner import Runner
+
+    target = SimpleNamespace(
+        compatible_classes={"http-chat"}, supports_history=True,
+        send_prompt=AsyncMock(return_value=("safe reply", 1.0)),
+    )
+    judge = SimpleNamespace(judge=AsyncMock(return_value=Verdict(
+        "pass", "info", 1.0, "safe reply", "fixture", None,
+    )))
+    completion = AsyncMock(side_effect=[
+        llm.Completion("first prompt", 100, 100, "fixture"),
+        llm.Completion("", 100, 4000, "fixture"),
+    ])
+    monkeypatch.setattr(llm, "complete", completion)
+    runner = Runner(target, judge, Path(__file__).resolve().parents[1] / "argus/rubrics")
+    findings = [f async for f in runner.run_probe(_probe(max_rounds=3))]
+    assert len(findings) == 1
+    finding = findings[0]
+    assert finding.verdict == "error"
+    assert finding.evidence["stop_reason"] == "attacker_stopped"
+    assert finding.evidence["rounds_run"] == 1
+    assert finding.evidence["transcript"][0]["verdict"] == "pass"
+    assert "attacker could not produce the next prompt: AttackerTruncated" in finding.reasoning
