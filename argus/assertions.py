@@ -39,6 +39,7 @@ class AssertionResult:
     # Such a result is neither a pass nor a fail; the runner reports `error`.
     error: bool = False
     verdict: str | None = None
+    definition_error: bool = False
 
 
 @dataclass(frozen=True)
@@ -911,7 +912,7 @@ def evaluate_assertions(
                     try:
                         check = plugins[0].load()
                     except Exception:
-                        results.append(AssertionResult(name=name, passed=False, reason="assertion plugin failed to load", error=True))
+                        results.append(AssertionResult(name=name, passed=False, reason="assertion plugin failed to load", error=True, definition_error=True))
                         continue
             if check is None:
                 results.append(AssertionResult(
@@ -919,12 +920,13 @@ def evaluate_assertions(
                     passed=False,
                     reason=f"unknown assertion {name!r}; valid: {sorted([*_CHECKS, *_PROMPT_CHECKS, *_OUTCOME_CHECKS])}",
                     error=True,
+                    definition_error=True,
                 ))
                 continue
             try:
                 passed, reason = evaluate_check(check, value, evidence, response_text, context=context)
-            except (_NoVerdict, Undecided, KeyError, TypeError, ValueError) as exc:
-                if context is None and isinstance(exc, (KeyError, TypeError, ValueError)):
+            except (_NoVerdict, Undecided, KeyError, TypeError, ValueError, AttributeError) as exc:
+                if context is None and isinstance(exc, (KeyError, TypeError, ValueError, AttributeError)):
                     raise
                 results.append(AssertionResult(name=name, passed=False, reason=str(exc), error=True))
                 continue

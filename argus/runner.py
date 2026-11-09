@@ -807,7 +807,8 @@ class Runner:
                 context = ObservationContext.from_probe(probe, "attack")
         except Undecided as exc:
             context_error = AssertionResult("required_event", False, str(exc), error=True)
-        kwargs = {"context": context} if not isinstance(self._target, PythonTarget) else {}
+            context = ObservationContext("attack", getattr(probe, "scenario_kind", None), frozenset())
+        kwargs = {"context": context} if context_error is not None or not isinstance(self._target, PythonTarget) else {}
         results = await asyncio.to_thread(
             evaluate_assertions, probe.assertions, evidence, response_text, prompt_index,
             **kwargs,
@@ -822,6 +823,8 @@ class Runner:
             ))
         undecided = [r for r in results if r.error]
         proven_failure = any(not r.passed and not r.error and r.verdict is None for r in results)
+        if proven_failure:
+            undecided = [r for r in undecided if not r.definition_error]
         if undecided and not (proven_failure and (
             context_error is not None or (context is not None and context.required_events)
         )):

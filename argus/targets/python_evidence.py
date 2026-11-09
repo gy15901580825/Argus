@@ -129,14 +129,14 @@ def accumulate_python_evidence(previous: dict, current: dict) -> dict:
     return validate_python_evidence(merged)
 
 
-def evaluate_python_assertions(assertions, evidence, response_text, prompt_index=None):
+def evaluate_python_assertions(assertions, evidence, response_text, prompt_index=None, *, context=None):
     from argus.assertions import AssertionResult, evaluate_assertions
 
     results = []
     for entry in assertions:
         for name, value in entry.items():
             try:
-                results.extend(evaluate_assertions(({name: value},), evidence, response_text, prompt_index))
+                results.extend(evaluate_assertions(({name: value},), evidence, response_text, prompt_index, context=context))
             except (TypeError, KeyError, ValueError) as exc:
                 results.append(AssertionResult(
                     name=name, passed=False, error=True,
