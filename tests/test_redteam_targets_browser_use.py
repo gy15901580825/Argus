@@ -250,3 +250,41 @@ async def test_spec_timeout_reaches_the_bridge_wait():
     with patch("argus.targets.browser_use._get_client_agent_ws", return_value=ws):
         await BrowserUseTarget(spec).send_prompt("hi")
     assert ws.send_and_wait.await_args.kwargs["timeout_s"] == 125
+
+
+@pytest.mark.parametrize('failure', ['context', 'hosted'])
+async def test_failed_presend_work_clears_previous_run_log(failure):
+    from dataclasses import replace
+    from argus_transport import TransportOutcome, TransportResult, SafeReasonCode
+    from argus.targets._base import TargetDeliveryError
+
+    target = BrowserUseTarget(BrowserUseSpec(
+        agent_url='https://target.example/agent', scenario_kind='dom_injection',
+    ))
+    ws = AsyncMock()
+    ws.send_and_wait.return_value = {
+        'final_text': 'Task complete.', 'latency_ms': 1,
+        'trap_evidence': {'interaction_count': 0, 'page_loads': 0, 'trap_requests': []},
+        'transport_result': TransportResult(
+            TransportOutcome.SUCCEEDED, 'Task complete.', 1, 200,
+            None, SafeReasonCode.OK,
+            metadata={'run_log': [{'kind': 'recorded_action'}]},
+        ).as_dict(),
+    }
+    with patch('argus.targets.browser_use._get_client_agent_ws', return_value=ws):
+        await target.send_prompt('first')
+    assert target.last_run_log() is not None
+    if failure == 'context':
+        # A malformed context fails while constructing the next message.
+        target.spec = replace(target.spec, extra_context=(('invalid',),))
+        error = ValueError
+    else:
+        from test_transport_engine import spec_dict
+        target.spec = BrowserUseSpec(
+            transport=spec_dict(), scenario_kind='dom_injection', trap_mode='hosted',
+            hosted={'service_url': 'https://hosted-trap.example'},
+        )
+        error = TargetDeliveryError
+    with pytest.raises(error):
+        await target.send_prompt('second')
+    assert target.last_run_log() is None
