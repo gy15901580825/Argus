@@ -235,16 +235,17 @@ class PythonTarget(Target):
         if self.spec.close is not None:
             try:
                 result = await self._call_hook("close")
-                if result is not None:
-                    raise TargetTransportError("mapping_error: python target close must return None")
             except RunStopped as exc:
                 close_error = exc
                 if self._cleanup_result is None and exc.target_cleanup is not None:
                     self._cache_cleanup(exc.target_cleanup)
             except BaseException as exc:
-                close_error = exc if isinstance(exc, (asyncio.CancelledError, TargetTransportError)) else TargetTransportError(
+                close_error = exc if isinstance(exc, asyncio.CancelledError) else TargetTransportError(
                     f"python_target_close_error: {type(exc).__name__}"
                 )
+            else:
+                if result is not None:
+                    close_error = TargetTransportError("mapping_error: python target close must return None")
         if isinstance(cleanup_error, RunStopped):
             error = cleanup_error
         elif isinstance(close_error, RunStopped):

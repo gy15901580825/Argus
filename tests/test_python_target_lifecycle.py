@@ -106,6 +106,31 @@ async def test_successful_cleanup_survives_close_failure(tmp_path):
     assert 'private detail' not in str(final.close_error)
 
 
+@pytest.mark.parametrize('async_close', [False, True])
+async def test_close_hook_transport_error_is_sanitized_and_cached(tmp_path, async_close):
+    target = make_target(tmp_path, f'''
+        from argus.targets._base import TargetTransportError
+        def cleanup(context):
+            calls.append('cleanup')
+            return {REPORT!r}
+        {'async ' if async_close else ''}def close(context):
+            calls.append('close')
+            raise TargetTransportError('fixture-private-close-detail')
+    ''')
+    await target.send_prompt('Task')
+    errors = []
+    for _ in range(2):
+        with pytest.raises(TargetTransportError) as caught:
+            await target.aclose()
+        errors.append(caught.value)
+        assert str(caught.value) == 'python_target_close_error: TargetTransportError'
+        assert 'fixture-private-close-detail' not in str(caught.value)
+        assert target.cleanup_report() == REPORT
+    assert errors[0] is errors[1]
+    module = next(iter(target._modules.values()))
+    assert module.calls == ['entry', 'cleanup', 'close']
+
+
 async def test_entry_stop_attached_report_survives_new_getter(tmp_path):
     target = PythonTarget(PythonSpec(entry='fixture_module:call'))
     stopped = RunStopped('quota', 'original detail')
