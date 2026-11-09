@@ -280,7 +280,7 @@ argus-probe judge-check --judge-provider litellm --judge-model gemini/gemini-2.5
 
 Full configuration reference: [target spec cookbook](https://github.com/gy15901580825/Argus/blob/main/docs/onboarding/target-spec-cookbook.md).
 
-For `python` targets, see [the Python function, evidence, and cleanup contract](python-target.md).
+For `python` targets, see [the Python function, evidence, and cleanup contract](https://github.com/gy15901580825/Argus/blob/main/docs/python-target.md).
 
 ### Installed target plugins
 
