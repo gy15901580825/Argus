@@ -20,7 +20,7 @@ from transport_v2_fakes import serve_in_thread
 def local_library(monkeypatch):
     base = load_probe_library(api.PROBES_DIR)[0]
     probe = replace(base, id='local_lifecycle', target_class=('llm_chat',), prompts=('normal',),
-                    assertions=({'type': 'tool_not_called', 'tool': 'unused'},),
+                    assertions=({'no_secret_in_response': 'fixture-marker'},),
                     judge_when_assertions_pass=False, conversation=False, requires_interaction=False)
     monkeypatch.setattr(api, 'load_probe_library', lambda *_: [probe])
     monkeypatch.setattr(local, 'load_probe_library', lambda *_: [probe])

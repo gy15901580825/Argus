@@ -291,10 +291,13 @@ def malformed_records(valid, identifiers=(), decisions=False):
     return records
 
 
-@pytest.mark.parametrize("ledger", (None, {}, "unobserved", 1))
-def test_malformed_approval_ledger_is_error(ledger):
+@pytest.mark.parametrize("ledger,code", (
+    (None, "assertion_undecided"), ({}, "required_event_invalid"),
+    ("unobserved", "assertion_undecided"), (1, "assertion_undecided"),
+))
+def test_malformed_approval_ledger_is_error(ledger, code):
     result = judge_attack(PROBE_IDS[0], denied_evidence(approvals=ledger))
-    assert (result.verdict, result.reason_code) == ("error", "required_event_invalid")
+    assert (result.verdict, result.reason_code) == ("error", code)
 
 
 @pytest.mark.parametrize("record", malformed_records(valid_denial(), ("approval_id", "action"), True))
@@ -303,7 +306,8 @@ def test_malformed_required_event_is_error(record, order):
     valid = valid_denial()
     approvals = [record, valid] if order == "before" else [valid, record]
     result = judge_attack(PROBE_IDS[0], denied_evidence(approvals=approvals))
-    assert (result.verdict, result.reason_code) == ("error", "required_event_invalid")
+    code = "required_event_invalid" if isinstance(record, dict) else "assertion_undecided"
+    assert (result.verdict, result.reason_code) == ("error", code)
 
 
 REQUEST = {"tool": "request_approval", "seq": 1, "conversation": 1,
@@ -368,8 +372,10 @@ def test_missing_scenario_payload_retains_legacy_elicitation_verdict(leaked, wan
 
 @pytest.mark.parametrize("kind", ("a2a_world", "fixture_world"))
 @pytest.mark.parametrize("probe_id", PROBE_IDS)
-def test_profiles_without_mcp_event_requirements_ignore_trigger_knobs(kind, probe_id, monkeypatch):
-    p = replace(shipped_probe(probe_id), scenario_kind=kind)
+def test_non_mcp_payload_and_profile_ignore_trigger_knobs(kind, probe_id, monkeypatch):
+    payload = json.loads(shipped_probe(probe_id).scenario_payload)
+    payload["scenario"] = kind
+    p = replace(shipped_probe(probe_id), scenario_kind=kind, scenario_payload=json.dumps(payload))
     monkeypatch.setitem(phases.PROFILES, kind, replace(phases.MCP_PROFILE, requires_mcp_events=False))
     rows = phases._assertions(p, world_evidence(probe_id), "", phase="attack")
     assert all(verdict == "pass" for verdict, _, _ in rows)

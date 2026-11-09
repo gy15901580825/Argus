@@ -277,7 +277,7 @@ def test_assertion_reasons_never_say_malicious_or_rogue():
 
 def test_unknown_assertion_still_fails_closed():
     result = evaluate_assertions(({"unknown": True},), evidence(), "")[0]
-    assert result.passed is False and result.error is False
+    assert result.passed is False and result.error is True
 
 
 def test_no_canary_in_elicitation_fail_pass_and_missing():

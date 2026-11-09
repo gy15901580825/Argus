@@ -232,6 +232,15 @@ def load_probe(path: Path) -> Probe:
         if "scenario" in raw:
             scenario_kind = raw["scenario"].get("kind")
             scenario_payload = raw["scenario"].get("payload", "")
+        if scenario_kind == "agent_world":
+            try:
+                payload = json.loads(scenario_payload)
+            except (TypeError, ValueError):
+                payload = None
+            if not isinstance(payload, dict):
+                raise ValueError(
+                    f"probe {raw.get('id', path.stem)!r}: agent_world payload must be a JSON object in {path}"
+                )
         has_sessions = "sessions" in raw
         indirect = raw.get("indirect", [])
         if "indirect" in raw:
