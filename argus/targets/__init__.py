@@ -160,13 +160,17 @@ class _BuiltinValidation:
             return spec
         from argus.targets.python_target import is_path_entry, split_entry
 
-        try:
-            target, func = split_entry(spec["entry"])
-        except (ValueError, AttributeError):
-            return spec
-        if not is_path_entry(target) or Path(target).is_absolute():
-            return spec
-        return {**spec, "entry": f"{base_dir / target}:{func}"}
+        anchored = dict(spec)
+        for name in ("entry", "cleanup", "close"):
+            if name != "entry" and anchored.get(name) is None:
+                continue
+            try:
+                target, func = split_entry(anchored[name])
+            except (ValueError, AttributeError):
+                continue
+            if is_path_entry(target) and not Path(target).is_absolute():
+                anchored[name] = f"{base_dir / target}:{func}"
+        return anchored
 
     def transport_version(self, spec: dict[str, Any]) -> int | None:
         """Select built-in validation routing; plugin transport fields are opaque."""

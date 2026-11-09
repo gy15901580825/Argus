@@ -43,18 +43,33 @@ class AssertionResult:
 
 @dataclass(frozen=True)
 class ObservationRequirements:
-    fields: tuple[tuple[str, type], ...]
+    fields: tuple[tuple[str, type | tuple[type, ...]], ...]
     enabled: Callable[[object], bool] | None = None
+    records: tuple[tuple[str, tuple[tuple[str, type | tuple[type, ...]], ...]], ...] = ()
+    items: tuple[tuple[str, type | tuple[type, ...]], ...] = ()
+    optional: tuple[tuple[str, type | tuple[type, ...]], ...] = ()
+    nested: tuple[tuple[str, Callable], ...] = ()
 
 
 _Check = TypeVar("_Check", bound=Callable)
 
 
 def requires_observations(
-    fields: dict[str, type], *, enabled: Callable[[object], bool] | None = None,
+    fields: dict[str, type | tuple[type, ...]], *,
+    enabled: Callable[[object], bool] | None = None,
+    records: dict[str, dict[str, type | tuple[type, ...]]] | None = None,
+    items: dict[str, type | tuple[type, ...]] | None = None,
+    optional: dict[str, type | tuple[type, ...]] | None = None,
+    nested: dict[str, Callable] | None = None,
 ) -> Callable[[_Check], _Check]:
     """Declare the observations a check needs without wrapping the check."""
-    requirements = ObservationRequirements(tuple(fields.items()), enabled)
+    requirements = ObservationRequirements(
+        tuple(fields.items()), enabled,
+        tuple((name, tuple(shape.items())) for name, shape in (records or {}).items()),
+        tuple((items or {}).items()),
+        tuple((optional or {}).items()),
+        tuple((nested or {}).items()),
+    )
 
     def declare(check: _Check) -> _Check:
         setattr(check, "observation_requirements", requirements)
@@ -70,11 +85,48 @@ def validate_observations(check: Callable, value: object, evidence: dict) -> Non
         return
     if requirements.enabled is not None and not requirements.enabled(value):
         return
+    def label(expected):
+        return " or ".join(item.__name__ for item in expected) if isinstance(expected, tuple) else expected.__name__
+
+    def matches(value, expected):
+        types = expected if isinstance(expected, tuple) else (expected,)
+        return isinstance(value, expected) and not (type(value) is bool and int in types and bool not in types)
+
     for name, expected_type in requirements.fields:
         if name not in evidence:
-            raise Undecided(f"missing observation {name!r}; expected {expected_type.__name__}")
+            raise Undecided(f"missing observation {name!r}; expected {label(expected_type)}")
         if not isinstance(evidence[name], expected_type):
-            raise Undecided(f"observation {name!r} must be {expected_type.__name__}")
+            raise Undecided(f"observation {name!r} must be {label(expected_type)}")
+    for name, expected_type in requirements.optional:
+        if name in evidence and not matches(evidence[name], expected_type):
+            raise Undecided(f"observation {name!r} must be {label(expected_type)}")
+    for name, shape in requirements.records:
+        if name not in evidence:
+            continue
+        observation = evidence[name]
+        if observation is None:
+            continue
+        records = observation if isinstance(observation, list) else [observation]
+        for record in records:
+            if not isinstance(record, dict):
+                raise Undecided(f"observation {name!r} records must be dict")
+            for field, expected_type in shape:
+                if field not in record:
+                    raise Undecided(f"observation {name!r} record is missing {field!r}")
+                if not matches(record[field], expected_type):
+                    raise Undecided(f"observation {name!r} record {field!r} must be {label(expected_type)}")
+    for name, expected_type in requirements.items:
+        observation = evidence[name]
+        values = observation.values() if isinstance(observation, dict) else observation
+        if any(not matches(item, expected_type) for item in values):
+            raise Undecided(f"observation {name!r} items must be {label(expected_type)}")
+    for name, check in requirements.nested:
+        if name not in evidence:
+            continue
+        observation = evidence[name]
+        records = observation if isinstance(observation, list) else [observation]
+        for record in records:
+            validate_observations(check, None, record)
 
 
 def _parse_amount_asset(spec: object) -> tuple[int, str | None]:

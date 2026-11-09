@@ -141,13 +141,14 @@ def _is_transport_failure(exc: Exception) -> bool:
     """The request did not produce a usable reply: network, timeout, or a body that is not JSON."""
     import json
 
-    from argus.targets._base import TargetDeliveryError
+    from argus.targets._base import TargetDeliveryError, TargetTransportError
 
     if isinstance(
         exc,
         (
             httpx.HTTPError,
             TargetDeliveryError,
+            TargetTransportError,
             TimeoutError,
             ConnectionError,
             json.JSONDecodeError,
