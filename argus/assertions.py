@@ -924,6 +924,8 @@ def evaluate_assertions(
             try:
                 passed, reason = evaluate_check(check, value, evidence, response_text, context=context)
             except (_NoVerdict, Undecided, KeyError, TypeError, ValueError) as exc:
+                if context is None and isinstance(exc, (KeyError, TypeError, ValueError)):
+                    raise
                 results.append(AssertionResult(name=name, passed=False, reason=str(exc), error=True))
                 continue
             results.append(AssertionResult(name=name, passed=passed, reason=reason))
