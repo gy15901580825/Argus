@@ -744,6 +744,7 @@ class Runner:
                 # No evidence means no verdict. A testbed blip or an expired
                 # session errors this probe only; it must never read as a pass.
                 self._evidence_failed = True
+                evidence_source = "target" if isinstance(self._target, PythonTarget) else "testbed"
                 return self._finding(
                     probe,
                     prompt,
@@ -753,7 +754,7 @@ class Runner:
                     verdict=VERDICT_ERROR,
                     severity="info",
                     confidence=1.0,
-                    reasoning=f"could not read evidence from the target: {_short(e)}",
+                    reasoning=f"could not read evidence from the {evidence_source}: {_short(e)}",
                     evidence=None,
                 )
 
