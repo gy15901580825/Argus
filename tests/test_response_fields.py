@@ -231,7 +231,7 @@ def test_invalid_response_fields_load_error_names_probe_file(tmp_path):
 
 @pytest.mark.parametrize('blocked, operation', [
     ('httpx', "from argus.probe import load_all_probes; assert len(list(load_all_probes(Path('argus/probes')))) > 100"),
-    ('jsonpath_ng', "from argus.assertions import evaluate_assertions; assert evaluate_assertions(({'max_tool_calls': 1},), {}, '')[0].passed"),
+    ('jsonpath_ng', "from argus.assertions import evaluate_assertions; assert evaluate_assertions(({'max_tool_calls': 1},), {'tool_calls': []}, '')[0].passed"),
 ])
 def test_existing_checks_and_probe_loading_do_not_require_response_field_dependencies(blocked, operation):
     script = f"""

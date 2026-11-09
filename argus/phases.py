@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from argus.assertions import validate_observations
 from argus.trials import TrialRecord
 from argus.world_assertions import (
     CHECKS,
@@ -148,6 +149,7 @@ def _assertions(probe, evidence: dict, response: str):
                 check = profile_for(probe).checks.get(name)
                 if check is None:
                     raise Undecided(f"unknown world assertion {name!r}")
+                validate_observations(check, value, evidence)
                 passed, reason = check(value, evidence, response)
                 level = (
                     "warn"

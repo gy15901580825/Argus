@@ -19,7 +19,7 @@ def stop_library(monkeypatch):
         replace(
             base, id=f"local_stop_{index}", target_class=("llm_chat",),
             prompts=("normal",),
-            assertions=({"no_call_to_tool": "unused"},),
+            assertions=({"no_secret_in_response": "synthetic-response-marker"},),
             judge_when_assertions_pass=False, conversation=False,
             requires_interaction=False,
         )
