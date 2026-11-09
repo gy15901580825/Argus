@@ -399,6 +399,7 @@ class BrowserUseTarget(Target):
     async def send_prompt(
         self, prompt: str, history: tuple[Turn, ...] = ()
     ) -> tuple[str, float]:
+        self._last_run_log = None
         if self.spec.trap_mode == "hosted" and not _LOCAL_RUN.get():
             raise TargetDeliveryError("trap_mode=hosted runs only with --local")
         msg = {
@@ -432,7 +433,6 @@ class BrowserUseTarget(Target):
         else:
             deadline = self.spec.timeout_s
             cleanup = 0.0
-        self._last_run_log = None
         start = time.monotonic()
         if _LOCAL_RUN.get():
             reply = await asyncio.wait_for(

@@ -208,7 +208,8 @@ def test_transport_trials_lifecycle_shared_budget(tmp_path, library, max_request
     p, _, install = library
     if indirect:
         p = replace(p, indirect=(IndirectItem('normal task', 'offline material'),))
-    install(replace(p, requires_interaction=False))
+    install(replace(p, requires_interaction=False,
+                    assertions=({'no_secret_in_response': 'unseen-fixture-marker'},)))
     app = recording_lifecycle()
     with serve_in_thread(app) as origin:
         spec = lifecycle_dict(origin)

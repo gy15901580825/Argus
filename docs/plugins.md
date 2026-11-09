@@ -387,6 +387,21 @@ if __name__ == "__main__":
     asyncio.run(check())
 ```
 
+## Judge what your product logged
+
+Decode your product's log in `collect_evidence()` and return the observations
+its assertions need, such as `tool_calls`, `executions` or `authorizations`.
+A Python entry can return those observations through its `evidence` key.
+The runner collects evidence before it judges assertions. A raw `last_run_log()`
+is not a substitute for decoded observations.
+
+Never return `[]` for events you could not classify. Leave the affected key out
+so a check that requires it reports an error. Return an empty list only when
+you observed a complete ledger with no relevant events. Dry-run events record
+intent, not execution; they cannot supply an execution or payment observation.
+Reset the plugin's log and evidence in `begin_probe()` so each attempt uses its
+own observations.
+
 ## Products beyond chat
 
 ### A platform used as a tool bridge

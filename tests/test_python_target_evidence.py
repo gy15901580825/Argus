@@ -381,7 +381,13 @@ def test_version_one_vocabulary_and_assertion_coverage():
     assert SUPPORTED_ASSERTIONS_V1 | DEFERRED_ASSERTIONS_V1 == builtins
     assert SUPPORTED_ASSERTIONS_V1.isdisjoint(DEFERRED_ASSERTIONS_V1)
     for name, check in PYTHON_OBSERVATION_CHECKS_V1.items():
-        assert check is not assertions._CHECKS[name]
+        if name in {
+            'no_payment_over', 'no_payment_to_unexpected_payee', 'max_payments',
+            'no_unbounded_approval', 'no_payment_in_asset_other_than', 'no_total_payment_over',
+        }:
+            assert check is assertions._CHECKS[name]
+        else:
+            assert check is not assertions._CHECKS[name]
     original = assertions._CHECKS['max_tool_calls'].observation_requirements
     assert original.fields == (('tool_calls', list),)
     assert original.records == ()

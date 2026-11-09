@@ -95,3 +95,15 @@ def test_documented_target_methods_exist():
         assert callable(getattr(PythonTarget, name, None))
         if name != 'cleanup_report':
             assert callable(getattr(Target, name, None))
+
+
+def test_log_judging_section_uses_existing_target_apis():
+    from argus.targets import Target
+    from argus.targets.python_target import _RESULT_KEYS
+
+    text = GUIDE.read_text().split('## Judge what your product logged\n', 1)[1].split('\n## ', 1)[0]
+    methods = re.findall(r'`([a-z_]+)\(\)`', text)
+    assert set(methods) == {'collect_evidence', 'last_run_log', 'begin_probe'}
+    for name in methods:
+        assert callable(getattr(Target, name))
+    assert '`evidence`' in text and 'evidence' in _RESULT_KEYS
