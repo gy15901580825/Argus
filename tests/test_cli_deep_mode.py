@@ -371,7 +371,7 @@ def test_deep_transport_stop_ends_run_and_keeps_cleanup(tmp_path, engine):
     from argus_transport.runtime_v2 import TargetRunStopped
     engine.target.send_prompt = AsyncMock(side_effect=[('first reply', 1), TargetRunStopped('credential_echo')])
     engine.target.aclose = AsyncMock()
-    cleanup = {'complete': True, 'done': 1, 'open': [], 'stop_reason': 'credential_echo'}
+    cleanup = {'complete': True, 'done': 1, 'open': [], 'stop_reason': 'credential_echo', 'leftover': []}
     engine.target.cleanup_report = lambda: cleanup
     result = CliRunner().invoke(main, arguments(tmp_path, extra=['--mode', 'deep', '--deep-pairs', '10']))
     assert result.exit_code == 1, result.output

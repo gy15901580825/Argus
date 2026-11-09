@@ -24,8 +24,9 @@ def test_close_exception_preserves_local_stop_signal(tmp_path, local_library, mo
     final_cleanup = {
         'complete': False,
         'done': 1,
-        'open': [{'method': 'DELETE', 'url': 'http://127.0.0.1:1/resources/remaining', 'step': 'source', 'status': 'failed'}],
+        'open': [{'scope': 'run', 'method': 'DELETE', 'url': 'http://127.0.0.1:1/resources/remaining', 'step': 'source', 'status': 'failed', 'http_status': None}],
         'stop_reason': None,
+        'leftover': [],
     }
     class Target:
         compatible_classes = frozenset({'llm_chat'})

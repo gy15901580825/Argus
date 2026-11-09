@@ -1,3 +1,5 @@
+from .cleanup import CleanupReport
+from .stops import RunStopped, TargetRunStopped
 from .engine import (
     LegacyPreparedRequest,
     LegacyResponseSelector,
@@ -52,6 +54,9 @@ from .spec_v2 import (
 from .security import ExecutionPolicy, Redactor, execution_policy, local_transport_mode
 
 __all__ = [
+    "CleanupReport",
+    "RunStopped",
+    "TargetRunStopped",
     "AuthHeader",
     "AuthSpec",
     "ContextKey",
