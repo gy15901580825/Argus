@@ -409,6 +409,9 @@ class Runner:
                 base,
                 prompts=tuple(render_generator_name(p, name) for p in base.prompts),
             )
+        closing = getattr(probe, 'closing_prompt', None)
+        if isinstance(closing, str) and needs_rendering(closing):
+            probe.closing_prompt = render_generator_name(closing, name)
         # A pack probe looks in its pack's rubrics first, then the built-in ones.
         candidate = None
         pack_rubrics = getattr(probe, "rubrics_dir", None)

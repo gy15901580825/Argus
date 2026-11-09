@@ -55,7 +55,11 @@ schema remains `argus.run/1` under its additive optional-field policy.
 
 Each deep finding carries `evidence.transcript`, an ordered list of attempted
 rounds. A round records `attack_prompt` as sent, `target_response`, `verdict`,
-`severity` and `reasoning`. `evidence.thread_id`, `persona` and `strategy`
+`severity`, `reasoning` and `kind`. `kind` is `adaptive` for attacker-generated
+rounds or `closing_direct` for the final static ask. With at least two rounds
+and nonempty base prompts, an unfinished thread sends its selected base prompt
+on the last round without an attacker call. Earlier stops omit that round.
+`evidence.thread_id`, `persona` and `strategy`
 identify the pairing. `rounds_run` equals the transcript length. `history` is
 false for a stateless target, whose rounds are independent cold messages.
 The attacker still receives prior replies when the target keeps no history.
@@ -94,7 +98,7 @@ at the attacker call. A filter refusal while judging a target reply instead
 ends with `judge_unusable`. Captured target evidence stays beside the thread
 metadata. Transcript prompts, replies and reasoning use the same registered
 secret masking as the top-level fields in every report format. Structural
-thread fields and round verdicts remain readable even for short secret values.
+thread fields, round verdicts and round kinds remain readable even for short secret values.
 
 ### Target cleanup
 

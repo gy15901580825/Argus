@@ -119,6 +119,14 @@ attacker; otherwise use static mode. Deep mode needs a text model with enough
 output budget for reasoning and the attack prompt. Each attacker call allows
 4000 output tokens.
 
+With `--max-rounds` of at least 2 and nonempty base prompts, a thread that
+reaches its last round sends one seeded choice from the base probe's static
+prompts verbatim, using the target's usual placeholder substitution and
+conversation history. This closing direct ask uses no attacker call; every
+earlier round remains adaptive. A failure or another stop ends the thread
+before that ask. With `--max-rounds 1`, the prompt remains attacker-generated.
+The thread transcript marks each round as `adaptive` or `closing_direct`.
+
 The default per-run cap is $5 for deep mode and $0.50 for static mode. The
 estimate includes judge and attacker calls at the requested pair and round
 budgets; it excludes requests billed by your target. Local mode prints its
@@ -128,9 +136,10 @@ from the server's; the server makes the admission decision and enforces the cap.
 
 The `deep` field in local [run.json](https://github.com/gy15901580825/Argus/blob/main/docs/run-json.md#deep-run-metadata) and the
 server's `deep_run` SSE event record the resolved seed and selected threads.
-Reusing a seed reproduces pair selection with the same probes and library;
-it does not promise identical model answers. Indirect probes using a material
-channel keep their static execution and appear in `static_material_probe_ids`.
+Reusing a seed reproduces pair selection and closing prompt selection with the
+same probes and library; it does not promise identical model answers. Indirect
+probes using a material channel keep their static execution and appear in
+`static_material_probe_ids`.
 Each deep thread produces one finding, with every sent prompt, reply and round
 verdict in `evidence.transcript`. HTML keeps the transcript collapsed. SARIF
 and JUnit carry one result per thread, including its transcript.

@@ -11,7 +11,7 @@ DeepStop = Literal['fail', 'max_rounds', 'attacker_stopped', 'attacker_blocked',
                    'send_error', 'blank_reply', 'judge_unusable', 'cost', 'blocked_by_target',
                    'not_exercised', 'not_started', 'collect_evidence', 'post_round']
 THREAD_STRUCTURE_FIELDS = ('thread_id', 'persona', 'strategy', 'rounds_run', 'stop_reason', 'history')
-ROUND_STRUCTURE_FIELDS = ('verdict', 'severity')
+ROUND_STRUCTURE_FIELDS = ('verdict', 'severity', 'kind')
 ROUND_FIELDS = ('attack_prompt', 'target_response', 'verdict', 'severity', 'reasoning')
 _VERDICT_RANK = {'pass': 0, 'warn': 1, 'error': 2, 'aborted_cost': 3, 'fail': 4}
 _SEVERITY_RANK = {'info': 0, 'low': 1, 'medium': 2, 'high': 3, 'critical': 4}
@@ -47,7 +47,11 @@ class DeepThread:
             'thread_id': self.probe.id, 'persona': self.probe.persona.id,
             'strategy': self.probe.strategy.id, 'rounds_run': len(self.rounds),
             'stop_reason': stop, 'history': self.history,
-            'transcript': [{key: getattr(row, key) for key in ROUND_FIELDS} for row in self.rounds],
+            'transcript': [
+                {**{key: getattr(row, key) for key in ROUND_FIELDS},
+                 'kind': 'closing_direct' if self.probe.is_closing_round(i) else 'adaptive'}
+                for i, row in enumerate(self.rounds)
+            ],
         })
 
     def finish(self, stop: DeepStop, diagnostic: str | None = None) -> Finding:

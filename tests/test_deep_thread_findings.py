@@ -26,7 +26,7 @@ def blocked():
 @pytest.fixture
 def thread_case(tmp_path, monkeypatch):
     base = Probe('thread_fixture', 'Benign thread fixture', ('llm_chat',), ('prompt-injection',),
-                 'medium', ('benign task',), ProbeMappings(), 'fixture', 'fixture.md')
+                 'medium', ('third {address}',), ProbeMappings(), 'fixture', 'fixture.md')
     (tmp_path / 'fixture.md').write_text('Assess the benign fixture.')
     probe = PersonaStrategyProbe(base, default_personas()[0], default_strategies()[0], max_rounds=3)
 
@@ -71,7 +71,7 @@ def assert_thread(finding, case, verdict, reason, rounds):
     assert evidence['history'] is case.target.supports_history
     assert evidence['stop_reason'] == reason and evidence['rounds_run'] == rounds
     assert len(evidence['transcript']) == rounds
-    assert all(set(row) == {'attack_prompt', 'target_response', 'verdict', 'severity', 'reasoning'}
+    assert all(set(row) == {'attack_prompt', 'target_response', 'verdict', 'severity', 'reasoning', 'kind'}
                for row in evidence['transcript'])
 
 
@@ -327,6 +327,7 @@ def test_static_evidence_cannot_spoof_thread_metadata_to_restore_a_secret():
 @pytest.mark.parametrize('round_n', [0, 1, 2])
 async def test_empty_attacker_never_sends_or_judges(thread_case, empty, round_n):
     c = thread_case
+    c.probe.max_rounds = 4
     c.attacker.side_effect = ['benign'] * round_n + [empty]
     found = await results(c)
     assert_thread(found[0], c, 'error', 'attacker_stopped', round_n)
