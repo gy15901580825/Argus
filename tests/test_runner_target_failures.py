@@ -183,7 +183,7 @@ async def test_empty_text_on_assertion_probe_is_still_decided_by_evidence():
             return "", 2.0
 
         async def collect_evidence(self):
-            return {"interaction_count": 1}
+            return {"interaction_count": 1, "authorizations": []}
 
     probe = _probe(assertions=({"max_payments": 0},))
     findings, judge = await _run(_Target(), [probe])
