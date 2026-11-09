@@ -73,6 +73,14 @@ def script_command(path):
     return f"import runpy; runpy.run_path({str(path)!r}, run_name='__main__')"
 
 
+def test_plugin_guide_action_major_matches_readme():
+    pattern = r"gy15901580825/argus-probe-action@v(\d+)\b"
+    readme_versions = re.findall(pattern, (ROOT / "README.md").read_text())
+    guide_versions = re.findall(pattern, GUIDE.read_text())
+    assert readme_versions and guide_versions, "both docs must reference the Action"
+    assert set(guide_versions) == set(readme_versions), "Action major must match README.md"
+
+
 def test_documented_target_methods_exist():
     from argus.targets import Target
     from argus.targets.python_target import PythonTarget

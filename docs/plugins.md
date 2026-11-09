@@ -4,7 +4,10 @@ A target plugin owns how Argus talks to a product. It sends tasks, waits for
 results, reads evidence and releases resources. Install it alongside Argus.
 You do not need to edit the engine to register a new kind.
 
-Use Python 3.11 or later. This guide describes the current target contract.
+Use Python 3.11 or later. This contract requires the first argus-probe release
+after 1.6.0. It is merged on main but not yet released. Version 1.6.0 has the
+`argus.targets` entry-point group, but no `kinds()`, `KindInfo`, public
+`RunStopped` cleanup contract or Python evidence support.
 The [CLI guide](cli.md#installed-target-plugins) explains the commands that
 use it.
 
@@ -413,8 +416,9 @@ that a plugin can test it.
 ## Install in the GitHub Action
 
 The Action's `install-spec` replaces its default engine installation. Include
-both the engine and your plugin in that input. Pin an Argus release that
-contains this registry contract; the Action's old default release does not.
+both the engine and your plugin in that input. Pin the first argus-probe release
+after 1.6.0 once it is published. The Action's current default is 1.6.0, which
+does not include this contract.
 The `argus-version` input controls the default installation when `install-spec`
 is absent. It does not add an engine to a custom `install-spec`.
 
@@ -423,7 +427,7 @@ distribution and target file belong to your project. Replace the release and
 package versions before using it.
 
 ```yaml not-runnable
-- uses: gy15901580825/argus-probe-action@v1
+- uses: gy15901580825/argus-probe-action@v2
   with:
     install-spec: "argus-probe==<registry-release> your-plugin==<plugin-release>"
     target: argus-target.json
