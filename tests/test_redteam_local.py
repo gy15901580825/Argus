@@ -525,6 +525,7 @@ class _MeteredRunner:
     Runner._run_iterative does: an aborted_cost finding, no exception."""
 
     calls: list[str] = []
+    output_tokens = 10_000
 
     def __init__(self, **kw):
         pass
@@ -534,7 +535,7 @@ class _MeteredRunner:
 
         type(self).calls.append(probe.id)
         try:
-            _spend(10_000)()
+            _spend(self.output_tokens)()
         except CostExceededError as e:
             yield aborted_finding(probe, f"cost cap hit at round 0: {e}")
             return
@@ -547,18 +548,19 @@ def _pass(probe):
     return replace(skipped_finding(probe, "ok"), verdict="pass")
 
 
-async def test_after_an_iterative_cap_hit_no_further_probe_starts(library):
+async def test_after_an_iterative_cap_hit_no_further_probe_starts(library, monkeypatch):
     _MeteredRunner.calls = []
+    monkeypatch.setattr(_MeteredRunner, "output_tokens", 50_000)
     meter = api._COST_METER
     before = meter.spent_today()
     with patch("argus.api.Runner", _MeteredRunner):
         with pytest.raises(LocalRunError) as exc:
-            # $0.05 per probe against a $0.08 cap: the second probe's call crosses it.
-            await _collect(run_local(TARGET, ["chat_j1", "chat_j2", "chat_a1"], per_run_cap_usd=0.08, env=KEY))
+            # Five exchanges estimate $0.406, below $0.45. Two actual $0.25 calls cross it.
+            await _collect(run_local(TARGET, ["chat_j1", "chat_j2", "chat_a1"], per_run_cap_usd=0.45, env=KEY))
     assert exc.value.code == "cost"
     assert _MeteredRunner.calls == ["chat_j1", "chat_j2"]  # chat_a1 never started
     # Exactly the two paid calls, the crossing one included; nothing after it.
-    assert meter.spent_today() - before == pytest.approx(0.10)
+    assert meter.spent_today() - before == pytest.approx(0.50)
     assert _scope_closed()
 
 

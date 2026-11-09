@@ -67,7 +67,7 @@ class AnthropicNativeTarget(Target):
         if not text.strip() and getattr(resp, "stop_reason", None) == "refusal":
             raise TargetBlockedError("target refused to answer (stop_reason: refusal)")
         llm.check_completion(
-            llm.Completion(text, 0, getattr(resp.usage, "output_tokens", 0) or 0, self.spec.model),
+            llm.Completion(text, 0, getattr(getattr(resp, "usage", None), "output_tokens", 0) or 0, self.spec.model),
             self.spec.max_tokens,
         )
         return text, latency_ms
