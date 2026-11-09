@@ -149,13 +149,15 @@ def test_quickstart_hands_off_to_init_for_the_selected_kind(tmp_path, monkeypatc
 
 
 def test_quickstart_documented_kinds_match_the_registry():
-    from argus.cli.target_loader import _KNOWN_KINDS
+    from argus.targets import _BUILDERS
+
+    builtin_kinds = set(_BUILDERS)
 
     text = (Path(__file__).resolve().parents[1] / "docs/onboarding/quickstart.md").read_text()
     step_two = text.split("## 2. Generate a target spec\n", 1)[1].split("\n## ", 1)[0]
     match = re.search(r"^The (\d+) supported `kind` values: (.+?)\.", step_two, re.MULTILINE)
     assert match is not None
     kinds = re.findall(r"`([^`]+)`", match.group(2))
-    assert int(match.group(1)) == len(kinds) == len(_KNOWN_KINDS)
+    assert int(match.group(1)) == len(kinds) == len(builtin_kinds)
     assert len(kinds) == len(set(kinds))
-    assert set(kinds) == _KNOWN_KINDS
+    assert set(kinds) == builtin_kinds

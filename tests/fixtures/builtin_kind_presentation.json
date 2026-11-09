@@ -1,0 +1,259 @@
+{
+  "kinds_order_desc": [
+    "openai_compat",
+    "anthropic_native",
+    "custom_http",
+    "web_chat",
+    "python",
+    "grpc",
+    "browser_use",
+    "http_upload",
+    "mcp_agent",
+    "payment_agent",
+    "a2a_agent",
+    "testbed_agent",
+    "mcp_server",
+    "a2a_server",
+    "vllm_server"
+  ],
+  "desc": {
+    "openai_compat": "An HTTP endpoint that speaks the OpenAI Chat Completions protocol",
+    "anthropic_native": "The Anthropic Messages API",
+    "custom_http": "An agent behind its own HTTP request and response shape",
+    "web_chat": "An agent reachable only through a web chat page",
+    "python": "An agent you can call as a Python function",
+    "grpc": "A gRPC service with server reflection enabled",
+    "browser_use": "A browser-using agent",
+    "http_upload": "A file upload endpoint that renders what it stores",
+    "mcp_agent": "An agent that uses MCP tools, run against a hostile MCP testbed",
+    "payment_agent": "An agent that spends money, run against a payment testbed",
+    "a2a_agent": "An agent that talks to A2A peers, run against an A2A peer testbed",
+    "testbed_agent": "The general form of mcp_agent, payment_agent and a2a_agent",
+    "mcp_server": "An MCP server you run over HTTP (tests the server, not an agent)",
+    "a2a_server": "An A2A server (tests the server, not an agent)",
+    "vllm_server": "A vLLM model server (tests the server, not an agent)"
+  },
+  "questions": {
+    "openai_compat": [
+      [
+        "endpoint_url",
+        "Endpoint URL",
+        "https://api.openai.com/v1/chat/completions"
+      ],
+      [
+        "model",
+        "Model name",
+        null
+      ],
+      [
+        "api_key_env",
+        "API key env var",
+        "OPENAI_API_KEY"
+      ]
+    ],
+    "anthropic_native": [
+      [
+        "model",
+        "Model name",
+        "claude-haiku-4-5-20251001"
+      ],
+      [
+        "api_key_env",
+        "API key env var",
+        "ANTHROPIC_API_KEY"
+      ]
+    ],
+    "custom_http": [
+      [
+        "request_url",
+        "Request URL",
+        null
+      ],
+      [
+        "request_body_template",
+        "Request body template (Jinja2 with {{prompt}})",
+        "{\"input\": {{prompt|tojson}}}"
+      ],
+      [
+        "response_jsonpath",
+        "Response JSONPath",
+        "$.output"
+      ]
+    ],
+    "python": [
+      [
+        "entry",
+        "Python entry (module:func or path/to/file.py:func)",
+        "argus_target.py:call"
+      ]
+    ],
+    "grpc": [
+      [
+        "endpoint",
+        "Endpoint (host:port)",
+        "localhost:50051"
+      ],
+      [
+        "service_method",
+        "Service method (pkg.Service/Method)",
+        null
+      ],
+      [
+        "prompt_field",
+        "Prompt field name",
+        "user_input"
+      ],
+      [
+        "response_field",
+        "Response field name",
+        "response"
+      ]
+    ],
+    "browser_use": [
+      [
+        "agent_url",
+        "Browser-using agent URL",
+        null
+      ],
+      [
+        "scenario_kind",
+        "Scenario kind (dom_injection/ui_phishing/visual_injection/os_cmd)",
+        "dom_injection"
+      ]
+    ],
+    "payment_agent": [
+      [
+        "testbed_url",
+        "Payment testbed URL (\"local\" starts the bundled one on 127.0.0.1 for each run)",
+        "local"
+      ],
+      [
+        "inner_json",
+        "Inner target spec (JSON) for the transport that talks to your agent",
+        "{\"kind\": \"openai_compat\", \"endpoint_url\": \"http://127.0.0.1:8091/v1/chat/completions\", \"model\": \"argus-demo-payment-agent\"}"
+      ]
+    ],
+    "mcp_agent": [
+      [
+        "testbed_url",
+        "MCP testbed URL (\"local\" starts the bundled one on 127.0.0.1 for each run)",
+        "local"
+      ],
+      [
+        "inner_json",
+        "Inner target spec (JSON) for the transport that talks to your agent",
+        "{\"kind\": \"openai_compat\", \"endpoint_url\": \"http://127.0.0.1:8093/v1/chat/completions\", \"model\": \"argus-demo-mcp-agent\"}"
+      ]
+    ],
+    "a2a_agent": [
+      [
+        "testbed_url",
+        "A2A control URL (local starts the bundled peer world)",
+        "local"
+      ],
+      [
+        "inner_json",
+        "Inner target spec (JSON)",
+        "{\"kind\":\"openai_compat\",\"endpoint_url\":\"http://127.0.0.1:8095/v1/chat/completions\",\"model\":\"demo\"}"
+      ],
+      [
+        "capabilities_csv",
+        "Capabilities (comma-separated)",
+        "peer_http_json_1_0"
+      ]
+    ],
+    "testbed_agent": [
+      [
+        "environment",
+        "Environment (mcp/payment/a2a)",
+        "mcp"
+      ],
+      [
+        "testbed_url",
+        "Testbed URL (\"local\" starts the bundled one on 127.0.0.1 for each run)",
+        "local"
+      ],
+      [
+        "inner_json",
+        "Inner target spec (JSON) for the transport that talks to your agent",
+        "{\"kind\": \"openai_compat\", \"endpoint_url\": \"http://127.0.0.1:8093/v1/chat/completions\", \"model\": \"argus-demo-mcp-agent\"}"
+      ]
+    ],
+    "http_upload": [
+      [
+        "upload_url",
+        "Upload URL",
+        null
+      ],
+      [
+        "upload_field_name",
+        "Upload form field name",
+        "file"
+      ],
+      [
+        "upload_filename",
+        "Upload filename",
+        "payload.svg"
+      ],
+      [
+        "upload_content_type",
+        "Upload content type",
+        "image/svg+xml"
+      ],
+      [
+        "render_url_jsonpath",
+        "Render URL JSONPath (extracts the render URL from the upload response)",
+        "$.url"
+      ]
+    ],
+    "web_chat": [
+      [
+        "url",
+        "Chat page URL",
+        null
+      ],
+      [
+        "input_selector",
+        "CSS selector of the message box",
+        "textarea"
+      ],
+      [
+        "response_selector",
+        "CSS selector matching every assistant message",
+        null
+      ],
+      [
+        "send_selector",
+        "CSS selector of the send button (empty: press Enter)",
+        ""
+      ]
+    ],
+    "a2a_server": [
+      [
+        "url",
+        "A2A server base URL (the Agent Card is at <url>/.well-known/agent-card.json)",
+        null
+      ]
+    ],
+    "mcp_server": [
+      [
+        "url",
+        "MCP server Streamable HTTP endpoint (e.g. http://127.0.0.1:3001/mcp)",
+        null
+      ]
+    ],
+    "vllm_server": [
+      [
+        "url",
+        "vLLM server root URL, not the /v1 path (e.g. http://10.0.0.5:8000)",
+        null
+      ]
+    ]
+  },
+  "hints": {
+    "custom_http": "check response_jsonpath or the endpoint",
+    "openai_compat": "the endpoint returned no message content",
+    "anthropic_native": "the endpoint returned no message content",
+    "web_chat": "check response_selector"
+  }
+}

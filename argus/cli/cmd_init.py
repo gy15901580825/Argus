@@ -9,170 +9,18 @@ from pathlib import Path
 
 import click
 
-from argus.cli.target_loader import _KNOWN_KINDS
+from argus.targets import _BUILTIN_KINDS, kinds
 
-# Per-kind question definitions. Each tuple: (field_name, prompt_text, default_or_None)
-_KIND_QUESTIONS: dict[str, list[tuple[str, str, str | None]]] = {
-    "openai_compat": [
-        ("endpoint_url", "Endpoint URL", "https://api.openai.com/v1/chat/completions"),
-        ("model", "Model name", None),
-        ("api_key_env", "API key env var", "OPENAI_API_KEY"),
-    ],
-    "anthropic_native": [
-        ("model", "Model name", "claude-haiku-4-5-20251001"),
-        ("api_key_env", "API key env var", "ANTHROPIC_API_KEY"),
-    ],
-    "custom_http": [
-        ("request_url", "Request URL", None),
-        (
-            "request_body_template",
-            "Request body template (Jinja2 with {{prompt}})",
-            '{"input": {{prompt|tojson}}}',
-        ),
-        ("response_jsonpath", "Response JSONPath", "$.output"),
-    ],
-    "python": [
-        (
-            "entry",
-            "Python entry (module:func or path/to/file.py:func)",
-            "argus_target.py:call",
-        ),
-    ],
-    "grpc": [
-        ("endpoint", "Endpoint (host:port)", "localhost:50051"),
-        ("service_method", "Service method (pkg.Service/Method)", None),
-        ("prompt_field", "Prompt field name", "user_input"),
-        ("response_field", "Response field name", "response"),
-    ],
-    "browser_use": [
-        ("agent_url", "Browser-using agent URL", None),
-        (
-            "scenario_kind",
-            "Scenario kind (dom_injection/ui_phishing/visual_injection/os_cmd)",
-            "dom_injection",
-        ),
-    ],
-    "payment_agent": [
-        (
-            "testbed_url",
-            'Payment testbed URL ("local" starts the bundled one on 127.0.0.1 for each run)',
-            "local",
-        ),
-        (
-            "inner_json",
-            "Inner target spec (JSON) for the transport that talks to your agent",
-            '{"kind": "openai_compat", "endpoint_url": "http://127.0.0.1:8091/v1/chat/completions", "model": "argus-demo-payment-agent"}',
-        ),
-    ],
-    "mcp_agent": [
-        (
-            "testbed_url",
-            'MCP testbed URL ("local" starts the bundled one on 127.0.0.1 for each run)',
-            "local",
-        ),
-        (
-            "inner_json",
-            "Inner target spec (JSON) for the transport that talks to your agent",
-            '{"kind": "openai_compat", "endpoint_url": "http://127.0.0.1:8093/v1/chat/completions", "model": "argus-demo-mcp-agent"}',
-        ),
-    ],
-    "a2a_agent": [
-        (
-            "testbed_url",
-            "A2A control URL (local starts the bundled peer world)",
-            "local",
-        ),
-        (
-            "inner_json",
-            "Inner target spec (JSON)",
-            '{"kind":"openai_compat","endpoint_url":"http://127.0.0.1:8095/v1/chat/completions","model":"demo"}',
-        ),
-        ("capabilities_csv", "Capabilities (comma-separated)", "peer_http_json_1_0"),
-    ],
-    "testbed_agent": [
-        ("environment", "Environment (mcp/payment/a2a)", "mcp"),
-        (
-            "testbed_url",
-            'Testbed URL ("local" starts the bundled one on 127.0.0.1 for each run)',
-            "local",
-        ),
-        (
-            "inner_json",
-            "Inner target spec (JSON) for the transport that talks to your agent",
-            '{"kind": "openai_compat", "endpoint_url": "http://127.0.0.1:8093/v1/chat/completions", "model": "argus-demo-mcp-agent"}',
-        ),
-    ],
-    "http_upload": [
-        ("upload_url", "Upload URL", None),
-        ("upload_field_name", "Upload form field name", "file"),
-        ("upload_filename", "Upload filename", "payload.svg"),
-        ("upload_content_type", "Upload content type", "image/svg+xml"),
-        (
-            "render_url_jsonpath",
-            "Render URL JSONPath (extracts the render URL from the upload response)",
-            "$.url",
-        ),
-    ],
-    "web_chat": [
-        ("url", "Chat page URL", None),
-        ("input_selector", "CSS selector of the message box", "textarea"),
-        ("response_selector", "CSS selector matching every assistant message", None),
-        # An empty answer is valid: the target then presses Enter in the message box.
-        ("send_selector", "CSS selector of the send button (empty: press Enter)", ""),
-    ],
-    "a2a_server": [
-        (
-            "url",
-            "A2A server base URL (the Agent Card is at <url>/.well-known/agent-card.json)",
-            None,
-        )
-    ],
-    "mcp_server": [
-        (
-            "url",
-            "MCP server Streamable HTTP endpoint (e.g. http://127.0.0.1:3001/mcp)",
-            None,
-        ),
-    ],
-    "vllm_server": [
-        (
-            "url",
-            "vLLM server root URL, not the /v1 path (e.g. http://10.0.0.5:8000)",
-            None,
-        ),
-    ],
-}
-
-# One line per kind for the prompt that bare `init` shows, in the order shown.
-_KIND_DESCRIPTIONS: dict[str, str] = {
-    "openai_compat": "An HTTP endpoint that speaks the OpenAI Chat Completions protocol",
-    "anthropic_native": "The Anthropic Messages API",
-    "custom_http": "An agent behind its own HTTP request and response shape",
-    "web_chat": "An agent reachable only through a web chat page",
-    "python": "An agent you can call as a Python function",
-    "grpc": "A gRPC service with server reflection enabled",
-    "browser_use": "A browser-using agent",
-    "http_upload": "A file upload endpoint that renders what it stores",
-    "mcp_agent": "An agent that uses MCP tools, run against a hostile MCP testbed",
-    "payment_agent": "An agent that spends money, run against a payment testbed",
-    "a2a_agent": "An agent that talks to A2A peers, run against an A2A peer testbed",
-    "testbed_agent": "The general form of mcp_agent, payment_agent and a2a_agent",
-    "mcp_server": "An MCP server you run over HTTP (tests the server, not an agent)",
-    "a2a_server": "An A2A server (tests the server, not an agent)",
-    "vllm_server": "A vLLM model server (tests the server, not an agent)",
-}
 _DEFAULT_KIND = "openai_compat"
 
 # Chat kinds get a small judged set. Every other kind gets `all`, because the chat probes do not
 # apply to it and would be skipped, leaving a job that tests nothing. Assumes `all` fits the target (PR5a).
 _CHAT_PROBES = "owasp_01_prompt_injection_basic,syscard_crescendo"
-_CHAT_KINDS = frozenset(
-    {"openai_compat", "anthropic_native", "custom_http", "web_chat", "python"}
-)
 
 
 def _probes_for(kind: str) -> str:
-    return _CHAT_PROBES if kind in _CHAT_KINDS else "all"
+    info = _BUILTIN_KINDS.get(kind) or kinds()[kind]
+    return _CHAT_PROBES if info.chat else "all"
 
 
 _WORKFLOW_TEMPLATE = """\
@@ -220,29 +68,45 @@ def _stdin_is_tty() -> bool:
 
 
 def _ask_kind() -> str:
+    descriptions = {kind: info.description for kind, info in kinds().items()}
     if not _stdin_is_tty():
         raise click.UsageError(
             "Missing option '--kind'. stdin is not a terminal, so init cannot ask for it. "
-            f"Choose one of: {', '.join(_KIND_DESCRIPTIONS)}. "
+            f"Choose one of: {', '.join(descriptions)}. "
             f"Example: argus-probe init --kind {_DEFAULT_KIND}"
         )
-    width = max(map(len, _KIND_DESCRIPTIONS))
+    width = max(map(len, descriptions))
     click.echo("Which kind of target do you want to test?")
-    for name, description in _KIND_DESCRIPTIONS.items():
+    for name, description in descriptions.items():
         click.echo(f"  {name.ljust(width)}  {description}")
     return click.prompt(
         "Target kind",
-        type=click.Choice(list(_KIND_DESCRIPTIONS)),
+        type=click.Choice(list(descriptions)),
         default=_DEFAULT_KIND,
         show_choices=False,
     )
+
+
+class _KindChoice(click.Choice):
+    def __init__(self):
+        # Choices are read by Click during help, conversion and completion.
+        self.case_sensitive = True
+
+    def convert(self, value, param, ctx):
+        if isinstance(value, str) and value in _BUILTIN_KINDS:
+            return value
+        return super().convert(value, param, ctx)
+
+    @property
+    def choices(self):
+        return tuple(sorted(kinds()))
 
 
 @click.command("init")
 @click.option(
     "--kind",
     default=None,
-    type=click.Choice(sorted(_KNOWN_KINDS)),
+    type=_KindChoice(),
     help="Target adapter kind. Asked for when omitted on a terminal.",
 )
 @click.option(
@@ -262,7 +126,11 @@ def init_command(kind: str | None, output: str, workflow: bool | None) -> None:
     if kind is None:
         kind = _ask_kind()
     click.echo(f"Target kind: {kind}")
-    questions = _KIND_QUESTIONS[kind]
+    info = _BUILTIN_KINDS.get(kind) or kinds()[kind]
+    questions = info.init_questions
+    if questions is None:
+        questions = tuple((field, field, None) for field in sorted(info.required)
+                          if field != "sandbox" or info.sandbox_reason is None)
 
     spec: dict[str, object] = {"kind": kind}
     for field, prompt_text, default in questions:
@@ -289,12 +157,7 @@ def init_command(kind: str | None, output: str, workflow: bool | None) -> None:
                 f"inner target spec is not valid JSON: {exc}"
             ) from exc
 
-    # sandbox is a safety interlock, not a question: payment_agent,
-    # mcp_agent and testbed_agent drive an agent that spends money / reaches a live MCP server,
-    # and both the engine and the CLI loader refuse a spec without
-    # sandbox: true — there is no way to turn it off, so it must never be
-    # presented as something a user could answer "no" to.
-    if kind in ("payment_agent", "mcp_agent", "testbed_agent", "a2a_agent"):
+    if info.sandbox_reason is not None:
         spec["sandbox"] = True
 
     if "capabilities_csv" in spec:

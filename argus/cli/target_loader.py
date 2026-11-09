@@ -1,7 +1,7 @@
 """Loader + minimal client-side validator for target specs.
 
 The engine is the source of truth for target specs; the CLI only checks
-that `kind` is one of the known kinds (`_KNOWN_KINDS`) and that the file is valid JSON with
+that `kind` is registered and that the file is valid JSON with
 the per-kind required fields. This catches most operator mistakes before
 round-tripping to the server.
 """
@@ -14,55 +14,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-_KNOWN_KINDS = frozenset(
-    {
-        "openai_compat",
-        "anthropic_native",
-        "custom_http",
-        "grpc",
-        "browser_use",
-        "payment_agent",
-        "mcp_agent",
-        "a2a_agent",
-        "testbed_agent",
-        "http_upload",
-        "mcp_server",
-        "vllm_server",
-        "web_chat",
-        "a2a_server",
-        "python",
-    }
-)
-
-_REQUIRED_FIELDS = {
-    "openai_compat": {"endpoint_url", "model"},
-    "anthropic_native": {"model", "api_key"},
-    "custom_http": {"request_url", "request_body_template", "response_jsonpath"},
-    "grpc": {"endpoint", "service_method"},
-    "browser_use": {"agent_url", "scenario_kind"},
-    "payment_agent": {"testbed_url", "inner", "sandbox"},
-    "a2a_agent": {"testbed_url", "inner", "sandbox"},
-    "mcp_agent": {"testbed_url", "inner", "sandbox"},
-    "testbed_agent": {"environment", "testbed_url", "inner", "sandbox"},
-    "http_upload": {"upload_url"},
-    "mcp_server": {"url"},
-    "a2a_server": {"url"},
-    "vllm_server": {"url"},
-    "web_chat": {"url", "input_selector", "response_selector"},
-    "python": {"entry"},
-}
-
-# Adapters that act on the world rather than only exchanging text. For these
-# `sandbox` must be present AND true — the orchestrator enforces the same rule,
-# but that must not be the only place it is checked. The value is the reason
-# shown to the operator, so each family says what it would actually reach.
-_SANDBOX_REQUIRED_KINDS = {
-    "payment_agent": "drives an agent that spends money",
-    "a2a_agent": "drives an agent that sends messages to A2A peers and requests actions",
-    "mcp_agent": "drives an agent against a live MCP server",
-    "testbed_agent": "drives an agent inside a simulated environment",
-}
-
 
 class TargetLoadError(ValueError):
     pass
@@ -74,7 +25,7 @@ _POSIX_VAR_RE = re.compile(r"\$(?:\w+|\{[^}]*\})", re.ASCII)
 _NT_VAR_RE = re.compile(r"%[^%]+%|\$(?:\w+|\{[^}]*\})", re.ASCII)
 
 
-def _expand_env(value, substituted: list[str]):
+def _expand_env(value, substituted: list[str], *, skip_transport: bool = True):
     """Expand ${VAR} references in strings; recurse through dicts and lists.
 
     Appends every non-empty value it substitutes to `substituted`."""
@@ -86,9 +37,13 @@ def _expand_env(value, substituted: list[str]):
                 substituted.append(expanded)
         return os.path.expandvars(value)
     if isinstance(value, dict):
-        return {k: v if k == "transport" else _expand_env(v, substituted) for k, v in value.items()}
+        return {
+            k: v if skip_transport and k == "transport"
+            else _expand_env(v, substituted, skip_transport=skip_transport)
+            for k, v in value.items()
+        }
     if isinstance(value, list):
-        return [_expand_env(v, substituted) for v in value]
+        return [_expand_env(v, substituted, skip_transport=skip_transport) for v in value]
     return value
 
 
@@ -129,45 +84,32 @@ def check_target_spec(
         raise TargetLoadError("target must be a JSON object")
     if "kind" not in spec:
         raise TargetLoadError("target.kind is required")
-    if not isinstance(spec["kind"], str) or spec["kind"] not in _KNOWN_KINDS:
-        raise TargetLoadError(
-            f"unknown target.kind {spec['kind']!r}; must be one of {sorted(_KNOWN_KINDS)}"
-        )
-    required = _REQUIRED_FIELDS[spec["kind"]]
-    if "transport" in spec:
-        if spec["kind"] not in {"custom_http", "browser_use"}:
-            raise TargetLoadError("transport is supported only by custom_http and browser_use")
-        from argus.targets.custom_http import LEGACY_TRANSPORT_FIELDS
-        legacy_fields = LEGACY_TRANSPORT_FIELDS if spec["kind"] == "custom_http" else {"agent_url", "timeout_s"}
-        if set(spec) & legacy_fields:
-            raise TargetLoadError("transport and legacy transport fields conflict")
-        required = set() if spec["kind"] == "custom_http" else {"scenario_kind"}
-    missing = required - set(spec.keys())
-    if missing:
-        raise TargetLoadError(
-            f"target.kind={spec['kind']!r} missing required fields: {sorted(missing)}"
-        )
-    sandbox_reason = _SANDBOX_REQUIRED_KINDS.get(spec["kind"])
-    if sandbox_reason is not None and spec["sandbox"] is not True:
-        raise TargetLoadError(
-            f"target.kind={spec['kind']!r} requires sandbox: true — this adapter "
-            f"{sandbox_reason} and may only be pointed at a "
-            "simulated testbed"
-        )
-    substituted: list[str] = []
-    spec = _expand_env(spec, substituted)
-    if spec["kind"] == "python" and base_dir is not None:
-        spec = _anchor_python_entry(spec, base_dir)
-    return spec, list(dict.fromkeys(substituted))
+    from argus.targets import (
+        _BUILTIN_KINDS, _BuiltinValidation, _check_required, _check_sandbox, kinds,
+    )
 
-
-def _anchor_python_entry(spec: dict[str, Any], base_dir: Path) -> dict[str, Any]:
-    from argus.targets.python_target import is_path_entry, split_entry
-
+    info = _BUILTIN_KINDS.get(spec["kind"]) if isinstance(spec["kind"], str) else None
+    if info is None:
+        registered = kinds()
+        if not isinstance(spec["kind"], str) or spec["kind"] not in registered:
+            raise TargetLoadError(
+                f"unknown target.kind {spec['kind']!r}; must be one of {sorted(registered)}"
+            )
+        info = registered[spec["kind"]]
     try:
-        target, func = split_entry(spec["entry"])
-    except (ValueError, AttributeError):
-        return spec  # the target builder reports a malformed entry
-    if not is_path_entry(target) or Path(target).is_absolute():
-        return spec
-    return {**spec, "entry": f"{base_dir / target}:{func}"}
+        if not isinstance(info.validate, _BuiltinValidation):
+            _check_required(spec, info.required)
+            _check_sandbox(spec, info.sandbox_reason)
+        if info.validate is not None:
+            info.validate(spec)
+    except ValueError as exc:
+        raise TargetLoadError(str(exc)) from exc
+    except (Exception, SystemExit) as exc:
+        raise TargetLoadError(
+            f"target.kind={spec['kind']!r} validation failed: {type(exc).__name__}: {exc}"
+        ) from exc
+    substituted: list[str] = []
+    spec = _expand_env(spec, substituted, skip_transport=spec["kind"] in _BUILTIN_KINDS)
+    if isinstance(info.validate, _BuiltinValidation):
+        spec = info.validate.anchor(spec, base_dir)
+    return spec, list(dict.fromkeys(substituted))

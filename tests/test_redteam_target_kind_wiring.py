@@ -1,13 +1,4 @@
-"""Every target adapter must be reachable from the CLI, or nobody can use it.
-
-`argus/targets/__init__.py::_BUILDERS` is the source of truth for
-adapters. The CLI pre-checks `kind` against `_KNOWN_KINDS`, so a kind missing
-there is rejected locally and its probes, rubrics and testbeds are dead code
-that no other test would catch.
-
-The CLI loader is loaded by file path rather than imported, so this guard runs
-without the CLI being imported. It depends only on the standard library.
-"""
+"""Every built-in adapter must remain reachable through the registry-backed CLI."""
 import importlib.util
 import json
 import sys
@@ -35,9 +26,10 @@ def _builder_kinds() -> set[str]:
 
 
 def _cli_kinds() -> set[str]:
-    loader = _load("_wiring_cli_target_loader", CLI_LOADER)
-    kinds = set(loader._KNOWN_KINDS)
-    assert kinds, "could not read _KNOWN_KINDS — the guard has gone blind"
+    from argus.targets import _BUILTIN_KINDS
+
+    kinds = set(_BUILTIN_KINDS)
+    assert kinds, "could not read registered kinds — the guard has gone blind"
     return kinds
 
 

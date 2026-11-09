@@ -96,19 +96,13 @@ _STATUS_HINTS = {
     429: "rate limited; slow down or retry later",
 }
 
-# The empty-reply hint names the field that produced the text, per adapter kind.
-_NO_TEXT_HINTS = {
-    "custom_http": "check response_jsonpath or the endpoint",
-    "openai_compat": "the endpoint returned no message content",
-    "anthropic_native": "the endpoint returned no message content",
-    "web_chat": "check response_selector",
-}
-
-
 def _no_text_reason(target) -> str:
-    hint = _NO_TEXT_HINTS.get(
-        getattr(getattr(target, "spec", None), "kind", None), "check the endpoint"
-    )
+    from argus.targets import _BUILTIN_KINDS, kinds
+
+    kind = getattr(getattr(target, "spec", None), "kind", None)
+    info = _BUILTIN_KINDS.get(kind) if isinstance(kind, str) else None
+    info = info or kinds().get(kind)
+    hint = (info.no_text_hint if info else None) or "check the endpoint"
     return f"target returned no text; {hint}"
 
 

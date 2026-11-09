@@ -430,3 +430,16 @@ async def test_execute_startup_stop_keeps_cleanup_enabled(tmp_path, reason):
         assert 'requests.submit=0 requests.poll=0 requests.retry=0 requests.setup=' in result.output
         assert 'requests.cleanup=1' in result.output
         assert app.calls[-1][:2] == ('DELETE', '/v1/sources/source-one')
+
+
+def test_browser_v2_transport_rejection_precedes_sample_response_options(tmp_path):
+    sample = tmp_path / "sample.json"
+    sample.write_text('{}')
+    result = CliRunner().invoke(main, [
+        "validate-target", "--target",
+        str(target_file(tmp_path, {"version": 2}, kind="browser_use")),
+        "--offline", "--sample-response", str(sample),
+    ])
+    assert result.exit_code == 1, result.output
+    assert result.output == "Error: target spec invalid: ValueError: Invalid transport fields\n"
+    assert "this option supports version 1 transports only" not in result.output

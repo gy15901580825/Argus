@@ -343,10 +343,9 @@ def test_workflow_leaves_the_version_to_the_action_from_an_uninstalled_tree(tmp_
 
 def test_every_known_kind_has_init_questions():
     # --kind offers every known kind, so a kind without questions crashes init.
-    from argus.cli.cmd_init import _KIND_QUESTIONS
-    from argus.cli.target_loader import _KNOWN_KINDS
+    from argus.targets import _BUILDERS, _BUILTIN_KINDS
 
-    assert set(_KIND_QUESTIONS) == set(_KNOWN_KINDS)
+    assert all(_BUILTIN_KINDS[kind].init_questions for kind in _BUILDERS)
 
 
 @pytest.mark.parametrize("kind,url", [
@@ -414,25 +413,26 @@ def test_bare_init_on_a_terminal_asks_for_the_kind_and_defaults_to_openai_compat
 
 
 def test_bare_init_on_a_terminal_lists_every_kind_with_a_description(tmp_path, monkeypatch):
-    from argus.cli.cmd_init import _KIND_DESCRIPTIONS
-    from argus.cli.target_loader import _KNOWN_KINDS
+    from argus.targets import kinds
+    registered = kinds()
 
     monkeypatch.chdir(tmp_path)
     _on_a_terminal(monkeypatch)
     result = CliRunner().invoke(init_command, ["--no-workflow"], input="mcp_agent\n\n\n")
     assert result.exit_code == 0, result.output
-    for kind in _KNOWN_KINDS:
-        assert f"{kind}  " in result.output and _KIND_DESCRIPTIONS[kind] in result.output
+    for kind, info in registered.items():
+        assert f"{kind}  " in result.output and info.description in result.output
     assert json.loads((tmp_path / "argus-target.json").read_text())["kind"] == "mcp_agent"
 
 
 def test_bare_init_without_a_terminal_exits_2_and_lists_the_kinds(tmp_path, monkeypatch):
-    from argus.cli.target_loader import _KNOWN_KINDS
+    from argus.targets import kinds
+    registered = kinds()
 
     monkeypatch.chdir(tmp_path)
     result = CliRunner().invoke(init_command, ["--no-workflow"], input="\n\nm\n\n")
     assert result.exit_code == 2, result.output
-    for kind in _KNOWN_KINDS:
+    for kind in registered:
         assert kind in result.output
     assert "argus-probe init --kind openai_compat" in result.output
     assert not (tmp_path / "argus-target.json").exists()
@@ -451,8 +451,6 @@ def test_kind_flag_does_not_ask_for_the_kind(tmp_path, monkeypatch):
 
 def test_every_known_kind_has_a_description():
     # The kind prompt shows every known kind, so a kind without a description shows a blank line.
-    from argus.cli.cmd_init import _KIND_DESCRIPTIONS
-    from argus.cli.target_loader import _KNOWN_KINDS
+    from argus.targets import _BUILTIN_KINDS
 
-    assert set(_KIND_DESCRIPTIONS) == set(_KNOWN_KINDS)
-    assert all(_KIND_DESCRIPTIONS.values())
+    assert all(info.description for info in _BUILTIN_KINDS.values())

@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "generic-registry-fixture"
+version = "0.0.0"
+requires-python = ">=3.11"
+
+[project.entry-points."argus.targets"]
+registry_fixture = "generic_plugin:adapter"
+
+[project.entry-points."argus.probe_packs"]
+generic = "generic_plugin:probes_dir"
+
+[tool.setuptools.package-data]
+generic_plugin = ["probes/*.yaml"]

@@ -1,9 +1,31 @@
 """Target ABC and shared spec model."""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import Any, ClassVar
+
+
+@dataclass(frozen=True)
+class KindInfo:
+    """CLI metadata for a registered adapter.
+
+    Plugins with semantic required fields should declare this on their target
+    class as ``kind_info``. A validate hook receives the spec and raises
+    ValueError for an invalid configuration, without contacting the target.
+    """
+
+    kind: str
+    required: frozenset[str] = frozenset()
+    description: str = ""
+    chat: bool = False
+    no_text_hint: str | None = None
+    sandbox_reason: str | None = None
+    init_questions: tuple[tuple[str, str, str | None], ...] | None = None
+    validate: Callable[[dict[str, Any]], None] | None = None
+
 
 _VALID_ROLES = frozenset({"user", "assistant"})
 
@@ -21,7 +43,6 @@ class TargetBlockedError(Exception):
 
     The message says why; the runner records it as blocked_by_target.
     """
-
 
     def __init__(self, message: str, *, transport_metadata: dict | None = None) -> None:
         super().__init__(message)
@@ -78,7 +99,11 @@ class Target(ABC):
 
     @abstractmethod
     async def send_prompt(
-        self, prompt: str, history: tuple[Turn, ...] = (), *, material: str | None = None
+        self,
+        prompt: str,
+        history: tuple[Turn, ...] = (),
+        *,
+        material: str | None = None,
     ) -> tuple[str, float]:
         """Send a task with optional third-party material on supported targets."""
         ...
