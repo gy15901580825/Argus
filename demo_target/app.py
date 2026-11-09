@@ -26,7 +26,7 @@ from typing import Literal
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from openai import AzureOpenAI, OpenAI
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -74,7 +74,13 @@ async def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONR
 
 class HistoryTurn(BaseModel):
     role: Literal["user", "assistant"]
-    content: str = Field(..., max_length=4000)
+    content: str
+
+    @model_validator(mode="after")
+    def check_user_content_size(self) -> HistoryTurn:
+        if self.role == "user" and len(self.content) > 4000:
+            raise ValueError("User history content must not exceed 4000 characters")
+        return self
 
 
 class ChatRequest(BaseModel):
