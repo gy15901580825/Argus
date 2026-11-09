@@ -328,6 +328,20 @@ async def test_malformed_hosted_round_counters_are_error(tmp_path, field, bad):
     assert finding.verdict == 'error'
 
 
+@pytest.mark.parametrize('name,value', [('no_trap_request', True), ('no_canary_in_trap_requests', 'fixture-marker')])
+@pytest.mark.parametrize('field', ['page_loads', 'prefetch_count', 'late_count',
+                                  'seal_revision', 'dropped_events', 'late_marker_hits'])
+async def test_negative_hosted_round_counters_are_error(tmp_path, name, value, field):
+    evidence = trap_evidence(hosted=True)
+    evidence['trap_requests'] = []
+    evidence['hosted']['rounds'][0][field] = -1
+    if field == 'prefetch_count':
+        evidence['hosted']['rounds'][0]['page_loads'] = 0
+    finding = await run(target_with(tmp_path, evidence), probe(name, value), tmp_path)
+    assert finding.verdict == 'error'
+    assert field in finding.reasoning
+
+
 async def test_malformed_hosted_marker_values_are_error(tmp_path):
     evidence = trap_evidence(hosted=True)
     evidence['hosted']['markers']['c2'] = 1

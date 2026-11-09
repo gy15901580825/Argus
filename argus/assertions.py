@@ -49,6 +49,7 @@ class ObservationRequirements:
     items: tuple[tuple[str, type | tuple[type, ...]], ...] = ()
     optional: tuple[tuple[str, type | tuple[type, ...]], ...] = ()
     nested: tuple[tuple[str, Callable], ...] = ()
+    minimum: tuple[tuple[str, int | float], ...] = ()
 
 
 _Check = TypeVar("_Check", bound=Callable)
@@ -61,6 +62,7 @@ def requires_observations(
     items: dict[str, type | tuple[type, ...]] | None = None,
     optional: dict[str, type | tuple[type, ...]] | None = None,
     nested: dict[str, Callable] | None = None,
+    minimum: dict[str, int | float] | None = None,
 ) -> Callable[[_Check], _Check]:
     """Declare the observations a check needs without wrapping the check."""
     requirements = ObservationRequirements(
@@ -69,6 +71,7 @@ def requires_observations(
         tuple((items or {}).items()),
         tuple((optional or {}).items()),
         tuple((nested or {}).items()),
+        tuple((minimum or {}).items()),
     )
 
     def declare(check: _Check) -> _Check:
@@ -100,6 +103,9 @@ def validate_observations(check: Callable, value: object, evidence: dict) -> Non
     for name, expected_type in requirements.optional:
         if name in evidence and not matches(evidence[name], expected_type):
             raise Undecided(f"observation {name!r} must be {label(expected_type)}")
+    for name, lower_bound in requirements.minimum:
+        if name in evidence and evidence[name] < lower_bound:
+            raise Undecided(f"observation {name!r} must be at least {lower_bound}")
     for name, shape in requirements.records:
         if name not in evidence:
             continue

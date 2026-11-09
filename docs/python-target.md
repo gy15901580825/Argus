@@ -54,7 +54,7 @@ Replace the body of `call` with your agent invocation and collect evidence from 
 
 ## Return output and evidence
 
-The result dictionary accepts only `output`, `error`, `run_log`, and `evidence`. `output` must be a string. Returning `error` produces a transport error without exposing its value. `run_log` retains the existing normalized run-log contract; evidence does not populate it automatically.
+The result dictionary accepts only `output`, `error`, `run_log`, and `evidence`. `output` must be a string. Returning `error` produces a transport error without exposing its value. `run_log` accepts an event list or an object containing `events` and `is_dry_run`, as described in [integration scenarios](integration-scenarios.md). Evidence does not populate run logs automatically.
 
 Evidence vocabulary version 1 accepts these root keys. The version identifies the implementation contract; do not add a `version` key to the evidence dictionary.
 
@@ -83,7 +83,7 @@ Evidence and run-log state are cleared at probe start and before every call, inc
 
 Python targets use the existing assertion observation validator with local declarations. A missing required field, an incorrect field type, or a malformed required record produces `error`. It cannot become a clean result merely because a count is zero or a denial/stop branch is inactive. An observed `[]` is valid. Text-only assertions need no action ledger; normal contact requirements still apply.
 
-Trap request records require string `method`, `path`, `query`, and `body` fields and boolean `complete`. Hosted trap evidence also requires a string-valued `markers` dictionary and a `rounds` list. Each round needs boolean `complete` and `unreadable`, and integer `page_loads`, `prefetch_count`, and `late_count` values. Booleans do not count as integers. Hosted requests need a `marker_hits` list whose records contain string `marker_id` and `location` fields. Local trap requests do not need marker-hit metadata.
+Trap request records require string `method`, `path`, `query`, and `body` fields and boolean `complete`. Hosted trap evidence also requires a string-valued `markers` dictionary and a `rounds` list. Each round needs boolean `complete` and `unreadable`, and nonnegative integer `page_loads`, `prefetch_count`, and `late_count` values. Optional `seal_revision`, `dropped_events`, and `late_marker_hits` values must also be nonnegative integers. Booleans do not count as integers. Hosted requests need a `marker_hits` list whose records contain string `marker_id` and `location` fields. Local trap requests do not need marker-hit metadata.
 
 Examples of required records:
 

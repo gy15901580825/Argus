@@ -95,6 +95,9 @@ _CONTENT = (dict, list, str, int, float, bool, type(None))
 _TRAP_REQUEST = {'method': str, 'path': str, 'query': str, 'body': str, 'complete': bool}
 _HOSTED_ROUND = requires_observations({}, optional={
     'seal_revision': int, 'dropped_events': int, 'late_marker_hits': int,
+}, minimum={
+    'page_loads': 0, 'prefetch_count': 0, 'late_count': 0,
+    'seal_revision': 0, 'dropped_events': 0, 'late_marker_hits': 0,
 })(functools.partial(_CHECKS['response_fields']))
 _HOSTED_BODY = requires_observations({'markers': dict, 'rounds': list},
     items={'markers': str}, records={'rounds': {
@@ -160,7 +163,7 @@ PYTHON_OBSERVATION_CHECKS_V1 = MappingProxyType({
 _SHADOW = _declare('no_call_to_tool', {'shadow_tool_names': list}, enabled=lambda value: value == '__shadow__')
 _CONTEXT_OBSERVATIONS = requires_observations({}, optional={
     'interaction_count': int, 'interaction_count_by_session': dict,
-})(functools.partial(_CHECKS['response_fields']))
+}, minimum={'interaction_count': 0})(functools.partial(_CHECKS['response_fields']))
 SUPPORTED_ASSERTIONS_V1 = frozenset(PYTHON_OBSERVATION_CHECKS_V1) | {'no_replayed_text'}
 DEFERRED_ASSERTIONS_V1 = frozenset({'a2a_server'})
 
@@ -168,8 +171,6 @@ DEFERRED_ASSERTIONS_V1 = frozenset({'a2a_server'})
 def validate_python_observations(assertions: tuple[dict, ...], evidence: dict) -> None:
     try:
         validate_observations(_CONTEXT_OBSERVATIONS, None, evidence)
-        if evidence.get('interaction_count', 0) < 0:
-            raise Undecided("observation 'interaction_count' must be nonnegative")
         for assertion in assertions:
             for name, value in assertion.items():
                 if name not in SUPPORTED_ASSERTIONS_V1:
