@@ -18,7 +18,9 @@ FIXTURE = ROOT / "tests" / "fixtures" / "registry_plugin"
 def install_plugin(
     path, *, entries="registry_fixture = generic_plugin:adapter", pack=True
 ):
-    shutil.copytree(FIXTURE, path, dirs_exist_ok=True)
+    shutil.copytree(
+        FIXTURE / "generic_plugin", path / "generic_plugin", dirs_exist_ok=True
+    )
     dist = path / "generic_registry_fixture-0.0.0.dist-info"
     dist.mkdir(exist_ok=True)
     (dist / "METADATA").write_text(
@@ -361,3 +363,27 @@ asyncio.run(run())
         ]
     ]
     assert (plugin / "sends").read_text() == "1"
+
+
+def test_built_fixture_metadata_does_not_leave_a_second_registration(
+    tmp_path, monkeypatch
+):
+    source = tmp_path / "source"
+    shutil.copytree(FIXTURE, source)
+    built = source / "generic_registry_fixture.egg-info"
+    built.mkdir()
+    (built / "PKG-INFO").write_text(
+        "Metadata-Version: 2.1\nName: generic-registry-fixture\nVersion: 0.0.0\n"
+    )
+    (built / "entry_points.txt").write_text(
+        "[argus.targets]\nregistry_fixture = generic_plugin:adapter\n"
+    )
+    monkeypatch.setattr(sys.modules[__name__], "FIXTURE", source)
+    installed = tmp_path / "installed"
+    dist = install_plugin(installed, pack=False)
+    shutil.rmtree(dist)
+    r = fresh(
+        installed,
+        "from argus.targets import kinds; assert 'registry_fixture' not in kinds()",
+    )
+    assert_ok(r)
