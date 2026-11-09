@@ -280,6 +280,31 @@ argus-probe judge-check --judge-provider litellm --judge-model gemini/gemini-2.5
 
 Full configuration reference: [target spec cookbook](https://github.com/gy15901580825/Argus/blob/main/docs/onboarding/target-spec-cookbook.md).
 
+### Installed target plugins
+
+The CLI accepts kinds registered in the `argus.targets` entry-point group.
+An entry point loads a `(SpecClass, TargetClass)` pair. `argus.targets.kinds()`
+returns each kind's `KindInfo`. A plugin can declare `TargetClass.kind_info`
+for required fields, init questions, chat support, empty-reply hints and an
+offline validation hook. Without this record, required fields come from
+non-defaulted dataclass init fields, excluding `kind`. Other schema types
+and semantic requirements need explicit metadata.
+
+Built-ins keep precedence over plugins. Duplicate plugins are sorted by
+entry-point name and value; the first successfully loaded adapter wins.
+Broken entry points and metadata whose kind does not match the entry point
+are skipped with a warning. Restart the process after installing or removing
+a plugin because entry-point discovery is cached.
+
+Probe selection reads `compatible_classes` from the target instance. A new
+class name used in a probe pack must also appear on the plugin's target class
+so the probe loader can validate it. The `--target-class` choices and the
+`mcp-trap` admission list retain their existing scope.
+
+For the GitHub Action, `install-spec` replaces the default engine install.
+Include both an Argus build with registry support and the plugin distribution.
+The Action's default Argus version, 1.2.0, predates this support.
+
 ### The bundled testbed for MCP and payment agents
 
 `mcp_agent`, `payment_agent` and `testbed_agent` run each probe inside a testbed: a hostile MCP server, or a mock x402 merchant that takes no real money. The testbed records what your agent did there, and the probe judges that record. Set `"testbed_url": "local"` and `run --local` starts the testbed that ships with `argus-probe`, so you need no clone and no container:

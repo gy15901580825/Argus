@@ -12,10 +12,6 @@ import yaml
 from argus.cli import run_json
 from argus.cli.target_loader import TargetLoadError, check_target_spec
 
-# Kinds that answer a chat prompt. The others (A2A, MCP and vLLM servers, testbed agents, uploads)
-# are checked by their probes, so a ping proves nothing about them.
-_CHAT_KINDS = ("openai_compat", "anthropic_native", "custom_http", "web_chat", "python")
-
 
 def _failure(exc: Exception) -> str:
     from argus.runner import _named
@@ -95,7 +91,7 @@ def cmd_validate_target(
     scenario_url: str | None,
 ):
     """Send one prompt to a chat target the way `run` does and report whether it answered."""
-    from argus.targets import build_target
+    from argus.targets import _BuiltinValidation, build_target, kinds
 
     if (with_scenario or scenario_url) and not execute:
         raise click.UsageError("--with-scenario and --scenario-url require --execute")
@@ -121,12 +117,13 @@ def cmd_validate_target(
         raise click.ClickException(str(e))
     kind = spec["kind"]
     secrets = run_json.run_secrets(spec, substituted)
-    if (
-        kind == "custom_http"
-        and isinstance(spec.get("transport"), dict)
-        and type(spec["transport"].get("version")) is int
-        and spec["transport"]["version"] == 2
-    ):
+    info = kinds()[kind]
+    transport_version = (
+        info.validate.transport_version(spec)
+        if isinstance(info.validate, _BuiltinValidation)
+        else None
+    )
+    if transport_version == 2:
         from argus.cli.validate_transport_v2 import validate
 
         if sample_response or with_scenario or scenario_url:
@@ -135,7 +132,7 @@ def cmd_validate_target(
             spec, offline=offline or not execute, endpoint_override=endpoint_override,
             secrets=secrets,
         )
-    if "transport" in spec or kind == "browser_use":
+    if transport_version == 1:
         return _validate_transport(
             spec,
             offline=offline or not execute,
@@ -169,9 +166,9 @@ def cmd_validate_target(
         Exception
     ) as e:  # spec values the adapter rejects (a bad JSONPath, a wrong type)
         fail(f"target spec invalid: {type(e).__name__}: {e}")
-    if kind not in _CHAT_KINDS:
+    if not info.chat:
         raise click.UsageError(
-            f"validate-target checks chat targets ({', '.join(_CHAT_KINDS)}), not {kind}. "
+            f"validate-target checks chat targets ({', '.join(name for name, entry in kinds().items() if entry.chat)}), not {kind}. "
             f"Run its probes instead: argus-probe run --local --target {target_file} --probes all"
         )
     try:
@@ -187,7 +184,7 @@ def cmd_validate_target(
         or raw.get("request_url")
         or raw.get("url")
         or raw.get("entry")
-        or f"anthropic {raw['model']}"
+        or (f"anthropic {raw['model']}" if kind == "anthropic_native" else kind)
     )
     click.echo(
         run_json.mask_text(
