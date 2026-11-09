@@ -324,6 +324,8 @@ def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, se
         click.echo(f"{STOP_MESSAGES[e.signum]}: the run was stopped before it finished; no report was written.", file=sys.stderr)
         if e.target_cleanup is not None:
             _echo_masked(cleanup_lines(e.target_cleanup), spec, secret_values)
+        if e.cleanup_diagnostic is not None:
+            _echo_masked([e.cleanup_diagnostic], spec, secret_values)
         sys.exit(128 + e.signum)
     except KeyboardInterrupt:
         click.echo("Interrupted: the run was stopped before it finished; no report was written.", file=sys.stderr)

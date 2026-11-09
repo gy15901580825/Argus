@@ -181,3 +181,29 @@ def test_signal_preserves_exit_code_when_attempt_cleanup_times_out(tmp_path, loc
         assert 'Terminated: the run was stopped before it finished; no report was written.' in result.stderr
         assert '(step ingest, failed)' in result.stderr
         assert '(step source, blocked_by_inner)' in result.stderr
+
+
+@pytest.mark.parametrize('signum, code', [(signal.SIGINT, 130), (signal.SIGTERM, 143)])
+def test_invalid_cleanup_on_signal_keeps_unknown_diagnostic(tmp_path, local_library, monkeypatch, signum, code):
+    class Target:
+        compatible_classes = frozenset({'llm_chat'})
+        async def aclose(self):
+            pass
+        def cleanup_report(self):
+            return {'complete': True}
+    class Runner:
+        def __init__(self, **kwargs):
+            pass
+        async def run_probe(self, probe):
+            os.kill(os.getpid(), signum)
+            await asyncio.sleep(10)
+            yield skipped_finding(probe, 'unused')
+    monkeypatch.setattr(api, 'build_target', lambda *a, **k: Target())
+    monkeypatch.setattr(api, 'Runner', Runner)
+    output = tmp_path / 'run.json'
+    result = CliRunner().invoke(main, ['run', '--local', '--target', json.dumps({
+        'kind': 'custom_http', 'transport': lifecycle_dict('http://127.0.0.1:1')}),
+        '--probes', local_library.id, '--format', 'json', '--out', str(output)])
+    assert result.exit_code == code, result.output
+    assert not output.exists()
+    assert 'cleanup state unknown' in result.stderr

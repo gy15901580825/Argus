@@ -546,12 +546,18 @@ async def run(req: RunRequest):
     async def _sse() -> AsyncIterator[bytes]:
         emitted: list[dict] = []
         target_cleanup = None
+        secrets = run_secrets(req.target)
         probes = _run_probes(req, anthropic_api_key)
         spent, started = 0.0, False
         cap = _COST_METER.per_run_cap(req.mode == "deep", req.per_run_cap_usd)
 
         def cost() -> dict:
             return {"spent_usd": round(spent, 6), "per_run_cap_usd": cap}
+
+        def frame(payload: dict, event: str | None = None) -> bytes:
+            payload = json.loads(json.dumps(payload))
+            prefix = f"event: {event}\n" if event is not None else ""
+            return f"{prefix}data: {json.dumps(_scrub(payload, secrets))}\n\n".encode()
 
         try:
             while True:
@@ -571,7 +577,7 @@ async def run(req: RunRequest):
                     continue
                 if finding_dict.get("type") != "deep_run":
                     emitted.append(finding_dict)
-                yield f"data: {json.dumps(finding_dict)}\n\n".encode()
+                yield frame(finding_dict)
             coverage_event = {
                 "type": "coverage",
                 "coverage": build_coverage(load_probe_library(PROBES_DIR), emitted),
@@ -579,17 +585,17 @@ async def run(req: RunRequest):
                 "cost": cost(),
             }
             if target_cleanup is not None:
-                coverage_event["target_cleanup"] = _scrub(target_cleanup, run_secrets(req.target))
-            yield f"data: {json.dumps(coverage_event)}\n\n".encode()
-            yield b"event: end\ndata: {}\n\n"
+                coverage_event["target_cleanup"] = target_cleanup
+            yield frame(coverage_event)
+            yield frame({}, "end")
         except Exception as exc:
             error = {"detail": run_error_detail(exc), "type": type(exc).__name__, "cost": cost()}
             target_cleanup = getattr(exc, "target_cleanup", None)
             if target_cleanup is not None:
-                error["target_cleanup"] = _scrub(target_cleanup, run_secrets(req.target))
+                error["target_cleanup"] = target_cleanup
             if isinstance(exc, llm.JudgeBlockedError):
                 error["judge_blocked"] = exc.as_dict()
-            yield f"event: error\ndata: {json.dumps(error)}\n\n".encode()
+            yield frame(error, "error")
         finally:
             await probes.aclose()
 

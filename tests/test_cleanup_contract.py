@@ -139,3 +139,22 @@ def test_status_aliases_are_shared_with_runtime():
     runtime = importlib.import_module('argus_transport.runtime_v2')
     assert runtime.UndoStatus is cleanup.UndoStatus
     assert set(get_args(cleanup.AbortStatus)) == {'not_needed', 'armed', 'done', 'failed', 'unconfirmed', 'skipped_stopped', 'interrupted'}
+
+
+@pytest.mark.parametrize('status', ['armed', 'failed', 'unconfirmed', 'skipped_stopped', 'interrupted'])
+def test_unfinished_abort_only_in_aborts_cannot_claim_complete(status):
+    abort = record(scope='attempt', status=status, attempt=1)
+    with pytest.raises(ValueError, match='cleanup state unknown'):
+        validator()(report(aborts=[abort]))
+
+
+@pytest.mark.parametrize('status', ['done', 'not_needed'])
+def test_finished_abort_only_in_aborts_keeps_complete(status):
+    value = report(aborts=[record(scope='attempt', status=status, attempt=1)])
+    assert validator()(value) == value
+
+
+@pytest.mark.parametrize('status', ['armed', 'failed', 'unconfirmed', 'skipped_stopped', 'interrupted'])
+def test_unfinished_abort_only_in_aborts_accepts_incomplete_report(status):
+    value = report(complete=False, aborts=[record(scope='attempt', status=status, attempt=1)])
+    assert validator()(value) == value

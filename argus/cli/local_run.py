@@ -22,10 +22,11 @@ from argus.cli.severity import (
 
 
 class StopSignalReceived(Exception):
-    def __init__(self, signum: int, target_cleanup: dict | None = None):
+    def __init__(self, signum: int, target_cleanup: dict | None = None, cleanup_diagnostic: str | None = None):
         super().__init__(signum)
         self.signum = signum
         self.target_cleanup = target_cleanup
+        self.cleanup_diagnostic = cleanup_diagnostic
 
 
 class TargetCleanupIncomplete(Exception):
@@ -145,9 +146,10 @@ def _run_and_render(
     judge: dict | None = None
     target_cleanup: dict | None = None
     deep: dict | None = None
+    cleanup_diagnostic: str | None = None
 
     async def _consume() -> None:
-        nonlocal coverage, judge, target_cleanup, deep
+        nonlocal coverage, judge, target_cleanup, deep, cleanup_diagnostic
         try:
             async for event in run_local(
                 spec, probe_ids, per_run_cap_usd=per_run_cap, skip_judged=skip_judged,
@@ -182,6 +184,7 @@ def _run_and_render(
                 )
         except BaseException as exc:
             target_cleanup = getattr(exc, "target_cleanup", None) or target_cleanup
+            cleanup_diagnostic = getattr(exc, "cleanup_diagnostic", None)
             raise
 
     async def _with_signals():
@@ -195,7 +198,7 @@ def _run_and_render(
                 if not stopped:
                     raise
             if stopped:
-                return StopSignalReceived(stopped[0], target_cleanup)
+                return StopSignalReceived(stopped[0], target_cleanup, cleanup_diagnostic)
 
     stopped_by: Exception | None = None
     stop_reason: str | None = None
