@@ -14,7 +14,7 @@ import json
 import os
 import re
 import secrets
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -24,6 +24,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from argus import llm, remediation
+from argus.redaction import _scrub, run_secrets
+from argus_transport.cleanup import CleanupReport, CleanupStateUnknown, run_error_detail, validate_cleanup_report
+from argus_transport.stops import RunStopped
 from argus.coverage import build_coverage, build_summary
 from argus.cost_meter import CostExceededError, CostMeter
 from argus.judge import Judge
@@ -271,6 +274,68 @@ def _judged_exchanges(req: RunRequest, probe_ids: list[str]) -> int:
     )
 
 
+@dataclass(frozen=True)
+class _Finalization:
+    report: CleanupReport | None
+    close_error: BaseException | None
+    cleanup_error: CleanupStateUnknown | None
+
+
+async def _finalize_target(target: object, primary: BaseException | None) -> _Finalization:
+    close_error = None
+    try:
+        close = getattr(target, "aclose", None)
+        if close is not None:
+            await close()
+    except BaseException as exc:
+        close_error = exc
+
+    cleanup_error = None
+    report = None
+    try:
+        absent = object()
+        getter = getattr(target, "cleanup_report", absent)
+        if getter is absent:
+            candidate = getattr(close_error, "target_cleanup", None)
+            if candidate is None:
+                candidate = getattr(primary, "target_cleanup", None)
+        else:
+            candidate = getter()
+        report = validate_cleanup_report(candidate)
+    except BaseException:
+        cleanup_error = CleanupStateUnknown()
+
+    error = primary if primary is not None else close_error
+    for previous in (primary, close_error):
+        if getattr(previous, "cleanup_diagnostic", None) == "cleanup state unknown":
+            del previous.cleanup_diagnostic
+    if report is None:
+        for previous in (primary, close_error):
+            if previous is None:
+                continue
+            old = getattr(previous, "cleanup", None)
+            if isinstance(old, dict):
+                old.clear()
+            attached = getattr(previous, "target_cleanup", None)
+            if isinstance(attached, dict):
+                attached.clear()
+            if hasattr(previous, "target_cleanup"):
+                previous.target_cleanup = None
+            if hasattr(previous, "cleanup"):
+                previous.cleanup = None
+            diagnostics = getattr(previous, "transport_diagnostics", None)
+            if isinstance(diagnostics, dict):
+                diagnostics.pop("cleanup", None)
+    elif error is not None:
+        if isinstance(error, RunStopped):
+            error.set_cleanup(report)
+        else:
+            error.target_cleanup = report
+    if cleanup_error is not None and error is not None:
+        error.cleanup_diagnostic = "cleanup state unknown"
+    return _Finalization(report, close_error, cleanup_error)
+
+
 async def _run_probes(
     req: RunRequest, anthropic_api_key: str, *, trusted_code: bool = False
 ) -> AsyncIterator[dict]:
@@ -282,11 +347,7 @@ async def _run_probes(
         )
     else:
         target = await asyncio.to_thread(build_target, req.target)
-    # Released however the run ends: normally, on a raise, or when the consumer
-    # closes this generator early (run_local's probes.aclose()). Plugin targets
-    # need not subclass Target, so aclose is optional like the runner's hooks.
-    closed = False
-    close = getattr(target, "aclose", None)
+    primary = None
     try:
         judge = Judge(api_key=anthropic_api_key, cost_meter=_COST_METER)
         runner = Runner(target=target, judge=judge, rubrics_dir=RUBRICS_DIR)
@@ -363,35 +424,17 @@ async def _run_probes(
                 cap_hit = e
         if cap_hit is not None:
             raise cap_hit
-        closed = True
-        if close is not None:
-            await close()
-        report = getattr(target, "cleanup_report", lambda: None)()
-        if report is not None:
-            yield {"type": "target_cleanup", "target_cleanup": report}
     except BaseException as exc:
-        try:
-            if not closed:
-                closed = True
-                if close is not None:
-                    await close()
-        except BaseException as close_exc:
-            exc = close_exc
-            raise
-        finally:
-            report = getattr(target, "cleanup_report", lambda: None)()
-            if report is not None:
-                set_cleanup = getattr(exc, "set_cleanup", None)
-                if set_cleanup is not None:
-                    set_cleanup(report)
-                else:
-                    exc.target_cleanup = report
-        raise
+        primary = exc
     finally:
-        if not closed:
-            closed = True
-            if close is not None:
-                await close()
+        final = await _finalize_target(target, primary)
+    error = primary if primary is not None else final.close_error
+    if error is None:
+        error = final.cleanup_error
+    if error is not None:
+        raise error
+    if final.report is not None:
+        yield {"type": "target_cleanup", "target_cleanup": final.report}
 
 
 def finding_dict(finding, probe) -> dict:
@@ -502,6 +545,7 @@ async def run(req: RunRequest):
 
     async def _sse() -> AsyncIterator[bytes]:
         emitted: list[dict] = []
+        target_cleanup = None
         probes = _run_probes(req, anthropic_api_key)
         spent, started = 0.0, False
         cap = _COST_METER.per_run_cap(req.mode == "deep", req.per_run_cap_usd)
@@ -523,6 +567,7 @@ async def run(req: RunRequest):
                     finally:
                         spent = _COST_METER.spent_in_current_run()
                 if finding_dict.get("type") == "target_cleanup":
+                    target_cleanup = finding_dict["target_cleanup"]
                     continue
                 if finding_dict.get("type") != "deep_run":
                     emitted.append(finding_dict)
@@ -533,10 +578,15 @@ async def run(req: RunRequest):
                 "summary": build_summary(emitted),
                 "cost": cost(),
             }
+            if target_cleanup is not None:
+                coverage_event["target_cleanup"] = _scrub(target_cleanup, run_secrets(req.target))
             yield f"data: {json.dumps(coverage_event)}\n\n".encode()
             yield b"event: end\ndata: {}\n\n"
         except Exception as exc:
-            error = {"detail": str(exc), "type": type(exc).__name__, "cost": cost()}
+            error = {"detail": run_error_detail(exc), "type": type(exc).__name__, "cost": cost()}
+            target_cleanup = getattr(exc, "target_cleanup", None)
+            if target_cleanup is not None:
+                error["target_cleanup"] = _scrub(target_cleanup, run_secrets(req.target))
             if isinstance(exc, llm.JudgeBlockedError):
                 error["judge_blocked"] = exc.as_dict()
             yield f"event: error\ndata: {json.dumps(error)}\n\n".encode()

@@ -91,9 +91,12 @@ async def test_close_exception_is_propagated_without_retry(local_library, probe_
                 raise probe_error
             yield skipped_finding(probe, 'ok')
     with patch.object(api, 'build_target', lambda *_: target), patch.object(api, 'Runner', Runner):
-        with pytest.raises(ValueError, match='close failed'):
+        with pytest.raises(RuntimeError if probe_error is not None else ValueError,
+                           match='probe failed' if probe_error is not None else 'close failed') as caught:
             async for _ in api._run_probes(api.RunRequest(target={'kind': 'openai_compat'}, probe_ids=[local_library.id]), 'dummy'):
                 pass
+        if probe_error is not None:
+            assert caught.value is probe_error
     assert target.closed == 1
 
 

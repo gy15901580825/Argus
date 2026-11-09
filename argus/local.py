@@ -15,6 +15,7 @@ from typing import AsyncIterator, Mapping, NamedTuple
 from fastapi import HTTPException
 
 from argus import api, decider, llm
+from argus_transport.cleanup import run_error_detail
 from argus.cost_meter import CostExceededError
 from argus.coverage import build_coverage, build_summary
 from argus.probe import load_probe_library
@@ -228,11 +229,11 @@ async def run_local(
     except CostExceededError as e:
         # Raised by cost_meter.record() once the run is underway. Other mid-run
         # exceptions propagate unchanged for the CLI to report.
-        error = LocalRunError(str(e), code="cost")
+        error = LocalRunError(run_error_detail(e), code="cost")
         error.target_cleanup = getattr(e, "target_cleanup", None)
         raise error from e
     except TargetUnreachableError as e:
-        error = LocalRunError(str(e), code="unreachable")
+        error = LocalRunError(run_error_detail(e), code="unreachable")
         error.target_cleanup = getattr(e, "target_cleanup", None)
         raise error from e
     finally:

@@ -12,40 +12,21 @@ import httpx
 
 from .engine import _OMIT
 from .engine_v2 import TransportEngineV2, _BOUND_SCALAR_TYPES, _BoundScalar, bind_v2
+from .cleanup import AbortStatus, UndoStatus
+from .stops import TargetRunStopped
 from .models import SafeReasonCode, SyncSpec, TransportContext, TransportResult
 from .security import ExecutionPolicy, Redactor
 from .spec_v2 import AbortSpec, PollSpecV2, RequestSpecV2, TransportSpecV2, UndoSpec, _iter_expressions
 
 
-class TargetRunStopped(Exception):
-    def __init__(self, reason: str, detail: str = ''):
-        super().__init__(f'{reason}: {detail}' if detail else reason)
-        self.reason = reason
-        self.detail = detail
-        self.checklist: tuple[str, ...] = ()
-        self.cleanup: dict | None = None
-        self.target_cleanup: dict | None = None
-        self.transport_diagnostics: dict = {}
 
-    def set_cleanup(self, report: dict | None) -> None:
-        if report is not None:
-            if self.cleanup is None:
-                self.cleanup = report
-            else:
-                self.cleanup.clear()
-                self.cleanup.update(report)
-            self.target_cleanup = self.cleanup
-            self.transport_diagnostics['cleanup'] = self.cleanup
-
-
-UndoStatus = Literal['pending', 'done', 'failed', 'skipped_stopped', 'blocked_by_inner', 'unbound', 'unconfirmed']
 
 
 @dataclass
 class AbortIntent:
     spec: AbortSpec
     attempt: int
-    status: Literal['not_needed', 'armed', 'done', 'failed', 'unconfirmed', 'skipped_stopped', 'interrupted'] = 'not_needed'
+    status: AbortStatus = 'not_needed'
     http_status: int | None = None
     url: str | None = None
     failure_reason: str | None = None

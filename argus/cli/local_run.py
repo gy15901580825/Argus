@@ -10,6 +10,8 @@ from typing import Iterable, NamedTuple
 
 import click
 
+from argus_transport.cleanup import run_error_detail
+
 from argus.cli import reports, run_json
 from argus.cli.severity import (
     blocked_warning,
@@ -208,9 +210,9 @@ def _run_and_render(
         if isinstance(e, LocalRunError):
             stop_reason = str(e)
         elif isinstance(e, TargetRunStopped):
-            stop_reason = f"target stopped the run: {e}"
+            stop_reason = f"target stopped the run: {run_error_detail(e)}"
         else:
-            stop_reason = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+            stop_reason = f"{type(e).__name__}: {run_error_detail(e)}" if run_error_detail(e) else type(e).__name__
         if coverage is None:
             # The engine emits coverage only at the end; build it from what did run.
             from argus.api import PROBES_DIR

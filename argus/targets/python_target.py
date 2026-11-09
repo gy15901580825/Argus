@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from argus_transport.stops import RunStopped
+
 from argus.targets._base import Target, TargetTransportError, Turn
 from argus.targets.custom_http import CustomHTTPTarget, run_log_from_metadata
 
@@ -100,6 +102,8 @@ class PythonTarget(Target):
         if self._fn is None:
             try:
                 self._fn = await asyncio.to_thread(load_entry, self.spec.entry)
+            except RunStopped:
+                raise
             except Exception as exc:
                 raise TargetTransportError(
                     f"python_target_error: cannot load entry: {type(exc).__name__}"
@@ -119,6 +123,8 @@ class PythonTarget(Target):
             result = await asyncio.wait_for(call, self.spec.timeout_s)
         except asyncio.TimeoutError:
             raise TimeoutError("timeout: python target exceeded timeout_s") from None
+        except RunStopped:
+            raise
         except Exception as exc:
             raise TargetTransportError(
                 f"python_target_error: {type(exc).__name__}"

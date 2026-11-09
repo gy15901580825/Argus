@@ -1,10 +1,8 @@
 import asyncio
-import copy
 import json
 import socket
 import threading
 import time
-from dataclasses import replace
 from types import SimpleNamespace
 
 import httpx
@@ -420,3 +418,38 @@ async def test_absent_getter_invalid_secondary_attachment_is_not_fallback(engine
             pass
     assert caught.value is target.primary
     assert caught.value.target_cleanup is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('mode', ['none', 'invalid'])
+async def test_generic_exception_stale_cleanup_is_cleared(engine, mode):
+    error = RuntimeError('generic run failure')
+    stale = cleanup('earlier')
+    error.cleanup = error.target_cleanup = stale
+    error.transport_diagnostics = {'cleanup': stale, 'other': 'retained'}
+    error.cleanup_diagnostic = 'cleanup state unknown'
+    target = engine.target = Plugin(mode)
+    async def failed(*args, **kwargs):
+        raise error
+    target.send_prompt = failed
+    req = api.RunRequest(target=SPEC, probe_ids=[p.id for p in engine.probes])
+    with pytest.raises(RuntimeError) as caught:
+        async for _ in api._run_probes(req, ''):
+            pass
+    assert caught.value is error
+    assert error.cleanup is None and error.target_cleanup is None and stale == {}
+    assert error.transport_diagnostics == {'other': 'retained'}
+    assert getattr(error, 'cleanup_diagnostic', None) == ('cleanup state unknown' if mode == 'invalid' else None)
+
+
+@pytest.mark.asyncio
+async def test_reused_exception_valid_report_clears_prior_unknown(engine):
+    target = engine.target = Plugin('quota')
+    target.primary.cleanup_diagnostic = 'cleanup state unknown'
+    req = api.RunRequest(target=SPEC, probe_ids=[p.id for p in engine.probes])
+    with pytest.raises(TargetRunStopped) as caught:
+        async for _ in api._run_probes(req, ''):
+            pass
+    assert caught.value is target.primary
+    assert getattr(caught.value, 'cleanup_diagnostic', None) is None
+    assert caught.value.target_cleanup == cleanup('quota', opened=True)
