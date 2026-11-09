@@ -798,13 +798,17 @@ class Runner:
                 )
             ):
                 context = ObservationContext.from_probe(probe, "attack")
-            if isinstance(self._target, PythonTarget) and context is not None and context.required_events:
-                raise Undecided("required_event_unsupported: Python target cannot check requested world triggers")
             kwargs = {"context": context} if not isinstance(self._target, PythonTarget) else {}
             results = await asyncio.to_thread(
                 evaluate_assertions, probe.assertions, evidence, response_text, prompt_index,
                 **kwargs,
             )
+            if isinstance(self._target, PythonTarget) and context is not None and context.required_events:
+                results.append(AssertionResult(
+                    "required_event", False,
+                    "required_event_unsupported: Python target cannot check requested world triggers",
+                    error=True,
+                ))
         except Undecided as exc:
             results = [AssertionResult("required_event", False, str(exc), error=True)]
         undecided = [r for r in results if r.error]

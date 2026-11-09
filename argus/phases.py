@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from argus.assertions import ObservationContext, evaluate_check
+from argus.assertions import ObservationContext, evaluate_check, validate_required_event_support
 from argus.trials import TrialRecord
 from argus.world_assertions import (
     CHECKS,
@@ -167,6 +167,10 @@ def _assertions(probe, evidence: dict, response: str, *, phase: str | None = Non
                 results.append(("skipped", str(exc), None))
             except (Undecided, KeyError, TypeError, ValueError) as exc:
                 results.append(("error", str(exc), getattr(exc, "code", None)))
+    try:
+        validate_required_event_support(profile_for(probe).checks, probe.assertions, context)
+    except Undecided as exc:
+        results.append(("error", str(exc), exc.code))
     return results
 
 

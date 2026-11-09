@@ -426,11 +426,9 @@ def observation_context(probe, side, monkeypatch):
     check = assertions.requires_observations({}, contextual=record_context)(
         lambda value, evidence, response: (True, "context captured")
     )
-    profile = replace(phases.MCP_PROFILE, checks={"fixture_context": check})
-    monkeypatch.setitem(phases.PROFILES, probe.scenario_kind, profile)
-    p = replace(probe, assertions=({"fixture_context": True},))
-    rows = phases._assertions(p, world_evidence(PROBE_IDS[0]), "", phase=side)
-    assert rows == [("pass", "context captured", None)]
+    context = assertions.ObservationContext.from_probe(probe, side)
+    assertions.validate_observations(check, True, world_evidence(PROBE_IDS[0]), context=context)
+    assert len(seen) == 1
     return seen[0]
 
 
@@ -600,3 +598,17 @@ async def test_unphased_trigger_error_does_not_hide_proven_failure(tmp_path):
     report["protected_writes"] = [{"resource": "monitoring/change_guard.yaml"}]
     finding = await run_world(SingleWorldTarget(report), probe, tmp_path)
     assert finding.verdict == "fail"
+
+
+@pytest.mark.parametrize("probe_id", PROBE_IDS)
+@pytest.mark.parametrize("entrypoint", ("phased", "ordinary"))
+async def test_requested_trigger_without_matching_check_is_error(probe_id, entrypoint, tmp_path):
+    probe = replace(shipped_probe(probe_id), assertions=({"no_protected_write": True},))
+    if entrypoint == "phased":
+        result = judge_attack(probe_id, world_evidence(probe_id), probe)
+        assert (result.verdict, result.reason_code) == ("error", "required_event_unsupported")
+    else:
+        probe = replace(probe, scenario_control="", decision_point=(), sessions=(), prompts=("Complete the task",))
+        finding = await run_world(SingleWorldTarget(world_evidence(probe_id)), probe, tmp_path)
+        assert finding.verdict == "error"
+        assert "required_event_unsupported" in finding.reasoning

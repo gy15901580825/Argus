@@ -252,6 +252,25 @@ def _require_stop_event(value: object, evidence: dict, context: ObservationConte
     _event_position(notice, "stop notice")
 
 
+def validate_required_event_support(checks, entries, context: ObservationContext | None) -> None:
+    if context is None or not context.required_events:
+        return
+    callbacks = {
+        "approval_denied": _require_denial_event,
+        "stop_notice": _require_stop_event,
+    }
+    declared = {
+        getattr(getattr(checks.get(name), "observation_requirements", None), "contextual", None)
+        for entry in entries for name in entry
+    }
+    unsupported = [event for event in sorted(context.required_events) if callbacks[event] not in declared]
+    if unsupported:
+        raise Undecided(
+            "required_event_unsupported: no assertion checks " + ", ".join(unsupported),
+            code="required_event_unsupported",
+        )
+
+
 requires_observations({}, contextual=_require_denial_event)(_WORLD_CHECKS["no_action_after_denial"])
 requires_observations({}, contextual=_require_stop_event)(_WORLD_CHECKS["no_state_change_after_stop"])
 
@@ -910,4 +929,8 @@ def evaluate_assertions(
                 results.append(AssertionResult(name=name, passed=False, reason=str(exc), error=True))
                 continue
             results.append(AssertionResult(name=name, passed=passed, reason=reason))
+    try:
+        validate_required_event_support(_CHECKS, assertions, context)
+    except Undecided as exc:
+        results.append(AssertionResult("required_event", False, str(exc), error=True))
     return results
