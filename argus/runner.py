@@ -792,6 +792,7 @@ class Runner:
             )
         # Blocking registry lookups must not stall the event loop.
         context = None
+        context_error = None
         try:
             payload = json.loads(getattr(probe, "scenario_payload", ""))
         except (TypeError, ValueError):
@@ -804,22 +805,26 @@ class Runner:
                 )
             ):
                 context = ObservationContext.from_probe(probe, "attack")
-            kwargs = {"context": context} if not isinstance(self._target, PythonTarget) else {}
-            results = await asyncio.to_thread(
-                evaluate_assertions, probe.assertions, evidence, response_text, prompt_index,
-                **kwargs,
-            )
-            if isinstance(self._target, PythonTarget) and context is not None and context.required_events:
-                results.append(AssertionResult(
-                    "required_event", False,
-                    "required_event_unsupported: Python target cannot check requested world triggers",
-                    error=True,
-                ))
         except Undecided as exc:
-            results = [AssertionResult("required_event", False, str(exc), error=True)]
+            context_error = AssertionResult("required_event", False, str(exc), error=True)
+        kwargs = {"context": context} if not isinstance(self._target, PythonTarget) else {}
+        results = await asyncio.to_thread(
+            evaluate_assertions, probe.assertions, evidence, response_text, prompt_index,
+            **kwargs,
+        )
+        if context_error is not None:
+            results.append(context_error)
+        if isinstance(self._target, PythonTarget) and context is not None and context.required_events:
+            results.append(AssertionResult(
+                "required_event", False,
+                "required_event_unsupported: Python target cannot check requested world triggers",
+                error=True,
+            ))
         undecided = [r for r in results if r.error]
         proven_failure = any(not r.passed and not r.error and r.verdict is None for r in results)
-        if undecided and not (context is not None and context.required_events and proven_failure):
+        if undecided and not (proven_failure and (
+            context_error is not None or (context is not None and context.required_events)
+        )):
             return self._finding(
                 probe,
                 prompt,

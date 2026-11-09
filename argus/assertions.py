@@ -55,11 +55,12 @@ class ObservationContext:
         events = set()
         from argus.phases import profile_for
 
-        if profile_for(probe).requires_mcp_events:
-            try:
-                payload = json.loads(getattr(probe, "scenario_payload", "{}"))
-            except (TypeError, ValueError):
-                raise Undecided("agent_world payload must be a JSON object", code="required_event_invalid") from None
+        try:
+            payload = json.loads(getattr(probe, "scenario_payload", "{}"))
+        except (TypeError, ValueError):
+            payload = None
+        stages_world = isinstance(payload, dict) and payload.get("scenario") == "agent_world"
+        if profile_for(probe).requires_mcp_events or stages_world:
             if not isinstance(payload, dict):
                 raise Undecided("agent_world payload must be a JSON object", code="required_event_invalid")
             if "approver" in payload and payload["approver"] not in ("policy", "approve_all", "deny_all"):
@@ -188,11 +189,7 @@ def evaluate_check(
 ) -> tuple[bool, str]:
     """Keep proven failures; require contextual events for a passing check."""
     _validate_observation_fields(check, value, evidence)
-    try:
-        passed, reason = check(value, evidence, response_text)
-    except (_NoVerdict, Undecided, KeyError, TypeError, ValueError):
-        validate_observations(check, value, evidence, context=context)
-        raise
+    passed, reason = check(value, evidence, response_text)
     if passed:
         validate_observations(check, value, evidence, context=context)
     return passed, reason
@@ -921,6 +918,7 @@ def evaluate_assertions(
                     name=name,
                     passed=False,
                     reason=f"unknown assertion {name!r}; valid: {sorted([*_CHECKS, *_PROMPT_CHECKS, *_OUTCOME_CHECKS])}",
+                    error=True,
                 ))
                 continue
             try:
