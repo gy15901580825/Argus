@@ -903,7 +903,7 @@ that a plugin can test it.
 
 The Action's `install-spec` replaces its default engine installation. Include
 both the engine and your plugin in that input. Pin argus-probe 1.7.0 or later.
-The Action's current default is 1.6.0, which does not include this contract.
+Action v2.3.0 and later install 1.7.0 by default.
 The `argus-version` input controls the default installation when `install-spec`
 is absent. It does not add an engine to a custom `install-spec`.
 
