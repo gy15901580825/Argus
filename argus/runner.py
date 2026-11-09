@@ -234,8 +234,6 @@ def _send_failure(exc: Exception) -> tuple[str, str] | None:
     """
     from argus.targets._base import TargetBlockedError, TargetDeliveryError, TargetTransportError
 
-    if isinstance(exc, llm.CompletionTruncated):
-        return VERDICT_ERROR, f"target reply could not be used: {_named(exc)}"
     if isinstance(exc, TargetBlockedError):
         return VERDICT_BLOCKED_BY_TARGET, f"{exc}; counted as blocked"
     if isinstance(exc, TargetTransportError):

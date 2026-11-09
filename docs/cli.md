@@ -769,16 +769,19 @@ PAIR, TAP or deep attacker call allows 4000 output tokens, shared between
 reasoning and the reply. This leaves room for reasoning before the model writes
 text. An empty or whitespace reply that uses at least that budget is a named
 `CompletionTruncated` outcome. Deep mode retains the `AttackerTruncated` name.
-The judge returns `error`; a truncated strong judge cannot reach the decider.
+A truncated fast judge returns `error`. A truncated strong judge keeps the fast
+verdict, or goes to the decider when one is configured. If the decider cannot
+decide, the fast verdict stays.
 `scan-mcp` leaves the text unjudged and exits inconclusive. A verdict explanation
 keeps the structured verdict and adds the truncation reason. Truncation causes
 no retry or provider fallback.
 
-Direct chat target adapters also default to 4000 output tokens and accept
-`max_tokens` in the target spec. Their exhausted empty replies raise
-`CompletionTruncated` for the runner's target-error path. Tool calls count as
-non-empty replies. The structured judge and decider answer typed questions and
-have no caller-set output-token budget.
+Customer target limits are separate. The native chat adapter defaults to 1024
+output tokens; the compatible chat adapter leaves the default to the endpoint.
+A reasoning-model target may need a larger `max_tokens` in its target spec to
+leave room for the reply. Empty target replies take the existing no-text error
+path. Tool calls count as non-empty replies. The structured judge and decider
+answer typed questions and have no caller-set output-token budget.
 
 Cost estimates price 4000 output tokens for each text call. For a text model
 priced at $0.10 input and $0.50 output per million tokens, the pre-run estimate

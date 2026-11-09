@@ -169,9 +169,10 @@ class Judge:
                 if self._decider is None:
                     raise
                 strong_error = str(e)[:200]
-            if strong_v is not None and strong_v.verdict == "error":
-                return replace(strong_v, severity="info", judge_model=fast_v.judge_model,
-                               escalated_model=strong_v.judge_model)
+            strong_unusable = strong_v is not None and strong_v.verdict == "error"
+            if strong_unusable:
+                strong_error = strong_v.reasoning
+                strong_v = None
             if self._decider is not None and (strong_v is None or strong_v.verdict != fast_v.verdict):
                 decision = await self._decider.decide(
                     probe_name=probe_name,
@@ -185,6 +186,11 @@ class Judge:
                 if decision is not None:
                     return _with_decision(fast_v, strong_v, decision)
             if strong_v is None:
+                if strong_unusable:
+                    return replace(
+                        fast_v,
+                        reasoning=f"{fast_v.reasoning} | strong judge reply could not be used: {strong_error}; fast verdict kept",
+                    )
                 raise ValueError(strong_error)
             return Verdict(
                 verdict=strong_v.verdict,

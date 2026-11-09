@@ -42,20 +42,60 @@ async def test_judge_exhaustion_is_named_error(monkeypatch, role, text):
     judge._decider.decide.assert_not_awaited()
 
 
-async def test_strong_truncation_cannot_be_decided_as_pass(monkeypatch):
+@pytest.mark.parametrize("fast_verdict", ["fail", "warn"])
+@pytest.mark.parametrize("decider_choice", [None, "fail", "pass", "abstain"])
+async def test_strong_truncation_keeps_fast_or_uses_decider(monkeypatch, fast_verdict, decider_choice):
+    from argus.decider import Decision
     calls = []
     async def complete(cfg, **kwargs):
         calls.append(kwargs)
-        text = json.dumps(dict(verdict="pass", severity="high", confidence=1, reasoning="safe")) if len(calls) == 1 else ""
-        return llm.Completion(text, 100, kwargs["max_tokens"], cfg.fast_model)
+        text = json.dumps(dict(verdict=fast_verdict, severity="high", confidence=1, reasoning="fast finding")) if len(calls) == 1 else ""
+        model = cfg.fast_model if kwargs["role"] == "fast" else cfg.strong_model
+        return llm.Completion(text, 100, kwargs["max_tokens"], model)
     monkeypatch.setattr(llm, "complete", complete)
+    cfg = llm.LLMConfig(anthropic_api_key="", provider="openai", fast_model="fast", strong_model="strong", fallback_enabled=False)
+    judge = Judge("", CostMeter(daily_cap_usd=float("inf")), cfg)
+    judge._decider = None
+    if decider_choice:
+        decision = None if decider_choice == "abstain" else Decision(decider_choice, 1, 1, .8, True, "decider")
+        judge._decider = SimpleNamespace(decide=AsyncMock(return_value=decision))
+    verdict = await judge.judge("probe", "attack", "reply", "rubric")
+    assert verdict.verdict == (fast_verdict if decider_choice in (None, "abstain") else decider_choice)
+    assert "fast finding" in verdict.reasoning
+    assert [c["max_tokens"] for c in calls] == [4000, 4000]
+    if decider_choice:
+        kwargs = judge._decider.decide.await_args.kwargs
+        assert kwargs["strong"] is None
+        assert "CompletionTruncated" in kwargs["strong_error"]
+    else:
+        assert "CompletionTruncated" in verdict.reasoning
+
+
+async def test_fast_truncation_is_error_without_escalation(monkeypatch):
+    calls = stub(monkeypatch, "")
     cfg = llm.LLMConfig(anthropic_api_key="", provider="openai", fast_model="fast", strong_model="strong", fallback_enabled=False)
     judge = Judge("", CostMeter(daily_cap_usd=float("inf")), cfg)
     judge._decider = SimpleNamespace(decide=AsyncMock())
     verdict = await judge.judge("probe", "attack", "reply", "rubric")
     assert verdict.verdict == "error" and "CompletionTruncated" in verdict.reasoning
+    assert [c["role"] for c in calls] == ["fast"]
     judge._decider.decide.assert_not_awaited()
-    assert [c["max_tokens"] for c in calls] == [4000, 4000]
+
+
+@pytest.mark.parametrize("fast_verdict", ["fail", "warn"])
+@pytest.mark.parametrize("with_decider", [False, True])
+async def test_strong_error_verdict_keeps_fast(monkeypatch, fast_verdict, with_decider):
+    from argus.judge import Verdict
+    cfg = llm.LLMConfig(anthropic_api_key="", provider="openai", fast_model="fast", strong_model="strong", fallback_enabled=False)
+    judge = Judge("", CostMeter(daily_cap_usd=float("inf")), cfg)
+    judge._call = AsyncMock(side_effect=[Verdict(fast_verdict, "high", 1, "fast finding", "fast"),
+                                        Verdict("error", "info", 0, "strong unavailable", "strong")])
+    judge._decider = SimpleNamespace(decide=AsyncMock(return_value=None)) if with_decider else None
+    verdict = await judge.judge("probe", "attack", "reply", "rubric")
+    assert verdict.verdict == fast_verdict and verdict.severity == "high"
+    assert "strong unavailable" in verdict.reasoning
+    if with_decider:
+        assert judge._decider.decide.await_args.kwargs["strong"] is None
 
 
 async def test_scan_truncation_is_unjudged_with_named_reason(monkeypatch):
@@ -148,35 +188,45 @@ def test_scan_estimate_uses_the_actual_budget(monkeypatch):
 
 
 @pytest.mark.parametrize("text", ["", " \n", "reply"])
-async def test_native_target_budget_and_truncation(monkeypatch, text):
+@pytest.mark.parametrize("limit", [None, 6000])
+async def test_native_target_preserves_default_and_blank_reply(monkeypatch, text, limit):
     from argus.targets import anthropic_native as native
-    resp = SimpleNamespace(content=[SimpleNamespace(text=text)], usage=SimpleNamespace(output_tokens=4000), stop_reason="end_turn")
+    resp = SimpleNamespace(content=[SimpleNamespace(text=text)], usage=SimpleNamespace(output_tokens=1024 if limit is None else limit), stop_reason="end_turn")
     create = AsyncMock(return_value=resp)
     monkeypatch.setattr(native, "AsyncAnthropic", lambda **kw: SimpleNamespace(messages=SimpleNamespace(create=create)))
-    target = native.AnthropicNativeTarget(native.AnthropicNativeSpec(model="fixture", api_key="fixture"))
-    if text.strip():
-        assert (await target.send_prompt("attack"))[0] == text
-    else:
-        with pytest.raises(llm.CompletionTruncated):
-            await target.send_prompt("attack")
-    assert create.await_args.kwargs["max_tokens"] == 4000
+    kwargs = {} if limit is None else {"max_tokens": limit}
+    target = native.AnthropicNativeTarget(native.AnthropicNativeSpec(model="fixture", api_key="fixture", **kwargs))
+    assert (await target.send_prompt("attack"))[0] == (text if text.strip() else "")
+    assert create.await_args.kwargs["max_tokens"] == (1024 if limit is None else limit)
+    if not text.strip():
+        from test_runner_target_failures import _run, _probe
+        findings, judge = await _run(target, [_probe()])
+        assert findings[0].verdict == "error"
+        assert findings[0].reasoning.startswith("target returned no text")
+        assert judge.seen == []
 
 
 @pytest.mark.parametrize("text", ["", " \n", "reply"])
-async def test_compat_target_budget_and_truncation(monkeypatch, text):
+@pytest.mark.parametrize("limit", [None, 6000])
+async def test_compat_target_preserves_default_and_blank_reply(monkeypatch, text, limit):
     from argus.targets import openai_compat as compat
     post = AsyncMock(return_value=httpx.Response(200, request=httpx.Request("POST", "https://test.invalid"), json={
-        "choices": [{"message": {"content": text}}], "usage": {"completion_tokens": 4000}}))
+        "choices": [{"message": {"content": text}}], "usage": {"completion_tokens": 4000 if limit is None else limit}}))
     client = AsyncMock()
     client.__aenter__.return_value = SimpleNamespace(post=post)
     monkeypatch.setattr(compat.httpx, "AsyncClient", lambda **kw: client)
-    target = compat.OpenAICompatTarget(compat.OpenAICompatSpec(endpoint_url="https://test.invalid", model="fixture"))
-    if text.strip():
-        assert (await target.send_prompt("attack"))[0] == text
+    target = compat.OpenAICompatTarget(compat.OpenAICompatSpec(endpoint_url="https://test.invalid", model="fixture", max_tokens=limit))
+    assert (await target.send_prompt("attack"))[0] == (text if text.strip() else "")
+    if limit is None:
+        assert "max_tokens" not in post.await_args.kwargs["json"]
     else:
-        with pytest.raises(llm.CompletionTruncated):
-            await target.send_prompt("attack")
-    assert post.await_args.kwargs["json"]["max_tokens"] == 4000
+        assert post.await_args.kwargs["json"]["max_tokens"] == limit
+    if not text.strip():
+        from test_runner_target_failures import _run, _probe
+        findings, judge = await _run(target, [_probe()])
+        assert findings[0].verdict == "error"
+        assert findings[0].reasoning == "target returned no text; the endpoint returned no message content"
+        assert judge.seen == []
 
 
 @pytest.mark.parametrize("role", ["fast", "strong"])
@@ -231,9 +281,3 @@ async def test_decider_empty_structured_answer_fails_closed(monkeypatch, caplog)
     assert result is None
     assert "KeyError" in caplog.text
     assert "max_tokens" not in post.await_args.args[0]
-
-
-def test_target_truncation_maps_to_named_error():
-    from argus.runner import _send_failure
-    failure = _send_failure(llm.CompletionTruncated("empty completion"))
-    assert failure[0] == "error" and "CompletionTruncated" in failure[1]
