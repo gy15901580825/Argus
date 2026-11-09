@@ -29,6 +29,7 @@ class WorldProfile:
         lambda names, evidence: None
     )
     truncated: Callable[[dict], str | None] = lambda evidence: None
+    requires_mcp_events: bool = False
 
 
 KEY_FIELDS = {
