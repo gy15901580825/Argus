@@ -287,14 +287,21 @@ An entry point loads a `(SpecClass, TargetClass)` pair. `argus.targets.kinds()`
 returns each kind's `KindInfo`. A plugin can declare `TargetClass.kind_info`
 for required fields, init questions, chat support, empty-reply hints and an
 offline validation hook. Without this record, required fields come from
-non-defaulted dataclass init fields, excluding `kind`. Other schema types
-and semantic requirements need explicit metadata.
+non-defaulted dataclass init fields, including `InitVar` and excluding `kind`.
+Other schema types and semantic requirements need explicit metadata.
 
 Built-ins keep precedence over plugins. Duplicate plugins are sorted by
 entry-point name and value; the first successfully loaded adapter wins.
-Broken entry points and metadata whose kind does not match the entry point
-are skipped with a warning. Restart the process after installing or removing
+Built-in target paths resolve their kind without loading target plugins.
+Plugins load when a requested kind is not built-in or a command lists all kinds.
+Entry points that raise `Exception` or `SystemExit`, and metadata whose kind
+does not match the entry point, are skipped with one warning per entry point.
+Load tracebacks appear only at debug level. `KeyboardInterrupt` and
+`GeneratorExit` propagate. Restart the process after installing or removing
 a plugin because entry-point discovery is cached.
+
+Plugin fields, including a field named `transport`, receive environment-variable
+expansion. A failed plugin validation hook rejects the spec with a named error.
 
 Probe selection reads `compatible_classes` from the target instance. A new
 class name used in a probe pack must also appear on the plugin's target class
@@ -303,7 +310,7 @@ so the probe loader can validate it. The `--target-class` choices and the
 
 For the GitHub Action, `install-spec` replaces the default engine install.
 Include both an Argus build with registry support and the plugin distribution.
-The Action's default Argus version, 1.2.0, predates this support.
+Set the Action's `argus-version` to a release that contains registry support.
 
 ### The bundled testbed for MCP and payment agents
 

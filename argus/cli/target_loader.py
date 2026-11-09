@@ -25,7 +25,7 @@ _POSIX_VAR_RE = re.compile(r"\$(?:\w+|\{[^}]*\})", re.ASCII)
 _NT_VAR_RE = re.compile(r"%[^%]+%|\$(?:\w+|\{[^}]*\})", re.ASCII)
 
 
-def _expand_env(value, substituted: list[str]):
+def _expand_env(value, substituted: list[str], *, skip_transport: bool = True):
     """Expand ${VAR} references in strings; recurse through dicts and lists.
 
     Appends every non-empty value it substitutes to `substituted`."""
@@ -37,9 +37,13 @@ def _expand_env(value, substituted: list[str]):
                 substituted.append(expanded)
         return os.path.expandvars(value)
     if isinstance(value, dict):
-        return {k: v if k == "transport" else _expand_env(v, substituted) for k, v in value.items()}
+        return {
+            k: v if skip_transport and k == "transport"
+            else _expand_env(v, substituted, skip_transport=skip_transport)
+            for k, v in value.items()
+        }
     if isinstance(value, list):
-        return [_expand_env(v, substituted) for v in value]
+        return [_expand_env(v, substituted, skip_transport=skip_transport) for v in value]
     return value
 
 
@@ -80,14 +84,18 @@ def check_target_spec(
         raise TargetLoadError("target must be a JSON object")
     if "kind" not in spec:
         raise TargetLoadError("target.kind is required")
-    from argus.targets import _BuiltinValidation, _check_required, _check_sandbox, kinds
+    from argus.targets import (
+        _BUILTIN_KINDS, _BuiltinValidation, _check_required, _check_sandbox, kinds,
+    )
 
-    registered = kinds()
-    if not isinstance(spec["kind"], str) or spec["kind"] not in registered:
-        raise TargetLoadError(
-            f"unknown target.kind {spec['kind']!r}; must be one of {sorted(registered)}"
-        )
-    info = registered[spec["kind"]]
+    info = _BUILTIN_KINDS.get(spec["kind"]) if isinstance(spec["kind"], str) else None
+    if info is None:
+        registered = kinds()
+        if not isinstance(spec["kind"], str) or spec["kind"] not in registered:
+            raise TargetLoadError(
+                f"unknown target.kind {spec['kind']!r}; must be one of {sorted(registered)}"
+            )
+        info = registered[spec["kind"]]
     try:
         if not isinstance(info.validate, _BuiltinValidation):
             _check_required(spec, info.required)
@@ -96,8 +104,12 @@ def check_target_spec(
             info.validate(spec)
     except ValueError as exc:
         raise TargetLoadError(str(exc)) from exc
+    except (Exception, SystemExit) as exc:
+        raise TargetLoadError(
+            f"target.kind={spec['kind']!r} validation failed: {type(exc).__name__}: {exc}"
+        ) from exc
     substituted: list[str] = []
-    spec = _expand_env(spec, substituted)
+    spec = _expand_env(spec, substituted, skip_transport=spec["kind"] in _BUILTIN_KINDS)
     if isinstance(info.validate, _BuiltinValidation):
         spec = info.validate.anchor(spec, base_dir)
     return spec, list(dict.fromkeys(substituted))

@@ -343,9 +343,9 @@ def test_workflow_leaves_the_version_to_the_action_from_an_uninstalled_tree(tmp_
 
 def test_every_known_kind_has_init_questions():
     # --kind offers every known kind, so a kind without questions crashes init.
-    from argus.targets import _BUILDERS, kinds
+    from argus.targets import _BUILDERS, _BUILTIN_KINDS
 
-    assert all(kinds()[kind].init_questions for kind in _BUILDERS)
+    assert all(_BUILTIN_KINDS[kind].init_questions for kind in _BUILDERS)
 
 
 @pytest.mark.parametrize("kind,url", [
@@ -451,7 +451,6 @@ def test_kind_flag_does_not_ask_for_the_kind(tmp_path, monkeypatch):
 
 def test_every_known_kind_has_a_description():
     # The kind prompt shows every known kind, so a kind without a description shows a blank line.
-    from argus.targets import kinds
-    registered = kinds()
+    from argus.targets import _BUILTIN_KINDS
 
-    assert all(info.description for info in registered.values())
+    assert all(info.description for info in _BUILTIN_KINDS.values())

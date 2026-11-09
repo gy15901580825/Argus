@@ -26,9 +26,9 @@ def _builder_kinds() -> set[str]:
 
 
 def _cli_kinds() -> set[str]:
-    from argus.targets import kinds as registered_kinds
+    from argus.targets import _BUILTIN_KINDS
 
-    kinds = set(registered_kinds())
+    kinds = set(_BUILTIN_KINDS)
     assert kinds, "could not read registered kinds — the guard has gone blind"
     return kinds
 

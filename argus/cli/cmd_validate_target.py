@@ -117,7 +117,9 @@ def cmd_validate_target(
         raise click.ClickException(str(e))
     kind = spec["kind"]
     secrets = run_json.run_secrets(spec, substituted)
-    info = kinds()[kind]
+    from argus.targets import _BUILTIN_KINDS
+
+    info = _BUILTIN_KINDS.get(kind) or kinds()[kind]
     transport_version = (
         info.validate.transport_version(spec)
         if isinstance(info.validate, _BuiltinValidation)
@@ -167,8 +169,9 @@ def cmd_validate_target(
     ) as e:  # spec values the adapter rejects (a bad JSONPath, a wrong type)
         fail(f"target spec invalid: {type(e).__name__}: {e}")
     if not info.chat:
+        registered = _BUILTIN_KINDS if kind in _BUILTIN_KINDS else kinds()
         raise click.UsageError(
-            f"validate-target checks chat targets ({', '.join(name for name, entry in kinds().items() if entry.chat)}), not {kind}. "
+            f"validate-target checks chat targets ({', '.join(name for name, entry in registered.items() if entry.chat)}), not {kind}. "
             f"Run its probes instead: argus-probe run --local --target {target_file} --probes all"
         )
     try:

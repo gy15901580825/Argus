@@ -97,10 +97,11 @@ _STATUS_HINTS = {
 }
 
 def _no_text_reason(target) -> str:
-    from argus.targets import kinds
+    from argus.targets import _BUILTIN_KINDS, kinds
 
     kind = getattr(getattr(target, "spec", None), "kind", None)
-    info = kinds().get(kind)
+    info = _BUILTIN_KINDS.get(kind) if isinstance(kind, str) else None
+    info = info or kinds().get(kind)
     hint = (info.no_text_hint if info else None) or "check the endpoint"
     return f"target returned no text; {hint}"
 

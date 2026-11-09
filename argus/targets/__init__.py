@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import functools
 import logging
-from dataclasses import MISSING, fields, is_dataclass
+from dataclasses import MISSING, _FIELD_INITVAR, fields, is_dataclass
 from importlib.metadata import entry_points
 from pathlib import Path
 from typing import Any
@@ -76,13 +76,13 @@ def _plugin_builders() -> dict[str, tuple[type, type]]:
             continue
         try:
             SpecClass, TargetClass = ep.load()
-        except Exception:
+        except (Exception, SystemExit):
             logger.warning(
                 "target plugin %r (%s) failed to load; skipped",
                 ep.name,
                 ep.value,
-                exc_info=True,
             )
+            logger.debug("target plugin %r load traceback", ep.name, exc_info=True)
             continue
         info = getattr(TargetClass, "kind_info", None)
         if info is not None and (
@@ -450,7 +450,7 @@ _BUILTIN_KINDS = {
 def kinds() -> dict[str, KindInfo]:
     """Built-in and installed plugin kinds, with the factory's precedence.
 
-    Without kind_info, dataclass plugins require non-defaulted init fields,
+    Without kind_info, dataclass plugins require non-defaulted init fields (including InitVar),
     excluding kind. Other schema types need explicit metadata for requiredness.
     """
     result = dict(_BUILTIN_KINDS)
@@ -460,7 +460,11 @@ def kinds() -> dict[str, KindInfo]:
             required = (
                 frozenset(
                     f.name
-                    for f in fields(spec_class)
+                    for f in (
+                        *fields(spec_class),
+                        *(f for f in spec_class.__dataclass_fields__.values()
+                          if f._field_type is _FIELD_INITVAR),
+                    )
                     if f.init
                     and f.name != "kind"
                     and f.default is MISSING

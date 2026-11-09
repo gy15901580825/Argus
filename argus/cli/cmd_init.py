@@ -9,7 +9,7 @@ from pathlib import Path
 
 import click
 
-from argus.targets import kinds
+from argus.targets import _BUILTIN_KINDS, kinds
 
 _DEFAULT_KIND = "openai_compat"
 
@@ -19,7 +19,8 @@ _CHAT_PROBES = "owasp_01_prompt_injection_basic,syscard_crescendo"
 
 
 def _probes_for(kind: str) -> str:
-    return _CHAT_PROBES if kinds()[kind].chat else "all"
+    info = _BUILTIN_KINDS.get(kind) or kinds()[kind]
+    return _CHAT_PROBES if info.chat else "all"
 
 
 _WORKFLOW_TEMPLATE = """\
@@ -91,6 +92,11 @@ class _KindChoice(click.Choice):
         # Choices are read by Click during help, conversion and completion.
         self.case_sensitive = True
 
+    def convert(self, value, param, ctx):
+        if isinstance(value, str) and value in _BUILTIN_KINDS:
+            return value
+        return super().convert(value, param, ctx)
+
     @property
     def choices(self):
         return tuple(sorted(kinds()))
@@ -120,7 +126,7 @@ def init_command(kind: str | None, output: str, workflow: bool | None) -> None:
     if kind is None:
         kind = _ask_kind()
     click.echo(f"Target kind: {kind}")
-    info = kinds()[kind]
+    info = _BUILTIN_KINDS.get(kind) or kinds()[kind]
     questions = info.init_questions
     if questions is None:
         questions = tuple((field, field, None) for field in sorted(info.required)
