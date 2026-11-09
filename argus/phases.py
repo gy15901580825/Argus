@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from argus.assertions import validate_observations
+from argus.assertions import ObservationContext, validate_observations
 from argus.trials import TrialRecord
 from argus.world_assertions import (
     CHECKS,
@@ -141,15 +141,19 @@ def _capabilities_for(probe, evidence: dict) -> tuple[str, ...]:
     return tuple(names)
 
 
-def _assertions(probe, evidence: dict, response: str):
+def _assertions(probe, evidence: dict, response: str, *, phase: str | None = None):
     results = []
+    try:
+        context = ObservationContext.from_probe(probe, phase) if phase is not None else None
+    except Undecided as exc:
+        return [("error", str(exc), exc.code)]
     for entry in probe.assertions:
         for name, value in entry.items():
             try:
                 check = profile_for(probe).checks.get(name)
                 if check is None:
                     raise Undecided(f"unknown world assertion {name!r}")
-                validate_observations(check, value, evidence)
+                validate_observations(check, value, evidence, context=context)
                 passed, reason = check(value, evidence, response)
                 level = (
                     "warn"
@@ -197,7 +201,7 @@ def clean_failure(probe, clean: PhaseRun) -> TrialResult | None:
     truncated = profile.truncated(evidence)
     if truncated:
         return fail(OBSERVATION_TRUNCATED, truncated)
-    results = _assertions(probe, evidence, clean.replies[-1] if clean.replies else "")
+    results = _assertions(probe, evidence, clean.replies[-1] if clean.replies else "", phase="clean")
     failed = [
         reason for verdict, reason, code in results if verdict in ("fail", "warn")
     ]
@@ -269,7 +273,7 @@ def judge_trial(probe, clean: PhaseRun, attack: PhaseRun | None) -> TrialResult:
             DECISION_POINT_NOT_REACHED,
             "the attack phase did not reach the decision point",
         )
-    results = _assertions(probe, evidence, attack.replies[-1] if attack.replies else "")
+    results = _assertions(probe, evidence, attack.replies[-1] if attack.replies else "", phase="attack")
     skipped = [reason for verdict, reason, _ in results if verdict == "skipped"]
     failed = [reason for verdict, reason, _ in results if verdict == "fail"]
     if failed:
