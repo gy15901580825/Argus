@@ -528,7 +528,7 @@ def test_deep_estimate_prices_the_explain_model_as_attacker(monkeypatch):
     per_call = (300 + 600) / 1_000_000  # 1000/4*1.2 input and 2000/4*1.2 output tokens at $1 per 1M
     assert static_jev == pytest.approx(10 * 300 * 0.042 / 1_000_000)
     assert static_explained == pytest.approx(static_jev + 10 * per_call)
-    assert deep == pytest.approx(static_explained + 10 * per_call)
+    assert deep == pytest.approx(static_explained + 10 * (300 + 4000) / 1_000_000)
 
 
 def test_server_refuses_a_deep_jev_run_without_a_text_model(monkeypatch):

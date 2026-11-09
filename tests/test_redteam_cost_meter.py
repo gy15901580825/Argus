@@ -124,7 +124,7 @@ def test_deep_preflight_is_capped_by_the_deep_per_run_cap():
     with pytest.raises(CostExceededError, match="per_run_cap"):
         m.check_or_abort_pre_run(probe_ids=["p1"], target_kind="openai_compat", total_exchanges=200)
     estimated = m.check_or_abort_pre_run(
-        probe_ids=["p1"], target_kind="openai_compat", total_exchanges=200, deep=True
+        probe_ids=["p1"], target_kind="openai_compat", total_exchanges=100, deep=True
     )
     assert 0.50 < estimated < 5.00
 
@@ -136,7 +136,7 @@ def test_deep_preflight_respects_the_deep_daily_slice():
     # ~$9 of estimated spend fits the day ($13.50) but not the deep slice ($8.10).
     with pytest.raises(CostExceededError, match="deep"):
         m.check_or_abort_pre_run(
-            probe_ids=["p1"], target_kind="openai_compat", total_exchanges=545, deep=True
+            probe_ids=["p1"], target_kind="openai_compat", total_exchanges=270, deep=True
         )
 
 
@@ -206,7 +206,7 @@ def test_estimate_counts_only_argus_llm_calls(kind, monkeypatch):
     ) == pytest.approx((_HAIKU + _SONNET) * 10)
     assert m.check_or_abort_pre_run(
         probe_ids=["p"], target_kind=kind, total_exchanges=10, deep=True
-    ) == pytest.approx((2 * _HAIKU + _SONNET) * 10)
+    ) == pytest.approx((_HAIKU + _SONNET + (300 * 1.0 + 4000 * 5.0) / 1e6) * 10)
 
 
 def test_estimate_skips_escalation_when_fast_and_strong_are_one_model(monkeypatch):

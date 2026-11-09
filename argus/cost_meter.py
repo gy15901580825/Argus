@@ -163,7 +163,11 @@ def estimate_run_usd(exchanges: int, *, deep: bool = False) -> float:
     if explain is not None:
         per_exchange += _call_usd(explain)
     if deep:
-        per_exchange += _call_usd(explain or fast)
+        from argus.persona_strategy import ATTACKER_MAX_TOKENS
+
+        attacker = explain or fast
+        per_exchange += (est_input_tokens * attacker["input"]
+                         + ATTACKER_MAX_TOKENS * attacker["output"]) / 1_000_000
     return per_exchange * exchanges
 
 

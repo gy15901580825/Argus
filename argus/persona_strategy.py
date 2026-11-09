@@ -39,6 +39,9 @@ DEFAULT_MAX_ROUNDS = 20
 # How many (persona, strategy) pairings to sample per base probe.
 DEFAULT_DEEP_PAIRS = 3
 
+# Reasoning can exhaust 600 tokens before any text; 4000 leaves room for the reply.
+ATTACKER_MAX_TOKENS = 4000
+
 # Only the testbed url_keys count: other braces (`{param}`) are not substituted.
 # Placeholder tokens a probe writes for the adapter to substitute at send time
 # (`{merchant_url}`, `{mcp_url}`). Matched on the base probe's prompts so the
@@ -58,6 +61,10 @@ def set_cost_meter(meter: CostMeter) -> None:
     _cost_meter = meter
 
 
+class AttackerTruncated(RuntimeError):
+    """The attacker exhausted its output budget without producing a prompt."""
+
+
 async def _call_attacker_llm(system_prompt: str, user_prompt: str) -> str:
     """Single-call wrapper around the Anthropic SDK. Module-level for patchability."""
     try:
@@ -66,13 +73,15 @@ async def _call_attacker_llm(system_prompt: str, user_prompt: str) -> str:
             role="fast",
             system=system_prompt,
             user=user_prompt,
-            max_tokens=600,
+            max_tokens=ATTACKER_MAX_TOKENS,
         )
     except llm.AllProvidersFailed as e:
         llm.record_refusals(_cost_meter, e.refusals)
         raise
     # Bill the model that answered (a provider fallback may have changed it) with the refusals.
     llm.record_completion(_cost_meter, out)
+    if not out.text.strip() and out.output_tokens >= ATTACKER_MAX_TOKENS:
+        raise AttackerTruncated
     return out.text
 
 
