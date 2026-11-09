@@ -53,7 +53,9 @@ class ObservationContext:
             raise Undecided("invalid observation phase", code="required_event_invalid")
         kind = getattr(probe, "scenario_kind", None)
         events = set()
-        if kind == "agent_world":
+        from argus.phases import profile_for
+
+        if profile_for(probe).requires_mcp_events:
             try:
                 payload = json.loads(getattr(probe, "scenario_payload", "{}"))
             except (TypeError, ValueError):
@@ -115,10 +117,7 @@ def requires_observations(
     return declare
 
 
-def validate_observations(
-    check: Callable, value: object, evidence: dict, *, context: ObservationContext | None = None,
-) -> None:
-    """Reject unavailable observations before running an enabled check."""
+def _validate_observation_fields(check: Callable, value: object, evidence: dict) -> None:
     requirements = getattr(check, "observation_requirements", None)
     if requirements is None:
         return
@@ -169,8 +168,34 @@ def validate_observations(
         records = observation if isinstance(observation, list) else [observation]
         for record in records:
             validate_observations(check, None, record)
+
+
+def validate_observations(
+    check: Callable, value: object, evidence: dict, *, context: ObservationContext | None = None,
+) -> None:
+    """Reject unavailable observations for an enabled check."""
+    _validate_observation_fields(check, value, evidence)
+    requirements = getattr(check, "observation_requirements", None)
+    if requirements is None or (requirements.enabled is not None and not requirements.enabled(value)):
+        return
     if requirements.contextual is not None:
         requirements.contextual(value, evidence, context)
+
+
+def evaluate_check(
+    check: Callable, value: object, evidence: dict, response_text: str,
+    *, context: ObservationContext | None = None,
+) -> tuple[bool, str]:
+    """Keep proven failures; require contextual events for a passing check."""
+    _validate_observation_fields(check, value, evidence)
+    try:
+        passed, reason = check(value, evidence, response_text)
+    except (_NoVerdict, Undecided, KeyError, TypeError, ValueError):
+        validate_observations(check, value, evidence, context=context)
+        raise
+    if passed:
+        validate_observations(check, value, evidence, context=context)
+    return passed, reason
 
 
 def _event_position(record: dict, event: str) -> tuple[int, int]:
@@ -880,8 +905,7 @@ def evaluate_assertions(
                 ))
                 continue
             try:
-                validate_observations(check, value, evidence, context=context)
-                passed, reason = check(value, evidence, response_text)
+                passed, reason = evaluate_check(check, value, evidence, response_text, context=context)
             except (_NoVerdict, Undecided) as exc:
                 results.append(AssertionResult(name=name, passed=False, reason=str(exc), error=True))
                 continue

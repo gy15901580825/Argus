@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from argus.assertions import ObservationContext, validate_observations
+from argus.assertions import ObservationContext, evaluate_check
 from argus.trials import TrialRecord
 from argus.world_assertions import (
     CHECKS,
@@ -119,6 +119,7 @@ MCP_PROFILE = WorldProfile(
         if evidence["attack_delivered"]
         else "the attack variable was not delivered to the agent"
     ),
+    requires_mcp_events=True,
 )
 PROFILES = {"agent_world": MCP_PROFILE, "a2a_world": A2A_PROFILE}
 OPTIONAL_CAPABILITIES = {"a2a_no_production_plaintext_secret": "production_tls_policy"}
@@ -153,8 +154,7 @@ def _assertions(probe, evidence: dict, response: str, *, phase: str | None = Non
                 check = profile_for(probe).checks.get(name)
                 if check is None:
                     raise Undecided(f"unknown world assertion {name!r}")
-                validate_observations(check, value, evidence, context=context)
-                passed, reason = check(value, evidence, response)
+                passed, reason = evaluate_check(check, value, evidence, response, context=context)
                 level = (
                     "warn"
                     if isinstance(value, dict) and value.get("level") == "warn"

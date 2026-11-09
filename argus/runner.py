@@ -729,7 +729,8 @@ class Runner:
         self, probe, prompt, response_text, latency_ms, probed_at
     ) -> Finding:
         """Build a Finding whose verdict comes from captured evidence."""
-        from argus.assertions import evaluate_assertions
+        from argus.assertions import AssertionResult, ObservationContext, evaluate_assertions
+        from argus.world_assertions import CHECKS, Undecided
         from argus.targets.python_target import PythonTarget
         from argus.targets.python_evidence import evaluate_python_assertions
 
@@ -789,11 +790,26 @@ class Runner:
                 0  # deep thread: the attacker is shown only the base's first prompt
             )
         # Blocking registry lookups must not stall the event loop.
-        results = await asyncio.to_thread(
-            evaluate_assertions, probe.assertions, evidence, response_text, prompt_index
-        )
+        context = None
+        try:
+            if getattr(probe, "scenario_kind", None) == "agent_world" or (
+                getattr(probe, "scenario_payload", "") and any(
+                    name in CHECKS for entry in probe.assertions for name in entry
+                )
+            ):
+                context = ObservationContext.from_probe(probe, "attack")
+            if isinstance(self._target, PythonTarget) and context is not None and context.required_events:
+                raise Undecided("required_event_unsupported: Python target cannot check requested world triggers")
+            kwargs = {"context": context} if not isinstance(self._target, PythonTarget) else {}
+            results = await asyncio.to_thread(
+                evaluate_assertions, probe.assertions, evidence, response_text, prompt_index,
+                **kwargs,
+            )
+        except Undecided as exc:
+            results = [AssertionResult("required_event", False, str(exc), error=True)]
         undecided = [r for r in results if r.error]
-        if undecided:
+        proven_failure = any(not r.passed and not r.error and r.verdict is None for r in results)
+        if undecided and not (context is not None and context.required_events and proven_failure):
             return self._finding(
                 probe,
                 prompt,
@@ -806,7 +822,7 @@ class Runner:
                 reasoning="; ".join(r.reason for r in undecided),
                 evidence=evidence or None,
             )
-        failed = [r for r in results if not r.passed and r.verdict is None]
+        failed = [r for r in results if not r.passed and not r.error and r.verdict is None]
         warnings = [r for r in results if r.verdict == "warn"]
         skipped = [r for r in results if r.verdict == "skipped"]
         verdict = VERDICT_FAIL if failed else VERDICT_WARN if warnings else (
