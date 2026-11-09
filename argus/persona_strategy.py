@@ -96,6 +96,7 @@ class PersonaStrategyProbe(IterativeProbe):
     strategy: Strategy = None  # type: ignore[assignment]
     max_rounds: int = DEFAULT_MAX_ROUNDS
     iterative: bool = True
+    closing_prompt: str | None = None
 
     # Populated from `base` in __post_init__ — never hand-authored.
     id: str = ""
@@ -120,6 +121,8 @@ class PersonaStrategyProbe(IterativeProbe):
     def __post_init__(self) -> None:
         if self.base is None or self.persona is None or self.strategy is None:
             raise ValueError("PersonaStrategyProbe requires base, persona and strategy")
+        if self.closing_prompt is None and self.base.prompts:
+            self.closing_prompt = self.base.prompts[0]
         # Inherit everything that determines how the finding is judged and reported.
         # This is why 167 probe YAMLs need no edits: rubric and all four standards
         # mappings come along, so SARIF/JUnit/HTML renderers are untouched.
@@ -164,7 +167,7 @@ class PersonaStrategyProbe(IterativeProbe):
         """The attack goal, expressed for the attacker LLM.
 
         Uses the base probe's first prompt as an intent exemplar rather than sending
-        it verbatim — deep mode's value is that the wire text differs every run.
+        it verbatim during adaptive rounds. The final round uses a static prompt.
         """
         exemplar = self.base.prompts[0] if self.base.prompts else ""
         return (
@@ -235,9 +238,15 @@ class PersonaStrategyProbe(IterativeProbe):
             "no quotation marks around the whole message."
         )
 
+    def is_closing_round(self, round_n: int) -> bool:
+        return (self.max_rounds >= 2 and bool(self.base.prompts)
+                and self.closing_prompt is not None and round_n == self.max_rounds - 1)
+
     async def next_prompt(self, ctx: IterationContext) -> str | None:
         if self.should_halt(ctx):
             return None
+        if self.is_closing_round(ctx.round_n):
+            return self.closing_prompt
         if ctx.round_n == 0:
             user_prompt = (
                 "This is turn 1. Open the conversation. It must look innocuous and must "
@@ -285,7 +294,8 @@ def build_deep_probes(
 ) -> list[PersonaStrategyProbe]:
     """Sample `deep_pairs` (persona, strategy) threads for one base probe.
 
-    Seeded from the run id: replaying the same run reproduces its pairings, so a
+    Seeded from the run id: replaying the same run reproduces its pairings and
+    closing prompts. Closing choices are drawn after sampling the pairings, so a
     report stays explicable after the fact, while a new run draws new ones — the
     anti-caching property that motivates deep mode.
     """
@@ -295,6 +305,9 @@ def build_deep_probes(
     rng = random.Random(f"{seed}:{base.id}")
     chosen = rng.sample(candidates, min(deep_pairs, len(candidates)))
     return [
-        PersonaStrategyProbe(base=base, persona=p, strategy=s, max_rounds=max_rounds)
+        PersonaStrategyProbe(
+            base=base, persona=p, strategy=s, max_rounds=max_rounds,
+            closing_prompt=base.prompts[rng.randrange(len(base.prompts))] if base.prompts else None,
+        )
         for p, s in chosen
     ]

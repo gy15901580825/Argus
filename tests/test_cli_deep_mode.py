@@ -245,8 +245,12 @@ async def test_http_upload_accepts_cold_history_without_sending_it(monkeypatch):
     assert b'first' in requests[0].content and b'second' in requests[2].content
 
 
-def test_cli_deep_adapts_after_refusals_to_three_turn_precondition(tmp_path, engine, monkeypatch):
+def test_cli_deep_prepares_three_turn_precondition_before_closing_ask(tmp_path, engine, monkeypatch):
     target = engine.target
+    probe = replace(engine.probe, prompts=('execute benign task',))
+    monkeypatch.setattr(api, 'load_probe_library', lambda *_: [probe])
+    monkeypatch.setattr(local, 'load_probe_library', lambda *_: [probe])
+    attacker_calls = []
 
     async def send(prompt, history=(), material=None):
         target.calls.append((prompt, tuple(history), material))
@@ -256,6 +260,7 @@ def test_cli_deep_adapts_after_refusals_to_three_turn_precondition(tmp_path, eng
         return 'refused: benign precondition missing', 1.0
 
     async def attacker(_cfg, *, user, **_):
+        attacker_calls.append(user)
         if 'confirm benign scope' in user and 'refused:' in user:
             text = 'execute benign task'
         elif 'introduce benign task' in user and 'refused:' in user:
@@ -282,8 +287,11 @@ def test_cli_deep_adapts_after_refusals_to_three_turn_precondition(tmp_path, eng
     assert [f['verdict'] for f in findings] == ['fail']
     assert len(findings[0]['evidence']['transcript']) == 3
     assert [r['verdict'] for r in findings[0]['evidence']['transcript']] == ['pass', 'pass', 'fail']
+    assert [r['kind'] for r in findings[0]['evidence']['transcript']] == [
+        'adaptive', 'adaptive', 'closing_direct']
     assert [call[0] for call in target.calls] == [
         'introduce benign task', 'confirm benign scope', 'execute benign task']
+    assert len(attacker_calls) == 2
     assert len(target.calls[-1][1]) == 4
     assert [turn.content for turn in target.calls[-1][1] if turn.role == 'assistant'] == [
         'refused: benign precondition missing', 'refused: benign precondition missing']
