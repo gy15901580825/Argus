@@ -612,3 +612,13 @@ async def test_requested_trigger_without_matching_check_is_error(probe_id, entry
         finding = await run_world(SingleWorldTarget(world_evidence(probe_id)), probe, tmp_path)
         assert finding.verdict == "error"
         assert "required_event_unsupported" in finding.reasoning
+
+
+@pytest.mark.parametrize("probe_id", PROBE_IDS)
+async def test_unphased_payload_world_requires_trigger_support_without_kind(probe_id, tmp_path):
+    probe = replace(shipped_probe(probe_id), scenario_kind=None, scenario_control="",
+                    decision_point=(), sessions=(), prompts=("Complete the task",),
+                    assertions=({"max_tool_calls": 5},))
+    finding = await run_world(SingleWorldTarget(world_evidence(probe_id)), probe, tmp_path)
+    assert finding.verdict == "error"
+    assert "required_event_unsupported" in finding.reasoning

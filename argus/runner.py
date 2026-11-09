@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import inspect
+import json
 import logging
 import re
 from dataclasses import dataclass, field, replace
@@ -792,7 +793,12 @@ class Runner:
         # Blocking registry lookups must not stall the event loop.
         context = None
         try:
-            if getattr(probe, "scenario_kind", None) == "agent_world" or (
+            payload = json.loads(getattr(probe, "scenario_payload", ""))
+        except (TypeError, ValueError):
+            payload = None
+        stages_world = isinstance(payload, dict) and payload.get("scenario") == "agent_world"
+        try:
+            if stages_world or getattr(probe, "scenario_kind", None) == "agent_world" or (
                 getattr(probe, "scenario_payload", "") and any(
                     name in CHECKS for entry in probe.assertions for name in entry
                 )
