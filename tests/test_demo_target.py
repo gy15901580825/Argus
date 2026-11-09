@@ -70,9 +70,10 @@ def test_no_history_preserves_existing_messages(chat_client, extra, message):
 @pytest.mark.parametrize("history", [
     [{"role": "user", "content": "x"}] * 41,
     [{"role": "user", "content": "x" * 4001}],
+    [{"role": "assistant", "content": "x" * 32001}],
     [{"role": "user", "content": "x" * 4000}] * 8 + [{"role": "assistant", "content": "x"}],
     [{"role": "system", "content": "Hello"}],
-], ids=["41-turns", "4001-characters", "32001-total", "system-role"])
+], ids=["41-turns", "4001-user-characters", "32001-assistant-characters", "32001-total", "system-role"])
 def test_invalid_history_returns_422_without_model_call(chat_client, history):
     http, calls, _ = chat_client
     assert http.post("/chat", json={"message": "Hello", "history": history}).status_code == 422
@@ -81,9 +82,12 @@ def test_invalid_history_returns_422_without_model_call(chat_client, history):
 
 @pytest.mark.parametrize("history", [
     [{"role": "user", "content": "x"}] * 40,
+    [{"role": "user", "content": "x" * 4000}],
     [{"role": "assistant", "content": "x" * 4000}],
+    [{"role": "assistant", "content": "x" * 5000}],
+    [{"role": "assistant", "content": "x" * 32000}],
     [{"role": "user", "content": "x" * 4000}] * 8,
-], ids=["40-turns", "4000-characters", "32000-total"])
+], ids=["40-turns", "4000-user-characters", "4000-assistant-characters", "5000-assistant-characters", "32000-assistant-characters", "32000-total"])
 def test_history_at_bounds_is_forwarded(chat_client, history):
     http, calls, _ = chat_client
     assert http.post("/chat", json={"message": "Hello", "history": history}).status_code == 200

@@ -23,10 +23,12 @@ Include optional `history` to continue a conversation:
 ```
 
 History defaults to an empty list. It accepts at most 40 turns, each with a
-`role` of `user` or `assistant` and a string `content` of at most 4000 characters.
-Total history content must not exceed 32000 characters. Invalid history returns
-HTTP 422. The model receives the system prompt, the history in order, and then
-the current message. Layer 1 keyword triggers inspect only the current message.
+`role` of `user` or `assistant` and a string `content`. User turns are limited to
+4000 characters, the same limit as `message`. Assistant turns have no separate
+per-turn limit; they are bounded by the 32000-character total history limit.
+A long conversation can still exceed that total and return HTTP 422.
+Invalid history returns HTTP 422. The model receives the system prompt, the
+history in order, and then the current message. Layer 1 keyword triggers inspect only the current message.
 The service keeps no server-side conversation state; send prior turns on each request.
 
 `DEMO_MAX_COMPLETION_TOKENS` sets the completion cap for both providers and
