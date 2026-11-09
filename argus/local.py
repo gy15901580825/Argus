@@ -170,8 +170,12 @@ async def run_local(
 ) -> AsyncIterator[dict]:
     """Yield events and finding dicts, then one {"type": "coverage", "coverage": dict, "summary": dict} event.
 
+    Deep runs begin with {"type": "estimate", "estimated_usd": float}.
     Before any finding: {"type": "judge", "judge": llm.describe(cfg), "record": llm.judge_record(cfg),
     "disclosure": llm.disclosure(cfg)} when a probe will be judged, then {"type": "warning", "message": str} events.
+
+    Deep execution emits {"type": "deep_run", "deep": dict} with replay metadata
+    before its thread findings. These metadata events do not count as findings.
 
     skip_judged: without a judge key, report the probes that need the judge as
     skipped and run the rest, instead of refusing the run.

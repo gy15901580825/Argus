@@ -230,7 +230,7 @@ def test_local_run_reports_the_block_and_stops_incomplete(tmp_path, monkeypatch)
     ("static", "You are a red-team judge"),  # the fast judge call
     ("deep", "You are a red-team attacker"),  # the deep-mode attacker's first turn
 ])
-async def test_server_stream_ends_with_the_named_block(monkeypatch, tmp_path, mode, first_caller):
+async def test_server_stream_handles_the_named_block_by_mode(monkeypatch, tmp_path, mode, first_caller):
     probes = [
         Probe(id=f"probe_{i}", name=f"Probe {i}", target_class=(), attack_class=("prompt-injection",),
               severity="info", prompts=(f"{PROMPT_MARK} {i}",), mappings=ProbeMappings(), judge_model=DEPLOYMENT,
@@ -246,11 +246,14 @@ async def test_server_stream_ends_with_the_named_block(monkeypatch, tmp_path, mo
     monkeypatch.setitem(cost_meter._PRICES_PER_M_TOKENS, DEPLOYMENT, {"input": 0.0, "output": 0.0})
     monkeypatch.setattr(api, "_COST_METER", CostMeter(daily_cap_usd=100, per_run_cap_usd=1))
 
+    target_calls = []
+
     class Target:
         compatible_classes = frozenset()
         supports_history = False
 
         async def send_prompt(self, prompt, **kwargs):
+            target_calls.append(prompt)
             return "The target answered.", 0.0
 
         async def aclose(self):
@@ -273,15 +276,43 @@ async def test_server_stream_ends_with_the_named_block(monkeypatch, tmp_path, mo
         response = await client.post("/redteam/run", json=body)
     assert response.status_code == 200, response.text
     blocks = response.text.strip().split("\n\n")
-    assert blocks[-1].startswith("event: error\ndata: ")
-    error = json.loads(blocks[-1].split("data: ", 1)[1])
-    assert error["type"] == "JudgeBlockedError"
-    assert error["judge_blocked"] == {"provider": "azure", "model": DEPLOYMENT, "categories": ["jailbreak"],
-                                      "fallback": "off"}
     assert PROMPT_MARK not in response.text
     events = [json.loads(b.split("data: ", 1)[1]) for b in blocks if "data: " in b]
-    assert [e for e in events if "verdict" in e] == []
-    assert len(systems) == 1 and systems[0].startswith(first_caller)
+    findings = [e for e in events if "verdict" in e]
+    expected_block = {"provider": "azure", "model": DEPLOYMENT, "categories": ["jailbreak"],
+                      "fallback": "off"}
+    if mode == "static":
+        assert blocks[-1].startswith("event: error\ndata: ")
+        error = json.loads(blocks[-1].split("data: ", 1)[1])
+        assert error["type"] == "JudgeBlockedError"
+        assert error["judge_blocked"] == expected_block
+        assert findings == []
+        assert len(systems) == 1 and systems[0].startswith(first_caller)
+        assert target_calls == [probes[0].prompts[0]]
+    else:
+        assert blocks[-1] == "event: end\ndata: {}"
+        assert all(not block.startswith("event: error\n") for block in blocks)
+        metadata = [e for e in events if e.get("type") == "deep_run"]
+        assert len(metadata) == 1
+        planned = metadata[0]["deep"]["threads"]
+        assert len(planned) == len(findings) == len(probes)
+        assert [f["probe_id"] for f in findings] == [t["thread_id"] for t in planned]
+        for finding, thread in zip(findings, planned):
+            assert finding["verdict"] == "error"
+            assert finding["attack_prompt"] == finding["target_response"] == ""
+            evidence = finding["evidence"]
+            assert evidence["thread_id"] == thread["thread_id"]
+            assert evidence["persona"] == thread["persona"]
+            assert evidence["strategy"] == thread["strategy"]
+            assert evidence["stop_reason"] == "attacker_blocked"
+            assert evidence["rounds_run"] == 0 and evidence["transcript"] == []
+            assert evidence["history"] is False
+            assert evidence["attacker_blocked"] == expected_block
+            assert "JudgeBlockedError:" in finding["reasoning"]
+            assert DEPLOYMENT in finding["reasoning"] and "jailbreak" in finding["reasoning"]
+        assert len(systems) == len(planned)
+        assert all(system.startswith(first_caller) for system in systems)
+        assert target_calls == []
     assert fallback_calls == []
 
 

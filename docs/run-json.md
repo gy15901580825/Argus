@@ -38,17 +38,63 @@ The top-level keys always appear in this order. `incomplete_reason`, `notes`, `j
 
 ### Deep run metadata
 
-`deep` contains `seed`, `deep_pairs`, `max_rounds`, `threads` and
-`static_material_probe_ids`. Each thread records `thread_id`, `base_probe_id`,
+`deep` contains `seed`, `deep_pairs`, `max_rounds`, `threads`, `history` and
+`static_material_probe_ids`. `history` states whether the target can retain
+conversation turns. Each thread records `thread_id`, `base_probe_id`,
 `persona` and `strategy`. The seed is generated once when omitted; an explicit
 empty string is valid. Reuse it with the same selected probes and library to
 reproduce pair selection. Model replies can still differ.
 
 `threads` records the selected plan, not proof that every thread ran or reached
-its round limit. Findings remain per round. Indirect probes with a material
-channel run statically and are listed in `static_material_probe_ids`. Static
+its round limit. Each actual deep thread emits one finding. Indirect probes
+with a material channel run statically and are listed in `static_material_probe_ids`. Static
 runs omit `deep`. Metadata events do not count as findings or coverage. The
 schema remains `argus.run/1` under its additive optional-field policy.
+
+### Deep thread evidence
+
+Each deep finding carries `evidence.transcript`, an ordered list of attempted
+rounds. A round records `attack_prompt` as sent, `target_response`, `verdict`,
+`severity` and `reasoning`. `evidence.thread_id`, `persona` and `strategy`
+identify the pairing. `rounds_run` equals the transcript length. `history` is
+false for a stateless target, whose rounds are independent cold messages.
+The attacker still receives prior replies when the target keeps no history.
+
+The top-level `attack_prompt`, `target_response` and judge attribution come
+from the representative worst round; the transcript retains every round.
+`target_latency_ms` is the sum of recorded latency across attempted rounds.
+
+`stop_reason` determines whether the thread completed:
+
+| Stop reason | Final verdict |
+|---|---|
+| `fail` | `fail`, after the first failed round. |
+| `max_rounds` | `warn` if any exercised round warned; `pass` only when at least one round was exercised and every exercised round passed. |
+| `attacker_stopped`, `attacker_blocked`, `send_error`, `blank_reply`, `judge_unusable` | `error`. Earlier passes do not make an unfinished thread safe. |
+| `not_exercised` | `error`, when no assertion-backed round reached the testbed or carried the required canary by the round limit. |
+| `blocked_by_target` | `blocked_by_target`. Target blocks do not count toward the unreachable breaker. |
+| `not_started` | `skipped` for incompatible or inapplicable threads, or `error` for setup trouble; no round ran. |
+| `collect_evidence`, `post_round` | `error` after an evidence or post-round step failed, unless a judged round proved `fail`. The transcript is retained and `evidence_error` records the exception. |
+| `cost` | `aborted_cost`. Completed and interrupted send rounds remain recorded. |
+
+A failed send counts as an attempted round with its prompt and an empty reply.
+An attacker that stops or is blocked before sending adds no round. A thread
+that never starts after a cost cap has an empty transcript and `rounds_run: 0`.
+An incompatible thread remains explicitly `skipped`, with `not_started` and an empty transcript.
+Empty, whitespace-only and null attacker prompts stop as `attacker_stopped`
+without a target or judge call. Assertion-backed rounds that do not reach the
+testbed or omit the required canary have transcript verdict `not_exercised`.
+They remain in the transcript and the attacker continues; later contact cannot
+relabel an earlier unexercised round as a pass. Exercised rounds decide the
+thread verdict. A transport run stop ends the whole run and retains its cleanup report.
+A failure proven by assertions remains `fail` even when the reply is blank.
+
+`attacker_blocked` reuses the provider content-filter `JudgeBlockedError` path
+at the attacker call. A filter refusal while judging a target reply instead
+ends with `judge_unusable`. Captured target evidence stays beside the thread
+metadata. Transcript prompts, replies and reasoning use the same registered
+secret masking as the top-level fields in every report format. Structural
+thread fields and round verdicts remain readable even for short secret values.
 
 ### Target cleanup
 
@@ -177,7 +223,7 @@ A target spec can reference environment variables as `$VAR` or `${VAR}` in any s
 
 This rule does not know which variables are secret. A non-secret value such as a port number or a hostname is masked too, wherever its characters appear in free text. This over-redaction is deliberate. These fields are always written as the engine produced them, never masked:
 
-- run: `schema_version`, `argus_version`, `id`, `status`, `started_at`, `finished_at`, `coverage`, `summary` and `target_spec.kind`
+- run: `schema_version`, `argus_version`, `id`, `status`, `started_at`, `finished_at`, `coverage`, `summary`, the deep replay metadata block and `target_spec.kind`
 - each finding: `id`, `probe_id`, `verdict`, `severity`, `probed_at`, `created_at`, `confidence`, `target_latency_ms`, `atlas_id`, `owasp_id`, `owasp_agentic`, `nist_id`, `eu_ai_act_id`, `judge_model`, `escalated_model`, `remediation` and `remediation_actions`
 - each `events` entry: `event_id`, `parent_event_ids`, `ts`, `operation`, `basis`, `source`, `atlas_technique` and `seq`
 

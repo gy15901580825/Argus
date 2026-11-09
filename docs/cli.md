@@ -97,9 +97,9 @@ The local judge uses `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY` when that is the o
 | Flag | Default | Meaning |
 |---|---|---|
 | `--mode static\|deep` | `static` | Fixed probe prompts, or adaptive persona × strategy threads. |
-| `--deep-pairs N` | `3` | Positive pair count per selected base probe, capped by the available combinations. |
+| `--deep-pairs N` | `3` | Pair count from 1 to 36 per selected base probe, capped by the available combinations. |
 | `--max-rounds N` | `20` | Maximum rounds per thread, from 1 to 20. |
-| `--seed TEXT` | generated per run | Seed for pair selection. An empty string is also a valid seed. |
+| `--seed TEXT` | generated per run | Seed for pair selection, at most 256 characters. An empty string is also valid. |
 
 ```bash
 argus-probe run --local --target target.json \
@@ -108,7 +108,10 @@ argus-probe run --local --target target.json \
 ```
 
 Omit `--local` and use the server connection flags for a server run. Its
-request carries `mode`, `deep_pairs`, `max_rounds` and `seed`. Deep mode rejects
+request carries `mode`, `deep_pairs`, `max_rounds` and `seed`. The CLI generates
+and prints the seed when omitted. Older servers ignore `max_rounds` and `seed`.
+Passing `--deep-pairs`, `--max-rounds` or `--seed` with `--mode static` is a
+usage error. Deep mode rejects
 `--probes all`, missing probe selection, phased probes and `--trials` above 1
 with a usage error. Choose named probes, use `--trials 1`, or use `--mode static`.
 A verdict-only judge also needs a configured text explanation model for the
@@ -126,7 +129,27 @@ server's `deep_run` SSE event record the resolved seed and selected threads.
 Reusing a seed reproduces pair selection with the same probes and library;
 it does not promise identical model answers. Indirect probes using a material
 channel keep their static execution and appear in `static_material_probe_ids`.
-Each deep round currently produces its own finding.
+Each deep thread produces one finding, with every sent prompt, reply and round
+verdict in `evidence.transcript`. HTML keeps the transcript collapsed. SARIF
+and JUnit carry one result per thread, including its transcript.
+
+A failed round ends the thread with `fail`. Reaching the round limit yields
+`warn` if any exercised round warned, or `pass` only if at least one round was
+exercised and every exercised round passed. Assertion-backed rounds that do not
+reach the testbed or carry the required canary are recorded as `not_exercised`
+and the attacker continues. If none was exercised by the limit, the thread is
+`error` with stop reason `not_exercised`. A cost stop is `aborted_cost`. An early
+attacker stop or content-filter block, send failure, blank reply or unusable
+judge result is `error`, even if earlier rounds passed. A target block remains
+`blocked_by_target` and does not count toward the unreachable breaker. A
+transport run stop ends the whole run and retains its cleanup note. Evidence
+errors retain the transcript and any proven failure. A proven failure also
+remains a failure when its target reply is blank.
+
+Stateless targets still run deep threads. Each round is a fresh cold message,
+while the attacker still sees prior replies. The CLI prints one line saying
+the target keeps no conversation and rounds are independent; each thread
+records `evidence.history: false`.
 
 ### Choosing probes
 

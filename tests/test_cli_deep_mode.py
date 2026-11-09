@@ -101,8 +101,9 @@ def test_local_cli_runs_deep_flags_and_records_run_metadata(tmp_path, engine):
     assert len(record['deep']['threads']) == 2
     assert all(t['base_probe_id'] == 'deep_fixture' and t['thread_id'] ==
                f"deep_fixture::{t['persona']}::{t['strategy']}" for t in record['deep']['threads'])
-    assert len(record['findings']) == 6
-    assert record['summary']['total'] == 6
+    assert len(record['findings']) == 2
+    assert record['summary']['total'] == 2
+    assert all(len(f['evidence']['transcript']) == 3 for f in record['findings'])
     assert 'Estimated' in result.output
     assert result.output.index('Estimated') < result.output.index('pass')
 
@@ -278,9 +279,104 @@ def test_cli_deep_adapts_after_refusals_to_three_turn_precondition(tmp_path, eng
         '--mode', 'deep', '--deep-pairs', '1', '--max-rounds', '3', '--seed', 'adaptivity']))
     assert deep.exit_code == 0, deep.output
     findings = json.loads((tmp_path / 'run.json').read_text())['findings']
-    assert [f['verdict'] for f in findings] == ['pass', 'pass', 'fail']
+    assert [f['verdict'] for f in findings] == ['fail']
+    assert len(findings[0]['evidence']['transcript']) == 3
+    assert [r['verdict'] for r in findings[0]['evidence']['transcript']] == ['pass', 'pass', 'fail']
     assert [call[0] for call in target.calls] == [
         'introduce benign task', 'confirm benign scope', 'execute benign task']
     assert len(target.calls[-1][1]) == 4
     assert [turn.content for turn in target.calls[-1][1] if turn.role == 'assistant'] == [
         'refused: benign precondition missing', 'refused: benign precondition missing']
+
+
+def test_local_stateless_deep_prints_one_independent_rounds_note(tmp_path, engine):
+    engine.target.supports_history = False
+    result = CliRunner().invoke(main, arguments(tmp_path, extra=[
+        '--mode', 'deep', '--deep-pairs', '2', '--max-rounds', '3', '--seed', 'repeat']))
+    assert result.exit_code == 0, result.output
+    assert result.output.count('target keeps no conversation') == 1
+    assert 'rounds are independent' in result.output
+    record = json.loads((tmp_path / 'run.json').read_text())
+    assert len(record['findings']) == 2
+    assert all(f['evidence']['history'] is False for f in record['findings'])
+    assert all(not call[1] for call in engine.target.calls)
+
+
+def test_server_stateless_deep_prints_one_independent_rounds_note(tmp_path, engine, monkeypatch):
+    monkeypatch.setattr(api_client, 'post_run', lambda *a, **k: {'run_id': 'run-1'})
+    finding = {'probe_id': 'deep_fixture::persona::strategy', 'verdict': 'pass', 'severity': 'info',
+               'evidence': {'history': False, 'thread_id': 'deep_fixture::persona::strategy',
+                            'persona': 'persona', 'strategy': 'strategy', 'transcript': []}}
+    monkeypatch.setattr(api_client, 'poll_until_complete', lambda *a, **k: {
+        'status': 'completed', 'findings': [finding, finding]})
+    monkeypatch.setattr(api_client, 'get_report', lambda *a, **k: 'report')
+    result = CliRunner().invoke(main, arguments(tmp_path, local_run=False, extra=['--mode', 'deep']))
+    assert result.exit_code == 0, result.output
+    assert result.output.count('target keeps no conversation') == 1
+    assert 'rounds are independent' in result.output
+
+
+def test_server_static_fallback_does_not_print_deep_rounds_note(tmp_path, engine, monkeypatch):
+    monkeypatch.setattr(api_client, 'post_run', lambda *a, **k: {'run_id': 'run-1'})
+    finding = {'probe_id': 'deep_fixture', 'verdict': 'pass', 'severity': 'info',
+               'evidence': {'history': False, 'thread_id': 'deep_fixture::persona::strategy',
+                            'persona': 'persona', 'strategy': 'strategy', 'transcript': []}}
+    monkeypatch.setattr(api_client, 'poll_until_complete', lambda *a, **k: {
+        'status': 'completed', 'findings': [finding]})
+    monkeypatch.setattr(api_client, 'get_report', lambda *a, **k: 'report')
+    result = CliRunner().invoke(main, arguments(tmp_path, local_run=False, extra=['--mode', 'deep']))
+    assert result.exit_code == 0, result.output
+    assert 'target keeps no conversation' not in result.output
+    assert 'rounds are independent' not in result.output
+
+
+@pytest.mark.parametrize('field,value', [('deep_pairs', 37), ('deep_pairs', 10**400), ('seed', 'x'*257)])
+@pytest.mark.parametrize('endpoint', ['/redteam/run/preflight', '/redteam/run'])
+def test_api_deep_limits_return_422(engine, field, value, endpoint):
+    app = FastAPI()
+    app.include_router(api.router)
+    response = TestClient(app).post(endpoint, json={'target': SPEC, 'mode': 'deep', 'probe_ids': ['deep_fixture'], field: value})
+    assert response.status_code == 422
+    assert field in response.text
+
+
+@pytest.mark.parametrize('flag,value', [('--deep-pairs', '37'), ('--seed', 'x'*257)])
+def test_cli_deep_limits_are_usage_errors(tmp_path, engine, flag, value):
+    result = CliRunner().invoke(main, arguments(tmp_path, extra=['--mode', 'deep', flag, value]))
+    assert result.exit_code == 2, result.output
+    assert flag in result.output
+    assert not engine.target.calls
+
+
+@pytest.mark.parametrize('flag,value', [('--deep-pairs', '3'), ('--max-rounds', '20'), ('--seed', 'x')])
+def test_static_rejects_explicit_deep_flags_even_at_default(tmp_path, engine, flag, value):
+    result = CliRunner().invoke(main, arguments(tmp_path, extra=['--mode', 'static', flag, value]))
+    assert result.exit_code == 2, result.output
+    assert flag in result.output and '--mode deep' in result.output
+    assert not engine.target.calls
+
+
+def test_server_cli_generates_and_echoes_replay_seed(tmp_path, engine, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(api_client, 'post_run', lambda *a, body: seen.update(body) or {'run_id': 'run-1'})
+    monkeypatch.setattr(api_client, 'poll_until_complete', lambda *a, **k: {'status': 'completed', 'findings': []})
+    monkeypatch.setattr(api_client, 'get_report', lambda *a, **k: 'report')
+    result = CliRunner().invoke(main, arguments(tmp_path, local_run=False, extra=['--mode', 'deep']))
+    assert result.exit_code == 0, result.output
+    assert isinstance(seen['seed'], str) and len(seen['seed']) == 32
+    assert seen['seed'] in result.output
+
+
+def test_deep_transport_stop_ends_run_and_keeps_cleanup(tmp_path, engine):
+    from argus_transport.runtime_v2 import TargetRunStopped
+    engine.target.send_prompt = AsyncMock(side_effect=[('first reply', 1), TargetRunStopped('credential_echo')])
+    engine.target.aclose = AsyncMock()
+    cleanup = {'complete': True, 'done': 1, 'open': [], 'stop_reason': 'credential_echo'}
+    engine.target.cleanup_report = lambda: cleanup
+    result = CliRunner().invoke(main, arguments(tmp_path, extra=['--mode', 'deep', '--deep-pairs', '10']))
+    assert result.exit_code == 1, result.output
+    assert 'Target stopped the run: credential_echo' in result.output
+    assert 'cleanup included' in result.output
+    assert engine.completion.await_count == engine.target.send_prompt.await_count == 2
+    engine.target.aclose.assert_awaited_once()
+    assert json.loads((tmp_path / 'run.json').read_text())['target_cleanup'] == cleanup

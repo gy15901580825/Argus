@@ -12,6 +12,7 @@ source_modules =
     argus.cost_meter
     argus.coverage
     argus.decider
+    argus.deep_thread
     argus.demo
     argus.dispatcher
     argus.email_alert

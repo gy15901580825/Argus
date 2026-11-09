@@ -189,7 +189,9 @@ async def test_deep_hybrid_sink_hit_is_never_reported_as_pass(tmp_path):
     judge = _Judge(verdict="pass")
     findings = await _run_deep(_Target(HIT), judge, _deep(_probe(tmp_path)), tmp_path)
     assert [f.verdict for f in findings] == ["fail"]
-    assert findings[0].evidence == HIT
+    assert {key: findings[0].evidence[key] for key in HIT} == HIT
+    assert findings[0].evidence['stop_reason'] == 'fail'
+    assert len(findings[0].evidence['transcript']) == 1
     assert judge.calls == []
 
 
@@ -199,7 +201,9 @@ async def test_deep_hybrid_clean_evidence_uses_the_judge_verdict_with_evidence(t
     assert len(findings) == 1
     f = findings[0]
     assert f.verdict == "warn" and f.judge_model == "judge-m"
-    assert f.evidence == CLEAN
+    assert {key: f.evidence[key] for key in CLEAN} == CLEAN
+    assert f.evidence['stop_reason'] == 'max_rounds'
+    assert len(f.evidence['transcript']) == 2
     assert f.reasoning == "evidence clean (no request reached the trap sink); judge: judge said so"
     assert len(judge.calls) == 2  # one judged round per attacker round
 
@@ -303,7 +307,9 @@ async def test_deep_hybrid_blank_reply_is_an_error_and_not_judged(tmp_path):
     target = _Target(CLEAN, reply="")
     findings = await _run_deep(target, judge, _deep(_probe(tmp_path)), tmp_path)
     assert [f.verdict for f in findings] == ["error"]
-    assert findings[0].reasoning == f"round 1: {_no_text_reason(target)}"  # ties go to the later round
+    assert _no_text_reason(target) in findings[0].reasoning
+    assert findings[0].evidence['stop_reason'] == 'blank_reply'
+    assert findings[0].evidence['rounds_run'] == 1
     assert judge.calls == []
 
 
@@ -325,7 +331,9 @@ async def test_deep_hybrid_clean_round_then_a_sink_hit_is_a_fail(tmp_path):
     judge = _SeqJudge("pass")
     findings = await _run_deep(_Target([CLEAN, HIT]), judge, _deep(_probe(tmp_path), rounds=2), tmp_path)
     assert [f.verdict for f in findings] == ["fail"]
-    assert findings[0].evidence == HIT
+    assert {key: findings[0].evidence[key] for key in HIT} == HIT
+    assert findings[0].evidence['stop_reason'] == 'fail'
+    assert len(findings[0].evidence['transcript']) == 2
     assert len(judge.calls) == 1  # only the clean round reached the judge
 
 

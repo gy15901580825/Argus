@@ -157,6 +157,8 @@ def _run_and_render(
                     continue
                 if event.get("type") == "deep_run":
                     deep = event["deep"]
+                    if deep.get("history") is False and deep.get("threads"):
+                        click.echo("The target keeps no conversation, so deep rounds are independent.")
                     continue
                 if event.get("type") == "target_cleanup":
                     target_cleanup = event["target_cleanup"]

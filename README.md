@@ -199,6 +199,9 @@ argus-probe run --local --target target.json \
 The default limits are three pairs per base probe and 20 rounds per thread.
 The default cost cap is $5 for deep runs and $0.50 for static runs. Deep mode
 requires named probes and `--trials 1`; phased probes require static mode.
+Each thread produces one finding with its full transcript and stop reason.
+Only a thread that reaches its round limit with every round passing is a pass.
+A stateless target still runs, with independent cold rounds and a console note.
 The [CLI guide](docs/cli.md#adaptive-deep-runs) explains estimates and replay.
 
 ## In the engine, not yet exposed
