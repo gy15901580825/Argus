@@ -385,7 +385,7 @@ def test_version_one_vocabulary_and_assertion_coverage():
     original = assertions._CHECKS['max_tool_calls'].observation_requirements
     assert original.fields == (('tool_calls', list),)
     assert original.records == ()
-    assert not hasattr(assertions._CHECKS['no_action_after_denial'], 'observation_requirements')
+    assertions.validate_observations(assertions._CHECKS['no_action_after_denial'], True, {})
 
 
 def test_shared_observation_metadata_nullable_records_and_items():
