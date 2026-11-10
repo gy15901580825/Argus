@@ -5,14 +5,14 @@ jobs:
   released-client:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         persist-credentials: false
     - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
       with:
         python-version: '3.11'
     - name: Check out the action
-      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         persist-credentials: false
         repository: gy15901580825/argus-probe-action
@@ -36,7 +36,7 @@ jobs:
         PYVERSION
         VERSION=$(python -c "import yaml; print(yaml.safe_load(open('.argus-probe-action/action.yml'))['inputs']['argus-version']['default'])")
         git ls-remote --exit-code --tags "https://github.com/$REPOSITORY" "refs/tags/v$VERSION" || { echo "release tag v$VERSION not found"; exit 1; }
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         persist-credentials: false
         ref: v${{ steps.version.outputs.version }}
@@ -96,7 +96,7 @@ jobs:
   pr-source:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         persist-credentials: false
     - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
@@ -116,7 +116,7 @@ jobs:
           curl -sf "http://127.0.0.1:$port/docs" > /dev/null
         done
     - name: Check out the action
-      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         persist-credentials: false
         repository: gy15901580825/argus-probe-action
