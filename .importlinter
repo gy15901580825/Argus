@@ -18,6 +18,7 @@ source_modules =
     argus.email_alert
     argus.events
     argus.guardrails
+    argus.input_budget
     argus.iterative
     argus.iterative_gcg
     argus.iterative_pair

@@ -7,6 +7,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
+from argus.input_budget import InputLimits
+
 
 @dataclass(frozen=True)
 class KindInfo:
@@ -89,6 +91,7 @@ class Target(ABC):
     # from this set, emitting verdict=skipped. Until T7 lands, this field is
     # advisory metadata only.
     compatible_classes: ClassVar[frozenset[str]] = frozenset()
+    input_limits: InputLimits = InputLimits()
 
     # Whether this adapter can carry a conversation. Adapters that cannot must
     # still accept the `history` kwarg so the runner can call them uniformly;

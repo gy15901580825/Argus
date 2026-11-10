@@ -97,6 +97,9 @@ def check_target_spec(
             )
         info = registered[spec["kind"]]
     try:
+        from argus.input_budget import InputLimits
+
+        InputLimits.from_spec(spec)
         if not isinstance(info.validate, _BuiltinValidation):
             _check_required(spec, info.required)
             _check_sandbox(spec, info.sandbox_reason)

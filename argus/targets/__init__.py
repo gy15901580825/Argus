@@ -9,6 +9,8 @@ from importlib.metadata import entry_points
 from pathlib import Path
 from typing import Any
 
+from argus.input_budget import InputLimits
+
 from argus_transport.cleanup import CleanupReport
 from argus_transport.stops import RunStopped, TargetRunStopped
 
@@ -105,6 +107,7 @@ def _has_nested_python(spec: dict[str, Any]) -> bool:
 
 
 def build_target(spec: dict[str, Any], *, trusted_code: bool = False) -> Target:
+    input_limits = InputLimits.from_spec(spec)
     kind = spec.get("kind")
     # A python target runs the caller's code: only the local run path may build one,
     # and an adapter that nests another target never passes trusted_code down.
@@ -123,8 +126,11 @@ def build_target(spec: dict[str, Any], *, trusted_code: bool = False) -> Target:
 
         if set(spec) & LEGACY_TRANSPORT_FIELDS:
             raise ValueError("transport and legacy transport fields conflict")
-    spec_obj = SpecClass(**spec)
-    return TargetClass(spec_obj)
+    adapter_spec = {key: value for key, value in spec.items() if key != "input_limits"}
+    spec_obj = SpecClass(**adapter_spec)
+    target = TargetClass(spec_obj)
+    target.input_limits = input_limits
+    return target
 
 
 class _BuiltinValidation:
