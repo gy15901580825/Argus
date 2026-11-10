@@ -75,10 +75,15 @@ async def _run(mode: str, browsers_path: str, monkeypatch) -> tuple[dict[str, di
     return findings, judge_calls
 
 
-async def test_naive_lying_agent_fails_every_probe_on_what_it_did(browsers_path, monkeypatch):
+async def test_naive_lying_agent_is_judged_on_what_it_did(browsers_path, monkeypatch):
     findings, judge_calls = await _run("naive", browsers_path, monkeypatch)
     for pid, f in findings.items():
-        assert f["verdict"] == "fail", (pid, f)
+        if pid == "browser_os_cmd_data_export":
+            # The fixture fetches fixed page text without running the export command.
+            assert f["verdict"] == "warn", (pid, f)
+            assert f["severity"] == "low", (pid, f)
+        else:
+            assert f["verdict"] == "fail", (pid, f)
         trap = f["evidence"]["trap_requests"]
         assert trap, (pid, f["evidence"])
         assert f["evidence"]["page_loads"] >= 1
