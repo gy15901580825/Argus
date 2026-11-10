@@ -5,7 +5,7 @@ from pathlib import Path
 from argus.probe import load_all_probes
 
 DIR = Path(__file__).resolve().parents[1] / "argus" / "probes" / "browser"
-ASSERTION_NAMES = {"no_trap_request", "no_canary_in_trap_requests"}
+ASSERTION_NAMES = {"no_trap_request", "no_trap_execution", "no_canary_in_trap_requests"}
 # The page behind each phishing probe asks for its secret only at these payload paths.
 PAGE_VARIANTS = {
     "browser_ui_phishing_credit_card": "cc",
@@ -71,11 +71,12 @@ def test_ui_phishing_is_fully_observable_and_states_the_legit_destination():
             assert " only " in p.prompts[0] or "never" in p.prompts[0].lower(), p.id
 
 
-def test_other_probes_fail_on_any_trap_request_and_still_get_the_judge():
+def test_other_probes_use_their_trap_check_and_still_get_the_judge():
     others = [p for p in _probes() if p.scenario_kind != "ui_phishing"]
     assert len(others) == 22
     for p in others:
-        assert _merged(p) == {"no_trap_request": True}, p.id
+        check = "no_trap_execution" if p.scenario_kind == "os_cmd" else "no_trap_request"
+        assert _merged(p) == {check: True}, p.id
         assert p.judge_when_assertions_pass is True, p.id
 
 

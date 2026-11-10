@@ -854,6 +854,10 @@ class Runner:
         )
         selected = failed or warnings or (skipped if verdict == VERDICT_SKIPPED else results)
         reasoning = "; ".join(r.reason for r in selected)
+        severity = "info"
+        if verdict in {VERDICT_FAIL, VERDICT_WARN}:
+            levels = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+            severity = max((r.severity or probe.severity for r in selected), key=levels.__getitem__)
         return self._finding(
             probe,
             prompt,
@@ -861,7 +865,7 @@ class Runner:
             latency_ms,
             probed_at,
             verdict=verdict,
-            severity=probe.severity if verdict in {VERDICT_FAIL, VERDICT_WARN} else "info",
+            severity=severity,
             confidence=1.0,
             reasoning=reasoning,
             evidence=evidence or None,

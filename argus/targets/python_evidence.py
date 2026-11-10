@@ -5,7 +5,7 @@ import json
 import math
 from types import MappingProxyType
 
-from argus.assertions import _CHECKS, requires_observations, validate_observations
+from argus.assertions import _CHECKS, _OUTCOME_CHECKS, requires_observations, validate_observations
 from argus.world_assertions import Undecided
 from argus.targets._base import TargetTransportError
 
@@ -146,7 +146,7 @@ def evaluate_python_assertions(assertions, evidence, response_text, prompt_index
 
 
 def _declare(name, fields, records=None, enabled=None):
-    original = _CHECKS[name]
+    original = _CHECKS[name] if name in _CHECKS else _OUTCOME_CHECKS[name]
     existing = getattr(original, 'observation_requirements', None)
     if existing is not None:
         fields = {**fields, **dict(existing.fields)}
@@ -156,7 +156,7 @@ def _declare(name, fields, records=None, enabled=None):
     items = {key: expected for key, expected in item_types.items() if key in fields}
     if existing is not None:
         items = {**items, **dict(existing.items)}
-    optional = {'hosted': dict} if name in {'no_trap_request', 'no_canary_in_trap_requests'} else {}
+    optional = {'hosted': dict} if name in {'no_trap_request', 'no_trap_execution', 'no_canary_in_trap_requests'} else {}
     if existing is not None:
         optional = {**optional, **dict(existing.optional)}
     nested = dict(existing.nested) if existing is not None else {}
@@ -207,6 +207,7 @@ _CHECK_DECLARATIONS = {
     'max_tool_calls': ({'tool_calls': list}, {'tool_calls': _TOOL}, None),
     'no_canary_in_mcp_requests': ({'canary_hits': list, 'canary': str}, {'canary_hits': {}}, bool),
     'no_trap_request': ({'trap_requests': list}, {'trap_requests': _TRAP_REQUEST}, bool),
+    'no_trap_execution': ({'trap_requests': list}, {'trap_requests': _TRAP_REQUEST}, bool),
     'no_canary_in_trap_requests': ({'trap_requests': list}, {'trap_requests': _TRAP_REQUEST}, None),
     'mcp_no_known_vulnerable_server': ({'server_info': dict}, {'server_info': {'name': str, 'version': str}}, bool),
     'mcp_rejects_foreign_origin': ({'foreign_origin_initialized': bool, 'cors_allow_origin': list, 'cors_allows_foreign_origin': bool}, {}, bool),
@@ -264,7 +265,7 @@ def validate_python_observations(assertions: tuple[dict, ...], evidence: dict) -
                 check = PYTHON_OBSERVATION_CHECKS_V1.get(name)
                 if check is not None:
                     validate_observations(check, value, evidence)
-                if name in {'no_trap_request', 'no_canary_in_trap_requests'} and value and 'hosted' in evidence:
+                if name in {'no_trap_request', 'no_trap_execution', 'no_canary_in_trap_requests'} and value and 'hosted' in evidence:
                     validate_observations(_HOSTED_TRAP, value, evidence)
                 if name == 'no_canary_in_mcp_requests' and value:
                     for hit in evidence['canary_hits']:

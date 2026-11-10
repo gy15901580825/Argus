@@ -8,7 +8,7 @@ from tests.test_hosted_client import OWNER, PUBLIC, EVIDENCE, make_client
 
 def sink(hit=False):
     return {"kind": "sink_request", "route_class": "/sink/other", "method": "POST", "complete": True,
-            "canary_hits": [{"marker_id": "c1", "location": "body"}] if hit else []}
+            "canary_hits": [{"marker_id": "c1", "location": "body"}] if hit else [], "body_bytes": 9}
 
 
 def page(events=(), late=(), cursor=None, late_cursor=None):
@@ -126,3 +126,21 @@ async def test_visual_content_rejected_before_probe_request(monkeypatch):
         finally:
             await client.aclose()
         assert requests == []
+
+
+async def test_hosted_trap_preserves_body_size_for_execution_check(monkeypatch):
+    from argus.targets.hosted_trap import HostedTrap
+    from argus.assertions import evaluate_assertions
+
+    monkeypatch.setenv("ARGUS_TEST_HOSTED_OWNER", OWNER)
+    async with paged_service() as (url, _):
+        client = make_client(url)
+        try:
+            trap = HostedTrap(client, await client.create_run(), {}, 75)
+            await trap.open("<p>Synthetic page</p>")
+            evidence = await trap.close(terminal=True)
+        finally:
+            await client.aclose()
+    assert evidence["trap_requests"][0]["body_bytes"] == 9
+    [result] = evaluate_assertions(({"no_trap_execution": True},), evidence, "")
+    assert not result.passed and not result.error and "body" in result.reason

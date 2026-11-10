@@ -36,7 +36,8 @@ def _make_scenario_server(scenario_kind: str, payload: str, *, scenario_options=
     def render() -> tuple[bytes | str, str]:
         return mod.render(payload.replace("{sink_url}", server.sink_url), **options)
 
-    server = ScenarioServer(render_fn=render, **bind)
+    sink_files_fn = (lambda: os_cmd.sink_files(server.sink_url)) if scenario_kind == "os_cmd" else None
+    server = ScenarioServer(render_fn=render, sink_files_fn=sink_files_fn, **bind)
     return server
 
 
