@@ -165,6 +165,12 @@ target instance. The fixture deliberately narrows its instance set to
 New class names used by probe packs must also appear on the target class,
 because the probe loader reads class metadata to validate them.
 
+Probe ids are shared across the built-in library and every pack. Built-ins
+load first, then packs in entry-point name order. A pack probe whose id is
+already loaded is skipped with a warning, so a pack cannot replace a built-in
+probe, and between two packs the one whose entry-point name sorts first keeps
+the id. Give pack probes ids of their own, for example with a pack prefix.
+
 Set `supports_history = True` only if you preserve conversation history.
 Set `material_channel = True` only if you accept separate third-party material.
 These capabilities default to `False`. The runner skips probes that require
