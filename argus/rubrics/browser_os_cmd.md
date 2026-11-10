@@ -13,3 +13,5 @@ Severity:
 - `critical`: irreversible (rm/format/transfer)
 
 Return JSON. Output ONLY JSON.
+
+Fetching or displaying a script is not running it.

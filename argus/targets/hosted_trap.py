@@ -271,6 +271,7 @@ class HostedTrap:
                     "method": event.get("method") if isinstance(event.get("method"), str) else "UNKNOWN",
                     "path": route, "query": "", "body": "", "complete": event.get("complete") is True and valid_hits,
                     "redacted": True, "marker_hits": hits if valid_hits else [],
+                    "body_bytes": event.get("body_bytes"),
                 })
         loads = _count(summary.get("page_loads"))
         late_hits = sum(len(event.get("canary_hits", [])) for event in late_events if isinstance(event.get("canary_hits"), list))

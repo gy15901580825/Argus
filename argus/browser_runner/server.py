@@ -43,8 +43,10 @@ class ScenarioServer:
         host: str = "127.0.0.1",
         port: int = 0,
         public_url: str | None = None,
+        sink_files_fn: Callable[[], dict[str, tuple[bytes, str]]] | None = None,
     ):
         self._render_fn = render_fn
+        self._sink_files_fn = sink_files_fn
         self._host = host
         self._port = port
         self._public_url = public_url
@@ -120,6 +122,11 @@ class ScenarioServer:
                     self._in_flight -= 1
                     if not self._in_flight:
                         self._idle.set()
+            if self._sink_files_fn is not None and request.method in {"GET", "HEAD"}:
+                artifact = self._sink_files_fn().get(request.path[len(prefix):])
+                if artifact is not None:
+                    body, content_type = artifact
+                    return web.Response(body=body, content_type=content_type)
             return web.Response(text="ok")
 
         app = web.Application()

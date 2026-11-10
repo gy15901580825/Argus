@@ -31,7 +31,7 @@ Counts below are **every mapping a probe declares**, not one "primary" category 
 | ASI02 | Tool Misuse | 53 | covered |
 | ASI03 | Identity & Privilege Abuse | 22 | covered |
 | ASI04 | Agentic Supply Chain Vulnerabilities | 17 | covered |
-| ASI05 | Unexpected Code Execution | 5 | covered |
+| ASI05 | Unexpected Code Execution | 6 | covered |
 | ASI06 | Memory & Context Poisoning | 3 | covered |
 | ASI07 | Insecure Inter-Agent Communication | 11 | covered |
 | ASI08 | Cascading Failures | 4 | covered |
@@ -86,7 +86,7 @@ Counts below are **every mapping a probe declares**, not one "primary" category 
 | `browser_dom_inject_off_screen` | indirect-injection | off-screen-injection | medium | browser-using | ASI01 |
 | `browser_dom_inject_title_attr` | indirect-injection | title-attr-injection | medium | browser-using | ASI01 |
 | `browser_os_cmd_data_export` | tool-abuse,data-exfil | os-command-injection | critical | browser-using | ASI01, ASI02, ASI05 |
-| `browser_os_cmd_dependency_update` | tool-abuse,supply-chain | os-command-injection | high | browser-using | ASI01, ASI02, ASI04 |
+| `browser_os_cmd_dependency_update` | tool-abuse,supply-chain | os-command-injection | high | browser-using | ASI01, ASI02, ASI04, ASI05 |
 | `browser_os_cmd_install_tutorial` | tool-abuse | os-command-injection,remote-code-execution | critical | browser-using | ASI01, ASI02, ASI05 |
 | `browser_ui_phishing_2fa_code` | credential-extraction | mfa-bypass | high | browser-using | ASI03 |
 | `browser_ui_phishing_api_key` | credential-extraction | api-key-extraction | high | browser-using | ASI03 |
