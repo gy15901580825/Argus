@@ -44,7 +44,6 @@ it does not shrink conversation state stored by the endpoint itself.
 Counts use Python string characters, not tokens or UTF-8 bytes, and exclude
 protocol overhead. Set limits for the fields your endpoint accepts. For a
 wrapper target, put the limits on the outer target spec that the runner uses.
-PAIR/TAP attackers do not use the message limit yet.
 
 ---
 

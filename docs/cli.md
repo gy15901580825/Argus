@@ -139,8 +139,7 @@ remains in the report and attacker context. Each transcript row records any
 retry, cut or dropped history turns. Both fields are optional positive integers;
 without them, prompts and histories keep their existing behavior. See the
 [target spec cookbook](https://github.com/gy15901580825/Argus/blob/main/docs/onboarding/target-spec-cookbook.md#input-limits-shared-by-all-target-kinds)
-for validation and counting details. PAIR/TAP attackers do not use the message
-limit yet.
+for validation and counting details.
 
 The default per-run cap is $5 for deep mode and $0.50 for static mode. The
 estimate includes judge and attacker calls at the requested pair and round
