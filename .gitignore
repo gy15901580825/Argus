@@ -78,3 +78,6 @@ CLAUDE_NOTES.md
 **/playwright/.auth/
 storageState.json
 **/storageState.json
+
+# Local cache for reproducible browser font subsetting
+.font-cache/

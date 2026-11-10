@@ -170,10 +170,10 @@ _SCENARIOS = {
 }
 
 
-def render_hosted_scenario(scenario_kind: str, payload: str) -> str:
+def render_hosted_scenario(scenario_kind: str, payload: str, **options) -> str:
     if scenario_kind == "visual_injection":
         raise UnsupportedHostedScenario("visual_injection is unsupported with trap_mode=hosted")
-    content, _ = _SCENARIOS[scenario_kind].render(payload)
+    content, _ = _SCENARIOS[scenario_kind].render(payload, **options)
     if not isinstance(content, str):
         raise UnsupportedHostedScenario("hosted scenarios require HTML")
     return content

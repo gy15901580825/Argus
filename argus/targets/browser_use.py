@@ -352,6 +352,7 @@ class BrowserUseTarget(Target):
         # old prompt-as-payload behaviour.
         self._scenario_kind: str | None = None
         self._scenario_payload: str | None = None
+        self._scenario_options: dict = {}
         self._evidence: dict = {}
         # Canaries the probe checks for; every other recorded value is masked.
         self._canaries: tuple[str, ...] = ()
@@ -375,6 +376,7 @@ class BrowserUseTarget(Target):
         self._last_run_log = None
         self._probe_id = getattr(probe, "id", "synthetic-page")
         self._canaries = trap_canaries(getattr(probe, "assertions", None) or ())
+        self._scenario_options = dict(getattr(probe, "scenario_options", {}))
         payload = getattr(probe, "scenario_payload", None)
         kind = getattr(probe, "scenario_kind", None)
         # No scenario block: the attack is the prompt itself, so send it as the
@@ -414,6 +416,8 @@ class BrowserUseTarget(Target):
             "timeout_s": self.spec.timeout_s,
             "extra_context": dict(self.spec.extra_context),
         }
+        if self._scenario_options:
+            msg["scenario_options"] = self._scenario_options
         if self.spec.transport is not None:
             msg.pop("agent_url")
             msg.pop("timeout_s")
@@ -631,7 +635,7 @@ class BrowserUseTarget(Target):
         if self.spec.trap_mode == "hosted":
             from .hosted_trap import HostedClient, HostedTrap, HostedTrapError, render_hosted_scenario
 
-            html = render_hosted_scenario(msg["scenario_kind"], msg["payload"])
+            html = render_hosted_scenario(msg["scenario_kind"], msg["payload"], **msg.get("scenario_options", {}))
             values = tuple(dict.fromkeys(self._canaries))
             if len(values) > 32 or any(len(value.encode("utf-8")) > 512 for value in values):
                 raise HostedTrapError("hosted markers permit at most 32 values of at most 512 bytes")

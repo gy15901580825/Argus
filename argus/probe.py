@@ -8,8 +8,12 @@ from dataclasses import dataclass, field, replace
 from importlib.metadata import entry_points
 from pathlib import Path
 from typing import Iterator
+from collections.abc import Mapping
+from types import MappingProxyType
 
 import yaml
+
+from argus.browser_runner.scenarios._options import BROWSER_KINDS, validate_options
 
 from argus.world_assertions import DECISION_PREDICATES
 from argus.a2a.world import (
@@ -172,6 +176,11 @@ class Probe:
     # reply contains none of it shows no sign the attack reached the agent.
     contact_markers: tuple[str, ...] = ()
 
+    scenario_options: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "scenario_options", MappingProxyType(dict(self.scenario_options)))
+
     @property
     def is_phased(self) -> bool:
         return bool(self.scenario_control)
@@ -229,9 +238,17 @@ def load_probe(path: Path) -> Probe:
                     raise ValueError(f"invalid response_fields spec in {path}") from None
         scenario_kind = None
         scenario_payload = ""
+        scenario_options = {}
         if "scenario" in raw:
             scenario_kind = raw["scenario"].get("kind")
             scenario_payload = raw["scenario"].get("payload", "")
+            scenario_options = {k: v for k, v in raw["scenario"].items()
+                                if k not in {"kind", "payload", "control"}}
+            if scenario_kind in BROWSER_KINDS:
+                try:
+                    scenario_options = validate_options(scenario_kind, scenario_options)
+                except ValueError as exc:
+                    raise ValueError(f"{exc} in {path}") from exc
         if scenario_kind == "agent_world":
             try:
                 payload = json.loads(scenario_payload)
@@ -391,6 +408,7 @@ def load_probe(path: Path) -> Probe:
             ),
             scenario_kind=scenario_kind,
             scenario_payload=scenario_payload,
+            scenario_options=scenario_options,
             conversation=bool(raw.get("conversation", False)),
             assertions=tuple(raw.get("assertions", ()) or ()),
             requires_interaction=bool(raw.get("requires_interaction", True)),

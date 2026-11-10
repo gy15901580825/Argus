@@ -29,6 +29,7 @@ dependencies = [
     "aiohttp>=3.9,<4",
     # Renders the visual_injection trap image; without it the page falls back to HTML.
     "Pillow>=10",
+    "segno>=1.6.6,<1.7",
     # argus.server loads .env at import time.
     "python-dotenv>=1.0",
 ]
@@ -63,6 +64,7 @@ scan-mcp = ["mcp>=2.3,<3"]
 # `web_chat` targets and `argus-probe web-login`: Playwright drives Chromium; run `playwright install chromium` too.
 web = ["playwright>=1.49"]
 dev = [
+    "fonttools>=4.60,<5",
     "slowapi>=0.1.9,<1.0",
     "websockets>=12",
     "pytest>=8.3,<10",
@@ -88,6 +90,7 @@ include = ["argus*"]
 
 [tool.setuptools.package-data]
 "argus" = [
+    "browser_runner/scenarios/fonts/*",
     "probes/*.yaml",
     "probes/*/*.yaml",
     "rubrics/*.md",
