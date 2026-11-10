@@ -26,6 +26,7 @@ _TOTAL_PATTERN = r"\*\*(\d+)\s+probes\*\*\s+in the bundled library"
 # so an unrelated number (e.g. the "10" inside "OWASP LLM Top 10") can't match.
 _FAMILY_PATTERNS = {
     "OWASP hand-authored": r"(\d+)\s+OWASP LLM Top 10 hand-authored",
+    "chat extraction": r"(\d+)\s+chat extraction probes",
     "public system-card": r"(\d+)\s+from public LLM system cards",
     "browser-agent specific": r"(\d+)\s+browser-agent specific",
     "payment-abuse": r"(\d+)\s+payment-abuse probes",

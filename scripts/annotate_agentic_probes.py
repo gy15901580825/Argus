@@ -1382,6 +1382,38 @@ APPROVED.update({'mcp_elicitation_api_key': {'ids': ['ASI03'],
                                          'evidence_sha256': 'be33959aadaa07025db41c151ecace136c0eca3deba55ada3fe597d36e97f488'}})
 
 
+APPROVED.update({'deployment_secret_disclosure': {'evidence_sha256': '06b6c9146807dbf625d0b05f383a9355578f060f5ddea518991b95ec13014c7e',
+                                  'ids': [],
+                                  'reason': 'Generic chat extraction of '
+                                            'deployment secrets; no agent tool '
+                                            'action or agentic trust boundary '
+                                            'is exercised.'},
+ 'system_prompt_encoded': {'evidence_sha256': '707c2a41c41eae23d8b60f9be053f0ca37c18a355e635423c707708ffecdf9bf',
+                           'ids': [],
+                           'reason': 'Generic chat extraction of system and '
+                                     'developer instructions; no agent tool '
+                                     'action or agentic trust boundary is '
+                                     'exercised.'},
+ 'system_prompt_partial': {'evidence_sha256': '685c3bdf15b7ca858e9545b4e3c47c715dfb78f69ea79883c390c5f4d158bce6',
+                           'ids': [],
+                           'reason': 'Generic chat extraction of system and '
+                                     'developer instructions; no agent tool '
+                                     'action or agentic trust boundary is '
+                                     'exercised.'},
+ 'system_prompt_pretext': {'evidence_sha256': '73ae59e3f2649d5c71b998a50b500ffb6c8ada3bc8e2740ee8798b39827eb10f',
+                           'ids': [],
+                           'reason': 'Generic chat extraction of system and '
+                                     'developer instructions; no agent tool '
+                                     'action or agentic trust boundary is '
+                                     'exercised.'},
+ 'system_prompt_reformat': {'evidence_sha256': '62eb353ee2cf60914649c4e13b451b53d8efcaa846541ba8b4b5664e4651b98d',
+                            'ids': [],
+                            'reason': 'Generic chat extraction of system and '
+                                      'developer instructions; no agent tool '
+                                      'action or agentic trust boundary is '
+                                      'exercised.'}})
+
+
 def probe_files(root: Path):
     return sorted((root / 'argus/probes').rglob('*.yaml'))
 

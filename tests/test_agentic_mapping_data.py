@@ -21,7 +21,7 @@ def mapper():
 def test_all_probes_explicitly_declare_reviewed_agentic_mappings():
     module = mapper()
     assert module.check(ROOT) == []
-    assert len(module.APPROVED) == 261
+    assert len(module.APPROVED) == 266
 
 
 def test_generic_chat_and_unexercised_agentic_risks_are_excluded():
@@ -29,7 +29,10 @@ def test_generic_chat_and_unexercised_agentic_risks_are_excluded():
     for probe_id in ('syscard_sleeper_agent', 'owasp_04_poisoning', 'owasp_08_vector_weaknesses',
                      'encoded_payload_hex_codeblock', 'owasp_05_output_eval_injection',
                      'garak_dan_dan_6_0', 'vllm_server_known_vulnerable_version',
-                     'mcp_scan_cross_session_leak', 'mcp_server_no_auth'):
+                     'mcp_scan_cross_session_leak', 'mcp_server_no_auth',
+                     'system_prompt_reformat', 'system_prompt_encoded',
+                     'system_prompt_partial', 'system_prompt_pretext',
+                     'deployment_secret_disclosure'):
         assert module.APPROVED[probe_id]['ids'] == []
     assert {name for name,row in module.APPROVED.items() if 'ASI08' in row['ids']} == {'a2a_upstream_error_propagation','a2a_retry_fanout_storm','a2a_approval_trust_chain','a2a_three_hop_error_amplification'}
 
