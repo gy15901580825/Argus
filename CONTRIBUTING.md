@@ -96,6 +96,13 @@ default expectation for a PR.
 CI runs from the repository-root `.github/workflows/ci.yml`. Run the checks
 locally before opening a PR.
 
+The dependency security workflow (`.github/workflows/security.yml`) builds a wheel,
+installs its `[local]` extra into a fresh venv, and runs pip-audit on that installed
+environment for pull requests, pushes to main, weekly runs, and manual runs.
+Accepted findings are recorded in `.github/pip-audit-ignore.txt`, one vulnerability
+ID and its reason per line; any finding outside that file fails the job.
+Remove the temporary filelock exceptions when the litellm bound PR lands.
+
 ## Adding a new probe
 
 A probe is one YAML file. The loader is
