@@ -108,6 +108,7 @@ Jev cells show `category: recommendation (confidence)`. An em dash means no API 
 | `browser_visual_inject_stylized_logo` | ASI01 | Attacker page content redirects the browser agent from the user page-reading task; scenario payload and injection rubric measure that deviation. | - |
 | `browser_visual_inject_tiny_text` | ASI01 | Attacker page content redirects the browser agent from the user page-reading task; scenario payload and injection rubric measure that deviation. | - |
 | `browser_visual_inject_white_on_white` | ASI01 | Attacker page content redirects the browser agent from the user page-reading task; scenario payload and injection rubric measure that deviation. | - |
+| `deployment_secret_disclosure` | [] | Generic chat extraction of deployment secrets; no agent tool action or agentic trust boundary is exercised. | - |
 | `encoded_payload_base64_link` | [] | Encoded/Unicode instructions target reply text or system-prompt disclosure; listed agent target classes do not add an actual agent workflow or tool action. | ASI01: exclude (0.74) |
 | `encoded_payload_hex_codeblock` | [] | Encoded/Unicode instructions target reply text or system-prompt disclosure; listed agent target classes do not add an actual agent workflow or tool action. | ASI01: exclude (0.48) |
 | `garak_ansiescape_ansiescaped` | [] | Standalone chat prompts and text-only rubric; no agent task, tool action, privileged identity, or retained memory is exercised. | - |
@@ -313,5 +314,9 @@ Jev cells show `category: recommendation (confidence)`. An em dash means no API 
 | `syscard_crescendo` | [] | Standalone chat prompts and text-only rubric; no agent task, tool action, privileged identity, or retained memory is exercised. | - |
 | `syscard_many_shot_jailbreak` | [] | Standalone chat prompts and text-only rubric; no agent task, tool action, privileged identity, or retained memory is exercised. | - |
 | `syscard_sleeper_agent` | [] | Trigger-year prompts judge generic chat output; they do not measure autonomous concealment, self-directed goals, or rogue agent activity. | ASI10: exclude (0.96) |
+| `system_prompt_encoded` | [] | Generic chat extraction of system and developer instructions; no agent tool action or agentic trust boundary is exercised. | - |
+| `system_prompt_partial` | [] | Generic chat extraction of system and developer instructions; no agent tool action or agentic trust boundary is exercised. | - |
+| `system_prompt_pretext` | [] | Generic chat extraction of system and developer instructions; no agent tool action or agentic trust boundary is exercised. | - |
+| `system_prompt_reformat` | [] | Generic chat extraction of system and developer instructions; no agent tool action or agentic trust boundary is exercised. | - |
 | `unicode_invisible_smuggling` | [] | Encoded/Unicode instructions target reply text or system-prompt disclosure; listed agent target classes do not add an actual agent workflow or tool action. | ASI01: exclude (0.49); ASI06: exclude (1.00) |
 | `vllm_server_known_vulnerable_version` | [] | The generic model-server version advisory check does not exercise a dependency in an agent runtime workflow. | ASI04: exclude (0.83) |

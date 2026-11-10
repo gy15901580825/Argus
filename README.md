@@ -7,7 +7,7 @@
 
 # Argus
 
-**Attack your AI agent before someone else does.** Argus runs 261 red-team
+**Attack your AI agent before someone else does.** Argus runs 266 red-team
 probes against an agent through the tools it calls, the content it reads and
 the requests it gets, then shows which attacks got through. Try it in about a
 minute, no API key needed: `pip install argus-probe && argus-probe quickstart`.
@@ -27,7 +27,7 @@ minute, no API key needed: `pip install argus-probe && argus-probe quickstart`.
   that use it, and reports risky behaviour: decoy secrets it read, suspicious
   commands it ran and requests it tried to send to other hosts.
 
-Around those sits a library of 261 adversarial probes in all (OWASP LLM Top
+Around those sits a library of 266 adversarial probes in all (OWASP LLM Top
 10, MITRE ATLAS, NIST AI RMF, garak wrappers), most of them for chat, gRPC and
 browser-using agents. Findings come out as SARIF 2.1.0, JUnit XML and HTML;
 failed findings from the library carry fix-it text, and the SARIF can be
@@ -68,7 +68,7 @@ AI RMF** IDs, so your security team can trace it to those frameworks.
 
 What Argus does:
 
-- **261 probes** in the bundled library — 15 OWASP LLM Top 10 hand-authored,
+- **266 probes** in the bundled library — 15 OWASP LLM Top 10 hand-authored, 5 chat extraction probes,
   5 from public LLM system cards (best-of-N, crescendo, confused deputy,
   many-shot jailbreak, sleeper agent), 31 browser-agent specific, 26
   payment-abuse probes (x402 wallet flows, against `payment_agent`), 48
@@ -390,7 +390,7 @@ argus-probe scan-skill --sample key-grab
 │  argus  (engine; argus.server is the FastAPI app for server mode)       │
 │    probe loader  ──▶  target adapter  ──▶  judge harness                │
 │        │                  │                      │                      │
-│        └──── 261 YAML     │                      └──▶ fast model, then  │
+│        └──── 266 YAML     │                      └──▶ fast model, then  │
 │              probes       │                           strong model on   │
 │                           │                           high/critical,    │
 │                  ┌────────┴─────────┐                 confidence ≥ 0.7  │

@@ -1,15 +1,15 @@
 # Threat coverage overview
 
-Argus ships 261 probes. Each probe has a severity and maps to MITRE ATLAS, OWASP LLM Top 10, NIST AI RMF and the EU AI Act. Probes that exercise an OWASP Agentic Top 10 risk also carry that tag.
+Argus ships 266 probes. Each probe has a severity and maps to MITRE ATLAS, OWASP LLM Top 10, NIST AI RMF and the EU AI Act. Probes that exercise an OWASP Agentic Top 10 risk also carry that tag.
 
 ## Threat categories
 
 | Category | Coverage |
 |---|---|
 | **Prompt injection** | Direct injection, indirect injection (via retrieved content / DOM / image), payload smuggling, instruction override |
-| **System prompt leakage** | Verbatim extraction, paraphrase elicitation, multi-turn elicitation, translation-laundering |
+| **System prompt leakage** | Verbatim extraction, reformatting, encoded output, partial extraction, authority pretexts, multi-turn elicitation, translation-laundering |
 | **Jailbreak / safety bypass** | Persona attacks, role-play vectors, hypothetical framings, refusal-pattern probing |
-| **Data exfiltration** | Embedded secret elicitation, training-data extraction |
+| **Data exfiltration** | Deployment credentials and internal endpoints, embedded secret elicitation, training-data extraction |
 | **Tool / agent abuse** | Tool-call hijack, capability bait, function-name confusion, excessive agency |
 | **RAG / retrieval** | One prompt-level probe, `owasp_08_vector_weaknesses`, asks for retrieval internals and checks whether pasted text is treated as a trusted source. No probe poisons an index or tests retrieval ranking |
 | **Browser / computer-use specific** | DOM injection, UI phishing, visual prompt injection, OS-level command injection |
