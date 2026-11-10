@@ -62,6 +62,20 @@ VALID_TARGET_CLASSES = {
     "vllm_server",
 }
 
+# Each pair has the same support across built-in adapters' compatible_classes.
+# An adapter can support several distinct classes; those are not all aliases.
+TARGET_CLASS_ALIASES = (
+    frozenset({"http-chat", "llm_chat"}),
+    frozenset({"tool-using", "agent_with_tools"}),
+    frozenset({"rag", "agent_with_rag"}),
+    frozenset({"browser-using", "browser_using_agent"}),
+)
+
+
+def equivalent_target_classes(name: str) -> frozenset[str]:
+    """Names equivalent to a target-class filter; other classes stand alone."""
+    return next((aliases for aliases in TARGET_CLASS_ALIASES if name in aliases), frozenset({name}))
+
 
 def registered_target_classes() -> set[str]:
     from argus.targets import _plugin_builders
