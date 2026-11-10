@@ -9,11 +9,10 @@ from importlib.metadata import entry_points
 from pathlib import Path
 from typing import Iterator
 from collections.abc import Mapping
-from types import MappingProxyType
 
 import yaml
 
-from argus.browser_runner.scenarios._options import BROWSER_KINDS, validate_options
+from argus.browser_runner.scenarios._options import BROWSER_KINDS, FrozenOptions, validate_options
 
 from argus.world_assertions import DECISION_PREDICATES
 from argus.a2a.world import (
@@ -176,10 +175,10 @@ class Probe:
     # reply contains none of it shows no sign the attack reached the agent.
     contact_markers: tuple[str, ...] = ()
 
-    scenario_options: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
+    scenario_options: Mapping[str, str] = field(default_factory=FrozenOptions)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "scenario_options", MappingProxyType(dict(self.scenario_options)))
+        object.__setattr__(self, "scenario_options", FrozenOptions(self.scenario_options))
 
     @property
     def is_phased(self) -> bool:

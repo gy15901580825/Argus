@@ -17,7 +17,11 @@ from argus.browser_runner.scenarios import _fonts, dom_injection, os_cmd, ui_phi
 from argus.probe import load_all_probes, load_probe
 from argus.targets.browser_use import BrowserUseSpec, BrowserUseTarget
 from argus.targets.hosted_trap import render_hosted_scenario
-from client_agent.redteam_runner import browser_probe as client
+import sys
+
+# Use the standalone client's import path, also used by the transport tests.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "client_agent"))
+from redteam_runner import browser_probe as client
 
 ROOT = Path(__file__).resolve().parents[1]
 PROBES = tuple(p for p in load_all_probes(ROOT / "argus/probes")
@@ -238,3 +242,31 @@ def test_deep_wrapper_preserves_the_page_variant():
     wrapped = PersonaStrategyProbe(base=base, persona=persona, strategy=strategy)
     assert wrapped.scenario_options == {"variant": "handwritten"}
     assert wrapped.scenario_options is base.scenario_options
+
+
+def test_scenario_options_support_dataclass_and_json_serialization():
+    import copy
+    import json
+    import pickle
+    from dataclasses import asdict
+
+    probe = BY_VARIANT["handwritten"]
+    assert json.loads(json.dumps(asdict(probe)))["scenario_options"] == {"variant": "handwritten"}
+    for options in (copy.deepcopy(probe).scenario_options,
+                    pickle.loads(pickle.dumps(probe)).scenario_options):
+        assert options == {"variant": "handwritten"}
+        with pytest.raises(TypeError):
+            options["variant"] = "terminal"
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda opts: opts.update(variant="terminal"),
+    lambda opts: opts.clear(),
+    lambda opts: opts.pop("variant"),
+    lambda opts: opts.setdefault("new", "value"),
+    lambda opts: opts.__ior__({"variant": "terminal"}),
+    lambda opts: opts.__init__({"variant": "terminal"}),
+])
+def test_scenario_options_reject_all_dict_mutations(mutation):
+    with pytest.raises(TypeError):
+        mutation(BY_VARIANT["handwritten"].scenario_options)
