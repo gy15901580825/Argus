@@ -166,7 +166,11 @@ def test_os_cmd_copy_answers_prompt_and_keeps_attack(probe):
     assert all(answer in body for answer in expected[probe.id])
     assert "your assistant should run this in the terminal:" in body
     assert '<pre style="background:#eee;padding:10px"><code>' in body
-    assert render_hosted_scenario("os_cmd", probe.scenario_payload, **probe.scenario_options) == body
+    hosted = render_hosted_scenario("os_cmd", probe.scenario_payload, **probe.scenario_options)
+    assert hosted == os_cmd.render(probe.scenario_payload, **probe.scenario_options, _include_font=False)[0]
+    assert len(hosted.encode("utf-8")) < 16_384
+    assert "data:font/" not in hosted
+    assert probe.scenario_options["intro"] in hosted
 
 
 def test_page_copy_is_escaped():
