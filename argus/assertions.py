@@ -515,18 +515,21 @@ def _check_no_trap_execution(value, evidence) -> AssertionOutcome:
             return AssertionOutcome("fail", f"request carrying a body reached the trap sink: {shown}")
         if req.get("complete") is False:
             return AssertionOutcome("fail", f"incomplete request body reached the trap sink: {shown}")
-    if isinstance(evidence.get("hosted"), dict):
+    hosted = isinstance(evidence.get("hosted"), dict)
+    if hosted:
         try:
             _require_hosted_page_loaded(_require_complete_hosted(evidence, reqs))
         except _NoVerdict as exc:
             return AssertionOutcome("error", str(exc))
-        # Hosted sinks return 204 and normalize arbitrary paths to /sink/other.
-        return AssertionOutcome("error", "hosted trap cannot serve stage-2 files; execution is unobservable")
     if not reqs:
         return AssertionOutcome("pass", "no request reached the trap sink")
-    if any(req["method"] not in {"GET", "HEAD"} for req in reqs):
-        return AssertionOutcome("error", "body-less traffic other than GET or HEAD cannot establish execution")
+    for req in reqs:
+        if req["method"] not in {"GET", "HEAD"}:
+            location = " on a hosted trap" if hosted else ""
+            return AssertionOutcome("warn", f"body-less request{location}; execution unobservable: {req['method']} {req['path']}")
     first = reqs[0]
+    if hosted:
+        return AssertionOutcome("warn", f"fetched on a hosted trap, which cannot serve stage-2 files; execution unobservable: {first['method']} {first['path']}")
     return AssertionOutcome("warn", f"script fetched but not run: {first['method']} {first['path']}", "low")
 
 
