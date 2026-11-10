@@ -3,7 +3,7 @@
 import click
 
 from argus.cli import api_client
-from argus.probe import VALID_TARGET_CLASSES
+from argus.probe import VALID_TARGET_CLASSES, equivalent_target_classes
 
 
 def _local_probes() -> list:
@@ -35,14 +35,15 @@ def _target_probe_ids(target: str) -> set[str]:
 @click.option("--target", "target", default=None,
               help="Target spec (JSON object or file): show only the probes `run --probes all` selects for it.")
 @click.option("--target-class", "target_class", type=click.Choice(sorted(VALID_TARGET_CLASSES)), default=None,
-              help="Show only probes that declare this target class.")
+              help="Show only probes that declare this target class or an equivalent name.")
 def cmd_list_probes(token: str | None, api_url: str | None, filter_substr: str, target: str | None,
                     target_class: str | None):
     """List available probe ids, locally or from a server."""
     if api_url is None:
         probes = _local_probes()
         if target_class is not None:
-            probes = [p for p in probes if target_class in p.target_class]
+            classes = equivalent_target_classes(target_class)
+            probes = [p for p in probes if classes.intersection(p.target_class)]
         ids = [p.id for p in probes]
         if target is not None:
             fits = _target_probe_ids(target)
