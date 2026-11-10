@@ -14,6 +14,7 @@ from argus_transport import (
 )
 
 from .scenarios import dom_injection, os_cmd, ui_phishing, visual_injection
+from .scenarios._options import validate_options
 from .server import ScenarioServer
 from .traps import LocalTrap, Trap
 
@@ -25,14 +26,15 @@ _SCENARIOS = {
 }
 
 
-def _make_scenario_server(scenario_kind: str, payload: str, **bind) -> ScenarioServer:
+def _make_scenario_server(scenario_kind: str, payload: str, *, scenario_options=None, **bind) -> ScenarioServer:
     if scenario_kind not in _SCENARIOS:
         raise ValueError(f"unknown scenario_kind: {scenario_kind!r}")
     mod = _SCENARIOS[scenario_kind]
+    options = validate_options(scenario_kind, {} if scenario_options is None else scenario_options)
 
     # Looked up at render time: the sink URL (and its port) exist only after start().
     def render() -> tuple[bytes | str, str]:
-        return mod.render(payload.replace("{sink_url}", server.sink_url))
+        return mod.render(payload.replace("{sink_url}", server.sink_url), **options)
 
     server = ScenarioServer(render_fn=render, **bind)
     return server
@@ -61,6 +63,8 @@ class BrowserProbe:
             for k in ("host", "port", "public_url")
             if msg.get(f"trap_{k}")
         }
+        if "scenario_options" in msg:
+            bind["scenario_options"] = msg["scenario_options"]
         if trap is None:
             trap = LocalTrap(_make_scenario_server(msg["scenario_kind"], msg["payload"], **bind), cleanup)
         scenario_url = ""

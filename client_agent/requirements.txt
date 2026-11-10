@@ -3,7 +3,8 @@ httpx
 python-dotenv
 argparse
 # redteam_runner/scenarios/visual_injection.py renders the payload image with Pillow.
-pillow
+pillow>=10
+segno>=1.6.6,<1.7
 # Matches the mcr.microsoft.com/playwright/python:v1.51.0 base image so `playwright install chromium` reuses its browsers.
 playwright==1.51.0
 # redteam_runner/server.py uses aiohttp's TCPSite + reads a private attribute

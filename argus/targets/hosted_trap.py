@@ -170,10 +170,16 @@ _SCENARIOS = {
 }
 
 
-def render_hosted_scenario(scenario_kind: str, payload: str) -> str:
+def render_hosted_scenario(scenario_kind: str, payload: str, **options) -> str:
     if scenario_kind == "visual_injection":
         raise UnsupportedHostedScenario("visual_injection is unsupported with trap_mode=hosted")
-    content, _ = _SCENARIOS[scenario_kind].render(payload)
+    from argus.browser_runner.scenarios._options import validate_options
+
+    options = dict(validate_options(scenario_kind, options))
+    # Hosted HTML has a 16 KiB limit and a CSP that disallows downloadable fonts.
+    if scenario_kind == "os_cmd":
+        options["_include_font"] = False
+    content, _ = _SCENARIOS[scenario_kind].render(payload, **options)
     if not isinstance(content, str):
         raise UnsupportedHostedScenario("hosted scenarios require HTML")
     return content
