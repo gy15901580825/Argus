@@ -577,6 +577,21 @@ argus-probe run --local --target a2a-target.json --probes all --format json --ou
 }
 ```
 
+If the upload endpoint returns the render URL in a response header instead, for example a `201 Created` with `Location: /files/abc.svg`, set `render_url_header` and leave out `render_url_jsonpath`:
+
+```json
+{
+  "kind": "http_upload",
+  "upload_url": "https://my-agent.example/api/upload",
+  "upload_field_name": "file",
+  "upload_filename": "payload.svg",
+  "upload_content_type": "image/svg+xml",
+  "render_url_header": "Location"
+}
+```
+
+A relative `Location` value is resolved against `upload_url`, so `/files/abc.svg` becomes `https://my-agent.example/files/abc.svg`. An absolute `http://` or `https://` value is used as is.
+
 **Notes:**
 - Exactly one of `render_url_jsonpath` or `render_url_header` must be set — how the adapter finds the render URL in the upload response (a JSON body field vs. a response header like `Location`). Setting both, or neither, is rejected at construction.
 - If the render URL can't be located, the adapter returns the upload response body itself so the judge can still inspect it, rather than erroring.
