@@ -70,7 +70,7 @@ AI RMF** IDs, so your security team can trace it to those frameworks.
 
 What Argus does:
 
-- **267 probes** in the bundled library — 15 OWASP LLM Top 10 hand-authored, 5 chat extraction probes,
+- **267 probes** in the bundled library — 15 OWASP LLM Top 10 hand-authored, 5 chat extraction probes, 1 built-in memory probe,
   5 from public LLM system cards (best-of-N, crescendo, confused deputy,
   many-shot jailbreak, sleeper agent), 32 browser-agent specific, 26
   payment-abuse probes (x402 wallet flows, against `payment_agent`), 48

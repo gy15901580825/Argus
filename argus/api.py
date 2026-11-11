@@ -204,7 +204,7 @@ def _resolve_request_probe_ids(req: RunRequest, target_obj: Any = None) -> list[
         phased = [
             p.id
             for p in load_probe_library(PROBES_DIR)
-            if p.id in ids and getattr(p, "is_phased", False)
+            if p.id in ids and (getattr(p, "is_phased", False) or getattr(p, "sessions", ()))
         ]
         if phased:
             raise HTTPException(

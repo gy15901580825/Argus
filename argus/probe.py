@@ -341,8 +341,11 @@ def load_probe(path: Path) -> Probe:
                 raise ValueError(
                     f"control must change an existing payload key in {path}"
                 )
-        if has_sessions and not scenario_control:
-            raise ValueError(f"sessions require scenario.control in {path}")
+        if has_sessions and not scenario_control and (
+            scenario_kind or not assertions or raw.get("judge_when_assertions_pass")
+            or raw.get("iterative")
+        ):
+            raise ValueError(f"sessions require scenario.control or reply-only assertions in {path}")
         trials = raw.get("trials", 1)
         if type(trials) is not int or not 1 <= trials <= 20:
             raise ValueError(f"trials must be an integer from 1 to 20 in {path}")

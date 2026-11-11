@@ -24,7 +24,7 @@ DISCLOSURE_LINE = (
 )
 
 
-def test_library_loads_266_probes():
+def test_library_loads_267_probes():
     assert len(load_probe_library(PROBES_DIR)) == 267
 
 
