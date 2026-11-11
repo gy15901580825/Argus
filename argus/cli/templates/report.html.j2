@@ -47,6 +47,12 @@ h1 { border-bottom: 2px solid #333; }
   <div class="metric"><div class="v">{{ counts.error }} error</div></div>
   <div class="metric"><div class="v">{{ counts.escalated }} escalated</div></div>
 </div>
+{% if run.baseline %}
+<h2>Baseline comparison</h2>
+<p>Baseline run: <code>{{ run.baseline.id }}</code> · Finished: {{ run.baseline.finished_at }}.</p>
+<p>new: {{ run.baseline.new | length }}, fixed: {{ run.baseline.fixed | length }}, still failing: {{ run.baseline.still_failing | length }}, not run: {{ run.baseline.not_run | length }}</p>
+{% if run.baseline.new %}<ul>{% for item in run.baseline.new %}<li>new · {{ item.severity }} · <code>{{ item.probe_id }}</code></li>{% endfor %}</ul>{% endif %}
+{% endif -%}
 <h2>Findings ({{ run.findings | length }})</h2>
 {% for f in run.findings %}
 <div class="finding">

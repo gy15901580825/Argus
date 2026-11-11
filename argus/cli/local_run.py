@@ -13,6 +13,8 @@ import click
 from argus_transport.cleanup import run_error_detail
 
 from argus.cli import reports, run_json
+from argus.cli.baseline_key import baseline_key
+from argus.cli.local_baseline import compare_baseline, new_failure_findings
 from argus.cli.severity import (
     blocked_warning,
     incomplete_lines,
@@ -57,6 +59,7 @@ class LocalRunResult(NamedTuple):
     stop_reason: str | None = None
     exit_code: int = 0
     target_cleanup: dict | None = None
+    baseline: dict | None = None
 
 
 def run_local_and_render(
@@ -72,6 +75,7 @@ def run_local_and_render(
     deep_pairs: int = 3,
     max_rounds: int = 20,
     seed: str | None = None,
+    baseline_run: dict | None = None,
 ) -> LocalRunResult:
     """Run the probes, print one line per finding, return the rendered report and findings.
 
@@ -111,6 +115,8 @@ def run_local_and_render(
             fail_on,
             skip_judged,
             trials,
+            baseline_run,
+            baseline_key(spec),
             **options,
         )
 
@@ -132,6 +138,8 @@ def _run_and_render(
     fail_on: str | None,
     skip_judged: bool,
     trials: int | None = None,
+    baseline_run: dict | None = None,
+    target_key: str | None = None,
     mode: str = "static",
     deep_pairs: int = 3,
     max_rounds: int = 20,
@@ -244,6 +252,7 @@ def _run_and_render(
         "started_at": started_at.isoformat(),
         "finished_at": datetime.now(timezone.utc).isoformat(),
         "target_spec": spec,
+        "baseline_key": target_key if target_key is not None else baseline_key(spec),
         "coverage": coverage,
         "findings": findings,
     }
@@ -253,7 +262,13 @@ def _run_and_render(
         run["target_cleanup"] = target_cleanup
     if judge:
         run["judge"] = judge["record"]
-    exit_code = run_exit_code(findings, stopped_by, fail_on)
+    comparison = compare_baseline(baseline_run, findings) if baseline_run is not None else None
+    if comparison is not None:
+        run["baseline"] = comparison
+        exit_code = (run_exit_code(findings, stopped_by, None)
+                     or run_exit_code(new_failure_findings(comparison), None, fail_on))
+    else:
+        exit_code = run_exit_code(findings, stopped_by, fail_on)
     # SARIF's exitCode; render_json leaves it out of run.json.
     run["exit_code"] = exit_code
     if incomplete:
@@ -268,6 +283,7 @@ def _run_and_render(
             stop_reason,
             exit_code,
             target_cleanup,
+            comparison,
         )
     # Same scrub as run.json, so no format can leak what another one masks.
     render = {
@@ -282,4 +298,5 @@ def _run_and_render(
         stop_reason,
         exit_code,
         target_cleanup,
+        comparison,
     )

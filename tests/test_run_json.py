@@ -225,7 +225,7 @@ def test_cli_writes_redacted_run_json(tmp_path, monkeypatch):
     text = out.read_text()
     assert "sk-CLI-111" not in text
     data = json.loads(text)
-    assert list(data.keys()) == TOP_LEVEL_KEYS
+    assert list(data.keys()) == [*TOP_LEVEL_KEYS, "baseline_key"]
     assert data["findings"][0]["target_response"] == "leaked ***"
 
 
