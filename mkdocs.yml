@@ -8,17 +8,14 @@ edit_uri: ""
 theme:
   name: material
   font: false
-  custom_dir: .mkdocs/overrides
   features:
     - navigation.sections
     - navigation.footer
 
 exclude_docs: |
   superpowers/
-  *.map
-  *.js
 
-plugins: []
+plugins: [search]
 
 nav:
   - Home: index.md
