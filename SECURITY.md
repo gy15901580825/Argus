@@ -58,6 +58,31 @@ mitigation within 30 days, depending on severity.
 Argus is at 1.x. Security fixes land on the default branch. There is no
 backport channel for older commits.
 
+### Dependency review: litellm
+
+[`pyproject.toml`](pyproject.toml) allows `litellm>=1.108.3,<1.108.5` and requires `filelock>=4.2.1`.
+Only litellm 1.108.3 and 1.108.4 are allowed because those releases passed review.
+The bound follows the 2026-10-21 incident, when litellm 1.107.0 was a malicious release published through the project's real pipeline.
+
+[PR #207](https://github.com/gy15901580825/Argus/pull/207) records the static review of both allowed releases.
+Wheel and sdist hashes matched PyPI, and every RECORD hash matched.
+The packages had no `.pth` files, `sitecustomize` modules or `.data` directories.
+Console entry points matched the previous allowed release.
+Python sources were byte-identical to the GitHub tags.
+The native extension imported the same symbols as the previous allowed release.
+Added lines had no exec, eval or network-at-import patterns.
+
+The review did not verify who published the files, whether native binaries are reproducible, or whether malicious code exists in the tags themselves.
+These releases have no PEP 740 attestations.
+As of 2026-11-11, 1.108.4, 1.108.5 and 1.109.0 had no attestations, and OSV listed no advisory for 1.108.4.
+Absence of an advisory does not establish that a release is safe.
+
+In [`argus/llm.py`](argus/llm.py), litellm imports occur for judge providers `openai`, `azure`, `litellm` or `jev`, and for content-filter error classification.
+The default `anthropic` judge calls the Anthropic SDK.
+[`Dependabot`](.github/dependabot.yml) watches GitHub Actions only, so it does not propose litellm bumps.
+A new litellm version is allowed only after the same review, recorded in the PR that widens the range.
+Revisit the range when litellm publishes attestations or its own verification of PyPI packages against GitHub tags.
+
 ---
 
 ## 2. Ethical use
