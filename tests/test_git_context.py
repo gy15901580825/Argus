@@ -28,5 +28,6 @@ def test_falls_back_to_git(tmp_path):
     assert len(out["commit"]) == 40
 
 
-def test_outside_git_and_ci_returns_empty(tmp_path):
+def test_outside_git_and_ci_returns_empty(tmp_path, monkeypatch):
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent))
     assert detect({}, cwd=str(tmp_path)) == {}
