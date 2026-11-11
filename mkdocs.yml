@@ -1,0 +1,55 @@
+site_name: Argus by Veyon Solutions
+site_description: Black-box red-team testing for AI agents.
+site_url: https://gy15901580825.github.io/Argus/
+repo_name: Argus on GitHub
+repo_url: https://github.com/gy15901580825/Argus
+edit_uri: ""
+
+theme:
+  name: material
+  font: false
+  features:
+    - navigation.sections
+    - navigation.footer
+
+exclude_docs: |
+  superpowers/
+
+plugins: [search]
+
+nav:
+  - Home: index.md
+  - Get started:
+      - Quickstart: onboarding/quickstart.md
+      - Target spec cookbook: onboarding/target-spec-cookbook.md
+      - Probe ID cheatsheet: onboarding/probe-id-cheatsheet.md
+  - Reference:
+      - CLI: cli.md
+      - Run JSON: run-json.md
+      - Transport specification: transport-spec.md
+      - Python targets: python-target.md
+      - Assertions: reference/assertions.md
+      - Services: reference/services.md
+      - Probe mappings: probe-mapping.md
+      - Agentic mappings: owasp-agentic-mapping.md
+  - Guides:
+      - Target plugins: plugins.md
+      - Integration scenarios: integration-scenarios.md
+      - Local scenario drafts: draft-local-scenarios.md
+      - Judge accuracy: judge-accuracy.md
+      - Judge decider: operations/judge-decider.md
+  - Background:
+      - Agent testing overview: llm-agent-testing-overview.md
+      - Agent evaluation: agent-evaluation-deep-dive.md
+  - Runbooks:
+      - Local development: runbooks/local-dev.md
+      - Releases: runbooks/release.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/gy15901580825/Argus
+      name: Argus on GitHub
+    - icon: fontawesome/solid/globe
+      link: https://www.veyon.solutions
+      name: Veyon Solutions
