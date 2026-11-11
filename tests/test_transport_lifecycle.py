@@ -197,7 +197,7 @@ async def test_cleanup_timeout_reports_pending_and_cancels_undo():
     app.route('POST', '/run', completed)
     async with serve(app) as origin:
         data = v2_dict(origin + '/run')
-        data['timeout'] = {'cleanup_s': .05}
+        data['timeout'] = {'cleanup_s': .5}
         data['lifecycle'] = {'run': [
             {'id': ident, 'request': {'method': 'POST', 'url': origin + '/objects/' + ident, 'body': {'none': True}}, 'expect': {'http_status': [201]}, 'undo': {'request': {'method': 'DELETE', 'url': origin + '/objects/' + ident}, 'expect': {'http_status': [204]}}}
             for ident in ('a', 'b')

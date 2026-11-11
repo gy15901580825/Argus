@@ -119,7 +119,7 @@ async def test_accepted_headers_retain_leftover_when_body_read_is_interrupted(sc
     async with serve(app) as origin:
         data = creation_data(origin, scope, undo)
         if interrupt == 'timeout':
-            data['timeout'] = {'read_s': .03}
+            data['timeout'] = {'read_s': .5}
         async with httpx.AsyncClient(event_hooks={'response': [received]}) as client:
             run = runtime(data, client=client)
             run.redactor.add('files')

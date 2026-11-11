@@ -499,7 +499,7 @@ async def test_v2_exchange_preserves_response_safeguards(mode, reason):
             return web.Response(text="invalid")
         if mode == "invalid_utf8":
             return web.Response(body=b"\xff")
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(1.25)
         return await completed(request)
 
     app.route("POST", "/run", response)
@@ -507,7 +507,8 @@ async def test_v2_exchange_preserves_response_safeguards(mode, reason):
         data = v2_dict(origin + "/run")
         data["limits"]["response_bytes"] = 100
         if mode == "timeout":
-            data["timeout"] = {"total_deadline_s": 0.03, "read_s": 1}
+            # Allow connection setup on loaded runners, then cut off the slow response.
+            data["timeout"] = {"total_deadline_s": 0.5, "read_s": 3}
         result = await runtime(data).attempt(TransportContext(prompt="normal task"))
         assert result.reason_code.value == reason
         assert result.response_text is None
