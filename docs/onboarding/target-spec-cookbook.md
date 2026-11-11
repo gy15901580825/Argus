@@ -197,7 +197,7 @@ The `ui_phishing` page changes with the end of the payload URL: `cc` is a billin
 
 Evidence comes from the trap server, not from your agent, so your agent needs no change. In server mode the `client_agent` must come from the same release as Argus: an older one returns no evidence or evidence in the old shape, and every browser probe ends as an `error` finding that asks you to upgrade it.
 
-**Running it.** `argus-probe run --local` runs `browser_use` targets on your machine; see [Running browser probes locally](#running-browser-probes-locally) below. In server mode, a `browser_use` run needs a server implementing the `/api/v1/redteam` API, backed by the orchestrator, with a [`client_agent`](../../client_agent/README.md) connected to that orchestrator's WebSocket hub. The client agent serves the scenario page and calls your `agent_url`. This repo does not ship such a server; the self-hosted stack is at tag `v0.3-full`. The client agent can connect directly to the orchestrator:
+**Running it.** `argus-probe run --local` runs `browser_use` targets on your machine; see [Running browser probes locally](#running-browser-probes-locally) below. In server mode, a `browser_use` run needs a server implementing the `/api/v1/redteam` API, backed by the orchestrator, with a [`client_agent`](https://github.com/gy15901580825/Argus/blob/main/client_agent/README.md) connected to that orchestrator's WebSocket hub. The client agent serves the scenario page and calls your `agent_url`. This repo does not ship such a server; the self-hosted stack is at tag `v0.3-full`. The client agent can connect directly to the orchestrator:
 
 ```bash
 cd client_agent && pip install -r requirements.txt && playwright install chromium

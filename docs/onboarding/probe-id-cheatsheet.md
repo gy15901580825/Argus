@@ -82,7 +82,7 @@ Each finding carries one of:
 
 ## Custom probes
 
-Need coverage we don't ship? Add a probe YAML under `argus/probes/` in this repo (Apache 2.0) and open a PR; the schema and the required `mappings` are in [CONTRIBUTING.md](../../CONTRIBUTING.md).
+Need coverage we don't ship? Add a probe YAML under `argus/probes/` in this repo (Apache 2.0) and open a PR; the schema and the required `mappings` are in [CONTRIBUTING.md](https://github.com/gy15901580825/Argus/blob/main/CONTRIBUTING.md).
 
 ## Next
 

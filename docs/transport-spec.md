@@ -307,7 +307,7 @@ The automated checks invoke the same Click command as `argus-probe run --local` 
 
 ### Vendor A threads
 
-The [vendor A fixture](../tests/fixtures/transport_v2/vendor_a_threads.json) creates one source per run. Each material attempt inserts a message, asks a question, polls with thread and run IDs, and deletes the message. Source deletion runs last. A prompt-only probe skips message ingestion and still sends its question. The fixture's budget covers the tested batch of three material probes and one prompt-only probe. A larger batch needs its own request and cleanup budgets.
+The [vendor A fixture](https://github.com/gy15901580825/Argus/blob/main/tests/fixtures/transport_v2/vendor_a_threads.json) creates one source per run. Each material attempt inserts a message, asks a question, polls with thread and run IDs, and deletes the message. Source deletion runs last. A prompt-only probe skips message ingestion and still sends its question. The fixture's budget covers the tested batch of three material probes and one prompt-only probe. A larger batch needs its own request and cleanup budgets.
 
 ```json
 {
@@ -468,7 +468,7 @@ The [vendor A fixture](../tests/fixtures/transport_v2/vendor_a_threads.json) cre
 
 ### Vendor B automation
 
-The [vendor B fixture](../tests/fixtures/transport_v2/vendor_b_automation.json) looks up one organization, workspace, and automation per run. The automation display name comes from `VENDOR_B_AUTOMATION_NAME`. Setting `VENDOR_B_AUTOMATION_ID` supplies the final ID and skips only the automation list request. The earlier organization and workspace lookups still run. Empty automation results print the configured preparation checklist and stop before any upload or invocation.
+The [vendor B fixture](https://github.com/gy15901580825/Argus/blob/main/tests/fixtures/transport_v2/vendor_b_automation.json) looks up one organization, workspace, and automation per run. The automation display name comes from `VENDOR_B_AUTOMATION_NAME`. Setting `VENDOR_B_AUTOMATION_ID` supplies the final ID and skips only the automation list request. The earlier organization and workspace lookups still run. Empty automation results print the configured preparation checklist and stop before any upload or invocation.
 
 Each material attempt uploads `invoice.txt` as multipart and invokes the automation with that upload's complete resource name. Prefix checks retain the full file name for the remote reference and extract safe suffixes for DELETE and run polling. Material is required, so a probe without `indirect` is skipped before any request. The fixture's budgets cover four material attempts. Successful cleanup leaves no live uploaded files or reported leftovers.
 
@@ -806,7 +806,7 @@ Each probe starts its actual scenario page before rendering the request. Success
 
 `timeout.total_deadline_s` controls the whole operation. The bridge allows the configured `cleanup_grace_s` and delivery overhead after that deadline. A legacy browser target keeps its 60-second default request timeout.
 
-A remote client must advertise `transport_versions: [1]` on the same connection that executes the probe. Older clients are rejected before dispatch. Remote operators authorize exact endpoint origins, environment names, and file roots in the client configuration; absent authorization denies secret access. See [client setup](../client_agent/README.md).
+A remote client must advertise `transport_versions: [1]` on the same connection that executes the probe. Older clients are rejected before dispatch. Remote operators authorize exact endpoint origins, environment names, and file roots in the client configuration; absent authorization denies secret access. See [client setup](https://github.com/gy15901580825/Argus/blob/main/client_agent/README.md).
 
 Offline browser validation renders a placeholder scenario URL and starts no server. For execution, provide `--with-scenario` to serve a neutral page, or `--scenario-url` to supply an existing neutral page. These options require `--execute`. Validation never runs a phishing scenario or a complete probe suite.
 
