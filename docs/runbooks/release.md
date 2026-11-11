@@ -47,3 +47,37 @@ The build job fails if the tag does not match the version in `pyproject.toml`.
 The tags `v0.1.0`, `v0.2.0` and `v0.3.0` belong to GitHub Releases from before argus-probe was on PyPI, so those versions cannot be used. The next version after 0.1.4 is 0.4.0.
 
 `argus-orchestrator` (the engine as a separate package, import name `orchestrator.redteam`) stopped at 0.3.4 and gets no more releases. It stays installable from PyPI for code that still imports `orchestrator.redteam`.
+
+## Merging during a GitHub Actions outage
+
+Waiting for Actions to recover is the default. The `main` branch requires CI checks and enforces them for admins with `enforce_admins` enabled. Force pushes and branch deletion are disabled. During an Actions outage, required checks cannot pass, so admins cannot merge either.
+
+If a merge cannot wait, test the change locally before using this procedure. Record the local test results and the reason the merge cannot wait in the PR. Replace `<N>` with the PR number and `<SHA>` with the full head commit SHA that you tested.
+
+1. Temporarily turn off admin enforcement:
+
+   ```bash
+   GH_TOKEN=$(gh auth token --user gy15901580825) gh api -X DELETE repos/gy15901580825/Argus/branches/main/protection/enforce_admins
+   ```
+
+2. Merge only the tested head commit:
+
+   ```bash
+   GH_TOKEN=$(gh auth token --user gy15901580825) gh pr merge <N> --admin --merge --match-head-commit <SHA>
+   ```
+
+3. Immediately restore admin enforcement, even if the merge fails:
+
+   ```bash
+   GH_TOKEN=$(gh auth token --user gy15901580825) gh api -X POST repos/gy15901580825/Argus/branches/main/protection/enforce_admins
+   ```
+
+4. Verify that admin enforcement is enabled:
+
+   ```bash
+   GH_TOKEN=$(gh auth token --user gy15901580825) gh api repos/gy15901580825/Argus/branches/main/protection/enforce_admins --jq .enabled
+   ```
+
+   The command must print `true`. If restoration or verification fails, restore enforcement before attempting another merge.
+
+5. Note the outage merge and the protection verification in the PR. Once Actions recovers, rerun CI on `main` from the Actions tab and check its results.
