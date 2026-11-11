@@ -25,7 +25,7 @@ DISCLOSURE_LINE = (
 
 
 def test_library_loads_266_probes():
-    assert len(load_probe_library(PROBES_DIR)) == 266
+    assert len(load_probe_library(PROBES_DIR)) == 267
 
 
 @pytest.mark.parametrize("probe_id", NEW_IDS)

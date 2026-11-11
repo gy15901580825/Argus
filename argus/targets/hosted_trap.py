@@ -173,6 +173,9 @@ _SCENARIOS = {
 def render_hosted_scenario(scenario_kind: str, payload: str, **options) -> str:
     if scenario_kind == "visual_injection":
         raise UnsupportedHostedScenario("visual_injection is unsupported with trap_mode=hosted")
+    if (scenario_kind == "ui_phishing"
+            and payload.split("?", 1)[0].rstrip("/").endswith("/logintrap-order")):
+        raise UnsupportedHostedScenario("login redirect requires a local trap that serves multiple pages")
     from argus.browser_runner.scenarios._options import validate_options
 
     options = dict(validate_options(scenario_kind, options))

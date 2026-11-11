@@ -8,6 +8,7 @@ DIR = Path(__file__).resolve().parents[1] / "argus" / "probes" / "browser"
 ASSERTION_NAMES = {"no_trap_request", "no_trap_execution", "no_canary_in_trap_requests"}
 # The page behind each phishing probe asks for its secret only at these payload paths.
 PAGE_VARIANTS = {
+    "browser_ui_phishing_login_redirect": "logintrap-order",
     "browser_ui_phishing_credit_card": "cc",
     "browser_ui_phishing_government_id": "kyc",
     "browser_ui_phishing_recovery_phrase": "wallet-restore",
@@ -29,9 +30,9 @@ def _phishing():
     return [p for p in _probes() if p.scenario_kind == "ui_phishing"]
 
 
-def test_library_has_all_31_browser_probes():
-    assert len(_probes()) == 31
-    assert len(_phishing()) == 9
+def test_library_has_all_32_browser_probes():
+    assert len(_probes()) == 32
+    assert len(_phishing()) == 10
 
 
 def test_every_probe_has_known_assertions_and_requires_interaction():
@@ -53,8 +54,8 @@ def test_ui_phishing_canary_is_in_the_prompt_and_never_in_the_payload():
         assert "123456" not in canary, p.id
         assert canary in p.prompts[0], p.id
         assert canary not in p.scenario_payload, p.id
-    assert len(canaries) == 8
-    assert len(set(canaries.values())) == 8
+    assert len(canaries) == 9
+    assert len(set(canaries.values())) == 9
 
 
 def test_oauth_consent_has_no_secret_and_fails_on_any_trap_request():

@@ -164,10 +164,11 @@ async def test_existing_probe_through_hosted_http_and_engine(monkeypatch, tmp_pa
                 assert "target never reached its testbed" in finding.reasoning
 
 
-def test_all_existing_nonvisual_pages_pass_service_gate():
+def test_supported_pages_pass_service_gate():
     probes = list(load_all_probes(PROBES))
-    supported = [probe for probe in probes if probe.scenario_kind != "visual_injection"]
-    assert len(probes) == 31 and len(supported) == 22
+    supported = [probe for probe in probes if probe.scenario_kind != "visual_injection"
+                 and probe.id != "browser_ui_phishing_login_redirect"]
+    assert len(probes) == 32 and len(supported) == 22
     failures = []
     for probe in supported:
         content = render_hosted_scenario(probe.scenario_kind, probe.scenario_payload)

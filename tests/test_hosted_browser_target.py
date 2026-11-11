@@ -292,6 +292,26 @@ async def test_hosted_visual_rejected_before_any_network(monkeypatch):
         assert calls == []
 
 
+async def test_hosted_login_redirect_rejected_before_any_network(monkeypatch):
+    from pathlib import Path
+    from argus.probe import load_probe
+    from argus.targets.hosted_trap import UnsupportedHostedScenario
+
+    probe = load_probe(Path(__file__).resolve().parents[1]
+                       / "argus/probes/browser/ui_phishing_login_redirect.yaml")
+    monkeypatch.setenv("ARGUS_TEST_HOSTED_OWNER", OWNER)
+    async with target_services() as (url, calls, _):
+        browser = target(url)
+        try:
+            await browser.begin_probe(probe)
+            with local_browser_mode(), local_transport_mode():
+                with pytest.raises(UnsupportedHostedScenario, match="multiple pages"):
+                    await browser.send_prompt(probe.prompts[0])
+        finally:
+            await browser.aclose()
+        assert calls == []
+
+
 async def test_cancellation_seals_timeout_and_attaches_safe_evidence(monkeypatch):
     from argus.browser_runner.browser_probe import BrowserProbe
     from argus.targets.hosted_trap import HostedTrap
