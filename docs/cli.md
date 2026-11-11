@@ -111,7 +111,10 @@ argus-probe run --local --target target.json --probes all \
 ```
 
 The summary lists new, fixed, still failing and not run probes. A failure in
-any trial makes that probe failing. A missing or errored probe is never fixed.
+any trial makes that probe failing. A fix requires at least one current finding,
+with every current finding `pass` or `warn`. A previously failing probe that is
+absent or has any other non-fail outcome is `not_run`, including skipped,
+cost-aborted, blocked, errored or unknown results, even alongside a pass or warning.
 With `--baseline`, `--fail-on high` exits 3 only for new high or critical failures;
 existing failures leave the gate green. Cost-cap exit 4 and incomplete-run exit 1
 retain priority, and the report is written before those exits. Keep the target

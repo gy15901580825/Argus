@@ -89,7 +89,7 @@ def compare_baseline(baseline: dict, findings: list[dict]) -> dict:
             category = "still_failing" if pid in old_failing else "new"
             severity = new_failing[pid]
         else:
-            category = "fixed" if pid in head and all(f.get("verdict") != "error" for f in head[pid]) else "not_run"
+            category = "fixed" if pid in head and all(f.get("verdict") in {"pass", "warn"} for f in head[pid]) else "not_run"
             severity = old_failing[pid]
         result[category].append({"probe_id": pid, "severity": severity})
     return result

@@ -55,9 +55,12 @@ including repeated trials; its severity is the highest among its failing finding
 | List | Meaning | Severity from |
 |---|---|---|
 | `new` | Failing now, with no failure in the baseline, including absent or errored baseline probes. | Current run |
-| `fixed` | Failing in the baseline; present now with no failed or errored findings. | Baseline |
+| `fixed` | Failing in the baseline; at least one current finding, with every current finding `pass` or `warn`. | Baseline |
 | `still_failing` | Failing in both runs. | Current run |
-| `not_run` | Failing in the baseline; absent now or unresolved because a current finding errored. | Baseline |
+| `not_run` | Failing in the baseline; not failing now, but absent or with any current finding outside `pass` and `warn`. | Baseline |
+
+Skipped, cost-aborted, blocked, errored and unknown outcomes cannot establish a
+fix, even alongside a `pass` or `warn` finding.
 
 With a baseline, `--fail-on` gates only `new` failures. Cost-cap exit 4 and
 incomplete-run exit 1 still take priority over failure exit 3. The report is

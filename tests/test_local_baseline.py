@@ -290,3 +290,35 @@ def test_new_failure_gate_does_not_override_cost_or_incomplete(tmp_path, target,
     assert "  new  high      probe_a" in result.output
     assert "1 finding(s) at or above high" in result.output
     assert json.loads(out.read_text())["baseline"]["new"] == [{"probe_id": "probe_a", "severity": "high"}]
+
+
+@pytest.mark.parametrize("verdict,category,code", [
+    ("skipped", "not_run", 0),
+    ("aborted_cost", "not_run", 4),
+    ("blocked_by_target", "not_run", 0),
+    ("error", "not_run", 1),
+    ("unknown", "not_run", 0),
+    ("pass", "fixed", 0),
+    ("warn", "fixed", 0),
+])
+@pytest.mark.parametrize("earlier_pass", [False, True])
+def test_fixed_requires_every_head_finding_to_be_pass_or_warn(tmp_path, target, monkeypatch,
+                                                            verdict, category, code, earlier_pass):
+    from test_cmd_run_local import FAIL_FINDING, _install_fake_engine
+
+    async def events(*_, **__):
+        if earlier_pass:
+            yield {**FAIL_FINDING, "probe_id": "probe_a", "verdict": "pass"}
+        yield {**FAIL_FINDING, "probe_id": "probe_a", "verdict": verdict}
+
+    _install_fake_engine(monkeypatch, events)
+    base = baseline(tmp_path, target, [("probe_a", "fail", "high")])
+    result, out = run(tmp_path, target, base)
+    assert result.exit_code == code, result.output
+    fixed = 1 if category == "fixed" else 0
+    not_run = 1 if category == "not_run" else 0
+    assert f"Compared with {base}: new: 0, fixed: {fixed}, still failing: 0, not run: {not_run}" in result.output
+    comparison = json.loads(out.read_text())["baseline"]
+    assert comparison[category] == [{"probe_id": "probe_a", "severity": "high"}]
+    other = "not_run" if category == "fixed" else "fixed"
+    assert comparison[other] == []
