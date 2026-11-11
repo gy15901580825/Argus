@@ -35,7 +35,8 @@ jobs:
       - name: Audit installed wheel dependencies
         shell: bash
         run: |
-          site_packages=$("$RUNNER_TEMP/runtime/bin/python" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')
+          # The freshly built argus-probe version may not be published on PyPI yet.
+          "$RUNNER_TEMP/runtime/bin/python" -m pip freeze --all --exclude argus-probe > "$RUNNER_TEMP/audit-requirements.txt"
           ignores=()
           while IFS= read -r line || [[ -n "$line" ]]; do
             id=${line%%#*}
@@ -44,4 +45,4 @@ jobs:
               ignores+=(--ignore-vuln "$id")
             fi
           done < .github/pip-audit-ignore.txt
-          pip-audit --strict --progress-spinner off --path "$site_packages" "${ignores[@]}"
+          pip-audit --strict --progress-spinner off --no-deps --disable-pip -r "$RUNNER_TEMP/audit-requirements.txt" "${ignores[@]}"
