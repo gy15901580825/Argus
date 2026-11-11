@@ -321,7 +321,7 @@ def test_init_picks_probes_that_fit_the_kind(tmp_path, monkeypatch, kind, answer
 
 @pytest.mark.parametrize("kind,answers", [("mcp_agent", "\n\n"), ("openai_compat", "\nm\n\n")])
 def test_workflow_installs_the_argus_version_that_wrote_it(tmp_path, monkeypatch, kind, answers):
-    # The Action's default argus-version is older and does not know `testbed_url: "local"`.
+    # Pin the workflow to the generating version instead of the Action's default.
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("argus.cli.cmd_init._installed_version", lambda: "9.8.7")
     result = CliRunner().invoke(init_command, ["--kind", kind, "--workflow"], input=answers)
