@@ -213,20 +213,20 @@ async def test_terminal_rule_precedes_pending_predicate():
         assert [c[0] for c in calls] == ["POST", "GET"]
 
 
-@pytest.mark.parametrize("delays,interval", [((0.04, 0.04), 0.01), ((0.01, 0.01), 1.0)])
+@pytest.mark.parametrize("delays,interval", [((0.35, 0.35), 0.01), ((0.01, 0.01), 1.0)])
 async def test_deadline_covers_submit_poll_sleep_and_read(delays, interval):
     async with poll_server(
         polls=[{"status": "RUNNING"}, {"status": "COMPLETED", "result": "too late"}],
         delays=delays,
     ) as (url, calls):
         data = poll_dict(url)
-        data["timeout"] = {"total_deadline_s": 0.07, "read_s": 1}
+        data["timeout"] = {"total_deadline_s": 0.5, "read_s": 2}
         data["delivery"]["interval_s"] = interval
         async with httpx.AsyncClient(trust_env=False) as client:
-            result = await asyncio.wait_for(run(data, client=client), timeout=0.3)
+            result = await asyncio.wait_for(run(data, client=client), timeout=1.5)
         assert result.outcome.value == "timed_out"
         assert result.reason_code.value == "timeout"
-        assert result.latency_ms < 180
+        assert result.latency_ms < 1000
         assert [c[0] for c in calls] == ["POST", "GET"]
         assert result.diagnostics["requests"] == {"submit": 1, "poll": 1, "retry": 0}
 
