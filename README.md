@@ -12,6 +12,8 @@ probes against an agent through the tools it calls, the content it reads and
 the requests it gets, then shows which attacks got through. Try it in about a
 minute, no API key needed: `pip install argus-probe && argus-probe quickstart`.
 
+![Argus by Veyon Solutions runs the local quickstart demo without an API key.](docs/assets/quickstart-demo.svg)
+
 - **Hostile MCP servers.** A testbed serves poisoned tool descriptions,
   look-alike tools, a tool list that turns hostile after the agent has trusted
   it, and tools that fish for credentials. Argus records every call the agent
