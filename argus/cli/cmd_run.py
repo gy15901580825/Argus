@@ -14,6 +14,7 @@ from click.core import ParameterSource
 from argus.cli import api_client, git_context, run_json
 from argus.cli.baseline_key import baseline_key
 from argus.cli.judge_options import judge_options
+from argus.cli.local_baseline import comparison_summary, load_baseline, new_failure_findings
 from argus.cli.local_run import StopSignalReceived, cleanup_lines, run_local_and_render, run_options
 from argus.cli.mcp_sdk import STOP_MESSAGES
 from argus.cli.severity import (
@@ -76,9 +77,13 @@ def _seed_length(_ctx, _param, value):
                    "run the rest, instead of refusing the run. Skipped probes do not change the exit code.")
 @click.option("--compare-to", "compare_to", default=None,
               help="Base branch: report and gate only on failures that are new relative to the latest run on it. Needs run history on a server implementing the /api/v1/redteam API.")
+@click.option("--baseline", "baseline_file", type=click.Path(), default=None,
+              help="With --local: compare with an earlier run.json and gate only on new failures.")
 @judge_options
-def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, token: str | None, api_url: str | None, max_wait: float, per_run_cap: float | None, fail_on: str | None, local: bool, compare_to: str | None, skip_judged: bool = False, trials: int | None = None, mode: str = "static", deep_pairs: int = 3, max_rounds: int = 20, seed: str | None = None):
+def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, token: str | None, api_url: str | None, max_wait: float, per_run_cap: float | None, fail_on: str | None, local: bool, compare_to: str | None, skip_judged: bool = False, trials: int | None = None, mode: str = "static", deep_pairs: int = 3, max_rounds: int = 20, seed: str | None = None, baseline_file: str | None = None):
     """Submit a red-team run and write the report to disk."""
+    if baseline_file is not None and not local:
+        raise click.UsageError("--baseline needs --local")
     try:
         spec, secret_values = load_target_spec_with_secrets(target)
     except TargetLoadError as e:
@@ -125,7 +130,9 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
         ]
         if typed:
             raise click.UsageError(f"--local runs in this process; do not pass {' or '.join(typed)}")
-        _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, secret_values, skip_judged, trials, **options)
+        baseline = load_baseline(baseline_file, spec, mode, secret_values) if baseline_file is not None else None
+        _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, secret_values, skip_judged, trials,
+                     **options, **({"baseline_run": baseline, "baseline_file": baseline_file} if baseline is not None else {}))
         return
     if _uses_python(spec):
         raise click.UsageError("a python target runs a local function; it needs --local")
@@ -311,7 +318,8 @@ def _write_report(out_file: str, report: str, encoding: str | None = None, echo=
 
 
 def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, secret_values=(),
-                 skip_judged=False, trials=None, mode="static", deep_pairs=3, max_rounds=20, seed=None) -> None:
+                 skip_judged=False, trials=None, mode="static", deep_pairs=3, max_rounds=20, seed=None,
+                 baseline_run=None, baseline_file=None) -> None:
     from argus_transport.runtime_v2 import TargetRunStopped
 
     click.echo(f"Running {('all probes that fit this target' if not tokens else f'{len(tokens)} probe(s)')} locally ...")
@@ -319,6 +327,7 @@ def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, se
         options = run_options(mode, deep_pairs, max_rounds, seed)
         result = run_local_and_render(spec, tokens, per_run_cap, report_format, secret_values, fail_on,
                                       skip_judged=skip_judged, **options,
+                                      **({"baseline_run": baseline_run} if baseline_run is not None else {}),
                                       **({"trials": trials} if trials is not None else {}))
     except StopSignalReceived as e:
         click.echo(f"{STOP_MESSAGES[e.signum]}: the run was stopped before it finished; no report was written.", file=sys.stderr)
@@ -339,6 +348,11 @@ def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, se
         sys.exit(2 if code == "usage" else 1)
     _write_report(out_file, result.report)
     click.echo(f"Wrote report to {out_file}")
+    if result.baseline is not None:
+        safe_file = run_json.mask_text(baseline_file, run_json.run_secrets(spec, secret_values))
+        click.echo(f"Compared with {safe_file}: {comparison_summary(result.baseline)}")
+        for item in result.baseline["new"]:
+            click.echo(f"  new  {item['severity']:<9} {item['probe_id']}")
     if isinstance(result.stopped_by, TargetRunStopped):
         cleanup_note = (
             "No further request was sent, cleanup included."
@@ -357,7 +371,8 @@ def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, se
     _warn_if_all_blocked(result.findings)
     if skip_note := judge_skip_line(result.findings):
         click.echo(skip_note, file=sys.stderr)  # a note: skipped probes leave the exit code alone
-    _count_fail_on(result.findings, fail_on)  # prints the hits even when another code wins
+    gate_findings = new_failure_findings(result.baseline) if result.baseline is not None else result.findings
+    _count_fail_on(gate_findings, fail_on)  # prints the hits even when another code wins
     # run_exit_code: the cost cap (4) beats incomplete (1), which beats --fail-on (3).
     if result.exit_code:
         sys.exit(result.exit_code)

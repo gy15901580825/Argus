@@ -17,7 +17,7 @@ from argus.events import EVENT_STRUCTURE_FIELDS, normalize_redacted_event
 
 SCHEMA_VERSION = "argus.run/1"
 # Engine-generated fields put back after the scrub, so a short env value cannot mangle them.
-_RUN_FIELDS = ("id", "status", "started_at", "finished_at", "coverage")
+_RUN_FIELDS = ("id", "status", "started_at", "finished_at", "coverage", "baseline_key", "baseline")
 _FINDING_FIELDS = ("id", "probe_id", "verdict", "severity", "probed_at", "created_at",
                    "confidence", "target_latency_ms", "atlas_id", "owasp_id", "owasp_agentic", "nist_id", "eu_ai_act_id",
                    "judge_model", "escalated_model", "remediation", "remediation_actions")
@@ -108,5 +108,7 @@ def render_json(run: dict, secret_values: Iterable[str] = (), include_notes: boo
         **({"judge": plain["judge"]} if plain.get("judge") else {}),
         **({"target_cleanup": plain["target_cleanup"]} if plain.get("target_cleanup") is not None else {}),
         **({"deep": plain["deep"]} if plain.get("deep") is not None else {}),
+        **({"baseline_key": plain["baseline_key"]} if "baseline_key" in plain else {}),
+        **({"baseline": plain["baseline"]} if "baseline" in plain else {}),
     }
     return json.dumps(record, indent=2, ensure_ascii=False)

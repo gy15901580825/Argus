@@ -90,6 +90,35 @@ The trap page listens on `127.0.0.1` by default, which works when the agent runs
 
 The local judge uses `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY` when that is the only key set. To use another provider or model, see [Choosing a judge](#choosing-a-judge).
 
+### Compare local runs in CI
+
+`run --local --baseline FILE` compares against an earlier `run.json`, without
+a server. The file must use `argus.run/1` and test the same target in the same
+static or deep mode. Invalid baselines exit 2 before any probe or paid call.
+`--compare-to` keeps its server branch-history meaning and cannot be used locally.
+
+Save the main-branch run as a CI artifact, then download it into the PR job as
+`baseline.json` and compare the PR run:
+
+```bash
+# Main-branch job: upload main-run.json as an artifact after this command.
+argus-probe run --local --target target.json --probes all \
+  --format json --out main-run.json
+
+# PR job: download the main artifact to baseline.json first.
+argus-probe run --local --target target.json --probes all \
+  --baseline baseline.json --fail-on high --format json --out pr-run.json
+```
+
+The summary lists new, fixed, still failing and not run probes. A failure in
+any trial makes that probe failing. A missing or errored probe is never fixed.
+With `--baseline`, `--fail-on high` exits 3 only for new high or critical failures;
+existing failures leave the gate green. Cost-cap exit 4 and incomplete-run exit 1
+retain priority, and the report is written before those exits. Keep the target
+configuration stable across jobs; a changed endpoint, model or transport needs
+a fresh baseline. See [run.json](https://github.com/gy15901580825/Argus/blob/main/docs/run-json.md#local-baseline-comparison) for the
+comparison fields and compatibility with older run records.
+
 ### Adaptive deep runs
 
 `run` accepts these flags in local and server mode:

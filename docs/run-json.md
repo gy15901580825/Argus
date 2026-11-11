@@ -16,7 +16,7 @@ If a run stops partway, for example when the daily cost cap is crossed, the targ
 
 ## Fields
 
-The top-level keys always appear in this order. `incomplete_reason`, `notes`, `judge`, `target_cleanup` and `deep` appear only when they apply:
+The top-level keys appear in this order. `incomplete_reason`, `notes`, `judge`, `target_cleanup`, `deep`, `baseline_key` and `baseline` are optional:
 
 | Key | Type | Meaning |
 |---|---|---|
@@ -35,6 +35,35 @@ The top-level keys always appear in this order. `incomplete_reason`, `notes`, `j
 | `judge` | object | Only when the run used the LLM judge (`run` with a judged probe, `scan-mcp` with the judge on). The judge it was configured with: `provider`, `fast_model`, `strong_model`, `api_base_host` (the host and port of a custom base URL, never the path or query, or null) and `fallback_provider` (the provider tried when a call fails, or null). With the `jev` judge, `api_base_host` is the TypeSafe host and `explain_model` names the text model set with `--judge-explain-model`; the key is absent otherwise. Each finding's `judge_model` says which model gave that verdict. |
 | `target_cleanup` | object | When the target has configured undo requests, delivery abort, or tracked lifecycle-created resources. Final run and attempt cleanup summary. See below. |
 | `deep` | object | Deep runs only. Resolved selection seed, requested limits and planned persona × strategy threads. See below. |
+| `baseline_key` | string | `run` only. Stable target identity, computed before secret masking and before starting a temporary local testbed. Secret-named keys and browser trap deployment settings are excluded. |
+| `baseline` | object | Only with `run --local --baseline FILE`. The earlier run's `id` and `finished_at`, plus `new`, `fixed`, `still_failing` and `not_run` lists. See below. |
+
+### Local baseline comparison
+
+Pass an earlier `argus.run/1` file with `run --local --baseline baseline.json`.
+The target identity and static/deep mode must match; an unreadable, malformed,
+incompatible or mismatched baseline exits 2 before the run starts. Files written
+by 1.9.0 without `baseline_key` remain supported: Argus compares their redacted
+`target_spec` with the current target under the same secret masking.
+New records store the key so comparisons can use the original identity directly.
+These optional fields keep the schema version at `argus.run/1`.
+
+The `baseline` object contains `id`, `finished_at` and four lists. Each list item
+has `probe_id` and `severity`. A probe fails if any finding for that probe fails,
+including repeated trials; its severity is the highest among its failing findings.
+
+| List | Meaning | Severity from |
+|---|---|---|
+| `new` | Failing now, with no failure in the baseline, including absent or errored baseline probes. | Current run |
+| `fixed` | Failing in the baseline; present now with no failed or errored findings. | Baseline |
+| `still_failing` | Failing in both runs. | Current run |
+| `not_run` | Failing in the baseline; absent now or unresolved because a current finding errored. | Baseline |
+
+With a baseline, `--fail-on` gates only `new` failures. Cost-cap exit 4 and
+incomplete-run exit 1 still take priority over failure exit 3. The report is
+written before those exits. The normal `summary` still counts all current
+findings; the comparison lists count probe ids once. The console and HTML
+summary also show the comparison.
 
 ### Deep run metadata
 
