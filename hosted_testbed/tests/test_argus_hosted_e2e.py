@@ -167,7 +167,7 @@ async def test_existing_probe_through_hosted_http_and_engine(monkeypatch, tmp_pa
 def test_all_existing_nonvisual_pages_pass_service_gate():
     probes = list(load_all_probes(PROBES))
     supported = [probe for probe in probes if probe.scenario_kind != "visual_injection"]
-    assert len(probes) == 31 and len(supported) == 22
+    assert len(probes) == 32 and len(supported) == 23
     failures = []
     for probe in supported:
         content = render_hosted_scenario(probe.scenario_kind, probe.scenario_payload)
