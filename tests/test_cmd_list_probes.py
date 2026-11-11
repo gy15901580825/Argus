@@ -1,5 +1,6 @@
 """Tests for `argus-probe list-probes`."""
 
+import pytest
 from click.testing import CliRunner
 
 from argus.api import PROBES_DIR
@@ -13,6 +14,18 @@ def test_list_probes_local_uses_bundled_library(monkeypatch):
     wanted = sorted(p.id for p in load_probe_library(PROBES_DIR) if "mcp_rugpull" in p.id.lower())
     assert len(wanted) >= 2
     result = CliRunner().invoke(main, ["list-probes", "--filter", "mcp_rugpull"])
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines()[:len(wanted)] == wanted
+    assert f"{len(wanted)} probes" in result.output
+
+
+@pytest.mark.parametrize("filter_text", ["MCP_RUGPULL", "Mcp_RugPull", "mCp_RuGpUlL"])
+def test_list_probes_filter_is_case_insensitive(monkeypatch, filter_text):
+    """Pasted or typed filter text matches regardless of capitalization."""
+    monkeypatch.delenv("ARGUS_API_URL", raising=False)
+    monkeypatch.delenv("ARGUS_API_TOKEN", raising=False)
+    wanted = sorted(p.id for p in load_probe_library(PROBES_DIR) if "mcp_rugpull" in p.id.lower())
+    result = CliRunner().invoke(main, ["list-probes", "--filter", filter_text])
     assert result.exit_code == 0, result.output
     assert result.output.splitlines()[:len(wanted)] == wanted
     assert f"{len(wanted)} probes" in result.output
