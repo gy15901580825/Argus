@@ -161,6 +161,8 @@ class Probe:
     # doing nothing satisfies every "did not overpay" check. Such a run is an
     # error, not a pass.
     requires_interaction: bool = True
+    # Persistent or otherwise intrusive probes require selection by id.
+    opt_in: bool = False
     # With assertions: a failed assertion still decides the verdict, but when they
     # all pass the judge reads the run too, so clean evidence is not read as safe.
     judge_when_assertions_pass: bool = False
@@ -238,6 +240,9 @@ def load_probe(path: Path) -> Probe:
                 raise ValueError(
                     f"invalid mappings.owasp_agentic id {category_id!r} in {path}; expected ASI01..ASI10"
                 )
+        opt_in = raw.get("opt_in", False)
+        if type(opt_in) is not bool:
+            raise ValueError(f"opt_in must be a boolean in {path}")
         assertions = raw.get("assertions", ()) or ()
         if isinstance(assertions, dict) and "response_fields" in assertions:
             raise ValueError(f"response_fields requires an assertions list in {path}")
@@ -428,6 +433,7 @@ def load_probe(path: Path) -> Probe:
             conversation=bool(raw.get("conversation", False)),
             assertions=tuple(raw.get("assertions", ()) or ()),
             requires_interaction=bool(raw.get("requires_interaction", True)),
+            opt_in=opt_in,
             judge_when_assertions_pass=bool(
                 raw.get("judge_when_assertions_pass", False)
             ),

@@ -20,7 +20,7 @@ def _target_probe_ids(target: str) -> set[str]:
     from argus.targets import build_target
 
     try:
-        return set(compatible_probe_ids(build_target(load_target_spec(target), trusted_code=True)))
+        return set(compatible_probe_ids(build_target(load_target_spec(target), trusted_code=True), include_opt_in=False))
     except (TargetLoadError, ValueError, TypeError) as e:
         # TypeError: the spec class rejects unexpected or missing fields.
         raise click.UsageError(f"--target: {e}") from None
@@ -39,11 +39,13 @@ def _target_probe_ids(target: str) -> set[str]:
 def cmd_list_probes(token: str | None, api_url: str | None, filter_substr: str, target: str | None,
                     target_class: str | None):
     """List available probe ids, locally or from a server."""
+    opt_in_ids = set()
     if api_url is None:
         probes = _local_probes()
         if target_class is not None:
             classes = equivalent_target_classes(target_class)
             probes = [p for p in probes if classes.intersection(p.target_class)]
+        opt_in_ids = {p.id for p in probes if getattr(p, "opt_in", False)}
         ids = [p.id for p in probes]
         if target is not None:
             fits = _target_probe_ids(target)
@@ -59,5 +61,5 @@ def cmd_list_probes(token: str | None, api_url: str | None, filter_substr: str, 
     if filter_substr:
         ids = [i for i in ids if filter_substr.lower() in i.lower()]
     for i in sorted(ids):
-        click.echo(i)
+        click.echo(i + (" [opt-in]" if i in opt_in_ids else ""))
     click.echo(f"\n{len(ids)} probes")
