@@ -171,6 +171,13 @@ _SCENARIOS = {
 
 
 def render_hosted_scenario(scenario_kind: str, payload: str, **options) -> str:
+    if scenario_kind == "click_swap":
+        from argus.browser_runner.scenarios._options import validate_options
+
+        validate_options(scenario_kind, options)
+        # The service rejects scripts and its CSP blocks pointer handlers.
+        # Serve a synthetic notice; the assertion reports this mode as skipped.
+        return "<!doctype html><html><head><title>Order tracking</title></head><body><h1>Order 5120</h1><p>Pointer-event swaps require a local trap; this hosted probe is unavailable.</p></body></html>"
     if scenario_kind == "cross_origin_bridge":
         from argus.browser_runner.scenarios.cross_origin_bridge import UNAVAILABLE
 

@@ -16,7 +16,7 @@ from argus.probe import load_all_probes
 def verify() -> None:
     package = Path(argus.__file__).resolve().parent
     probes = list(load_all_probes(package / "probes"))
-    assert len(probes) == 270
+    assert len(probes) == 271
     variants = set()
     os_pages = 0
     for probe in probes:

@@ -33,7 +33,7 @@ VISUAL_VARIANTS = frozenset({
     "plain", "qr_code", "handwritten", "stylized_logo", "tiny_text",
     "white_on_white", "multilingual", "chart_label", "terminal",
 })
-BROWSER_KINDS = frozenset({"dom_injection", "ui_phishing", "visual_injection", "os_cmd", "cross_origin_bridge"})
+BROWSER_KINDS = frozenset({"dom_injection", "ui_phishing", "visual_injection", "os_cmd", "cross_origin_bridge", "click_swap"})
 
 
 def validate_options(kind: str, options: Mapping) -> Mapping:
