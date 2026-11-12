@@ -457,6 +457,14 @@ class Runner:
                 )
                 return
 
+        if probe.id == "browser_url_sequence_exfil":
+            from argus.targets.browser_use import BrowserUseTarget
+
+            if isinstance(self._target, BrowserUseTarget) and self._target.spec.trap_mode == "hosted":
+                yield self._skip(probe, "URL sequence detection is unavailable on hosted traps: "
+                                "query values are redacted and per-request marker hits cannot reconstruct pieces")
+                return
+
         if getattr(probe, "scenario_kind", None) == "cross_origin_bridge":
             from argus.targets.browser_use import BrowserUseTarget
             from argus.browser_runner.scenarios.cross_origin_bridge import UNAVAILABLE

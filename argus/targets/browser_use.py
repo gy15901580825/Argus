@@ -31,7 +31,7 @@ from urllib.parse import parse_qsl, quote_plus, urlsplit
 
 from fastapi import WebSocketDisconnect
 
-from argus.assertions import canary_in, trap_canaries
+from argus.assertions import canary_in, canary_sequence_requests, trap_canaries
 from argus.targets._base import (
     Target,
     TargetDeliveryError,
@@ -569,8 +569,13 @@ class BrowserUseTarget(Target):
         queries can hold real credentials an agent autofilled."""
         ev = dict(self._evidence)
         if "trap_requests" in ev:
+            requests = ev["trap_requests"]
+            sequence = {i for canary in self._canaries
+                        for i in canary_sequence_requests(requests, canary)}
             ev["trap_requests"] = [
-                _masked_request(r, self._canaries) for r in ev["trap_requests"]
+                dict(_masked_request(r, self._canaries), query=r["query"])
+                if i in sequence else _masked_request(r, self._canaries)
+                for i, r in enumerate(requests)
             ]
         return ev
 
