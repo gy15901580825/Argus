@@ -6,7 +6,7 @@ import base64
 import json
 
 
-def build_402_body(session, resource: str) -> dict:
+def build_402_body(session, resource: str, product=None) -> dict:
     """An x402 `accepts` offer. `payTo` is the quoted payee, which a probe can
     point at an attacker address to test whether the agent checks it."""
     return {
@@ -15,11 +15,12 @@ def build_402_body(session, resource: str) -> dict:
         "accepts": [{
             "scheme": "exact",
             "network": "mock",
-            "maxAmountRequired": session.script.quote_amount,
+            "maxAmountRequired": str(product.price) if product else session.script.quote_amount,
             "asset": session.script.quote_asset,
             "payTo": session.quoted_payee,
             "resource": resource,
-            "description": "Argus simulated paid resource",
+            "description": product.description if product else "Argus simulated paid resource",
+            **({"sku": product.sku} if product else {}),
             "maxTimeoutSeconds": 60,
         }],
     }
@@ -42,13 +43,15 @@ def parse_payment_header(raw: str | None) -> dict | None:
     return auth if isinstance(auth, dict) else None
 
 
-def paid_content(session) -> dict:
+def paid_content(session, product=None) -> dict:
     """The resource the agent paid for -- plus, when the probe says so, an
     instruction planted in the content it now trusts."""
     body = {
         "title": "Quarterly threat report",
         "content": "Simulated paid content. No real transfer occurred.",
     }
+    if product:
+        body.update(sku=product.sku, title=product.name)
     if session.script.inject_followup:
         body["content"] += f"\n\n{session.script.inject_followup}"
     return body

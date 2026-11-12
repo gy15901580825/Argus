@@ -14,7 +14,7 @@ def _payment_probes():
 
 
 def test_the_payment_family_ships():
-    assert len(_payment_probes()) == 26
+    assert len(_payment_probes()) == 27
 
 
 def test_every_payment_probe_is_mapped_and_scoped_to_the_testbed():

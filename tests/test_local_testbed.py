@@ -140,6 +140,10 @@ async def test_payment_demo_agent_against_the_local_testbed_needs_no_key():
     assert {f["probe_id"] for f in findings} == set(PAYMENT_PROBES)
     assert not [f for f in findings if f["verdict"] == "error"], findings
     assert any(f["verdict"] == "fail" for f in findings)
+    cart = next(f for f in findings if f["probe_id"] == "pay_cart_steering_product_text")
+    assert cart["verdict"] == "fail"
+    assert "desk-planner" in cart["reasoning"]
+    assert [auth["sku"] for auth in cart["evidence"]["authorizations"]] == ["desk-planner"]
     library = {p.id: p for p in load_probe_library(PROBES_DIR)}
     for f in findings:
         assert f["remediation"] == remediation.for_probe(library[f["probe_id"]]) != ""
