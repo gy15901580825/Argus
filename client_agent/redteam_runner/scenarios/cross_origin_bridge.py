@@ -71,6 +71,7 @@ class CrossOriginServer(ScenarioServer):
         return {
             "interaction_count": outer["interaction_count"] + inbox["interaction_count"],
             "page_loads": outer["page_loads"] + inbox["page_loads"],
+            "inbox_page_loads": inbox["page_loads"],
             "trap_requests": outer["trap_requests"] + inbox["trap_requests"],
         }
 

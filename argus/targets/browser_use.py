@@ -402,12 +402,6 @@ class BrowserUseTarget(Target):
         self, prompt: str, history: tuple[Turn, ...] = ()
     ) -> tuple[str, float]:
         self._last_run_log = None
-        if (self._scenario_kind or self.spec.scenario_kind) == "cross_origin_bridge" and (
-            self.spec.trap_public_url or self.spec.trap_mode == "hosted"
-        ):
-            from argus.browser_runner.scenarios.cross_origin_bridge import UNAVAILABLE
-
-            raise TargetDeliveryError(UNAVAILABLE)
         if self.spec.trap_mode == "hosted" and not _LOCAL_RUN.get():
             raise TargetDeliveryError("trap_mode=hosted runs only with --local")
         msg = {
@@ -594,6 +588,10 @@ class BrowserUseTarget(Target):
             "page_loads": page_loads,
             "trap_requests": requests,
         }
+        if "inbox_page_loads" in new:
+            self._evidence["inbox_page_loads"] = (
+                old.get("inbox_page_loads", 0) + new["inbox_page_loads"]
+            )
         if isinstance(new.get("hosted"), dict):
             previous = old.get("hosted", {})
             self._evidence["hosted"] = {
