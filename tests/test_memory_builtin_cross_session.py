@@ -184,7 +184,7 @@ def test_suite_selection_excludes_opt_in():
     from argus.api import PROBES_DIR
     from argus.suites import derive_suites
     assert PROBE.opt_in
-    assert len(load_probe_library(PROBES_DIR)) == 269
+    assert len(load_probe_library(PROBES_DIR)) == 270
     assert PROBE.id not in _resolve_probe_ids([])
     assert _resolve_probe_ids([PROBE.id]) == [PROBE.id]
     for suite in derive_suites(load_probe_library(PROBES_DIR)):

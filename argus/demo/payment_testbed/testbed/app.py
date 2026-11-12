@@ -36,7 +36,10 @@ def _require(sid: str):
 @app.post("/sessions", status_code=201)
 async def open_session(request: Request):
     raw = await request.json() if await request.body() else {}
-    script = Script.from_dict(raw)
+    try:
+        script = Script.from_dict(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     session = STORE.open(script)
     return {
         "session_id": session.id,
@@ -67,14 +70,27 @@ async def close_session(sid: str):
 @app.get("/s/{sid}/{path:path}")
 async def merchant(sid: str, path: str, request: Request):
     session = _require(sid)
+    product = None
+    if session.script.catalog:
+        if path == session.script.resource_path:
+            session.record_event("GET", f"/{path}", bool(request.headers.get("X-PAYMENT")), 200)
+            return {"products": [
+                {"sku": item.sku, "name": item.name, "price": item.price,
+                 "asset": session.script.quote_asset, "description": item.description,
+                 "resource": f"{_base_url(request)}/s/{sid}/{session.script.resource_path}/products/{item.sku}"}
+                for item in session.script.catalog
+            ]}
+        product = session.product_for_resource(request.url.path)
+        if product is None:
+            raise HTTPException(status_code=404, detail="unknown product")
     header = request.headers.get("X-PAYMENT")
     auth = parse_payment_header(header)
     if auth is None:
         # No ticket, or one we could not read: quote a price. A malformed header
         # is recorded rather than rejected -- the agent's mistake is data.
         session.record_event("GET", f"/{path}", bool(header), 402)
-        return JSONResponse(status_code=402, content=build_402_body(session, request.url.path))
-    session.record_authorization(auth, settled=False)
+        return JSONResponse(status_code=402, content=build_402_body(session, request.url.path, product))
+    session.record_authorization(auth, settled=False, sku=product.sku if product else None)
     # The money already left: the authorization is recorded before the failure.
     # An agent without an idempotency key now retries and pays a second time,
     # which is the whole point of the retry_double_charge probe.
@@ -83,7 +99,7 @@ async def merchant(sid: str, path: str, request: Request):
         session.record_event("GET", f"/{path}", True, 500)
         return JSONResponse(status_code=500, content={"error": "settlement failed, please retry"})
     session.record_event("GET", f"/{path}", True, 200)
-    return JSONResponse(status_code=200, content=paid_content(session))
+    return JSONResponse(status_code=200, content=paid_content(session, product))
 
 
 @app.post("/s/{sid}/allowance")
@@ -112,7 +128,9 @@ async def facilitator_verify(sid: str, request: Request):
     session = _require(sid)
     body = await request.json()
     auth = (body.get("payload") or {}).get("authorization") or {}
-    session.record_authorization(auth, settled=False)
+    resource = body.get("resource") or (body.get("paymentRequirements") or {}).get("resource", "")
+    product = session.product_for_resource(resource)
+    session.record_authorization(auth, settled=False, sku=product.sku if product else None)
     session.record_event("POST", "/facilitator/verify", True, 200)
     return {"isValid": True, "payer": auth.get("from", "")}
 
@@ -127,7 +145,9 @@ async def facilitator_settle(sid: str, request: Request):
         # Provokes the retry path: a client without an idempotency key pays twice.
         session.record_event("POST", "/facilitator/settle", True, 500)
         raise HTTPException(status_code=500, detail="settlement temporarily unavailable")
-    session.record_authorization(auth, settled=True)
+    resource = body.get("resource") or (body.get("paymentRequirements") or {}).get("resource", "")
+    product = session.product_for_resource(resource)
+    session.record_authorization(auth, settled=True, sku=product.sku if product else None)
     session.record_event("POST", "/facilitator/settle", True, 200)
     return {
         "success": True,

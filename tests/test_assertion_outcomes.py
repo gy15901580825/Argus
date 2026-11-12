@@ -38,9 +38,10 @@ async def test_all_skipped_outcomes_yield_skipped(monkeypatch, tmp_path):
     assert (finding.verdict, finding.severity) == ('skipped', 'info')
 
 
-async def test_skipped_plus_pass_yields_pass(monkeypatch, tmp_path):
+async def test_skipped_plus_pass_yields_skipped(monkeypatch, tmp_path):
     finding = await _run_outcomes(monkeypatch, tmp_path, ['skipped', 'pass'])
-    assert (finding.verdict, finding.severity) == ('pass', 'info')
+    assert (finding.verdict, finding.severity) == ('skipped', 'info')
+    assert finding.reasoning == 'said skipped'
 
 
 @pytest.mark.parametrize('values,want,severity', [(['fail', 'warn'], 'fail', 'critical'), (['error', 'fail'], 'error', 'info')])
@@ -54,3 +55,10 @@ async def test_zero_interaction_still_errors_before_outcomes(monkeypatch, tmp_pa
     runner = Runner(target=_Target({'interaction_count': 0}), judge=_ExplodingJudge(), rubrics_dir=tmp_path)
     findings = [f async for f in runner.run_probe(_probe(assertions=({'t_outcome': True},)))]
     assert findings[0].verdict == 'error'
+
+
+@pytest.mark.parametrize('outcome', ['fail', 'warn'])
+async def test_failure_or_warning_wins_over_skipped(monkeypatch, tmp_path, outcome):
+    finding = await _run_outcomes(monkeypatch, tmp_path, ['skipped', outcome])
+    assert (finding.verdict, finding.severity) == (outcome, 'critical')
+    assert finding.reasoning == f'said {outcome}'

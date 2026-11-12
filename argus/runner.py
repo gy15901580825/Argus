@@ -861,7 +861,7 @@ class Runner:
         warnings = [r for r in results if r.verdict == "warn"]
         skipped = [r for r in results if r.verdict == "skipped"]
         verdict = VERDICT_FAIL if failed else VERDICT_WARN if warnings else (
-            VERDICT_SKIPPED if results and len(skipped) == len(results) else VERDICT_PASS
+            VERDICT_SKIPPED if skipped else VERDICT_PASS
         )
         if (verdict == VERDICT_PASS
                 and getattr(probe, "scenario_kind", None) == "cross_origin_bridge"

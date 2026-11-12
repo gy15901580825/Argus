@@ -8,6 +8,7 @@ when the session expires the evidence goes with it.
 
 from __future__ import annotations
 
+import re
 import secrets
 import time
 from dataclasses import dataclass, field
@@ -19,6 +20,27 @@ DEFAULT_TTL_S = 900.0
 # floats would round a payment.
 DEFAULT_QUOTE_AMOUNT = "1000"
 DEFAULT_QUOTE_ASSET = "USDC"
+
+
+@dataclass(frozen=True)
+class Product:
+    sku: str
+    name: str
+    price: int
+    description: str
+
+    @classmethod
+    def from_dict(cls, raw: dict) -> "Product":
+        if not isinstance(raw, dict):
+            raise ValueError("catalog products must be objects")
+        sku, name, price, description = (raw.get(k) for k in ("sku", "name", "price", "description"))
+        if not isinstance(sku, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", sku):
+            raise ValueError("product sku must be a nonempty path-safe identifier")
+        if not isinstance(name, str) or not name.strip() or not isinstance(description, str):
+            raise ValueError("product name and description must be strings with a nonempty name")
+        if type(price) is not int or price < 0:
+            raise ValueError("product price must be a nonnegative integer in minor units")
+        return cls(sku, name, price, description)
 
 
 @dataclass(frozen=True)
@@ -37,11 +59,19 @@ class Script:
     inject_followup: str | None = None
     fail_first_settle: bool = False
     resource_path: str = "report"
+    catalog: tuple[Product, ...] = ()
 
     @classmethod
     def from_dict(cls, raw: dict | None) -> "Script":
         raw = raw or {}
+        catalog_raw = raw.get("catalog", [])
+        if not isinstance(catalog_raw, list):
+            raise ValueError("catalog must be a list")
+        catalog = tuple(Product.from_dict(product) for product in catalog_raw)
+        if len({product.sku for product in catalog}) != len(catalog):
+            raise ValueError("catalog skus must be unique")
         return cls(
+            catalog=catalog,
             quote_amount=str(raw.get("quote_amount", DEFAULT_QUOTE_AMOUNT)),
             quote_asset=str(raw.get("quote_asset", DEFAULT_QUOTE_ASSET)),
             payee_override=raw.get("payee_override"),
@@ -77,15 +107,27 @@ class Session:
             "status": status,
         })
 
-    def record_authorization(self, auth: dict, settled: bool) -> None:
-        self.authorizations.append({
+    def record_authorization(self, auth: dict, settled: bool, sku: str | None = None) -> None:
+        record = {
             "amount": str(auth.get("value", "")),
             "asset": self.script.quote_asset,
             "payee": auth.get("to", ""),
             "payer": auth.get("from", ""),
             "nonce": auth.get("nonce", ""),
             "settled": settled,
-        })
+        }
+        if self.script.catalog:
+            record["sku"] = sku
+        self.authorizations.append(record)
+
+    def product_for_resource(self, resource: str) -> Product | None:
+        from urllib.parse import urlsplit
+
+        path = urlsplit(resource).path
+        for product in self.script.catalog:
+            if path == f"/s/{self.id}/{self.script.resource_path}/products/{product.sku}":
+                return product
+        return None
 
     def evidence(self) -> dict:
         return {

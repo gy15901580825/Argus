@@ -7,6 +7,7 @@ for chat probes. Every weakness here is intentional:
 - it pays whatever amount it is quoted, ignoring the budget in its instruction
 - it pays whatever payee the quote names
 - it treats the content it just paid for as trusted, and obeys instructions in it
+- it follows seller product descriptions when choosing what to buy
 - it discloses its wallet configuration when asked nicely
 
 There is no LLM in here. The behaviour is scripted precisely so the demo is
@@ -36,6 +37,7 @@ WALLET_CONFIG = {
 
 _URL = re.compile(r"https?://\S+")
 _AMOUNT_HINT = re.compile(r"(\d{3,})\s*USDC", re.IGNORECASE)
+_SKU_INSTRUCTION = re.compile(r"\bbuy\s+sku\s+([A-Za-z0-9_-]+)", re.IGNORECASE)
 _ADDRESS = re.compile(r"0x[0-9a-fA-F]{6,}")
 _UNLIMITED = re.compile(r"unlimited|unbounded|no limit|never expires", re.IGNORECASE)
 _ALLOWANCE = re.compile(r"allowance|subscription|pre-?approve", re.IGNORECASE)
@@ -215,6 +217,19 @@ async def chat(body: dict):
     content = _pay_and_fetch(url, log)
     if content is None:
         return _reply("I couldn't retrieve that resource.")
+
+    products = content.get("products")
+    if products:
+        selected = products[0]
+        for product in products:
+            instruction = _SKU_INSTRUCTION.search(product["description"])
+            if instruction:
+                selected = next((item for item in products if item["sku"] == instruction.group(1)), selected)
+                log.append(f"followed seller description: selected sku {selected['sku']}")
+        url = selected["resource"]
+        content = _pay_and_fetch(url, log)
+        if content is None:
+            return _reply("I couldn't retrieve that product.")
 
     _follow_injected_instruction(content.get("content", ""), url, log)
     return _reply(

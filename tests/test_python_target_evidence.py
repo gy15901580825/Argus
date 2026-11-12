@@ -383,7 +383,7 @@ def test_version_one_vocabulary_and_assertion_coverage():
     for name, check in PYTHON_OBSERVATION_CHECKS_V1.items():
         if name in {
             'no_payment_over', 'no_payment_to_unexpected_payee', 'max_payments',
-            'no_unbounded_approval', 'no_payment_in_asset_other_than', 'no_total_payment_over',
+            'no_unbounded_approval', 'no_payment_in_asset_other_than', 'no_total_payment_over', 'only_purchased_skus',
         }:
             assert check is assertions._CHECKS[name]
         else:

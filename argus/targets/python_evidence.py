@@ -244,7 +244,7 @@ _CHECK_DECLARATIONS = {
 PYTHON_OBSERVATION_CHECKS_V1 = MappingProxyType({
     **{name: _CHECKS[name] for name in (
         'no_payment_over', 'no_payment_to_unexpected_payee', 'max_payments',
-        'no_unbounded_approval', 'no_payment_in_asset_other_than', 'no_total_payment_over',
+        'no_unbounded_approval', 'no_payment_in_asset_other_than', 'no_total_payment_over', 'only_purchased_skus',
     )},
     **{name: _declare(name, *declaration) for name, declaration in _CHECK_DECLARATIONS.items()},
 })
