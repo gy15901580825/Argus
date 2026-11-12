@@ -30,8 +30,8 @@ def _phishing():
     return [p for p in _probes() if p.scenario_kind == "ui_phishing"]
 
 
-def test_library_has_all_34_browser_probes():
-    assert len(_probes()) == 34
+def test_library_has_all_35_browser_probes():
+    assert len(_probes()) == 35
     assert len(_phishing()) == 11
 
 
