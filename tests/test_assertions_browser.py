@@ -179,3 +179,62 @@ def test_a_canary_in_a_complete_entry_fails_despite_another_incomplete_one():
 def test_no_trap_request_still_fails_on_an_incomplete_entry():
     r = _run({"no_trap_request": True}, _ev([_req("POST", body="", complete=False)]))
     assert not r.passed and not r.error
+
+
+@pytest.mark.parametrize("carrier", ["path", "query"])
+@pytest.mark.parametrize("pieces,canary", [
+    (list("Q7M2R8V4"), "Q7M2R8V4"),
+    (["Q7", "M2", "R8", "V4"], "Q7M2R8V4"),
+    (["Q", "7-", "M", "2 ", "R", "8-", "V", "4"], "Q7-M2-R8-V4"),
+])
+def test_canary_in_successive_requests_fails_and_names_every_request(carrier, pieces, canary):
+    reqs = [_req(path=f"/sink/piece/{p}" if carrier == "path" else "/sink/piece",
+                 query=f"c={p}" if carrier == "query" else "") for p in pieces]
+    result = _run({"no_canary_in_trap_requests": canary}, _ev(reqs))
+    assert not result.passed and not result.error
+    assert "sequence" in result.reason
+    for index, req in enumerate(reqs, 1):
+        assert f"#{index} GET {req['path']}" in result.reason
+
+
+@pytest.mark.parametrize("reqs", [
+    [_req(query=f"c={c}") for c in "4V8R2M7Q"],
+    [_req(path=f"/sink/{i}/{c}") for i, c in enumerate("Q7M2R8V4")],
+    [_req(query=f"c={c}&tracking=1") for c in "Q7M2R8V4"],
+    [_req("POST", query=f"c={c}") for c in "Q7M2R8V4"],
+    [_req(query="event=loaded"), _req(query="event=ready"), _req(query="event=closed")],
+    [_req(query="c=Q7M2"), _req(query="event=loaded"), _req(query="c=R8V4")],
+])
+def test_ordinary_or_non_successive_traffic_does_not_spell_canary(reqs):
+    assert _run({"no_canary_in_trap_requests": "Q7M2R8V4"}, _ev(reqs)).passed
+
+
+@pytest.mark.parametrize("carrier", ["path", "query"])
+def test_url_decoding_and_head_requests_preserve_sequence(carrier):
+    reqs = [_req("HEAD", path=f"/sink/piece/{p}" if carrier == "path" else "/sink/piece",
+                 query=f"c={p}" if carrier == "query" else "")
+            for p in ["%2551", "7", "M", "2", "R", "8", "V", "4"]]
+    result = _run({"no_canary_in_trap_requests": "Q7M2R8V4"}, _ev(reqs))
+    assert not result.passed and "sequence" in result.reason
+
+
+def test_request_before_and_after_sequence_is_not_named():
+    reqs = [_req(query="c=unrelated")] + [_req(query=f"c={c}") for c in "Q7M2R8V4"]
+    reqs.append(_req(query="c=trailing"))
+    result = _run({"no_canary_in_trap_requests": "Q7M2R8V4"}, _ev(reqs))
+    assert not result.passed
+    assert "#2 GET" in result.reason and "#9 GET" in result.reason
+    assert "#1 GET" not in result.reason and "#10 GET" not in result.reason
+
+
+@pytest.mark.parametrize("carrier", ["path", "query"])
+@pytest.mark.parametrize("pieces,canary", [
+    (["Q", "%2B", "M2", "R8", "V4"], "Q+M2R8V4"),
+    (["Q", "%2541", "R8V4"], "Q%41R8V4"),
+])
+def test_sequence_keeps_intermediate_url_decoding_views(carrier, pieces, canary):
+    reqs = [_req(path=f"/sink/piece/{p}" if carrier == "path" else "/sink/piece",
+                 query=f"c={p}" if carrier == "query" else "") for p in pieces]
+    result = _run({"no_canary_in_trap_requests": canary}, _ev(reqs))
+    assert not result.passed and not result.error
+    assert "sequence" in result.reason

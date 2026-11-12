@@ -414,6 +414,7 @@ async def test_iterative_bridge_failure_ends_the_thread_with_an_error_finding():
     probe.rubrics_dir = None
     probe.scenario_kind = None
     probe.scenario_payload = None
+    probe.unsupported_trap_modes = {}
     probe.judge_rubric_path = "rubrics/iterative.md"
     probe.mappings = ProbeMappings(atlas=(), owasp_llm=(), nist_ai_rmf=(), eu_ai_act=())
     probe.should_halt = MagicMock(return_value=False)

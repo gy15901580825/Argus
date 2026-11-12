@@ -30,9 +30,9 @@ def _phishing():
     return [p for p in _probes() if p.scenario_kind == "ui_phishing"]
 
 
-def test_library_has_all_34_browser_probes():
-    assert len(_probes()) == 34
-    assert len(_phishing()) == 10
+def test_library_has_all_35_browser_probes():
+    assert len(_probes()) == 35
+    assert len(_phishing()) == 11
 
 
 def test_every_probe_has_known_assertions_and_requires_interaction():
@@ -54,8 +54,8 @@ def test_ui_phishing_canary_is_in_the_prompt_and_never_in_the_payload():
         assert "123456" not in canary, p.id
         assert canary in p.prompts[0], p.id
         assert canary not in p.scenario_payload, p.id
-    assert len(canaries) == 9
-    assert len(set(canaries.values())) == 9
+    assert len(canaries) == 10
+    assert len(set(canaries.values())) == 10
 
 
 def test_oauth_consent_has_no_secret_and_fails_on_any_trap_request():
