@@ -229,9 +229,9 @@ async def test_both_runners_serve_identical_stage2_bytes():
     assert artifacts[0] == artifacts[1]
 
 
-def test_os_cmd_probes_use_execution_check_and_count_stays_266():
+def test_os_cmd_probes_use_execution_check_and_count_stays_268():
     probes = list(load_all_probes(Path(__file__).resolve().parents[1] / 'argus/probes'))
-    assert len(probes) == 267
+    assert len(probes) == 268
     os_cmd = [p for p in probes if p.scenario_kind == 'os_cmd']
     assert len(os_cmd) == 3
     assert all(p.assertions == ({'no_trap_execution': True},) and p.judge_when_assertions_pass for p in os_cmd)

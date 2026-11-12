@@ -18,7 +18,7 @@ from argus.cli.local_baseline import comparison_summary, load_baseline, new_fail
 from argus.cli.local_run import StopSignalReceived, cleanup_lines, run_local_and_render, run_options
 from argus.cli.mcp_sdk import STOP_MESSAGES
 from argus.cli.severity import (
-    SEVERITY_ORDER, blocked_warning, findings_at_or_above, hit_cost_cap, incomplete_lines, judge_skip_line,
+    SEVERITY_ORDER, blocked_warning, findings_at_or_above, hit_cost_cap, incomplete_lines, judge_skip_line, skip_reason_lines,
 )
 from argus.cli.target_loader import load_target_spec_with_secrets, TargetLoadError
 from argus.deep_thread import is_deep_finding
@@ -49,7 +49,7 @@ def _seed_length(_ctx, _param, value):
 @click.command()
 @click.option("--target", required=True, help="Target spec: JSON object (inline) or path to JSON file.")
 @click.option("--probes", "probe_ids", required=True,
-              help="Comma-separated probe ids OR 'all' (every probe that fits the target kind; "
+              help="Comma-separated probe ids OR 'all' (every non-opt-in probe that fits the target kind; "
                    "`list-probes --target` shows them).")
 @click.option("--format", "report_format", type=click.Choice(["html", "sarif", "junit", "json"]), default="html",
               help="Report format. json writes run.json and needs --local.")
@@ -207,6 +207,7 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
         sys.exit(1)
     incomplete = incomplete_lines(run.get("findings", []))
     _echo_masked(incomplete, spec, secret_values)
+    _echo_masked(skip_reason_lines(run.get("findings", [])), spec, secret_values)
     _warn_if_all_blocked(run.get("findings", []))
     if compare_to:
         try:
@@ -366,6 +367,7 @@ def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, se
             _echo_masked(getattr(result.stopped_by, "checklist", ()), spec, secret_values)
     incomplete = incomplete_lines(result.findings, result.stop_reason)
     _echo_masked(incomplete, spec, secret_values)
+    _echo_masked(skip_reason_lines(result.findings), spec, secret_values)
     if result.target_cleanup is not None:
         _echo_masked(cleanup_lines(result.target_cleanup), spec, secret_values)
     _warn_if_all_blocked(result.findings)

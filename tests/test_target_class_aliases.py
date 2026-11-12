@@ -20,7 +20,8 @@ from argus.targets import _BUILDERS
 @pytest.mark.parametrize("aliases", TARGET_CLASS_ALIASES, ids=lambda group: ",".join(sorted(group)))
 def test_list_probes_aliases_have_identical_nonempty_lists(aliases, monkeypatch):
     monkeypatch.delenv("ARGUS_API_URL", raising=False)
-    wanted = sorted(p.id for p in load_probe_library(PROBES_DIR) if aliases.intersection(p.target_class))
+    wanted = sorted(p.id + (" [opt-in]" if p.opt_in else "")
+                    for p in load_probe_library(PROBES_DIR) if aliases.intersection(p.target_class))
     assert wanted
     for name in sorted(aliases):
         result = CliRunner().invoke(main, ["list-probes", "--target-class", name])

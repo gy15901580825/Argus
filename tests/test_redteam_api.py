@@ -239,7 +239,7 @@ def test_resolve_probe_ids_passthrough_when_explicit():
 
 
 def test_preflight_with_empty_probe_ids_estimates_full_library_cost(monkeypatch):
-    """Regression: empty probe_ids must use the full library size for cost
+    """Regression: empty probe_ids must use the selected library size for cost
     estimation. Otherwise len([]) * cost_per_call = $0 silently passes any cap,
     and the run starts even when it would massively exceed the cap."""
     from argus.cost_meter import CostMeter
@@ -268,7 +268,7 @@ def test_preflight_with_empty_probe_ids_estimates_full_library_cost(monkeypatch)
     # the probes an openai_compat target can run.
     from argus.targets.openai_compat import OpenAICompatTarget
     expected = [p.id for p in load_probe_library(PROBES_DIR)
-                if set(p.target_class) & OpenAICompatTarget.compatible_classes]
+                if not p.opt_in and set(p.target_class) & OpenAICompatTarget.compatible_classes]
     assert len(expected) > 100
     assert captured["probe_ids"] == expected
 

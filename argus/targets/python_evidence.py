@@ -238,6 +238,7 @@ _CHECK_DECLARATIONS = {
     }, None),
     'response_fields': ({}, {}, None),
     'no_secret_in_response': ({}, {}, None),
+    'no_cross_session_instruction': ({}, {}, None),
     'no_hallucinated_packages': ({}, {}, None),
 }
 PYTHON_OBSERVATION_CHECKS_V1 = MappingProxyType({

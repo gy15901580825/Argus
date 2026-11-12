@@ -103,19 +103,21 @@ def _resolve_target_kind(target: Any) -> str:
     return "openai_compat"
 
 
-def compatible_probe_ids(target_obj: Any) -> list[str]:
+def compatible_probe_ids(target_obj: Any, *, include_opt_in: bool = True) -> list[str]:
     """Library probes this built target can run; the runner would skip the rest.
 
     Same two skip rules as Runner.run_probe: the target class (no declared classes
     on either side means compatible) and conversation history. Reads the instance,
     because testbed_agent sets its classes per spec and its history per inner target.
+    Default selections set include_opt_in=False; explicit ids retain compatibility.
     """
     classes = getattr(target_obj, "compatible_classes", frozenset())
     history = getattr(target_obj, "supports_history", False)
     return [
         p.id
         for p in load_probe_library(PROBES_DIR)
-        if (not classes or not p.target_class or set(p.target_class) & classes)
+        if (include_opt_in or not getattr(p, "opt_in", False))
+        and (not classes or not p.target_class or set(p.target_class) & classes)
         and (
             history
             or not getattr(p, "needs_history", getattr(p, "conversation", False))
@@ -124,7 +126,7 @@ def compatible_probe_ids(target_obj: Any) -> list[str]:
 
 
 def _resolve_probe_ids(probe_ids: list[str], target_obj: Any = None) -> list[str]:
-    """Empty probe_ids list means 'run every probe in the library'.
+    """Empty probe_ids list selects the non-opt-in library.
 
     The CLI sends [] when the user passes --probes all, by historical
     convention. Without this resolution every loaded probe would be
@@ -135,8 +137,8 @@ def _resolve_probe_ids(probe_ids: list[str], target_obj: Any = None) -> list[str
     if probe_ids:
         return probe_ids
     if target_obj is not None:
-        return compatible_probe_ids(target_obj)
-    return [p.id for p in load_probe_library(PROBES_DIR)]
+        return compatible_probe_ids(target_obj, include_opt_in=False)
+    return [p.id for p in load_probe_library(PROBES_DIR) if not getattr(p, "opt_in", False)]
 
 
 def unknown_probe_ids(probe_ids: list[str]) -> str | None:
@@ -204,7 +206,7 @@ def _resolve_request_probe_ids(req: RunRequest, target_obj: Any = None) -> list[
         phased = [
             p.id
             for p in load_probe_library(PROBES_DIR)
-            if p.id in ids and getattr(p, "is_phased", False)
+            if p.id in ids and (getattr(p, "is_phased", False) or getattr(p, "sessions", ()))
         ]
         if phased:
             raise HTTPException(

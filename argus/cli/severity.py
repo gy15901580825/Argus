@@ -58,6 +58,18 @@ def incomplete_lines(findings: list[dict], stopped_by: str | None = None) -> lis
     return lines
 
 
+def skip_reason_lines(findings: list[dict]) -> list[str]:
+    """Print outcome skips separately from the missing-judge summary."""
+    from argus.runner import NO_JUDGE_KEY
+
+    return list(dict.fromkeys(
+        f"  {f.get('probe_id')}: {f['reasoning']}"
+        for f in findings
+        if f.get("verdict") == "skipped" and f.get("reasoning")
+        and not str(f["reasoning"]).startswith(NO_JUDGE_KEY)
+    ))
+
+
 def judge_skip_line(findings: list[dict]) -> str | None:
     """How many probes were skipped for want of a judge key, and how to run them; None if none were.
 

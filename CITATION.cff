@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 message: "If you use argus-probe in your work, cite this software."
 title: "Argus by Veyon Solutions"
-abstract: "Argus runs 267 red-team probes against an agent through the tools it calls, the content it reads and the requests it gets, then shows which attacks got through."
+abstract: "Argus runs 268 red-team probes against an agent through the tools it calls, the content it reads and the requests it gets, then shows which attacks got through."
 authors:
   - name: "Veyon Solutions"
 version: 1.10.0

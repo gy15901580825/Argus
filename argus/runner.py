@@ -1113,9 +1113,20 @@ class Runner:
 
         indirect = getattr(probe, "indirect", ())
         use_material = bool(indirect) and getattr(self._target, "material_channel", False)
-        conversation = getattr(probe, "conversation", False)
+        sessions = getattr(probe, "sessions", ())
+        conversation = getattr(probe, "conversation", False) or bool(sessions)
+        session_starts = {}
+        offset = 0
+        for session, prompts in enumerate(sessions, 1):
+            session_starts[offset] = session
+            offset += len(prompts)
+        session = 1
+        exchanges = []
         transcript: list[Turn] = []
         for idx, prompt in enumerate(probe.prompts):
+            if idx in session_starts:
+                session = session_starts[idx]
+                transcript = []
             indirect_evidence = {"indirect": {
                 "task": indirect[idx].task,
                 "material_sha256": hashlib.sha256(indirect[idx].material.encode("utf-8")).hexdigest(),
@@ -1153,6 +1164,9 @@ class Runner:
                     return
                 continue
             self._note_send(None)
+            if sessions:
+                exchanges.append({"session": session, "prompt": self._shown(prompt),
+                                  "reply": response_text or ""})
             # An empty reply is a broken response path, not a refusal; a judge would read it as a pass.
             if not probe.assertions and _blank(response_text):
                 yield self._finding(
@@ -1192,6 +1206,8 @@ class Runner:
                 f = await self._assertion_finding(
                     probe, prompt, response_text, latency_ms, probed_at
                 )
+                if sessions:
+                    f = replace(f, evidence={**(f.evidence or {}), "sessions": exchanges})
                 if indirect_evidence:
                     f = replace(f, evidence={**(f.evidence or {}), **indirect_evidence})
                 if f.verdict == VERDICT_PASS and _is_hybrid(probe):
