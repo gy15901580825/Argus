@@ -1,9 +1,10 @@
 """Public docs repeat facts the code owns: target kinds, CLI subcommands, link targets."""
+import json
 import re
 from pathlib import Path
 
 from argus.cli.__main__ import main as cli_main
-from argus.targets import _BUILDERS
+from argus.targets import _BUILDERS, build_target
 
 REPO = Path(__file__).resolve().parents[1]
 README = REPO / "README.md"
@@ -45,6 +46,16 @@ def test_cli_md_shape_table_lists_every_kind():
 def test_quickstart_lists_every_kind():
     line = next(l for l in QUICKSTART.read_text().splitlines() if "supported `kind` values" in l)
     assert sorted(k for k in re.findall(r"`([a-z0-9_]+)`", line) if k != "kind") == sorted(_BUILDERS)
+
+
+def test_cookbook_http_upload_examples_cover_both_render_url_locators():
+    section = _section(COOKBOOK.read_text(), "## http_upload")
+    blocks = re.findall(r"^```json\n(.*?)^```", section, re.MULTILINE | re.DOTALL)
+    specs = [json.loads(block) for block in blocks]
+    for spec in specs:
+        build_target(spec)
+    used = {key for spec in specs for key in ("render_url_jsonpath", "render_url_header") if key in spec}
+    assert used == {"render_url_jsonpath", "render_url_header"}
 
 
 def test_cli_md_lists_every_subcommand():
