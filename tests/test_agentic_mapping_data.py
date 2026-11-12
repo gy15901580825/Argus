@@ -21,7 +21,7 @@ def mapper():
 def test_all_probes_explicitly_declare_reviewed_agentic_mappings():
     module = mapper()
     assert module.check(ROOT) == []
-    assert len(module.APPROVED) == 270
+    assert len(module.APPROVED) == 271
 
 
 def test_generic_chat_and_unexercised_agentic_risks_are_excluded():

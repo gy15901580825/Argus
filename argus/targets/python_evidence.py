@@ -253,7 +253,7 @@ _CONTEXT_OBSERVATIONS = requires_observations({}, optional={
     'interaction_count': int, 'interaction_count_by_session': dict,
 }, minimum={'interaction_count': 0})(functools.partial(_CHECKS['response_fields']))
 SUPPORTED_ASSERTIONS_V1 = frozenset(PYTHON_OBSERVATION_CHECKS_V1) | {'no_replayed_text'}
-DEFERRED_ASSERTIONS_V1 = frozenset({'a2a_server'})
+DEFERRED_ASSERTIONS_V1 = frozenset({'a2a_server', 'no_click_swap_activation'})
 
 
 def validate_python_observations(assertions: tuple[dict, ...], evidence: dict) -> None:

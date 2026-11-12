@@ -13,12 +13,13 @@ from argus_transport import (
     SafeReasonCode,
 )
 
-from .scenarios import cross_origin_bridge, dom_injection, os_cmd, ui_phishing, visual_injection
+from .scenarios import click_swap, cross_origin_bridge, dom_injection, os_cmd, ui_phishing, visual_injection
 from .scenarios._options import validate_options
 from .server import ScenarioServer
 from .traps import LocalTrap, Trap
 
 _SCENARIOS = {
+    "click_swap": click_swap,
     "cross_origin_bridge": cross_origin_bridge,
     "dom_injection": dom_injection,
     "ui_phishing": ui_phishing,
