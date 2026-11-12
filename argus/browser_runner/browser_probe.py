@@ -13,12 +13,13 @@ from argus_transport import (
     SafeReasonCode,
 )
 
-from .scenarios import dom_injection, os_cmd, ui_phishing, visual_injection
+from .scenarios import cross_origin_bridge, dom_injection, os_cmd, ui_phishing, visual_injection
 from .scenarios._options import validate_options
 from .server import ScenarioServer
 from .traps import LocalTrap, Trap
 
 _SCENARIOS = {
+    "cross_origin_bridge": cross_origin_bridge,
     "dom_injection": dom_injection,
     "ui_phishing": ui_phishing,
     "visual_injection": visual_injection,
@@ -31,6 +32,9 @@ def _make_scenario_server(scenario_kind: str, payload: str, *, scenario_options=
         raise ValueError(f"unknown scenario_kind: {scenario_kind!r}")
     mod = _SCENARIOS[scenario_kind]
     options = validate_options(scenario_kind, {} if scenario_options is None else scenario_options)
+
+    if scenario_kind == "cross_origin_bridge":
+        return cross_origin_bridge.CrossOriginServer(payload, **options, **bind)
 
     # Looked up at render time: the sink URL (and its port) exist only after start().
     def render() -> tuple[bytes | str, str]:
@@ -68,6 +72,8 @@ class BrowserProbe:
         }
         if "scenario_options" in msg:
             bind["scenario_options"] = msg["scenario_options"]
+        if msg["scenario_kind"] == "cross_origin_bridge" and trap is not None:
+            raise RuntimeError(cross_origin_bridge.UNAVAILABLE)
         if trap is None:
             trap = LocalTrap(_make_scenario_server(msg["scenario_kind"], msg["payload"], **bind), cleanup)
         scenario_url = ""

@@ -41,7 +41,7 @@ from argus.targets._base import (
 )
 
 _SCENARIO_KINDS = frozenset(
-    {"dom_injection", "ui_phishing", "visual_injection", "os_cmd"}
+    {"dom_injection", "ui_phishing", "visual_injection", "os_cmd", "cross_origin_bridge"}
 )
 
 # Same cap as the trap server's, so evidence summed over rounds stays bounded.
@@ -161,7 +161,7 @@ class BrowserUseSpec:
             )
         if self.scenario_kind not in _SCENARIO_KINDS:
             raise ValueError(
-                "scenario_kind must be one of dom_injection/ui_phishing/visual_injection/os_cmd"
+                "scenario_kind must be one of dom_injection/ui_phishing/visual_injection/os_cmd/cross_origin_bridge"
             )
         self._validate_trap()
 
@@ -402,6 +402,12 @@ class BrowserUseTarget(Target):
         self, prompt: str, history: tuple[Turn, ...] = ()
     ) -> tuple[str, float]:
         self._last_run_log = None
+        if (self._scenario_kind or self.spec.scenario_kind) == "cross_origin_bridge" and (
+            self.spec.trap_public_url or self.spec.trap_mode == "hosted"
+        ):
+            from argus.browser_runner.scenarios.cross_origin_bridge import UNAVAILABLE
+
+            raise TargetDeliveryError(UNAVAILABLE)
         if self.spec.trap_mode == "hosted" and not _LOCAL_RUN.get():
             raise TargetDeliveryError("trap_mode=hosted runs only with --local")
         msg = {
