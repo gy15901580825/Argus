@@ -136,6 +136,16 @@ How the response is parsed: `response_jsonpath` is a [JSONPath](https://goessner
 
 When an indirect attack changes structured output rather than the free-text answer, the [`response_fields` assertion](../reference/assertions.md#response_fields) checks declared JSON fields without a judge or Python plugin. Set `requires_interaction: false` when the response is the evidence and no testbed interaction is expected. `trials` evaluates each response independently.
 
+Probe YAML can declare trap constraints with `unsupported_trap_modes`, a mapping from mode to the reason printed when the runner skips the probe:
+
+```yaml
+unsupported_trap_modes:
+  hosted: "This assertion needs raw trap requests, which hosted traps redact."
+  public_url: "This scenario needs two reachable origins."
+```
+
+Allowed names are `local`, `hosted` and `public_url`. The first two match the browser target's `trap_mode`; `public_url` applies whenever `trap_public_url` is set, including with local capture. Reasons must be nonempty strings. Unknown names or malformed mappings fail when the probe loads. Omit the field, or use `{}`, when all trap configurations are supported. A matching constraint skips before target contact, prints its reason, keeps the run complete and does not affect `--fail-on`. Constraints travel with a copied probe under any ID and with its deep-mode threads.
+
 ---
 
 ## grpc

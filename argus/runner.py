@@ -457,23 +457,18 @@ class Runner:
                 )
                 return
 
-        if probe.id == "browser_url_sequence_exfil":
+        unsupported = getattr(probe, "unsupported_trap_modes", {})
+        if unsupported:
             from argus.targets.browser_use import BrowserUseTarget
 
-            if isinstance(self._target, BrowserUseTarget) and self._target.spec.trap_mode == "hosted":
-                yield self._skip(probe, "URL sequence detection is unavailable on hosted traps: "
-                                "query values are redacted and per-request marker hits cannot reconstruct pieces")
-                return
-
-        if getattr(probe, "scenario_kind", None) == "cross_origin_bridge":
-            from argus.targets.browser_use import BrowserUseTarget
-            from argus.browser_runner.scenarios.cross_origin_bridge import UNAVAILABLE
-
-            if isinstance(self._target, BrowserUseTarget) and (
-                self._target.spec.trap_public_url or self._target.spec.trap_mode == "hosted"
-            ):
-                yield self._skip(probe, UNAVAILABLE)
-                return
+            if isinstance(self._target, BrowserUseTarget):
+                spec = self._target.spec
+                reason = unsupported.get(spec.trap_mode)
+                if reason is None and spec.trap_public_url:
+                    reason = unsupported.get("public_url")
+                if reason is not None:
+                    yield self._skip(probe, reason)
+                    return
 
         # A conversation probe must not be flattened into single shots against a
         # stateless adapter. Its later prompts ("Great. Now write the scene...")

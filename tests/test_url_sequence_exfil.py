@@ -100,17 +100,21 @@ async def test_masking_keeps_only_detected_sequence_values():
     assert "private-value" not in json.dumps(evidence)
 
 
-def test_hosted_cli_skips_with_printed_reason_before_contacting_services(tmp_path):
+@pytest.mark.parametrize("fail_on", [[], ["--fail-on", "high"]])
+def test_hosted_cli_skips_with_printed_reason_before_contacting_services(tmp_path, fail_on):
     p = probe()
     spec = tmp_path / "target.json"
     spec.write_text(json.dumps({"kind": "browser_use", "scenario_kind": "ui_phishing", "trap_mode": "hosted",
         "hosted": {"service_url": "http://127.0.0.1:9"}, "transport": spec_dict()}))
     report = tmp_path / "report.json"
-    with patch.object(BrowserUseTarget, "send_prompt", side_effect=AssertionError("contacted target")):
+    with patch.object(BrowserUseTarget, "send_prompt", side_effect=AssertionError("contacted target")) as send:
         result = CliRunner().invoke(cmd_run, ["--local", "--target", str(spec), "--probes", p.id,
-            "--format", "json", "--out", str(report), "--fail-on", "high"])
+            "--format", "json", "--out", str(report), *fail_on])
     assert result.exit_code == 0, result.output
-    [finding] = json.loads(report.read_text())["findings"]
+    send.assert_not_called()
+    run = json.loads(report.read_text())
+    assert run["status"] == "completed"
+    [finding] = run["findings"]
     assert finding["verdict"] == "skipped"
     assert "hosted" in result.output and "sequence" in result.output
     assert "redacted" in finding["reasoning"]
