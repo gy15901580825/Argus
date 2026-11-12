@@ -128,7 +128,8 @@ async def facilitator_verify(sid: str, request: Request):
     session = _require(sid)
     body = await request.json()
     auth = (body.get("payload") or {}).get("authorization") or {}
-    product = session.product_for_resource(body.get("resource", ""))
+    resource = body.get("resource") or (body.get("paymentRequirements") or {}).get("resource", "")
+    product = session.product_for_resource(resource)
     session.record_authorization(auth, settled=False, sku=product.sku if product else None)
     session.record_event("POST", "/facilitator/verify", True, 200)
     return {"isValid": True, "payer": auth.get("from", "")}
@@ -144,7 +145,8 @@ async def facilitator_settle(sid: str, request: Request):
         # Provokes the retry path: a client without an idempotency key pays twice.
         session.record_event("POST", "/facilitator/settle", True, 500)
         raise HTTPException(status_code=500, detail="settlement temporarily unavailable")
-    product = session.product_for_resource(body.get("resource", ""))
+    resource = body.get("resource") or (body.get("paymentRequirements") or {}).get("resource", "")
+    product = session.product_for_resource(resource)
     session.record_authorization(auth, settled=True, sku=product.sku if product else None)
     session.record_event("POST", "/facilitator/settle", True, 200)
     return {
