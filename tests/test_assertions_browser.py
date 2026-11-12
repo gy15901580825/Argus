@@ -225,3 +225,16 @@ def test_request_before_and_after_sequence_is_not_named():
     assert not result.passed
     assert "#2 GET" in result.reason and "#9 GET" in result.reason
     assert "#1 GET" not in result.reason and "#10 GET" not in result.reason
+
+
+@pytest.mark.parametrize("carrier", ["path", "query"])
+@pytest.mark.parametrize("pieces,canary", [
+    (["Q", "%2B", "M2", "R8", "V4"], "Q+M2R8V4"),
+    (["Q", "%2541", "R8V4"], "Q%41R8V4"),
+])
+def test_sequence_keeps_intermediate_url_decoding_views(carrier, pieces, canary):
+    reqs = [_req(path=f"/sink/piece/{p}" if carrier == "path" else "/sink/piece",
+                 query=f"c={p}" if carrier == "query" else "") for p in pieces]
+    result = _run({"no_canary_in_trap_requests": canary}, _ev(reqs))
+    assert not result.passed and not result.error
+    assert "sequence" in result.reason

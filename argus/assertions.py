@@ -17,7 +17,6 @@ import json
 import math
 import re
 from importlib.metadata import entry_points
-from collections import deque
 from dataclasses import dataclass
 from typing import Callable, Literal, TypeVar
 from urllib.parse import parse_qsl, unquote_plus
@@ -619,7 +618,7 @@ def canary_in(text: str, canary: str) -> bool:
     return any(canary in t or (loose and squeezed in _SEPARATORS.sub("", t)) for t in _text_views(text))
 
 
-def _request_piece(request: dict) -> tuple[tuple[str, ...], str] | None:
+def _request_piece(request: dict) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
     if request.get("method") not in {"GET", "HEAD"} or request.get("body"):
         return None
     path = str(request.get("path") or "")
@@ -631,21 +630,21 @@ def _request_piece(request: dict) -> tuple[tuple[str, ...], str] | None:
             return None
         if len(pairs) != 1 or not pairs[0][1]:
             return None
-        key, piece = pairs[0]
-        route = ("query", path, key)
-        remaining_decodes = 2  # parse_qsl has already decoded once
+        route = ("query", path, pairs[0][0])
+        piece = query.split("=", 1)[1]
     else:
         prefix, _, piece = path.rpartition("/")
         if not piece:
             return None
         route = ("path", prefix)
-        remaining_decodes = 3
-    for _ in range(remaining_decodes):
+    views = [piece]
+    for _ in range(3):
         decoded = unquote_plus(piece)
         if decoded == piece:
             break
+        views.append(decoded)
         piece = decoded
-    return route, piece
+    return route, tuple(views)
 
 
 def canary_sequence_requests(requests: list[dict], canary: str) -> tuple[int, ...]:
@@ -653,32 +652,35 @@ def canary_sequence_requests(requests: list[dict], canary: str) -> tuple[int, ..
 
     A piece is the sole nonempty query value (same path and key), or, without
     a query, the final path segment (same prefix). Only body-less GET/HEAD
-    requests qualify. Matching uses the same separator rule as canary_in.
+    requests qualify. Raw and up to three URL-decoded views remain eligible,
+    so a literal plus or percent sequence survives further decoding.
+    Matching uses the same separator rule as canary_in.
     Shared with masking so only values involved in a detected leak survive.
     """
     squeezed = _SEPARATORS.sub("", canary)
     loose = len(squeezed) >= 8 and squeezed != canary
     wanted = squeezed if loose else canary
-    window = deque()
-    joined = ""
+    prefixes: dict[int, int] = {}  # matched canary length -> first request index
     route = None
     hits = set()
     for index, request in enumerate(requests):
         part = _request_piece(request)
         if part is None or part[0] != route:
-            window.clear()
-            joined = ""
+            prefixes.clear()
         route = part[0] if part else None
         if part is None:
             continue
-        piece = _SEPARATORS.sub("", part[1]) if loose else part[1]
-        window.append((index, piece))
-        joined += piece
-        while len(joined) > len(wanted):
-            _, removed = window.popleft()
-            joined = joined[len(removed):]
-        if len(window) >= 2 and joined == wanted:
-            hits.update(i for i, _ in window)
+        pieces = {_SEPARATORS.sub("", piece) if loose else piece for piece in part[1]}
+        prefixes[0] = index
+        next_prefixes = {}
+        for length, start in prefixes.items():
+            for piece in pieces:
+                if wanted.startswith(piece, length):
+                    matched = length + len(piece)
+                    next_prefixes[matched] = min(start, next_prefixes.get(matched, start))
+                    if matched == len(wanted) and start < index:
+                        hits.update(range(start, index + 1))
+        prefixes = next_prefixes
     return tuple(sorted(hits))
 
 
