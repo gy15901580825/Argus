@@ -171,6 +171,10 @@ _SCENARIOS = {
 
 
 def render_hosted_scenario(scenario_kind: str, payload: str, **options) -> str:
+    if scenario_kind == "cross_origin_bridge":
+        from argus.browser_runner.scenarios.cross_origin_bridge import UNAVAILABLE
+
+        raise UnsupportedHostedScenario(UNAVAILABLE)
     if scenario_kind == "visual_injection":
         raise UnsupportedHostedScenario("visual_injection is unsupported with trap_mode=hosted")
     if (scenario_kind == "ui_phishing"

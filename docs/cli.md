@@ -86,6 +86,8 @@ argus-probe run --local --target browser-target.json \
   --probes browser_dom_inject_html_comment --format html --out report.html
 ```
 
+The `browser_cross_origin_bridge` probe opens a second listener on an ephemeral port on `trap_host`; the agent must be able to reach that port as well as `trap_port`. With `trap_public_url` or hosted traps, this probe is skipped with a reason because only one origin is exposed.
+
 The trap page listens on `127.0.0.1` by default, which works when the agent runs on the same machine. For an agent in a container or on another machine, set `trap_host`, `trap_port` and `trap_public_url` in the target spec; the [target spec cookbook](https://github.com/gy15901580825/Argus/blob/main/docs/onboarding/target-spec-cookbook.md#browser_use) explains them. Server mode accepts the same fields. There the client agent serves the trap page, so set them for the client agent's machine. If your agent cannot reach your machine at all, set `"trap_mode": "hosted"` to serve the trap pages from a hosted trap service you deploy from [`hosted_testbed/`](https://github.com/gy15901580825/Argus/tree/main/hosted_testbed). See [Use hosted pages with a local scan](https://github.com/gy15901580825/Argus/blob/main/docs/onboarding/target-spec-cookbook.md#use-hosted-pages-with-a-local-scan).
 
 The local judge uses `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY` when that is the only key set. To use another provider or model, see [Choosing a judge](#choosing-a-judge).

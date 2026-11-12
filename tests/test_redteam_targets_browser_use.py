@@ -232,7 +232,7 @@ async def test_begin_probe_accepts_every_shipped_browser_compatible_probe():
 
     probes_dir = Path(redteam_pkg.__file__).parent / "probes"
     paths = sorted((probes_dir / "browser").glob("*.yaml"))
-    assert len(paths) == 32
+    assert len(paths) == 33
     paths += [probes_dir / p for p in _PROMPT_ONLY_PROBES]
     target = BrowserUseTarget(BrowserUseSpec(agent_url="https://x", scenario_kind="dom_injection"))
     for path in paths:

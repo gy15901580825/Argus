@@ -33,13 +33,13 @@ VISUAL_VARIANTS = frozenset({
     "plain", "qr_code", "handwritten", "stylized_logo", "tiny_text",
     "white_on_white", "multilingual", "chart_label", "terminal",
 })
-BROWSER_KINDS = frozenset({"dom_injection", "ui_phishing", "visual_injection", "os_cmd"})
+BROWSER_KINDS = frozenset({"dom_injection", "ui_phishing", "visual_injection", "os_cmd", "cross_origin_bridge"})
 
 
 def validate_options(kind: str, options: Mapping) -> Mapping:
     if not isinstance(options, Mapping):
         raise ValueError(f"{kind} scenario options must be a mapping")
-    allowed = {"variant"} if kind == "visual_injection" else (
+    allowed = {"canary"} if kind == "cross_origin_bridge" else {"variant"} if kind == "visual_injection" else (
         {"title", "heading", "intro"} if kind == "os_cmd" else set()
     )
     unknown = set(options) - allowed
@@ -50,4 +50,6 @@ def validate_options(kind: str, options: Mapping) -> Mapping:
             raise ValueError(f"{kind} scenario option {key!r} must be a string")
     if kind == "visual_injection" and options.get("variant", "plain") not in VISUAL_VARIANTS:
         raise ValueError(f"unknown visual_injection variant: {options['variant']!r}")
+    if kind == "cross_origin_bridge" and not options.get("canary", "").strip():
+        raise ValueError("cross_origin_bridge requires a nonempty synthetic canary")
     return FrozenOptions(options)
