@@ -65,7 +65,7 @@ The scenario finding passes through `ctx.redact` when serialized and when emitte
 ```json
 {
   "status": "ok",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "judge": {"provider": "anthropic", "fast_model": "claude-haiku-4-5-20251001", "strong_model": "claude-sonnet-4-6"},
   "per_run_cap_usd": {"static": 0.5, "deep": 5.0},
   "daily_cap_usd": 13.5
