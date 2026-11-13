@@ -49,7 +49,7 @@ def _role_usd(config: llm.LLMConfig, role: str, chars: int) -> float:
     models = [config.model_for(role)]
     fb = config.fallback_provider
     if config.fallback_enabled and fb is not None:
-        models.append(llm._DEFAULTS[fb][role])  # llm.complete may answer from the fallback, at its rate
+        models.append(config.fallback_model_for(role))  # the fallback may answer, at its rate
     return max(estimate_call_usd(m, chars, JUDGE_MAX_TOKENS) for m in models)
 
 

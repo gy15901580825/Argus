@@ -295,7 +295,27 @@ argus-probe run --local --judge-provider litellm --judge-model ollama/qwen2.5:32
 
 `gpt-6.1-sol` and `azure/gpt-6.1-sol` both use $4.00 input and $15.00 output per 1M tokens. These are [Azure OpenAI retail list prices](https://azure.microsoft.com/en-us/pricing/details/azure-openai/) for the long-context GlobalStandard row in eastus2, read 2026-11-04 at 19:17-19:21 UTC. The cutoff between short and long context is unverified, so cost caps use the higher long-context row. These are retail prices, not agreement rates.
 
-**Where your data goes.** The judge reads each attack prompt and your agent's reply. With a cloud provider, those go to that provider, and the console says which one before the first probe, for example `Target replies, attack prompts and rubrics are sent to Google Gemini for judging.` When the [Jev decider](https://github.com/gy15901580825/Argus/blob/main/docs/operations/judge-decider.md) is on, the line adds that conflicting verdicts also go to TypeSafe. With Ollama or your own server, they stay on machines you run. `anthropic` and `azure` fall back to each other by default: when a judge call fails and the other provider's credentials are set, the same text goes to the second vendor. The `Judge:` line says so with `(falls back to ...)`. Set `REDTEAM_LLM_FALLBACK=off` to keep the judge on one vendor. A content filter block falls back only when you set `REDTEAM_LLM_FALLBACK=on`, and the `Judge:` line then adds `content-filter blocks included`. `openai` and `litellm` never fall back.
+**Where your data goes.** The judge reads each attack prompt and your agent's reply. With a cloud provider, those go to that provider, and the console says which one before the first probe, for example `Target replies, attack prompts and rubrics are sent to Google Gemini for judging.` When the [Jev decider](https://github.com/gy15901580825/Argus/blob/main/docs/operations/judge-decider.md) is on, the line adds that conflicting verdicts also go to TypeSafe. With Ollama or your own server, they stay on machines you run. `anthropic` and `azure` fall back to each other by default: when a judge call fails and the other provider's credentials are set, the same text goes to the second vendor. The `Judge:` line says so with `(falls back to ...)`. Set `REDTEAM_LLM_FALLBACK=off` to keep the judge on one vendor. A content filter block falls back only when you set `REDTEAM_LLM_FALLBACK=on`, and the `Judge:` line then adds `content-filter blocks included`. `openai` and `litellm` never fall back unless you choose a fallback, as below.
+
+**Choosing the fallback.** `REDTEAM_LLM_FALLBACK_PROVIDER` picks the fallback provider: `anthropic`, `azure`, `openai`, `litellm` or `jev`. It works with any judge except `jev`, and it replaces the built-in anthropic/azure pair. `REDTEAM_LLM_FALLBACK_MODEL` gives its model: required for `litellm` (a litellm model string), optional for the others, which default to the same models as when they are the judge. A fallback equal to the judge's own provider, an unknown name, or `litellm` without a model stops the run before it starts. So does a chosen fallback whose credential is missing, named the same way as a missing judge key. `REDTEAM_LLM_FALLBACK=off` and `on` keep their meaning, and the `Judge:` line, the data line and run.json name the chosen fallback.
+
+A `jev` fallback returns a verdict, not text. It serves judge calls only: its verdict is final for that reply, with no escalation, and its cost is billed at Jev's rate. Deep mode's attacker writes text, so a deep run with a `jev` fallback stops before it starts; use a text provider as the fallback, `REDTEAM_LLM_FALLBACK=off`, or `--mode static`. An Azure judge whose content filter blocks some judge prompts, with Jev answering those:
+
+```bash
+export REDTEAM_MODEL_PROVIDER=azure REDTEAM_FAST_MODEL=<deployment>
+export AZURE_API_KEY=<key> AZURE_API_BASE=https://<resource>.openai.azure.com AZURE_API_VERSION=<version>
+export REDTEAM_LLM_FALLBACK_PROVIDER=jev TYPESAFE_API_KEY=<key>
+export REDTEAM_LLM_FALLBACK=on   # also fall back on content-filter blocks, not only on errors
+argus-probe run --local --target argus-target.json --probes all
+```
+
+An OpenAI judge that falls back to Gemini through litellm:
+
+```bash
+export REDTEAM_MODEL_PROVIDER=openai OPENAI_API_KEY=<key>
+export REDTEAM_LLM_FALLBACK_PROVIDER=litellm REDTEAM_LLM_FALLBACK_MODEL=gemini/gemini-2.5-flash GEMINI_API_KEY=<key>
+argus-probe run --local --target argus-target.json --probes all
+```
 
 **Small judges.** Small local models miss many jailbreaks (in [JailbreakBench](https://arxiv.org/abs/2404.01318), Table 1, the 7B Llama Guard judge missed 60.9% of jailbreaks), so `run` prints a warning when the judge is a `litellm` model, and a clean report from a small judge is weak evidence. Azure's default content filter blocks judge calls, because the judge reads attack text. Use a custom filter policy with jailbreak detection turned off for the judge deployment (also when `OPENAI_API_KEY` is paired with `--judge-api-base` pointing at Azure, where you also need to set both models to your deployment names).
 

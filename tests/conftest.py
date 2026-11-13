@@ -73,20 +73,28 @@ def _isolate_env(monkeypatch, request, _test_home):
         "AZURE_OPENAI_API_KEY": "test",
         "AZURE_OPENAI_ENDPOINT": "https://azure.invalid",
     }
+    rubric_live = bool(request.node.get_closest_marker("rubric_live"))
     for k, v in safe_defaults.items():
-        monkeypatch.setenv(k, v)
+        # The live rubric tier may judge on Azure with the shell's real Azure settings.
+        if not (rubric_live and k.startswith("AZURE_") and os.environ.get(k)):
+            monkeypatch.setenv(k, v)
     # Judge provider auto-detect reads these; a developer's shell must not change results.
     # The live rubric and scan-skill tiers need the real ANTHROPIC_API_KEY.
-    scrub = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "REDTEAM_MODEL_PROVIDER",
-             "REDTEAM_FAST_MODEL", "REDTEAM_STRONG_MODEL", "REDTEAM_LLM_API_BASE", "REDTEAM_EXPLAIN_MODEL",
-             "REDTEAM_LLM_FALLBACK"]
-    if request.node.get_closest_marker("rubric_live") or request.node.get_closest_marker("live_skillscan"):
+    judge_vars = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "REDTEAM_MODEL_PROVIDER",
+                  "REDTEAM_FAST_MODEL", "REDTEAM_STRONG_MODEL", "REDTEAM_LLM_API_BASE", "REDTEAM_EXPLAIN_MODEL",
+                  "REDTEAM_LLM_FALLBACK", "REDTEAM_LLM_FALLBACK_PROVIDER", "REDTEAM_LLM_FALLBACK_MODEL"]
+    scrub = list(judge_vars)
+    if rubric_live:
+        # The live rubric tier judges with whatever the shell configured, like the CLI.
+        scrub = []
+    elif request.node.get_closest_marker("live_skillscan"):
         scrub.remove("ANTHROPIC_API_KEY")
     # Server secrets from a developer's .env would 401 /redteam/* or refuse /agent/connect tests.
     scrub += ["ARGUS_SERVER_TOKEN", "ARGUS_SERVER_HOST", "ARGUS_SERVER_ALLOW_UNAUTHENTICATED",
               "AGENT_CONNECT_SECRET"]
     # Declared judge prices change every cost estimate.
-    scrub += [k for k in os.environ if k.startswith("REDTEAM_PRICE_")]
+    if not rubric_live:  # a live Azure deployment may need its declared price
+        scrub += [k for k in os.environ if k.startswith("REDTEAM_PRICE_")]
     for k in scrub:
         monkeypatch.delenv(k, raising=False)
     yield

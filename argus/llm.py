@@ -16,8 +16,10 @@ fallback fired.
 
 `openai` and `litellm` exist for users without an Anthropic key (`litellm` reaches
 anything litellm speaks, e.g. a local Ollama model). They never fall back to another
-vendor: a judge silently re-run on a different vendor would send the operator's
+vendor by default: a judge silently re-run on a different vendor would send the operator's
 target traffic somewhere they did not choose, so failure surfaces instead.
+REDTEAM_LLM_FALLBACK_PROVIDER (and REDTEAM_LLM_FALLBACK_MODEL) name a fallback explicitly,
+for any primary but jev.
 
 Mirrors the naming of the planner's knobs (`PLANNER_MODEL_PROVIDER`,
 `PLANNER_MODEL`, `PLANNER_FALLBACK_MODEL`).
@@ -74,6 +76,11 @@ NO_API_BASE = {PROVIDER_ANTHROPIC: "ANTHROPIC_BASE_URL", PROVIDER_AZURE: "AZURE_
 # The text model a jev run uses for explanations and for the deep-mode attacker.
 NEEDS_TEXT_MODEL = ("the jev judge writes no text, so deep mode's attacker needs a text model: "
                     "pass --judge-explain-model MODEL (a litellm model string, env REDTEAM_EXPLAIN_MODEL)")
+FALLBACK_ENV = {"provider": "REDTEAM_LLM_FALLBACK_PROVIDER", "model": "REDTEAM_LLM_FALLBACK_MODEL"}
+# Jev answers verdict questions only, so a jev fallback serves the judge and nothing that writes text.
+JEV_FALLBACK_NO_TEXT = ("REDTEAM_LLM_FALLBACK_PROVIDER=jev serves judge verdicts only, and deep mode's attacker "
+                        "writes text: choose a text provider as the fallback, set REDTEAM_LLM_FALLBACK=off, "
+                        "or use --mode static")
 
 # Defaults per provider. Anthropic's are the models the judge shipped with; the
 # defaults must not change behaviour for an operator who sets nothing.
@@ -173,7 +180,7 @@ def _blocked_error(cfg: "LLMConfig", provider: str, model: str, categories: tupl
     if other is not None:
         text += (f" REDTEAM_LLM_FALLBACK=on, and the fallback failed too: {other}." if cfg.fallback_on_block
                  else f" The other provider failed too: {other}.")
-    elif cfg.fallback_enabled and cfg.fallback_provider is not None:
+    elif cfg.fallback_enabled and cfg.fallback_provider is not None and not cfg.fallback_on_block:
         fallback = "off"
         text += (f" Argus did not fall back to {cfg.fallback_provider}: a content-filter block falls back only "
                  "with REDTEAM_LLM_FALLBACK=on.")
@@ -205,18 +212,37 @@ class LLMConfig:
     explain_model: Optional[str] = None
     # A content-filter block falls back only when REDTEAM_LLM_FALLBACK is set to "on", never by default.
     fallback_on_block: bool = False
+    # The fallback named by REDTEAM_LLM_FALLBACK_PROVIDER; None keeps the built-in anthropic/azure pair.
+    fallback: Optional["LLMConfig"] = None
 
     @property
     def fallback_provider(self) -> Optional[str]:
-        # openai/litellm never fall back: see module docstring.
+        if self.fallback is not None:
+            return self.fallback.provider
+        # openai/litellm never fall back unless configured: see module docstring.
         if self.provider == PROVIDER_ANTHROPIC:
             return PROVIDER_AZURE
         if self.provider == PROVIDER_AZURE:
             return PROVIDER_ANTHROPIC
         return None
 
+    def fallback_model_for(self, role: str) -> str:
+        """The model the fallback uses for `role`. Only call when fallback_provider is not None."""
+        if self.fallback is not None:
+            return self.fallback.model_for(role)
+        return _DEFAULTS[self.fallback_provider][role]
+
+    def fallback_missing_credential(self) -> Optional[str]:
+        """What a configured, enabled fallback lacks. The built-in pair's fallback stays optional."""
+        if self.fallback is None or not self.fallback_enabled:
+            return None
+        return self.fallback.missing_credential()
+
     def missing_credential(self) -> Optional[str]:
-        """Name(s) of the env vars the chosen provider needs but lacks, comma-separated, else None."""
+        """Name(s) of the env vars the chosen provider, or a configured fallback, needs but lacks, else None."""
+        return self._primary_missing_credential() or self.fallback_missing_credential()
+
+    def _primary_missing_credential(self) -> Optional[str]:
         if self.provider == PROVIDER_ANTHROPIC and not self.anthropic_api_key:
             return "ANTHROPIC_API_KEY"
         if self.provider == PROVIDER_OPENAI and not self.openai_api_key:
@@ -280,9 +306,12 @@ def check_completion(out: Completion, max_tokens: int) -> None:
 
 def missing_text(cfg: LLMConfig) -> Optional[str]:
     """`<NAME> is not set`, naming the model for litellm; None when nothing is missing."""
-    name = cfg.missing_credential()
+    name = cfg._primary_missing_credential()
     if name is None:
-        return None
+        if cfg.fallback_missing_credential() is None:
+            return None
+        text = missing_text(cfg.fallback)
+        return f"the fallback judge ({FALLBACK_ENV['provider']}={cfg.fallback.provider}): {text}"
     if cfg.provider == PROVIDER_LITELLM:
         models = " and ".join(dict.fromkeys((cfg.fast_model, cfg.strong_model)))
         # litellm lists every variable a provider can read (Gemini: either key will do).
@@ -297,6 +326,9 @@ def credential_error(cfg: LLMConfig) -> Optional[str]:
     text = missing_text(cfg)
     if text is None:
         return None
+    if cfg._primary_missing_credential() is None:
+        return (f"{text}. Set the variable the fallback needs, unset {FALLBACK_ENV['provider']}, "
+                "or set REDTEAM_LLM_FALLBACK=off (see the README).")
     if cfg.provider in (PROVIDER_LITELLM, PROVIDER_JEV):
         return f"{text}. Set the variable your provider needs, or choose another judge (see the README)."
     return (
@@ -394,6 +426,8 @@ def judge_record(cfg: LLMConfig) -> dict:
     fallback = cfg.fallback_provider if cfg.fallback_enabled else None
     record = {"provider": cfg.provider, "fast_model": cfg.fast_model, "strong_model": cfg.strong_model,
               "api_base_host": host, "fallback_provider": fallback}
+    if fallback and cfg.fallback is not None:
+        record["fallback_model"] = cfg.fallback.fast_model
     if cfg.explain_model:
         record["explain_model"] = cfg.explain_model
     return record
@@ -412,7 +446,8 @@ def describe(cfg: LLMConfig) -> str:
         text += f", api base {r['api_base_host']}"
     if r["fallback_provider"]:
         blocks = ", content-filter blocks included" if cfg.fallback_on_block else ""
-        text += f" (falls back to {r['fallback_provider']}{blocks})"
+        model = f" {r['fallback_model']}" if "fallback_model" in r else ""
+        text += f" (falls back to {r['fallback_provider']}{model}{blocks})"
     return text
 
 
@@ -448,7 +483,9 @@ def destination(cfg: LLMConfig) -> str:
     else:
         where = " and ".join(dict.fromkeys(_litellm_destination(m, cfg.api_base)
                                            for m in (cfg.fast_model, cfg.strong_model)))
-    if cfg.fallback_enabled and cfg.fallback_provider:
+    if cfg.fallback_enabled and cfg.fallback is not None:
+        where += f", or {destination(cfg.fallback)} when that fails"
+    elif cfg.fallback_enabled and cfg.fallback_provider:
         where += f", or {'Azure OpenAI' if cfg.fallback_provider == PROVIDER_AZURE else 'Anthropic'} when that fails"
     return where
 
@@ -488,6 +525,38 @@ def text_config(env: Optional[Mapping[str, str]] = None) -> LLMConfig:
     return text
 
 
+def _fallback_config(env: Mapping[str, str], primary: str) -> Optional[LLMConfig]:
+    """The fallback REDTEAM_LLM_FALLBACK_PROVIDER names, or None when unset. Raises ValueError on a bad choice."""
+    pvar, mvar = FALLBACK_ENV["provider"], FALLBACK_ENV["model"]
+    name = (env.get(pvar) or "").strip().lower()
+    model = (env.get(mvar) or "").strip() or None
+    if not name:
+        if model:
+            raise ValueError(f"{mvar} needs {pvar}: name the fallback provider too")
+        return None
+    if name not in _VALID_PROVIDERS:
+        raise ValueError(f"{pvar}={name!r} is not supported; expected one of {list(_VALID_PROVIDERS)}")
+    if primary == PROVIDER_JEV:
+        raise ValueError(f"{pvar} does not apply to the jev judge: it has no fallback")
+    if name == primary:
+        raise ValueError(f"{pvar}={name!r} is the judge's own provider (REDTEAM_MODEL_PROVIDER); "
+                         "choose a different provider or unset it")
+    if name == PROVIDER_LITELLM and not model:
+        raise ValueError(f"{pvar}=litellm requires {mvar}, a litellm model string such as gemini/gemini-2.5-flash")
+    keys = {"fallback_enabled": False, "anthropic_api_key": env.get("ANTHROPIC_API_KEY"),
+            "openai_api_key": env.get("OPENAI_API_KEY")}
+    if name == PROVIDER_JEV:
+        from argus import typesafe
+
+        fast = model or _DEFAULTS[name]["fast"]
+        return LLMConfig(provider=name, fast_model=fast, strong_model=fast, api_base=typesafe.api_url(env),
+                         typesafe_api_key=typesafe.api_key(env), **keys)
+    if name == PROVIDER_LITELLM:
+        return LLMConfig(provider=name, fast_model=model, strong_model=model, **keys)
+    return LLMConfig(provider=name, fast_model=model or _DEFAULTS[name]["fast"],
+                     strong_model=model or _DEFAULTS[name]["strong"], **keys)
+
+
 def resolve_config(env: Optional[Mapping[str, str]] = None) -> LLMConfig:
     env = os.environ if env is None else env
     provider = (env.get("REDTEAM_MODEL_PROVIDER") or "").strip().lower()
@@ -502,6 +571,7 @@ def resolve_config(env: Optional[Mapping[str, str]] = None) -> LLMConfig:
             f"REDTEAM_MODEL_PROVIDER={provider!r} is not supported; "
             f"expected one of {list(_VALID_PROVIDERS)}"
         )
+    fallback = _fallback_config(env, provider)
     if provider == PROVIDER_LITELLM:
         fast = env.get("REDTEAM_FAST_MODEL")
         if not fast:
@@ -530,6 +600,7 @@ def resolve_config(env: Optional[Mapping[str, str]] = None) -> LLMConfig:
         anthropic_api_key=env.get("ANTHROPIC_API_KEY"),
         openai_api_key=env.get("OPENAI_API_KEY"),
         api_base=env.get("REDTEAM_LLM_API_BASE") or None,
+        fallback=fallback,
     )
 
 
@@ -651,14 +722,16 @@ async def complete(cfg: LLMConfig, *, role: str, system: str, user: str, max_tok
     refusals: list[ModelRefused] = []
     blocked: Optional[tuple[str, str, tuple[str, ...]]] = None
     other: Optional[str] = None
-    attempts = [(cfg.provider, cfg.model_for(role))]
+    attempts = [(cfg, cfg.provider, cfg.model_for(role))]
     fb = cfg.fallback_provider
-    if cfg.fallback_enabled and fb is not None:
-        attempts.append((fb, _DEFAULTS[fb][role]))
+    # Jev writes no text: a jev fallback serves judge verdicts only, from Judge (argus/judge.py).
+    if cfg.fallback_enabled and fb is not None and fb != PROVIDER_JEV:
+        # A configured fallback calls with its own config: its keys, and no primary api base.
+        attempts.append((cfg.fallback or cfg, fb, cfg.fallback_model_for(role)))
 
-    for provider, model in attempts:
+    for call_cfg, provider, model in attempts:
         try:
-            out = await _DISPATCH[provider](cfg, model, system, user, max_tokens)
+            out = await _DISPATCH[provider](call_cfg, model, system, user, max_tokens)
             return replace(out, refusals=tuple(refusals)) if refusals else out
         except Exception as e:  # noqa: BLE001 — any provider error is a fallback trigger
             if isinstance(e, ModelRefused):

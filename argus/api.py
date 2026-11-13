@@ -515,6 +515,8 @@ async def run(req: RunRequest):
         and llm.explain_config(cfg) is None
     ):
         raise HTTPException(status_code=422, detail=llm.NEEDS_TEXT_MODEL + "; set mode=static (CLI: --mode static)")
+    if req.mode == "deep" and cfg.fallback_enabled and cfg.fallback_provider == llm.PROVIDER_JEV:
+        raise HTTPException(status_code=422, detail=llm.JEV_FALLBACK_NO_TEXT)
 
     if not isinstance(req.target, dict):
         raise HTTPException(status_code=422, detail="target must be a JSON object")
