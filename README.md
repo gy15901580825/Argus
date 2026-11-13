@@ -292,7 +292,8 @@ argus-probe run --local --target argus-target.json \
 
 ### Run with Docker
 
-After the maintainer enables image publishing, run a released CLI without Python:
+After the maintainer enables image publishing, run a released CLI without Python.
+Replace `<version>` with a published image version:
 
 ```bash
 mkdir -p output
@@ -300,7 +301,7 @@ mkdir -p output
 docker run --rm --user "$(id -u):$(id -g)" -e ANTHROPIC_API_KEY \
   --mount type=bind,src="$PWD/argus-target.json",dst=/target.json,readonly \
   --mount type=bind,src="$PWD/output",dst=/output \
-  ghcr.io/gy15901580825/argus-probe:1.12.0 \
+  "ghcr.io/gy15901580825/argus-probe:<version>" \
   run --local --target /target.json --probes owasp_01_prompt_injection_basic \
   --format sarif --out /output/argus.sarif
 ```
