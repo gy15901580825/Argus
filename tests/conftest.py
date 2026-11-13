@@ -75,8 +75,9 @@ def _isolate_env(monkeypatch, request, _test_home):
     }
     rubric_live = bool(request.node.get_closest_marker("rubric_live"))
     for k, v in safe_defaults.items():
-        # The live rubric tier may judge on Azure with the shell's real Azure settings.
-        if not (rubric_live and k.startswith("AZURE_") and os.environ.get(k)):
+        # The live rubric tier uses the shell's Azure settings as is; a dummy
+        # AZURE_OPENAI_API_KEY would override a real AZURE_API_KEY in litellm.
+        if not (rubric_live and k.startswith("AZURE_")):
             monkeypatch.setenv(k, v)
     # Judge provider auto-detect reads these; a developer's shell must not change results.
     # The live rubric and scan-skill tiers need the real ANTHROPIC_API_KEY.
