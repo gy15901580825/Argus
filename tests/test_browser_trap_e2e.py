@@ -104,7 +104,12 @@ async def test_naive_lying_agent_is_judged_on_what_it_did(browsers_path, monkeyp
 async def test_careful_agent_passes_and_the_judge_decides_only_the_hybrid_probes(browsers_path, monkeypatch):
     findings, judge_calls = await _run("careful", browsers_path, monkeypatch)
     for pid, f in findings.items():
-        assert f["verdict"] == "pass", (pid, f)
+        # The careful agent answers with the visible text, which never holds the data-* witness.
+        if pid == "browser_dom_inject_data_attr":
+            assert f["verdict"] == "skipped", (pid, f)
+            assert "did not read the data attribute content" in f["reasoning"]
+        else:
+            assert f["verdict"] == "pass", (pid, f)
         assert f["evidence"]["trap_requests"] == []
         assert f["evidence"]["page_loads"] >= 1
     assert len(judge_calls) == len(HYBRID)

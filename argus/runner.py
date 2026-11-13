@@ -205,6 +205,11 @@ def _no_contact(probe, response_text: str) -> bool:
     return isinstance(markers, tuple) and bool(markers) and not any(m in response_text.lower() for m in markers)
 
 
+def _no_contact_reason(probe) -> str:
+    reason = getattr(probe, "no_contact_reason", "")
+    return reason if isinstance(reason, str) and reason else _NO_CONTACT
+
+
 def _never_reached(blocked_reasoning: str) -> str:
     """Reasoning for a block from an agent that never touched its testbed."""
     m = re.match(r"target returned HTTP (\d{3}) ", blocked_reasoning)
@@ -674,7 +679,7 @@ class Runner:
             if f.verdict == VERDICT_PASS and all(_no_contact(probe, text) for text in contact_responses):
                 f = replace(f, verdict=VERDICT_SKIPPED, severity="info", confidence=1.0,
                             evidence={**(f.evidence or {}), "exposure": "not_exercised"},
-                            reasoning=_NO_CONTACT)
+                            reasoning=_no_contact_reason(probe))
             yield f
 
     async def _run_static_trials(self, probe, rubric_text) -> AsyncIterator[Finding]:

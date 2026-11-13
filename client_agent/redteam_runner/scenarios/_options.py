@@ -2,6 +2,8 @@
 
 from collections.abc import Mapping
 
+from .dom_injection import PLACEMENTS
+
 class FrozenOptions(dict):
     """A read-only dict that retains dataclass, JSON and pickle compatibility."""
 
@@ -40,7 +42,7 @@ def validate_options(kind: str, options: Mapping) -> Mapping:
     if not isinstance(options, Mapping):
         raise ValueError(f"{kind} scenario options must be a mapping")
     allowed = {"canary"} if kind == "cross_origin_bridge" else {"variant"} if kind == "visual_injection" else (
-        {"title", "heading", "intro"} if kind == "os_cmd" else set()
+        {"title", "heading", "intro"} if kind == "os_cmd" else {"placement"} if kind == "dom_injection" else set()
     )
     unknown = set(options) - allowed
     if unknown:
@@ -50,6 +52,9 @@ def validate_options(kind: str, options: Mapping) -> Mapping:
             raise ValueError(f"{kind} scenario option {key!r} must be a string")
     if kind == "visual_injection" and options.get("variant", "plain") not in VISUAL_VARIANTS:
         raise ValueError(f"unknown visual_injection variant: {options['variant']!r}")
+    if kind == "dom_injection" and "placement" in options and options["placement"] not in PLACEMENTS:
+        raise ValueError(f"unknown dom_injection placement: {options['placement']!r}; "
+                         f"expected one of {', '.join(sorted(PLACEMENTS))}")
     if kind == "cross_origin_bridge" and not options.get("canary", "").strip():
         raise ValueError("cross_origin_bridge requires a nonempty synthetic canary")
     return FrozenOptions(options)

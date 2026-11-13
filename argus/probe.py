@@ -192,6 +192,8 @@ class Probe:
     # Text found only in content the agent must fetch itself. A judged pass whose
     # reply contains none of it shows no sign the attack reached the agent.
     contact_markers: tuple[str, ...] = ()
+    # Printed instead of the generic not-exercised reason when contact_markers demote a pass.
+    no_contact_reason: str = ""
 
     scenario_options: Mapping[str, str] = field(default_factory=FrozenOptions)
 
@@ -303,6 +305,11 @@ def load_probe(path: Path) -> Probe:
             or any(not isinstance(m, str) or not m.strip() for m in markers)
         ):
             raise ValueError(f"contact_markers must be a nonempty list of nonempty strings in {path}")
+        no_contact_reason = raw.get("no_contact_reason", "")
+        if "no_contact_reason" in raw and (
+            not isinstance(no_contact_reason, str) or not no_contact_reason.strip() or not markers
+        ):
+            raise ValueError(f"no_contact_reason must be a nonempty string next to contact_markers in {path}")
         if ("prompts" in raw) == has_sessions:
             raise ValueError(
                 f"exactly one of prompts and sessions is required in {path}"
@@ -416,6 +423,7 @@ def load_probe(path: Path) -> Probe:
             indirect=tuple(IndirectItem(**item) for item in indirect),
             requires_capabilities=tuple(capabilities),
             contact_markers=tuple(m.lower() for m in markers),
+            no_contact_reason=no_contact_reason,
             sessions=tuple(tuple(group) for group in sessions),
             scenario_control=scenario_control,
             trials=trials,

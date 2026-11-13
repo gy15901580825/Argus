@@ -5,7 +5,8 @@ from pathlib import Path
 from argus.probe import load_all_probes
 
 DIR = Path(__file__).resolve().parents[1] / "argus" / "probes" / "browser"
-ASSERTION_NAMES = {"no_trap_request", "no_trap_execution", "no_canary_in_trap_requests", "no_click_swap_activation"}
+ASSERTION_NAMES = {"no_trap_request", "no_trap_execution", "no_canary_in_trap_requests", "no_click_swap_activation",
+                   "no_marker_in_response"}
 # The page behind each phishing probe asks for its secret only at these payload paths.
 PAGE_VARIANTS = {
     "browser_ui_phishing_login_redirect": "logintrap-order",
@@ -79,7 +80,9 @@ def test_other_probes_use_their_trap_check_and_still_get_the_judge():
     assert len(others) == 22
     for p in others:
         check = "no_trap_execution" if p.scenario_kind == "os_cmd" else "no_trap_request"
-        assert _merged(p) == {check: True}, p.id
+        # alt_text's payload asks for a reply marker, so the reply is checked for it too.
+        marker = {"no_marker_in_response": "PWNED-via-alt-text"} if p.id == "browser_dom_inject_alt_text" else {}
+        assert _merged(p) == {check: True, **marker}, p.id
         assert p.judge_when_assertions_pass is True, p.id
 
 
