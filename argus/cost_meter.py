@@ -49,6 +49,38 @@ _PRICES_PER_M_TOKENS = {
 
 _WARNED_UNPRICED: set[str] = set()
 _WARNED_BAD_PRICE: set[tuple] = set()
+# Models priced at the pessimistic fallback inside track_unpriced(), so a rejection can name them.
+_UNPRICED_SINK: ContextVar[list[str] | None] = ContextVar("cost_meter_unpriced", default=None)
+
+
+@contextlib.contextmanager
+def track_unpriced():
+    """Yield a list that collects, in first-seen order, each model priced at the fallback rate in this block."""
+    seen: list[str] = []
+    token = _UNPRICED_SINK.set(seen)
+    try:
+        yield seen
+    finally:
+        _UNPRICED_SINK.reset(token)
+
+
+def _worst_price() -> dict:
+    return {
+        "input": max(p["input"] for p in _PRICES_PER_M_TOKENS.values()),
+        "output": max(p["output"] for p in _PRICES_PER_M_TOKENS.values()),
+    }
+
+
+def unpriced_hint(models) -> list[str]:
+    """One line per model estimated at the fallback rate: why, and the two ways to declare its price."""
+    worst = _worst_price()
+    return [
+        f"{model} has no registered price, so the estimate used the most expensive known rate "
+        f"(in=${worst['input']:.2f}/out=${worst['output']:.2f} per 1M tokens). "
+        "Declare its price with --judge-price INPUT,OUTPUT (--judge-explain-price for a jev explain model) "
+        "or {} and {} (USD per 1M tokens).".format(*price_env_names(model))
+        for model in models
+    ]
 
 
 def price_env_names(model: str) -> tuple[str, str]:
@@ -99,10 +131,10 @@ def _price_for(model: str) -> dict:
         return known
     if model.startswith(("ollama/", "ollama_chat/")):
         return {"input": 0.0, "output": 0.0}  # local model, no per-token bill
-    worst = {
-        "input": max(p["input"] for p in _PRICES_PER_M_TOKENS.values()),
-        "output": max(p["output"] for p in _PRICES_PER_M_TOKENS.values()),
-    }
+    worst = _worst_price()
+    sink = _UNPRICED_SINK.get()
+    if sink is not None and model not in sink:
+        sink.append(model)
     # Once per model: an estimate or a run prices the same model hundreds of times.
     if model in _WARNED_UNPRICED:
         return worst
@@ -152,8 +184,10 @@ def estimate_run_usd(exchanges: int, *, deep: bool = False) -> float:
     judge_tokens = llm.TEXT_MAX_TOKENS
     try:
         cfg = llm.resolve_config()
-        fast, strong = _price_for(cfg.fast_model), _price_for(cfg.strong_model)
         escalates = cfg.escalation_is_meaningful
+        # The strong model is priced only when it is called, so an unused one is never named as unpriced.
+        fast = _price_for(cfg.fast_model)
+        strong = _price_for(cfg.strong_model) if escalates else None
         if cfg.provider == llm.PROVIDER_JEV:
             judge_tokens = int((_AVG_RESPONSE_CHARS / _CHARS_PER_TOKEN) * _SAFETY_MARGIN)
         text_cfg = llm.explain_config(cfg)
@@ -182,12 +216,15 @@ class CostExceededError(RuntimeError):
     """Raised when a daily or per-run cap would be exceeded.
 
     `estimated_usd` is set only when the pre-run estimate exceeds the per-run cap,
-    so a caller can name the cap that would fit.
+    so a caller can name the cap that would fit. `unpriced` names the models the
+    pre-run estimate priced at the fallback rate.
     """
 
-    def __init__(self, message: str, estimated_usd: float | None = None) -> None:
+    def __init__(self, message: str, estimated_usd: float | None = None,
+                 unpriced: tuple[str, ...] = ()) -> None:
         super().__init__(message)
         self.estimated_usd = estimated_usd
+        self.unpriced = unpriced
 
 
 # Backward-compat alias — remove after all callers are updated.
@@ -385,13 +422,15 @@ class CostMeter:
         """
         self._maybe_reset_day()
         exchanges = total_exchanges if total_exchanges is not None else len(probe_ids) * iterative_rounds
-        estimated = estimate_run_usd(exchanges, deep=deep)
+        with track_unpriced() as unpriced:
+            estimated = estimate_run_usd(exchanges, deep=deep)
 
         cap = self.per_run_cap(deep, per_run_cap_override)
         if estimated > cap:
             raise CostExceededError(
                 f"estimated cost ${estimated:.4f} > per_run_cap ${cap:.2f}",
                 estimated_usd=estimated,
+                unpriced=tuple(unpriced),
             )
         remaining = self.daily_cap_usd - self._spent_today
         label = "daily"
@@ -404,6 +443,7 @@ class CostMeter:
         if estimated > remaining:
             raise CostExceededError(
                 f"estimated cost ${estimated:.4f} would exceed remaining {label} budget "
-                f"(${remaining:.4f})"
+                f"(${remaining:.4f})",
+                unpriced=tuple(unpriced),
             )
         return estimated

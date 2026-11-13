@@ -16,7 +16,7 @@ from fastapi import HTTPException
 
 from argus import api, decider, llm
 from argus_transport.cleanup import run_error_detail
-from argus.cost_meter import CostExceededError
+from argus.cost_meter import CostExceededError, unpriced_hint
 from argus.coverage import build_coverage, build_summary
 from argus.probe import load_probe_library
 from argus.persona_strategy import DEFAULT_DEEP_PAIRS, DEFAULT_MAX_ROUNDS
@@ -250,9 +250,10 @@ _KEY_HELP = ("Judge keys: ANTHROPIC_API_KEY or OPENAI_API_KEY, or choose another
 
 
 def _cost_message(e: CostExceededError) -> str:
-    """The meter's reason, plus a --per-run-cap at or above the estimate."""
+    """The meter's reason, plus a --per-run-cap at or above the estimate, then one line per unpriced model."""
     estimate = getattr(e, "estimated_usd", None)
-    if estimate is None:
-        return str(e)
-    fit = math.ceil(estimate * 100) / 100  # next cent up, so the suggested cap is never short
-    return f"{e}; rerun with --per-run-cap {fit:.2f} or select fewer probes"
+    message = str(e)
+    if estimate is not None:
+        fit = math.ceil(estimate * 100) / 100  # next cent up, so the suggested cap is never short
+        message = f"{e}; rerun with --per-run-cap {fit:.2f} or select fewer probes"
+    return "\n".join([message, *unpriced_hint(getattr(e, "unpriced", ()))])
