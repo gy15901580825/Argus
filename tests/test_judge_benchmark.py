@@ -48,6 +48,12 @@ def test_judge_error_verdict_counts_as_an_error():
     assert s["errors"] == 1 and s["correct"] == 1 and s["false_pass"] == 0 and s["false_fail"] == 0
 
 
+def test_correct_error_verdict_on_a_blank_reply_is_not_an_error():
+    # expect_not=[pass] on a blank reply: the judge's `error` is the right answer.
+    s = jb.summarise([_rec("a.md", False, "error", expected_ok=True), _rec("a.md", True, "error")])
+    assert s["errors"] == 1 and s["correct"] == 1 and s["false_pass"] == 0
+
+
 def test_summarise_with_no_cases_has_no_rates():
     s = jb.summarise([])
     assert s["accuracy"] is None and s["false_pass_rate"] is None and s["false_fail_rate"] is None
@@ -82,14 +88,17 @@ CASES = [
 @pytest.mark.asyncio
 async def test_run_benchmark_scores_real_verdicts():
     cfg = llm.resolve_config({"ANTHROPIC_API_KEY": "k"})
-    with patch("argus.llm._anthropic_client", return_value=_client("pass", "pass", "fail")):
+    client = _client("pass", "pass")
+    with patch("argus.llm._anthropic_client", return_value=client):
         records, spent, capped = await jb.run_benchmark(cfg, CASES, cap=5.0, concurrency=1)
     by = {r["case_id"]: r for r in records}
-    assert [by[c]["verdict"] for c in ("c1", "c2", "c3")] == ["pass", "pass", "fail"]
+    # The blank reply (c3) is graded `error` by the judge without a model call.
+    assert [by[c]["verdict"] for c in ("c1", "c2", "c3")] == ["pass", "pass", "error"]
     assert [by[c]["correct"] for c in ("c1", "c2", "c3")] == [True, False, True]
+    assert client.messages.create.await_count == 2
     assert spent > 0 and not capped
     rep = jb.build_report(records)["overall"]
-    assert rep["false_pass"] == 1 and rep["false_fail"] == 0
+    assert rep["false_pass"] == 1 and rep["false_fail"] == 0 and rep["errors"] == 0
 
 
 @pytest.mark.asyncio
@@ -154,13 +163,13 @@ def test_main_writes_json_with_meta_and_every_case(tmp_path, monkeypatch, capsys
     monkeypatch.delenv("REDTEAM_MODEL_PROVIDER", raising=False)
     out = tmp_path / "r.json"
     monkeypatch.setattr(jb, "load_all_cases", lambda: CASES)
-    with patch("argus.llm._anthropic_client", return_value=_client("pass", "fail", "fail")):
+    with patch("argus.llm._anthropic_client", return_value=_client("pass", "fail")):
         rc = jb.main(["--out", str(out), "--per-run-cap", "5"])
     assert rc == 0
     data = json.loads(out.read_text())
     assert data["meta"]["cases_total"] == 3 and data["meta"]["per_run_cap_usd"] == 5.0
     assert data["meta"]["decider"] == "off" and data["meta"]["spent_usd"] > 0 and data["meta"]["stopped_at_cap"] is False
-    assert [c["verdict"] for c in data["cases"]] == ["pass", "fail", "fail"]
+    assert [c["verdict"] for c in data["cases"]] == ["pass", "fail", "error"]
     assert data["overall"]["accuracy"] == 1.0
     printed = capsys.readouterr().out
     assert printed.index("Estimated cost") < printed.index("OVERALL")
