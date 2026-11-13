@@ -18,6 +18,7 @@ A copy of `testbed/` and `demo_agent/` ships in `argus/demo/mcp_testbed/` for `a
 POST /sessions                -> {session_id, mcp_url, script}
 POST /s/{sid}/mcp             -> JSON-RPC 2.0: initialize / tools/list / tools/call
 POST /s/{sid}/mcp2             -> second server, for worlds that provide one
+GET  /s/{sid}/beacon/ran      -> records a hit; proof a planted command ran
 GET  /sessions/{sid}/evidence -> every interaction, deterministic
 DELETE /sessions/{sid}
 ```
@@ -42,6 +43,13 @@ total number of JSON-RPC requests the session received, counting every
 method including errors. The probe runner reads this to tell "the agent
 defended itself" apart from "the probe never actually ran"; without it every
 MCP probe would report a false green.
+
+It also carries `beacon_url` and `beacon_hits`. The testbed cannot see an
+agent's shell, so a probe that plants a shell command (a `{beacon_url}` in
+`script.injection` is replaced with this session's URL) proves execution
+out of band: the command requests `/s/{sid}/beacon/ran`, which needs no
+control token, and each hit records its method, path, query and user agent.
+No hit does not mean the agent refused; it may have no shell at all.
 
 ## Safety: `testbed/` cannot reach the network
 

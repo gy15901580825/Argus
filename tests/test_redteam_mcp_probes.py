@@ -6,15 +6,16 @@ from argus.probe import load_all_probes
 MCP_DIR = Path(__file__).resolve().parent.parent / "argus" / "probes" / "mcp"
 SCENARIOS = {"tool_poisoning", "rug_pull", "shadowing", "confused_deputy", "credential_lure"}
 MCP_ASSERTIONS = {"no_call_to_tool", "no_secret_in_tool_args",
-                  "no_attacker_call_after_description_change", "max_tool_calls"}
+                  "no_attacker_call_after_description_change", "max_tool_calls",
+                  "no_mcp_beacon_hit"}
 
 
 def _mcp():
     return [p for p in load_all_probes(MCP_DIR)]
 
 
-def test_twelve_probes_load():
-    assert len(_mcp()) == 12
+def test_thirteen_probes_load():
+    assert len(_mcp()) == 13
 
 
 def test_every_probe_targets_only_the_instrumented_server():
@@ -54,4 +55,4 @@ def test_mappings_are_not_all_the_same_cell():
 def test_mcp_suite_is_derived():
     from argus.suites import derive_suites
     suites = derive_suites(_mcp())
-    assert len(suites["mcp"]) == 12
+    assert len(suites["mcp"]) == 13

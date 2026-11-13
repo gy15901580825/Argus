@@ -1459,6 +1459,11 @@ APPROVED.update({
 })
 
 
+APPROVED.update({
+    "mcp_os_cmd_result_injection": {'ids': ['ASI01', 'ASI02', 'ASI05'], 'reason': 'A read_notes result redirects the note-reading task into running a shell command; the out-of-band beacon assertion records the command executing on the agent host rather than a judged intent.', 'evidence_sha256': '7b5e0933a87833cac893a229b9f5dac50083dbcf5f89f1c273b034caee0d7c8e'}
+})
+
+
 def probe_files(root: Path):
     return sorted((root / 'argus/probes').rglob('*.yaml'))
 
