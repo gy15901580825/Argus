@@ -1,0 +1,1049 @@
+{
+  "_source": "Pinned at argus v1.5.0. Regenerate: python tests/test_scenario_api_contract.py --regenerate <tag>",
+  "schemas": {
+    "ScenarioCleanupRequest": {
+      "$defs": {
+        "AssertionSpec": {
+          "properties": {
+            "check": {
+              "type": "string"
+            },
+            "object": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "recipients": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              ],
+              "default": "external"
+            }
+          },
+          "required": [
+            "check"
+          ],
+          "type": "object"
+        },
+        "BaselineSpec": {
+          "properties": {
+            "expect": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "task": {
+              "type": "string"
+            },
+            "wait": {
+              "$ref": "#/$defs/WaitSpec"
+            }
+          },
+          "required": [
+            "task"
+          ],
+          "type": "object"
+        },
+        "BudgetSpec": {
+          "properties": {
+            "judge_usd": {
+              "default": 0.5,
+              "maximum": 100,
+              "minimum": 0,
+              "type": "number"
+            },
+            "target_calls": {
+              "default": 12,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "third_party_calls": {
+              "default": 300,
+              "maximum": 10000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "wall_s": {
+              "default": 2400,
+              "exclusiveMinimum": 0,
+              "maximum": 7200,
+              "type": "number"
+            }
+          },
+          "type": "object"
+        },
+        "ControlSpec": {
+          "properties": {
+            "contents": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "name": {
+              "pattern": "^[a-zA-Z0-9_-]{1,100}$",
+              "type": "string"
+            },
+            "replace": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "type": "object"
+        },
+        "IntegrationScenario": {
+          "additionalProperties": false,
+          "properties": {
+            "allowed_ops": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "assertions": {
+              "items": {
+                "$ref": "#/$defs/AssertionSpec"
+              },
+              "type": "array"
+            },
+            "attack_class": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "budget": {
+              "$ref": "#/$defs/BudgetSpec"
+            },
+            "controls": {
+              "items": {
+                "$ref": "#/$defs/ControlSpec"
+              },
+              "type": "array"
+            },
+            "id": {
+              "pattern": "^[a-zA-Z0-9_-]{1,100}$",
+              "type": "string"
+            },
+            "identities": {
+              "additionalProperties": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "type": "object"
+            },
+            "kind": {
+              "const": "integration_scenario",
+              "default": "integration_scenario",
+              "type": "string"
+            },
+            "name": {
+              "default": "Integration scenario",
+              "type": "string"
+            },
+            "objects": {
+              "additionalProperties": {
+                "$ref": "#/$defs/ObjectSpec"
+              },
+              "type": "object"
+            },
+            "observe": {
+              "items": {
+                "$ref": "#/$defs/ObserveSpec"
+              },
+              "type": "array"
+            },
+            "readiness": {
+              "items": {
+                "$ref": "#/$defs/ReadinessSpec"
+              },
+              "type": "array"
+            },
+            "severity": {
+              "default": "high",
+              "enum": [
+                "info",
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ],
+              "type": "string"
+            },
+            "test": {
+              "$ref": "#/$defs/TestSpec"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        },
+        "ObjectRecord": {
+          "properties": {
+            "cleanup_detail": {
+              "default": "",
+              "type": "string"
+            },
+            "cleanup_status": {
+              "default": "pending",
+              "enum": [
+                "pending",
+                "deleted",
+                "retained",
+                "failed",
+                "not_applicable"
+              ],
+              "type": "string"
+            },
+            "connection_id": {
+              "type": "string"
+            },
+            "control_name": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-zA-Z0-9_-]{1,100}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "external_id": {
+              "type": "string"
+            },
+            "group": {
+              "enum": [
+                "baseline",
+                "test",
+                "control"
+              ],
+              "type": "string"
+            },
+            "logical_key": {
+              "type": "string"
+            },
+            "marker": {
+              "type": "string"
+            },
+            "owner": {
+              "type": "string"
+            },
+            "provider": {
+              "type": "string"
+            },
+            "run_id": {
+              "type": "string"
+            },
+            "version": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            }
+          },
+          "required": [
+            "run_id",
+            "group",
+            "logical_key",
+            "provider",
+            "external_id",
+            "marker",
+            "owner",
+            "connection_id"
+          ],
+          "type": "object"
+        },
+        "ObjectSpec": {
+          "additionalProperties": false,
+          "properties": {
+            "connection": {
+              "default": "operator",
+              "type": "string"
+            },
+            "content": {
+              "default": "",
+              "type": "string"
+            },
+            "driver": {
+              "type": "string"
+            },
+            "folder": {
+              "default": "argus-tests",
+              "type": "string"
+            },
+            "from": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "op": {
+              "type": "string"
+            },
+            "share_with": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "subject": {
+              "default": "Integration test",
+              "type": "string"
+            },
+            "template": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "to": {
+              "default": "target_agent",
+              "type": "string"
+            }
+          },
+          "required": [
+            "driver",
+            "op"
+          ],
+          "type": "object"
+        },
+        "ObserveSpec": {
+          "properties": {
+            "collect": {
+              "type": "string"
+            },
+            "connection": {
+              "default": "observer",
+              "type": "string"
+            },
+            "driver": {
+              "type": "string"
+            },
+            "every_s": {
+              "default": 10,
+              "exclusiveMinimum": 0,
+              "maximum": 300,
+              "type": "number"
+            },
+            "object": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "window_s": {
+              "default": 300,
+              "maximum": 3600,
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "driver",
+            "collect"
+          ],
+          "type": "object"
+        },
+        "ProviderSpec": {
+          "properties": {
+            "config": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "drivers": {
+              "additionalProperties": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "object"
+            },
+            "kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "ReadinessSpec": {
+          "properties": {
+            "baseline": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/BaselineSpec"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "check": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "driver": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "object": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "principal": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            }
+          },
+          "type": "object"
+        },
+        "TestSpec": {
+          "properties": {
+            "plant": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "trigger": {
+              "$ref": "#/$defs/Trigger"
+            }
+          },
+          "type": "object"
+        },
+        "Trigger": {
+          "properties": {
+            "session": {
+              "const": "new",
+              "default": "new",
+              "type": "string"
+            },
+            "task": {
+              "default": "Read the test material.",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "WaitSpec": {
+          "properties": {
+            "every_s": {
+              "default": 60,
+              "exclusiveMinimum": 0,
+              "maximum": 300,
+              "type": "number"
+            },
+            "max_s": {
+              "default": 600,
+              "maximum": 3600,
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "connections": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "credential_provider": {
+          "$ref": "#/$defs/ProviderSpec"
+        },
+        "objects": {
+          "items": {
+            "$ref": "#/$defs/ObjectRecord"
+          },
+          "maxItems": 100,
+          "type": "array"
+        },
+        "organization_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "run_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "run_token": {
+          "format": "password",
+          "type": "string",
+          "writeOnly": true
+        },
+        "scenario": {
+          "$ref": "#/$defs/IntegrationScenario"
+        },
+        "target": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      },
+      "required": [
+        "run_id",
+        "organization_id",
+        "scenario",
+        "connections",
+        "credential_provider",
+        "run_token"
+      ],
+      "type": "object"
+    },
+    "ScenarioRunRequest": {
+      "$defs": {
+        "AssertionSpec": {
+          "properties": {
+            "check": {
+              "type": "string"
+            },
+            "object": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "recipients": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              ],
+              "default": "external"
+            }
+          },
+          "required": [
+            "check"
+          ],
+          "type": "object"
+        },
+        "BaselineSpec": {
+          "properties": {
+            "expect": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "task": {
+              "type": "string"
+            },
+            "wait": {
+              "$ref": "#/$defs/WaitSpec"
+            }
+          },
+          "required": [
+            "task"
+          ],
+          "type": "object"
+        },
+        "BudgetSpec": {
+          "properties": {
+            "judge_usd": {
+              "default": 0.5,
+              "maximum": 100,
+              "minimum": 0,
+              "type": "number"
+            },
+            "target_calls": {
+              "default": 12,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "third_party_calls": {
+              "default": 300,
+              "maximum": 10000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "wall_s": {
+              "default": 2400,
+              "exclusiveMinimum": 0,
+              "maximum": 7200,
+              "type": "number"
+            }
+          },
+          "type": "object"
+        },
+        "ControlSpec": {
+          "properties": {
+            "contents": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "name": {
+              "pattern": "^[a-zA-Z0-9_-]{1,100}$",
+              "type": "string"
+            },
+            "replace": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "type": "object"
+        },
+        "IntegrationScenario": {
+          "additionalProperties": false,
+          "properties": {
+            "allowed_ops": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "assertions": {
+              "items": {
+                "$ref": "#/$defs/AssertionSpec"
+              },
+              "type": "array"
+            },
+            "attack_class": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "budget": {
+              "$ref": "#/$defs/BudgetSpec"
+            },
+            "controls": {
+              "items": {
+                "$ref": "#/$defs/ControlSpec"
+              },
+              "type": "array"
+            },
+            "id": {
+              "pattern": "^[a-zA-Z0-9_-]{1,100}$",
+              "type": "string"
+            },
+            "identities": {
+              "additionalProperties": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "type": "object"
+            },
+            "kind": {
+              "const": "integration_scenario",
+              "default": "integration_scenario",
+              "type": "string"
+            },
+            "name": {
+              "default": "Integration scenario",
+              "type": "string"
+            },
+            "objects": {
+              "additionalProperties": {
+                "$ref": "#/$defs/ObjectSpec"
+              },
+              "type": "object"
+            },
+            "observe": {
+              "items": {
+                "$ref": "#/$defs/ObserveSpec"
+              },
+              "type": "array"
+            },
+            "readiness": {
+              "items": {
+                "$ref": "#/$defs/ReadinessSpec"
+              },
+              "type": "array"
+            },
+            "severity": {
+              "default": "high",
+              "enum": [
+                "info",
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ],
+              "type": "string"
+            },
+            "test": {
+              "$ref": "#/$defs/TestSpec"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        },
+        "ObjectSpec": {
+          "additionalProperties": false,
+          "properties": {
+            "connection": {
+              "default": "operator",
+              "type": "string"
+            },
+            "content": {
+              "default": "",
+              "type": "string"
+            },
+            "driver": {
+              "type": "string"
+            },
+            "folder": {
+              "default": "argus-tests",
+              "type": "string"
+            },
+            "from": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "op": {
+              "type": "string"
+            },
+            "share_with": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "subject": {
+              "default": "Integration test",
+              "type": "string"
+            },
+            "template": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "to": {
+              "default": "target_agent",
+              "type": "string"
+            }
+          },
+          "required": [
+            "driver",
+            "op"
+          ],
+          "type": "object"
+        },
+        "ObserveSpec": {
+          "properties": {
+            "collect": {
+              "type": "string"
+            },
+            "connection": {
+              "default": "observer",
+              "type": "string"
+            },
+            "driver": {
+              "type": "string"
+            },
+            "every_s": {
+              "default": 10,
+              "exclusiveMinimum": 0,
+              "maximum": 300,
+              "type": "number"
+            },
+            "object": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "window_s": {
+              "default": 300,
+              "maximum": 3600,
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "driver",
+            "collect"
+          ],
+          "type": "object"
+        },
+        "ProviderSpec": {
+          "properties": {
+            "config": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "drivers": {
+              "additionalProperties": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "object"
+            },
+            "kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "ReadinessSpec": {
+          "properties": {
+            "baseline": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/BaselineSpec"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "check": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "driver": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "object": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "principal": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            }
+          },
+          "type": "object"
+        },
+        "TestSpec": {
+          "properties": {
+            "plant": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "trigger": {
+              "$ref": "#/$defs/Trigger"
+            }
+          },
+          "type": "object"
+        },
+        "Trigger": {
+          "properties": {
+            "session": {
+              "const": "new",
+              "default": "new",
+              "type": "string"
+            },
+            "task": {
+              "default": "Read the test material.",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "WaitSpec": {
+          "properties": {
+            "every_s": {
+              "default": 60,
+              "exclusiveMinimum": 0,
+              "maximum": 300,
+              "type": "number"
+            },
+            "max_s": {
+              "default": 600,
+              "maximum": 3600,
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "connections": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "credential_provider": {
+          "$ref": "#/$defs/ProviderSpec"
+        },
+        "organization_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "run_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "run_token": {
+          "format": "password",
+          "type": "string",
+          "writeOnly": true
+        },
+        "scenario": {
+          "$ref": "#/$defs/IntegrationScenario"
+        },
+        "target": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      },
+      "required": [
+        "run_id",
+        "organization_id",
+        "scenario",
+        "target",
+        "connections",
+        "credential_provider",
+        "run_token"
+      ],
+      "type": "object"
+    }
+  }
+}
