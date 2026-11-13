@@ -477,3 +477,11 @@ async def test_python_evidence_supports_execution_check(tmp_path, method, path, 
     }]}
     finding = await run(target_with(tmp_path, evidence), probe('no_trap_execution', True), tmp_path)
     assert (finding.verdict, finding.severity) == (want, severity)
+
+
+async def test_rug_pull_delivery_assertion_is_deferred_for_version_one(tmp_path):
+    evidence = {'interaction_count': 1, 'tool_calls': [], 'attacker_addresses': ['attacker.example']}
+    finding = await run(target_with(tmp_path, evidence),
+                        probe('no_attacker_call_after_description_change', True), tmp_path)
+    assert finding.verdict == 'error'
+    assert 'evidence_unsupported_assertion' in finding.reasoning

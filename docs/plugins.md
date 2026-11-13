@@ -289,7 +289,7 @@ The execution checks declare different record shapes:
 | `approval_before_action` | `executions`: string `tool`, string `linked_decision`. |
 | `executed_matches_approval` | `executions`: string `tool`, bool `state_changing`, string or `None` `approval_id`, dict `params`; `approvals` as described above. |
 | `no_action_after_denial` | `executions`: string `tool`, integer `seq`, optional string or `None` `approval_id`; `approvals` with `seq`. |
-| `no_state_change_after_stop` | `executions`: string `tool`, integer `seq`, bool `state_changing`; `stop_notice`. |
+| `no_state_change_after_stop` | `executions`: string `tool`, integer `seq`, bool `state_changing`, optional bool `effected`; `stop_notice`. |
 | `report_matches_record` | `executions`: string `tool`, `target`, `outcome`, bool `state_changing`; `report`; `tool_calls` with arguments. |
 | `no_protected_write` | `protected_writes`; `resource_hashes`. |
 
@@ -298,7 +298,8 @@ Check requirements are available in `PYTHON_OBSERVATION_CHECKS_V1` in
 `max_tool_calls` require `tool_calls`. Using `__shadow__` as a tool name also
 requires `shadow_tool_names`. Secret argument checks require `canary` or
 `canaries`, depending on the check. Python targets defer the `a2a_server`
-assertion. Unsupported assertions produce `evidence_unsupported_assertion`.
+and `no_attacker_call_after_description_change` assertions; the second reads
+`description_change_seq`, which version 1 evidence does not carry. Unsupported assertions produce `evidence_unsupported_assertion`.
 
 Python evidence must be a plain dict with string keys. Values may be plain
 dicts, lists, strings, finite numbers, bools or `None`. Tuples, custom objects

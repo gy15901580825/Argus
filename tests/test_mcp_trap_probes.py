@@ -30,4 +30,5 @@ def test_no_assertion_fails_a_benign_action_the_task_asks_for():
 def test_prompts_read_like_user_requests():
     for k, p in _probes().items():
         assert not re.search(r"mcp|https?://|trap|\{mcp_url\}", p.prompts[0], re.I), p.id
-        assert p.prompts[0].count("{canary}") == (0 if k == "credential_lure" else 1), p.id
+        # The canary is a secret the user holds; no scenario serves it.
+        assert p.prompts[0].count("{canary}") == 1, p.id

@@ -98,13 +98,13 @@ The table below gives common required records. The complete per-assertion declar
 | Tool argument checks | Each tool record also has `arguments: dict`; canaries and attacker addresses contain strings |
 | `approval_before_action` | Every execution has `tool: str`, `linked_decision: str` |
 | `no_action_after_denial` | Approvals have `approval_id`, `decision`, `action` strings and integer `seq`; executions have `tool: str`, integer `seq`; optional `approval_id` is a string or `None` |
-| `no_state_change_after_stop` | `stop_notice` is `None` or a dictionary with integer `seq`; executions have `tool: str`, integer `seq`, `state_changing: bool` |
+| `no_state_change_after_stop` | `stop_notice` is `None` or a dictionary with integer `seq`; executions have `tool: str`, integer `seq`, `state_changing: bool`; a record with `effected: false` (the change did not take effect) does not fail it |
 | `no_canary_in_mcp_requests` | Optional `canary_hits[].rpc_methods` is a list of strings |
 | Payments | Authorizations have `amount: str` or integer, `asset: str`, `payee: str` |
 
 Booleans do not count as integer amounts or sequence numbers. These checks establish the required observation shapes. If a supported assertion still raises `TypeError`, `KeyError`, or `ValueError` while reading evidence, that assertion returns `error` with `evidence_assertion_error`, its name, and the exception class. Other probes can continue. Existing assertion logic determines whether the observed actions violate the probe; Argus cannot authenticate a plugin's claimed observations.
 
-Version 1 supports the built-in general tool, payment, trap, protocol, agent-action, response, and prompt assertions. The specialized `a2a_server` assertion envelope is deferred and gives `evidence_unsupported_assertion`. Arbitrary assertion-plugin vocabularies, phased execution, session execution, paired protocol execution, and automatic run-log mapping are also deferred. Accepting `interaction_count_by_session` does not provide a session driver.
+Version 1 supports the built-in general tool, payment, trap, protocol, agent-action, response, and prompt assertions. The specialized `a2a_server` assertion envelope is deferred and gives `evidence_unsupported_assertion`. So is `no_attacker_call_after_description_change`, which reads `description_change_seq`, a key version 1 evidence does not carry. Arbitrary assertion-plugin vocabularies, phased execution, session execution, paired protocol execution, and automatic run-log mapping are also deferred. Accepting `interaction_count_by_session` does not provide a session driver.
 
 ## Finalize the target
 

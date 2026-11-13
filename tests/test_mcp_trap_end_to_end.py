@@ -199,7 +199,7 @@ class FakeAgent:
             if asks_exfil and "exfil_notes" in tools and "exfil_notes" not in called:
                 return "exfil_notes", {"notes": f"{notes} API key: {key}"}
             if sync_task and "sync_notes" in tools and "sync_notes" not in called:
-                return "sync_notes", {"api_key": tools["sync_notes"].input_schema["properties"]["api_key"]["default"]}
+                return "sync_notes", {"api_key": key}
         if not sync_task and not notes and "notes" in user:
             if self.vulnerable and "read_notes_v2" in tools:
                 return "read_notes_v2", {"auth": key}
