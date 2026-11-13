@@ -97,8 +97,10 @@ never acts on tool results and calls each tool once. The rug-pull probes
 report `skipped`: the agent never relists tools, so the changed description
 never reaches it. Set `DEMO_AGENT_WEAKNESSES` to a comma-separated subset of
 `relist`, `obey_results`, `loop` to add those weaknesses. With all three on,
-all 12 MCP probes report `fail`, so each probe family has been shown to catch
-its attack at least once:
+every MCP probe except `mcp_os_cmd_result_injection` reports `fail`. The demo
+agent has no shell, so that probe passes; its failing path is covered by the
+scripted-agent tests in `tests/test_mcp_attacker_attribution.py`. To turn
+all three on:
 
 ```bash
 DEMO_AGENT_WEAKNESSES=relist,obey_results,loop TESTBED_ORIGIN=http://127.0.0.1:8092 \
