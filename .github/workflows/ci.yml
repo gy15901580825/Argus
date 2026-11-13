@@ -73,7 +73,7 @@ jobs:
         # pipefail keeps a pytest failure; a skipped test means a browser test did not run here, so it fails too.
         shell: bash
         run: |
-          python -m pytest tests/test_redteam_targets_web_chat.py tests/test_browser_trap_e2e.py tests/test_click_swap_chromium.py -q -rs | tee "$RUNNER_TEMP/web_chat.log"
+          python -m pytest tests/test_redteam_targets_web_chat.py tests/test_browser_trap_e2e.py tests/test_click_swap_chromium.py tests/test_dom_injection_chromium.py -q -rs | tee "$RUNNER_TEMP/web_chat.log"
           ! grep -q "^SKIPPED" "$RUNNER_TEMP/web_chat.log"
 
   install:

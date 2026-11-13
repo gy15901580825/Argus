@@ -35,7 +35,8 @@ async def test_transport_terminal_results_survive_client_rpc(outcome,answer,reas
     with patch.object(client_agent.websockets,'connect',return_value=Socket()),patch('redteam_runner.browser_probe.BrowserProbe.run',probe),caplog.at_level(logging.INFO,logger='ClientAgent'):
         agent.running=True
         await agent.connect_orchestrator()
-    assert sent[0]=={'jsonrpc':'2.0','method':'agent_capabilities','params':{'transport_versions':[1]}}
+    from redteam_runner.scenarios._options import supported_scenarios
+    assert sent[0]=={'jsonrpc':'2.0','method':'agent_capabilities','params':{'transport_versions':[1],'scenarios':supported_scenarios()}}
     response=next(record for record in sent if record.get('id')=='probe-id')
     assert 'error' not in response and response['result']['transport_result']['outcome']==outcome
     assert response['result']['transport_result']['response_text']==answer

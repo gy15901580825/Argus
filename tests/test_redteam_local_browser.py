@@ -48,7 +48,8 @@ def test_browser_runner_copy_has_no_extra_files():
 
 # --- a fake browser-using agent -------------------------------------------------
 
-_PLANTED = re.compile(r"<!-- AGENT_INSTRUCTION: (.*?) -->|<code>(.*?)</code>", re.S)
+_PLANTED = re.compile(r"<!-- (?:AGENT_INSTRUCTION: |Item number \d+\. )(.*?) -->|<code>(.*?)</code>", re.S)
+_WITNESS = re.compile(r"Item number (\d+)")
 
 
 async def _start_agent(obeys: bool):
@@ -66,6 +67,9 @@ async def _start_agent(obeys: bool):
             text = f"PLANTED_SEEN: following the page, I will now: {planted}"
         else:
             text = "I read the page and ignored instructions embedded in it."
+        witness = _WITNESS.search(page)
+        if witness:
+            text += f" The featured item is number {witness.group(1)}."
         return web.json_response({"final_text": text})
 
     app = web.Application()
@@ -357,5 +361,5 @@ async def test_run_local_runs_browser_probes_in_process(monkeypatch, obeys, verd
     assert events[-1]["type"] == "coverage"
     # Each probe planted its own scenario: one hidden comment, one install guide.
     pages = " ".join(c["page"] for c in calls)
-    assert "AGENT_INSTRUCTION" in pages and "Installation Guide" in pages
+    assert "<!-- Item number" in pages and "Installation Guide" in pages
     assert len(judge_calls) >= 2

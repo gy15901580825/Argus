@@ -29,6 +29,29 @@ class ClientTransportVersionError(NoClientAgentError):
     """The connected client does not support the requested transport version."""
 
 
+# What a client agent that advertises no "scenarios" accepts: every browser kind
+# and option of the 1.12.0 release (BROWSER_KINDS and validate_options in
+# client_agent/redteam_runner/scenarios/_options.py at tag v1.12.0).
+CLIENT_1_12_SCENARIOS: Dict[str, frozenset] = {
+    "click_swap": frozenset(),
+    "cross_origin_bridge": frozenset({"canary"}),
+    "dom_injection": frozenset(),
+    "os_cmd": frozenset({"title", "heading", "intro"}),
+    "ui_phishing": frozenset(),
+    "visual_injection": frozenset({"variant"}),
+}
+
+
+def parse_scenarios(value: Any) -> Dict[str, frozenset]:
+    """The `scenarios` capability: kind -> option names, both strings."""
+    if not isinstance(value, dict) or not all(
+        isinstance(kind, str) and isinstance(opts, list) and all(isinstance(o, str) for o in opts)
+        for kind, opts in value.items()
+    ):
+        raise ValueError("scenarios must map each kind to a list of option names")
+    return {kind: frozenset(opts) for kind, opts in value.items()}
+
+
 class ConnectionManager:
     """Manages WebSocket connections for agents"""
     
@@ -41,6 +64,7 @@ class ConnectionManager:
         # concurrent connects with one id cannot both register.
         self._reserved: set = set()
         self._transport_versions: Dict[str, frozenset[int]] = {}
+        self._scenarios: Dict[str, Dict[str, frozenset]] = {}
         # command_id -> agent_id for redteam probes, so a disconnect can fail them.
         self._command_agents: Dict[str, str] = {}
         logger.info(f"ConnectionManager initialized, instance id: {id(self)}")
@@ -57,6 +81,7 @@ class ConnectionManager:
             await websocket.accept()
             self.active_connections[agent_id] = websocket
             self._transport_versions.pop(agent_id, None)
+            self._scenarios.pop(agent_id, None)
         finally:
             self._reserved.discard(agent_id)
         logger.info(f"Agent connected: {agent_id}, ConnectionManager id: {id(self)}, total connections: {len(self.active_connections)}")
@@ -77,6 +102,19 @@ class ConnectionManager:
         if self.active_connections.get(agent_id) is not connection:
             return frozenset()
         return self._transport_versions.get(agent_id, frozenset())
+
+    def set_scenarios(self, agent_id: str, connection: Any, scenarios: Any) -> bool:
+        """Record the scenario kinds and options this socket's client serves."""
+        if self.active_connections.get(agent_id) is not connection:
+            return False
+        self._scenarios[agent_id] = parse_scenarios(scenarios)
+        return True
+
+    def scenarios(self, agent_id: str, connection: Any) -> Dict[str, frozenset]:
+        """What the client serves; a client that never said is treated as 1.12.0."""
+        if self.active_connections.get(agent_id) is not connection:
+            return CLIENT_1_12_SCENARIOS
+        return self._scenarios.get(agent_id, CLIENT_1_12_SCENARIOS)
 
     async def _post_status(self, agent_id: str, status: str) -> None:
         """Tell the API server about an agent's status, when one is configured."""
@@ -107,6 +145,7 @@ class ConnectionManager:
         if agent_id in self.active_connections:
             del self.active_connections[agent_id]
             self._transport_versions.pop(agent_id, None)
+            self._scenarios.pop(agent_id, None)
             logger.info(f"Agent disconnected: {agent_id}, total connections: {len(self.active_connections)}")
             
             await self._post_status(agent_id, "offline")
@@ -195,6 +234,24 @@ class RedteamBridge:
 
     def __init__(self, manager: ConnectionManager) -> None:
         self._mgr = manager
+
+    def missing_scenario_support(self, kind: str, options: Any) -> Optional[str]:
+        """Why the connected client cannot serve this scenario, or None.
+
+        None also when no client is connected, so the send reports that as before.
+        """
+        agent_id = self._mgr.first_active_agent_id()
+        if not agent_id:
+            return None
+        supported = self._mgr.scenarios(agent_id, self._mgr.active_connections[agent_id])
+        if kind not in supported:
+            return (f"the connected client agent does not support scenario kind {kind!r}; "
+                    "upgrade the client agent to run this probe")
+        missing = sorted(set(options) - supported[kind])
+        if missing:
+            return (f"the connected client agent does not support {kind} option(s) "
+                    f"{', '.join(map(repr, missing))}; upgrade the client agent to run this probe")
+        return None
 
     async def send_and_wait(self, msg: Dict[str, Any], timeout_s: float = 60.0) -> Dict[str, Any]:
         agent_id = self._mgr.first_active_agent_id()

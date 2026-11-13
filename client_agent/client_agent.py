@@ -266,9 +266,13 @@ class ClientAgent:
                     ping_timeout=None,
                 ) as websocket:
                     logger.info("Connected to Orchestrator")
+                    if __package__:
+                        from .redteam_runner.scenarios._options import supported_scenarios
+                    else:
+                        from redteam_runner.scenarios._options import supported_scenarios
                     await websocket.send(json.dumps({
                         "jsonrpc": "2.0", "method": "agent_capabilities",
-                        "params": {"transport_versions": [1]},
+                        "params": {"transport_versions": [1], "scenarios": supported_scenarios()},
                     }))
 
                     async def _keepalive():

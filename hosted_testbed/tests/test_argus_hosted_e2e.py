@@ -171,7 +171,7 @@ def test_supported_pages_pass_service_gate():
     assert supported
     failures = []
     for probe in supported:
-        content = render_hosted_scenario(probe.scenario_kind, probe.scenario_payload)
+        content = render_hosted_scenario(probe.scenario_kind, probe.scenario_payload, **probe.scenario_options)
         try:
             validate_page(content, "html")
         except Rejected as error:

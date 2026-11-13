@@ -183,6 +183,12 @@ async def websocket_endpoint(websocket: WebSocket):
                             connection_manager.set_transport_versions(agent_id, websocket, versions)
                         except ValueError:
                             logger.warning("Invalid transport capabilities from agent %s", agent_id)
+                        if isinstance(params, dict) and "scenarios" in params:
+                            try:
+                                connection_manager.set_scenarios(agent_id, websocket, params["scenarios"])
+                            except ValueError:
+                                # Keep the 1.12.0 baseline: probes it cannot serve skip with a reason.
+                                logger.warning("Invalid scenario capabilities from agent %s", agent_id)
                     if data["method"] == "ping":
                         await websocket.send_json({"jsonrpc": "2.0", "result": "pong", "id": data.get("id")})
                 elif "result" in data or "error" in data:
