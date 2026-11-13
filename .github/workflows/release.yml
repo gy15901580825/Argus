@@ -4,7 +4,7 @@ name: Release
 # trusted publishing: the publish jobs get an OIDC token, so no API tokens or
 # secrets are stored. Setup and steps are in docs/runbooks/release.md.
 #
-# Manual run (default target testpypi) is the rehearsal; a v* tag publishes to PyPI.
+# Manual target none rehearses without publishing; the default remains TestPyPI.
 
 on:
   push:
@@ -12,9 +12,9 @@ on:
   workflow_dispatch:
     inputs:
       target:
-        description: Package index to publish to
+        description: Publish to an index, or none for an image rehearsal
         type: choice
-        options: [testpypi, pypi]
+        options: [testpypi, pypi, none]
         default: testpypi
 
 permissions:
@@ -24,6 +24,8 @@ jobs:
   build:
     name: build + check argus-probe
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -48,6 +50,16 @@ jobs:
           if tag.removeprefix("v") != version:
               sys.exit(f"tag {tag} does not match argus-probe version {version} in pyproject.toml")
           print(f"tag {tag} matches argus-probe {version}")
+          PY
+
+      - name: Read package version
+        id: version
+        run: |
+          python - <<'PY'
+          import os, tomllib
+          version = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"version={version}\n")
           PY
 
       - name: Build sdist + wheel
@@ -104,3 +116,99 @@ jobs:
         with:
           # Lets a failed publish be re-run after a partial upload.
           skip-existing: true
+
+  image-build:
+    name: CLI image — ${{ matrix.arch }} smoke test
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+      - name: Prepare wheel-only context
+        run: |
+          mkdir -p "$RUNNER_TEMP/cli-context"
+          cp docker/cli.Dockerfile "$RUNNER_TEMP/cli-context/Dockerfile"
+          cp dist/*.whl "$RUNNER_TEMP/cli-context/"
+      - uses: docker/setup-qemu-action@5138f26214adf9d69718655df70f66d2b3c81db3
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@bf8388060db527dff14f48b6a5fdbe70763c1213
+      - uses: docker/build-push-action@562e51947939164e4fe808a6eab5101977e509e0
+        with:
+          context: ${{ runner.temp }}/cli-context
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          push: false
+          provenance: false
+          sbom: false
+          tags: argus-cli:smoke
+          build-args: VERSION=${{ needs.build.outputs.version }}
+      - name: Smoke test and report uncompressed size
+        env:
+          IMAGE_PLATFORM: linux/${{ matrix.arch }}
+          PACKAGE_VERSION: ${{ needs.build.outputs.version }}
+        run: bash docker/cli-smoke.sh argus-cli:smoke "$IMAGE_PLATFORM" "$PACKAGE_VERSION"
+      - name: Publishing is off
+        if: github.ref_type != 'tag' || vars.GHCR_PUBLISH != 'true'
+        run: echo "Image publishing is off; only v* tags with GHCR_PUBLISH=true can push."
+
+  publish-image:
+    name: publish CLI image to GHCR
+    needs: [build, image-build]
+    if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && vars.GHCR_PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+      - name: Prepare wheel-only context
+        run: |
+          mkdir -p "$RUNNER_TEMP/cli-context"
+          cp docker/cli.Dockerfile "$RUNNER_TEMP/cli-context/Dockerfile"
+          cp dist/*.whl "$RUNNER_TEMP/cli-context/"
+      - uses: docker/setup-qemu-action@5138f26214adf9d69718655df70f66d2b3c81db3
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@bf8388060db527dff14f48b6a5fdbe70763c1213
+      - uses: docker/login-action@d0b8297dd55199249f38268efae35fcb03f75aab
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@562e51947939164e4fe808a6eab5101977e509e0
+        id: image
+        with:
+          context: ${{ runner.temp }}/cli-context
+          platforms: linux/amd64,linux/arm64
+          push: true
+          sbom: true
+          provenance: mode=max
+          tags: |
+            ghcr.io/gy15901580825/argus-probe:${{ needs.build.outputs.version }}
+            ghcr.io/gy15901580825/argus-probe:latest
+          build-args: VERSION=${{ needs.build.outputs.version }}
+      - uses: actions/attest-build-provenance@9d57eef8c06cd9d6b433effeeb7a6a77b3ff94ad
+        with:
+          subject-name: ghcr.io/gy15901580825/argus-probe
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true

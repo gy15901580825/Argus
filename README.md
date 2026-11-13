@@ -290,6 +290,29 @@ argus-probe run --local --target argus-target.json \
                 --format sarif --out argus.sarif
 ```
 
+### Run with Docker
+
+After the maintainer enables image publishing, run a released CLI without Python.
+Replace `<version>` with a published image version:
+
+```bash
+mkdir -p output
+# ANTHROPIC_API_KEY is already set in your shell; -e passes it by name.
+docker run --rm --user "$(id -u):$(id -g)" -e ANTHROPIC_API_KEY \
+  --mount type=bind,src="$PWD/argus-target.json",dst=/target.json,readonly \
+  --mount type=bind,src="$PWD/output",dst=/output \
+  "ghcr.io/gy15901580825/argus-probe:<version>" \
+  run --local --target /target.json --probes owasp_01_prompt_injection_basic \
+  --format sarif --out /output/argus.sarif
+```
+
+For an OpenAI judge, pass `-e OPENAI_API_KEY` instead. The plain image has the
+same dependencies as `pip install argus-probe`: no Docker CLI or daemon for
+`scan-skill`, no Playwright or Chromium for `web_chat` targets and `web-login`,
+and no `mcp` for running `mcp-trap` or `scan-mcp` (help and config printing still work).
+A target running on the host needs `--network host` on Linux or the host's
+reachable address in the target spec; `127.0.0.1` points inside the container.
+
 Browser probes run locally too, with no server and no client_agent. The CLI
 serves each probe's trap page from your machine and asks your agent to open it:
 
