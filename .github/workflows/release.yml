@@ -26,6 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      probes: ${{ steps.probes.outputs.probes }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -38,7 +39,7 @@ jobs:
       - name: Install build tools
         run: |
           python -m pip install --upgrade pip
-          pip install build twine
+          pip install build twine pyyaml
 
       - name: Tag must match argus-probe version
         if: github.ref_type == 'tag'
@@ -61,6 +62,10 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a") as out:
               out.write(f"version={version}\n")
           PY
+
+      - name: Count probes in the checkout
+        id: probes
+        run: echo "probes=$(python scripts/probe_counts.py --total)" >> "$GITHUB_OUTPUT"
 
       - name: Build sdist + wheel
         run: |
@@ -158,7 +163,8 @@ jobs:
         env:
           IMAGE_PLATFORM: linux/${{ matrix.arch }}
           PACKAGE_VERSION: ${{ needs.build.outputs.version }}
-        run: bash docker/cli-smoke.sh argus-cli:smoke "$IMAGE_PLATFORM" "$PACKAGE_VERSION"
+          PROBE_COUNT: ${{ needs.build.outputs.probes }}
+        run: bash docker/cli-smoke.sh argus-cli:smoke "$IMAGE_PLATFORM" "$PACKAGE_VERSION" "$PROBE_COUNT"
       - name: Publishing is off
         if: github.ref_type != 'tag' || vars.GHCR_PUBLISH != 'true'
         run: echo "Image publishing is off; only v* tags with GHCR_PUBLISH=true can push."

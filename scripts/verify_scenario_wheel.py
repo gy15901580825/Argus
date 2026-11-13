@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
-"""Run with a freshly installed wheel, outside the checkout, without network."""
+"""Run with a freshly installed wheel, outside the checkout, without network.
+
+The wheel must hold as many probes as the checkout this script sits in.
+"""
 from __future__ import annotations
 
+import importlib.util
 import io
 import json
 from pathlib import Path
@@ -12,11 +16,16 @@ from argus.browser_runner.browser_probe import _SCENARIOS
 from argus.browser_runner.scenarios import _fonts
 from argus.probe import load_all_probes
 
+CHECKOUT = Path(__file__).resolve().parents[1]
+_SPEC = importlib.util.spec_from_file_location("probe_counts", CHECKOUT / "scripts" / "probe_counts.py")
+probe_counts = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(probe_counts)
+
 
 def verify() -> None:
     package = Path(argus.__file__).resolve().parent
     probes = list(load_all_probes(package / "probes"))
-    assert len(probes) == 272
+    assert len(probes) == probe_counts.counts(CHECKOUT / "argus" / "probes")["total"]
     variants = set()
     os_pages = 0
     for probe in probes:

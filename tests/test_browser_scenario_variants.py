@@ -65,7 +65,6 @@ def test_variant_set_and_probe_count():
         "white_on_white", "multilingual", "chart_label", "terminal",
     }
     assert len(PROBES) == 12
-    assert len(list(load_all_probes(ROOT / "argus/probes"))) == 272
 
 
 def test_qr_pixels_encode_the_payload():

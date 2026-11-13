@@ -24,10 +24,6 @@ DISCLOSURE_LINE = (
 )
 
 
-def test_library_loads_272_probes():
-    assert len(load_probe_library(PROBES_DIR)) == 272
-
-
 @pytest.mark.parametrize("probe_id", NEW_IDS)
 def test_extraction_probe_loads_with_chat_and_disclosure_contract(probe_id):
     library = {p.id: p for p in load_probe_library(PROBES_DIR)}
