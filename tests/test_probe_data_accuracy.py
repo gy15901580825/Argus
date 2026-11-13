@@ -305,8 +305,9 @@ def test_every_placeholder_left_in_the_library_is_known():
     # {generator.name} and {describe character here}: rendered by the runner. url keys: rendered by the testbed
     # adapter. {canary}: mcp-trap driver. {param}/{YOUR_REPLY}: literal shell
     # templates inside owasp_05_output_cmd_injection. {sink_url}: browser trap server.
+    # {beacon_url}: filled in by the MCP testbed.
     known = {"{generator.name}", "{mcp_url}", "{mcp_url_2}", "{user_secret}", "{a2a_url}", "{merchant_url}", "{canary}", "{YOUR_REPLY}", "{param}",
-             "{describe character here}", "{sink_url}"}
+             "{describe character here}", "{sink_url}", "{beacon_url}"}
     found = set()
     for p in LIBRARY:
         for text in (*p.prompts, p.scenario_payload):

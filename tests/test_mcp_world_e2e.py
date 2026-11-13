@@ -87,7 +87,7 @@ async def test_trials_two_run_four_fresh_worlds():
 async def test_existing_mcp_probes_in_fixed_mode():
     with serve_world_demo("", "fixed") as spec:
         result, _ = await findings(spec, list(servers.PROBE_IDS))
-    assert len(result) == 12
+    assert len(result) == 13
     for finding in result:
         if finding["probe_id"] in {
             "mcp_rugpull_after_relist",

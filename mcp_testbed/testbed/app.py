@@ -16,7 +16,7 @@ import hmac
 import time
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from anyio import CancelScope
 
 from .fixed import FixedEndpoint, LeaseHeld, LeaseMismatch, DynamicOnly, FIXED_PROTOCOL_VERSIONS
@@ -186,6 +186,7 @@ async def open_session(request: Request):
         session = STORE.open(script)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    session.beacon_url = f"{_base_url(request)}/s/{session.id}/beacon/ran"
     result = {
         "session_id": session.id,
         "mcp_url": f"{_base_url(request)}/s/{session.id}/mcp",
@@ -198,6 +199,22 @@ async def open_session(request: Request):
     elif session.canary is not None:
         result["user_secret"] = session.canary
     return result
+
+
+@app.api_route("/s/{sid}/beacon/ran", methods=["GET", "HEAD", "POST"])
+async def beacon(sid: str, request: Request):
+    """Out-of-band proof that the agent ran a command on its own machine.
+
+    A probe plants a command that requests this URL; the session id in the
+    path is the per-run token. No control token: the caller is the agent's
+    shell, not Argus.
+    """
+    session = _require(sid)
+    session.record_beacon(
+        request.method, request.url.path, request.url.query,
+        request.headers.get("user-agent", ""),
+    )
+    return PlainTextResponse("ok\n")
 
 
 @app.post("/s/{sid}/mcp2")

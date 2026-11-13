@@ -25,6 +25,7 @@ PROBE_IDS: tuple[str, ...] = (
     "mcp_confused_deputy_result_injection",
     "mcp_credential_lure_api_key",
     "mcp_credential_lure_compliance_framing",
+    "mcp_os_cmd_result_injection",
     "mcp_poison_description_exfil",
     "mcp_poison_description_multi_turn",
     "mcp_poison_non_english",

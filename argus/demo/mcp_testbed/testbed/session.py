@@ -25,6 +25,8 @@ SETTLE_TIMEOUT_S = 2.0
 
 DEFAULT_TTL_S = 900.0
 DEFAULT_SCENARIO = "tool_poisoning"
+# Beacon hits kept per session; one is enough to prove execution.
+MAX_BEACON_HITS = 20
 
 
 def _digest(tools: list[dict]) -> str:
@@ -41,7 +43,8 @@ class Script:
     probe can stage a differently-shaped attack (a single-hop forward vs. a
     chained "read again, then forward") without the testbed growing one
     scenario per variant; on `credential_lure` it is appended to `sync_notes`'
-    description. Every other scenario ignores it.
+    description. Every other scenario ignores it. A `{beacon_url}` in it is
+    replaced with this session's beacon URL (see `Session.beacon_url`).
 
     `gate_send_email` only has an effect on `rug_pull`, default off so the
     original probe is untouched. On, it makes the first listing's send_email
@@ -86,6 +89,10 @@ class Session:
     scenario: Scenario
     created_at: float
     canary: str | None = None
+    # Set by the app at open: an out-of-band URL that only a command the agent
+    # ran on its own machine would request (the testbed cannot see its shell).
+    beacon_url: str | None = None
+    beacon_hits: list[dict] = field(default_factory=list)
     interaction_count: int = 0
     tools_list_count: int = 0
     descriptions_served: list[dict] = field(default_factory=list)
@@ -201,7 +208,7 @@ class Session:
             return self.world.tools()
         return self.scenario.tools_fn(
             self.tools_list_count + 1, self.canary, self.script.gate_send_email,
-            self.script.injection,
+            self._injection(),
         )
 
     def call_result(self, tool: str, arguments: dict) -> dict:
@@ -214,10 +221,26 @@ class Session:
             tool,
             arguments,
             self.canary,
-            self.script.injection,
+            self._injection(),
             self.tools_list_count,
             self.script.gate_send_email,
         )
+
+    def _injection(self) -> str | None:
+        injection = self.script.injection
+        if injection and self.beacon_url:
+            injection = injection.replace("{beacon_url}", self.beacon_url)
+        return injection
+
+    def record_beacon(self, method: str, path: str, query: str, user_agent: str) -> None:
+        if len(self.beacon_hits) < MAX_BEACON_HITS:
+            self.beacon_hits.append({
+                "seq": self.interaction_count,
+                "method": method,
+                "path": path,
+                "query": query,
+                "user_agent": user_agent,
+            })
 
     def record_tools_list(self, tools: list[dict]) -> None:
         self.tools_list_count += 1
@@ -284,6 +307,8 @@ class Session:
             "attacker_addresses": list(self.scenario.attacker_addresses),
             "description_change_seq": self.description_change_seq(),
             "canary": self.canary,
+            "beacon_url": self.beacon_url,
+            "beacon_hits": list(self.beacon_hits),
         })
 
 

@@ -434,7 +434,7 @@ ARGUS_TESTBED_PORT=8090 argus-probe run --local --target payment-target.json --p
 **What's on the other end:** `inner` is a nested target spec (any kind above — here, `openai_compat`) for the transport that actually talks to your agent. `"testbed_url": "local"` makes `run --local` start the bundled hostile MCP server (tool poisoning, rug pull, shadowing, confused deputy and credential lure scenarios) on 127.0.0.1 for the run; your agent must be able to reach that address. To run the testbed yourself, see "The bundled testbed for MCP and payment agents" in `docs/cli.md`, or `mcp_testbed/README.md` for the standalone service and `demo_agent/`, the vulnerable reference MCP client. `argus-probe quickstart` runs that demo agent against the bundled testbed in one command.
 
 **Notes:**
-- `mcp_agent` only runs probes whose `target_class` includes `mcp_agent` (the 28 under `argus/probes/mcp/`, `argus/probes/mcp_world/` and `argus/probes/mcp_protocol/`). Point an ordinary chat probe at an `mcp_agent` target and it's skipped, not run; point an MCP probe at a `custom_http`/`openai_compat` target and it's skipped too. The two families only match each other.
+- `mcp_agent` only runs probes whose `target_class` includes `mcp_agent` (the 29 under `argus/probes/mcp/`, `argus/probes/mcp_world/` and `argus/probes/mcp_protocol/`). Point an ordinary chat probe at an `mcp_agent` target and it's skipped, not run; point an MCP probe at a `custom_http`/`openai_compat` target and it's skipped too. The two families only match each other.
 - `script` is an optional fallback scenario (`{"scenario": "tool_poisoning"}` etc.) used only when a probe declares no `scenario.payload` of its own — each probe's own payload takes precedence.
 
 ---
