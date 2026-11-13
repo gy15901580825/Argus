@@ -168,7 +168,7 @@ def test_supported_pages_pass_service_gate():
     probes = list(load_all_probes(PROBES))
     supported = [probe for probe in probes if probe.scenario_kind not in {"visual_injection", "cross_origin_bridge"}
                  and probe.id not in {"browser_ui_phishing_login_redirect", "browser_url_sequence_exfil"}]
-    assert len(probes) == 35 and len(supported) == 23
+    assert supported
     failures = []
     for probe in supported:
         content = render_hosted_scenario(probe.scenario_kind, probe.scenario_payload)

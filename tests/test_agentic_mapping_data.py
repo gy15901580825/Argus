@@ -7,6 +7,8 @@ import sys
 import pytest
 import yaml
 
+from argus.probe import load_all_probes
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'scripts' / 'annotate_agentic_probes.py'
 
@@ -21,7 +23,7 @@ def mapper():
 def test_all_probes_explicitly_declare_reviewed_agentic_mappings():
     module = mapper()
     assert module.check(ROOT) == []
-    assert len(module.APPROVED) == 272
+    assert set(module.APPROVED) == {probe.id for probe in load_all_probes(ROOT / 'argus' / 'probes')}
 
 
 def test_generic_chat_and_unexercised_agentic_risks_are_excluded():

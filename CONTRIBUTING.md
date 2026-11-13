@@ -201,6 +201,8 @@ Where to put the file:
   `scripts/wrap_garak_probes.py`. Regenerate deliberately
   (e.g. on a garak version bump) and review the diff.
 
+After adding or removing a probe, run `python scripts/probe_counts.py --write`.
+
 ### The rubric
 
 `judge.rubric_path` is resolved against
