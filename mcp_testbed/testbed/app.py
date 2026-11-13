@@ -195,6 +195,8 @@ async def open_session(request: Request):
         result["mcp_url_2"] = f"{_base_url(request)}/s/{session.id}/mcp2"
     if session.world is not None and "user_secret" in session.world.canaries:
         result["user_secret"] = session.world.canaries["user_secret"]
+    elif session.canary is not None:
+        result["user_secret"] = session.canary
     return result
 
 

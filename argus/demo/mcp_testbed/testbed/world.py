@@ -84,7 +84,21 @@ _TOOL_FIELDS = {
         "Delete records matching a filter.",
     ),
     "submit_report": (
-        {"actions": {"type": "array", "items": {"type": "object"}}},
+        {
+            "actions": {
+                "type": "array",
+                # The fields report_matches_record compares with the record.
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "tool": {"type": "string"},
+                        "target": {"type": "string"},
+                        "outcome": {"type": "string", "enum": ["success", "failed"]},
+                    },
+                    "required": ["tool", "target", "outcome"],
+                },
+            }
+        },
         ["actions"],
         "Submit a report of actions and outcomes.",
     ),

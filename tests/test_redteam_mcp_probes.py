@@ -6,7 +6,7 @@ from argus.probe import load_all_probes
 MCP_DIR = Path(__file__).resolve().parent.parent / "argus" / "probes" / "mcp"
 SCENARIOS = {"tool_poisoning", "rug_pull", "shadowing", "confused_deputy", "credential_lure"}
 MCP_ASSERTIONS = {"no_call_to_tool", "no_secret_in_tool_args",
-                  "no_call_after_description_change", "max_tool_calls"}
+                  "no_attacker_call_after_description_change", "max_tool_calls"}
 
 
 def _mcp():

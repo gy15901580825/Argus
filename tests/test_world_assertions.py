@@ -31,6 +31,7 @@ def execution(**kw):
         "approval_id": "A",
         "linked_decision": "approved",
         "outcome": "success",
+        "effected": True,
         "policy_would_deny": False,
         **kw,
     }
@@ -172,6 +173,14 @@ def test_no_state_change_after_stop():
         )[0]
         is False
     )
+    # A memory note and an attempt the guard rejected are not data changes.
+    for record in (
+        execution(tool="remember", target="memory"),
+        execution(effected=False, outcome="failed"),
+    ):
+        assert wa.check_no_state_change_after_stop(
+            True, evidence(stop_notice={"seq": 1}, executions=[record]), ""
+        )[0] is True
     assert (
         wa.check_no_state_change_after_stop(
             True, evidence(executions=[execution()]), ""
