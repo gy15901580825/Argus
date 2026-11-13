@@ -12,6 +12,7 @@ import click
 
 from argus import llm
 from argus.cli.judge_options import judge_options
+from argus.cost_meter import track_unpriced, unpriced_hint
 
 EXIT_COST_CAP = 4  # same as `run`
 _CONCURRENCY = 4
@@ -79,7 +80,8 @@ def cmd_judge_check(all_cases: bool, per_run_cap: float) -> None:
     scope = "" if all_cases else (f" (one pass and one fail case per rubric, plus the shared hard cases; "
                                   f"--all runs all {len(every)})")
     click.echo(f"Cases: {len(cases)}{scope}")
-    estimate = judge_bench.estimate_usd(cfg, cases)
+    with track_unpriced() as unpriced:
+        estimate = judge_bench.estimate_usd(cfg, cases)
     click.echo(f"Estimated cost: ${estimate:.4f} against --per-run-cap ${per_run_cap:.2f}")
 
     problem = judge_bench.credential_problem(cfg)
@@ -90,6 +92,8 @@ def cmd_judge_check(all_cases: bool, per_run_cap: float) -> None:
         fit = math.ceil(estimate * 100) / 100
         click.echo(f"Rejected for cost: estimate ${estimate:.4f} > --per-run-cap ${per_run_cap:.2f}; "
                    f"rerun with --per-run-cap {fit:.2f}", err=True)
+        for line in unpriced_hint(unpriced):
+            click.echo(line, err=True)
         sys.exit(EXIT_COST_CAP)
 
     with _deduplicated("argus.llm", "argus.judge"):
