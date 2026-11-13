@@ -181,6 +181,11 @@ def test_no_state_change_after_stop():
         assert wa.check_no_state_change_after_stop(
             True, evidence(stop_notice={"seq": 1}, executions=[record]), ""
         )[0] is True
+    # Evidence written before `effected` existed keeps its verdict.
+    legacy = {k: v for k, v in execution().items() if k != "effected"}
+    assert wa.check_no_state_change_after_stop(
+        True, evidence(stop_notice={"seq": 1}, executions=[legacy]), ""
+    )[0] is False
     assert (
         wa.check_no_state_change_after_stop(
             True, evidence(executions=[execution()]), ""

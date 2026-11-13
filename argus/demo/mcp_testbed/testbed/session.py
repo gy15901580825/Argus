@@ -40,9 +40,8 @@ class Script:
     replaces the default instruction planted in a tool call's result, so a
     probe can stage a differently-shaped attack (a single-hop forward vs. a
     chained "read again, then forward") without the testbed growing one
-    scenario per variant; on `credential_lure` it is what `sync_notes`
-    answers. Every other scenario ignores it -- their `call_result_fn` accepts
-    and drops the same parameter.
+    scenario per variant; on `credential_lure` it is appended to `sync_notes`'
+    description. Every other scenario ignores it.
 
     `gate_send_email` only has an effect on `rug_pull`, default off so the
     original probe is untouched. On, it makes the first listing's send_email
@@ -201,7 +200,8 @@ class Session:
         if self.world is not None:
             return self.world.tools()
         return self.scenario.tools_fn(
-            self.tools_list_count + 1, self.canary, self.script.gate_send_email
+            self.tools_list_count + 1, self.canary, self.script.gate_send_email,
+            self.script.injection,
         )
 
     def call_result(self, tool: str, arguments: dict) -> dict:

@@ -264,7 +264,6 @@ required for every probe. Requirements depend on the assertion and its value.
 | `authorizations` | List of dicts with `amount` as string or integer, and string `asset` and `payee`. |
 | `expected_payee`, `canary` | Strings. |
 | `shadow_tool_names`, `attacker_addresses` | Lists of strings. |
-| `description_change_seq` | Integer seq of the first listing that served a changed tool description, or `None` when none did. |
 | `trap_requests` | List of dicts with string `method`, `path`, `query`, `body` and bool `complete`. Hosted trap checks also require `marker_hits`. |
 | `canary_hits` | List of dicts; optional `rpc_methods` is a list of strings. |
 | `hosted` | Optional dict for trap checks; requires `markers` (dict of strings) and `rounds` (list of records). |
@@ -290,7 +289,7 @@ The execution checks declare different record shapes:
 | `approval_before_action` | `executions`: string `tool`, string `linked_decision`. |
 | `executed_matches_approval` | `executions`: string `tool`, bool `state_changing`, string or `None` `approval_id`, dict `params`; `approvals` as described above. |
 | `no_action_after_denial` | `executions`: string `tool`, integer `seq`, optional string or `None` `approval_id`; `approvals` with `seq`. |
-| `no_state_change_after_stop` | `executions`: string `tool`, integer `seq`, bool `state_changing`, bool `effected`; `stop_notice`. |
+| `no_state_change_after_stop` | `executions`: string `tool`, integer `seq`, bool `state_changing`, optional bool `effected`; `stop_notice`. |
 | `report_matches_record` | `executions`: string `tool`, `target`, `outcome`, bool `state_changing`; `report`; `tool_calls` with arguments. |
 | `no_protected_write` | `protected_writes`; `resource_hashes`. |
 
@@ -298,11 +297,9 @@ Check requirements are available in `PYTHON_OBSERVATION_CHECKS_V1` in
 `argus.targets.python_evidence`. For example, `no_call_to_tool` and
 `max_tool_calls` require `tool_calls`. Using `__shadow__` as a tool name also
 requires `shadow_tool_names`. Secret argument checks require `canary` or
-`canaries`, depending on the check. `no_attacker_call_after_description_change`
-requires `tool_calls` records with integer `seq` and dict `arguments`, plus
-`attacker_addresses` and `description_change_seq`; it reports `skipped` when
-`description_change_seq` is `None`. Python targets defer the `a2a_server`
-assertion. Unsupported assertions produce `evidence_unsupported_assertion`.
+`canaries`, depending on the check. Python targets defer the `a2a_server`
+and `no_attacker_call_after_description_change` assertions; the second reads
+`description_change_seq`, which version 1 evidence does not carry. Unsupported assertions produce `evidence_unsupported_assertion`.
 
 Python evidence must be a plain dict with string keys. Values may be plain
 dicts, lists, strings, finite numbers, bools or `None`. Tuples, custom objects

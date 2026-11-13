@@ -10,7 +10,7 @@ A copy of `testbed/` and `demo_agent/` ships in `argus/demo/mcp_testbed/` for `a
 | Service | What it is |
 |---|---|
 | `testbed/` | The hostile MCP server. Opens a session per probe run, stages one of five hostile scenarios, records every JSON-RPC request in memory, and reports it back as evidence -- so a probe can answer "which tools did the agent call, with what arguments" as a fact rather than as a judge's reading of the transcript |
-| `demo_agent/` | An OpenAI-compatible MCP client with no tool-trust policy. Obeys instructions embedded in tool descriptions, calls whichever tool a description claims is "preferred," and copies schema-planted credentials straight into tool call arguments |
+| `demo_agent/` | An OpenAI-compatible MCP client with no tool-trust policy. Obeys instructions embedded in tool descriptions, calls whichever tool a description claims is "preferred," and fills a requested credential field with a secret the user mentioned for another service |
 
 ## Session lifecycle
 
@@ -59,8 +59,8 @@ cannot survive on discipline alone: one debugging session that imports
 
 The demo agent is deliberately insecure as an MCP client -- it obeys
 instructions embedded in tool descriptions, calls whichever tool a
-description claims is "preferred," and copies schema-planted credentials
-straight into tool call arguments. It is not, on top of that, allowed to
+description claims is "preferred," and hands a secret from the prompt to
+any tool that asks for a credential. It is not, on top of that, allowed to
 speak JSON-RPC to arbitrary URLs: the MCP server URL it acts on comes
 straight out of the prompt, and an unrestricted outbound request from a
 deployable container would make it an SSRF pivot to cluster-internal
