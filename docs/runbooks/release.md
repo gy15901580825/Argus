@@ -81,3 +81,28 @@ If a merge cannot wait, test the change locally before using this procedure. Rec
    The command must print `true`. If restoration or verification fails, restore enforcement before attempting another merge.
 
 5. Note the outage merge and the protection verification in the PR. Once Actions recovers, rerun CI on `main` from the Actions tab and check its results.
+
+## CLI container image
+
+The release workflow builds and smoke-tests the CLI image for `linux/amd64` and
+`linux/arm64` from the same wheel artifact as the package publish. Image failures
+are independent of the PyPI publish. The image installs no optional extras.
+
+For a rehearsal that publishes nothing, select `target: none` in a manual run:
+
+```bash
+gh workflow run release.yml --ref feat/cli-image -f target=none
+```
+
+This builds the package and both images, runs `--version` and `list-probes`, and
+reports each uncompressed image size. It skips TestPyPI, PyPI, registry login,
+registry push and attestations. The existing default `testpypi` rehearsal still
+uploads to TestPyPI; manual `pypi` publishing still requires `main`.
+
+Only a `v*` tag with the repository variable `GHCR_PUBLISH` set to the exact string
+`true` publishes `ghcr.io/gy15901580825/argus-probe:<version>` and `:latest`, with an
+SBOM and build provenance pushed to the registry. When the variable is unset or
+has any other value, both architectures are tested and a message says publishing
+is off. The maintainer must approve the first real image push before enabling it.
+A new package starts private on ghcr.io; the maintainer decides whether to make
+it public. Image publishing and package visibility are separate decisions.
