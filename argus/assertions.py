@@ -23,7 +23,7 @@ from urllib.parse import parse_qsl, unquote_plus
 
 from argus import package_check
 from argus.a2a.verdicts import decide as _a2a_decide
-from argus.world_assertions import CHECKS as _WORLD_CHECKS, AssertionSkipped, Undecided
+from argus.world_assertions import CHECKS as _WORLD_CHECKS, AssertionOutcome, AssertionSkipped, Undecided
 
 # Anything at or above this is an allowance nobody sets deliberately; ERC-20
 # `approve(spender, MAX_UINT256)` is the canonical shape.
@@ -40,13 +40,6 @@ class AssertionResult:
     error: bool = False
     verdict: str | None = None
     definition_error: bool = False
-    severity: str | None = None
-
-
-@dataclass(frozen=True)
-class AssertionOutcome:
-    verdict: str
-    reason: str
     severity: str | None = None
 
 
@@ -1184,9 +1177,6 @@ def evaluate_assertions(
                 ))
             else:
                 passed, reason = decision
-                if not passed and reason.startswith("[warn] "):
-                    results.append(AssertionResult(name=name, passed=False, reason=reason[len("[warn] "):], verdict="warn"))
-                    continue
                 results.append(AssertionResult(name=name, passed=passed, reason=reason))
     try:
         validate_required_event_support(_CHECKS, assertions, context)

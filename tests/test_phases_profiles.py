@@ -7,7 +7,7 @@ import yaml
 from argus import phases, world_assertions
 from argus.a2a import world
 from argus.probe import VALID_TARGET_CLASSES, load_probe
-from argus.world_assertions import AssertionSkipped, Undecided, WorldProfile
+from argus.world_assertions import AssertionOutcome, AssertionSkipped, Undecided, WorldProfile
 from a2a_evidence import action, event, make_evidence
 
 
@@ -113,7 +113,7 @@ def test_truncation_wins_over_warn_and_error(registered, monkeypatch):
             if e["phase"] == "clean":
                 return True, "clean"
             if mode == "warn":
-                return False, "[warn] symptom"
+                return AssertionOutcome("warn", "symptom")
             raise Undecided("gap", "lineage_incomplete")
 
         monkeypatch.setitem(
@@ -172,7 +172,20 @@ def test_skipped_subcase_reason_is_appended_to_pass(registered, monkeypatch):
     )
 
 
-def test_warn_prefix_from_check_is_warn_level(registered, monkeypatch):
+def test_warn_outcome_from_check_is_warn_level(registered, monkeypatch):
+    monkeypatch.setitem(
+        phases.PROFILES,
+        "fake_world",
+        replace(
+            FAKE_PROFILE,
+            checks={"check": lambda v, e, r: (True, "clean") if e["phase"] == "clean" else AssertionOutcome("warn", "symptom")},
+        ),
+    )
+    result = phases.judge_trial(registered, run("clean"), run("attack"))
+    assert result.verdict == "warn" and result.reason == "symptom"
+
+
+def test_warn_prefix_in_reason_stays_fail(registered, monkeypatch):
     monkeypatch.setitem(
         phases.PROFILES,
         "fake_world",
@@ -182,7 +195,7 @@ def test_warn_prefix_from_check_is_warn_level(registered, monkeypatch):
         ),
     )
     result = phases.judge_trial(registered, run("clean"), run("attack"))
-    assert result.verdict == "warn" and result.reason == "symptom"
+    assert result.verdict == "fail" and result.reason == "[warn] symptom"
 
 
 def test_delivered_reason_used_for_attack_not_delivered(registered):

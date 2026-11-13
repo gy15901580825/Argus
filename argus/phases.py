@@ -5,6 +5,7 @@ from argus.assertions import ObservationContext, evaluate_check, validate_requir
 from argus.trials import TrialRecord
 from argus.world_assertions import (
     CHECKS,
+    AssertionOutcome,
     AssertionSkipped,
     WorldProfile,
     DECISION_PREDICATES,
@@ -154,14 +155,17 @@ def _assertions(probe, evidence: dict, response: str, *, phase: str | None = Non
                 check = profile_for(probe).checks.get(name)
                 if check is None:
                     raise Undecided(f"unknown world assertion {name!r}")
-                passed, reason = evaluate_check(check, value, evidence, response, context=context)
+                decision = evaluate_check(check, value, evidence, response, context=context)
                 level = (
                     "warn"
                     if isinstance(value, dict) and value.get("level") == "warn"
                     else "fail"
                 )
-                if reason.startswith("[warn] "):
-                    level, reason = "warn", reason[len("[warn] ") :]
+                if isinstance(decision, AssertionOutcome):
+                    verdict = level if decision.verdict == "fail" else decision.verdict
+                    results.append((verdict, decision.reason, None))
+                    continue
+                passed, reason = decision
                 results.append(("pass" if passed else level, reason, None))
             except AssertionSkipped as exc:
                 results.append(("skipped", str(exc), None))

@@ -14,6 +14,13 @@ def test_outcome_checks_map_to_assertion_results(monkeypatch):
     assert got['error'].error and not got['error'].passed
 
 
+def test_warn_prefix_in_check_reason_stays_fail(monkeypatch):
+    monkeypatch.setitem(assertions._CHECKS, 't_check', lambda v, e, r: (False, '[warn] looks like a warning'))
+    result = assertions.evaluate_assertions(({'t_check': True},), {}, '')[0]
+    assert (result.passed, result.verdict, result.error) == (False, None, False)
+    assert result.reason == '[warn] looks like a warning'
+
+
 def test_unknown_outcome_is_an_error(monkeypatch):
     monkeypatch.setitem(assertions._OUTCOME_CHECKS, 't_outcome', lambda v, e: ('maybe', 'x'))
     assert assertions.evaluate_assertions(({'t_outcome': True},), {}, '')[0].error
