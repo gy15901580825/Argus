@@ -61,6 +61,10 @@ REGISTRY: list[tuple[str, str, str]] = [
     ("CONTRIBUTING.md", r"(?P<n>\d+) wrappers around NVIDIA garak", "dir:garak"),
     ("docs/onboarding/probe-id-cheatsheet.md", r"Argus ships (?P<n>\d+) probes", "total"),
     ("argus/coverage.py", r"A library of (?P<n>\d+) probes", "total"),
+    # quickstart runs servers.PROBE_IDS, which tests/test_redteam_demo.py pins to argus/probes/mcp.
+    ("docs/onboarding/quickstart.md", r"runs the (?P<n>\d+) MCP probes", "dir:mcp"),
+    ("docs/cli.md", r"\d+ of (?P<n>\d+) probes caught the demo agent", "dir:mcp"),
+    ("argus/cli/cmd_quickstart.py", r"Run (?P<n>\d+) MCP probes against", "dir:mcp"),
 ]
 
 # A library-sized number (3+ digits) followed by "probes" or "YAML", optionally
