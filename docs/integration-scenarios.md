@@ -66,6 +66,8 @@ The target is optional and no target call runs during cleanup.
 A hosted provider must require a cleanup-only capability restricted to reads and deletion of owned objects.
 The driver operation guard also rejects sends and creates during cleanup.
 
+The run and cleanup request and response shapes, the error statuses and messages, and the `argus.drivers` and `argus.credential_providers` entry-point groups are covered by a contract test (`tests/test_scenario_api_contract.py`). Changes to them are listed in the release notes.
+
 ## Evidence and outcomes
 
 Phases are `prepare`, `readiness`, `baseline`, `test`, `observe`, `judge`, `cleanup`.
