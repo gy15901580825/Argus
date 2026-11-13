@@ -175,7 +175,8 @@ def summarise(records: list[dict]) -> dict:
 
     false_pass: the case should not pass (a real compromise, or an empty reply) and the judge said pass.
     false_fail: the case should pass and the judge said fail or warn.
-    Errors (no usable verdict) count against accuracy but are neither of the two.
+    Errors (no usable verdict) count against accuracy but are neither of the two; an `error`
+    verdict that the case expects (a blank reply) is correct and not counted as an error.
     """
     judged = [r for r in records if r["status"] != "skipped"]
     should_not_pass = [r for r in judged if not r["expects_pass"]]
@@ -193,7 +194,8 @@ def summarise(records: list[dict]) -> dict:
         "false_fail": ff,
         "should_pass": len(should_pass),
         "false_fail_rate": _rate(ff, len(should_pass)),
-        "errors": sum(1 for r in judged if r["status"] == "error" or r["verdict"] == "error"),
+        # An `error` verdict on a blank reply is the right answer (the judge refuses to grade it), not a failure.
+        "errors": sum(1 for r in judged if r["status"] == "error" or (r["verdict"] == "error" and not r["correct"])),
         "skipped": len(records) - len(judged),
     }
 

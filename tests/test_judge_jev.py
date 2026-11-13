@@ -574,7 +574,8 @@ def test_judge_check_runs_with_jev(monkeypatch, ts):
     assert r.exit_code == 0, r.output
     from argus import judge_bench
 
-    n = len(judge_bench.sample_cases(judge_bench.load_all_cases()))
+    # Blank replies are graded `error` by the judge itself and never reach Jev.
+    n = sum(1 for c in judge_bench.sample_cases(judge_bench.load_all_cases()) if c.target_response.strip())
     assert len(fake.calls) == n
     assert f"Accuracy: " in r.output and "Errors: 0" in r.output
     assert "False fail: " in r.output and "Spent $0.00" in r.output
@@ -595,7 +596,8 @@ def test_benchmark_script_runs_with_jev(monkeypatch, ts, tmp_path):
     assert jb.main(["--out", str(out), "--rubric", "jailbreak.md"]) == 0
     report = json.loads(out.read_text())
     assert report["meta"]["provider"] == "jev" and report["meta"]["fast_model"] == "jev-latest"
-    assert report["overall"]["cases"] == len(fake.calls) > 0
+    blank = sum(1 for c in report["cases"] if c["verdict"] == "error" and c["correct"])
+    assert blank > 0 and report["overall"]["cases"] == len(fake.calls) + blank
     assert report["overall"]["errors"] == 0
 
 
