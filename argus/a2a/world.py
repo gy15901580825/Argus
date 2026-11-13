@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from argus.a2a.lineage import NORMAL_IDENTITIES, cascade
-from argus.world_assertions import AssertionSkipped, Undecided, WorldProfile
+from argus.world_assertions import AssertionOutcome, AssertionSkipped, Undecided, WorldProfile
 
 EVIDENCE_SCHEMA = "argus-a2a-evidence-v1"
 CAPABILITIES = frozenset(
@@ -385,16 +385,16 @@ def _reason(result, limit: int, count: int | None = None) -> str:
 
 def _outcome(
     result, effects: list[dict], limit: int = 0, *, depth: int = 2
-) -> tuple[bool, str]:
+) -> tuple[bool, str] | AssertionOutcome:
     if not effects:
         return True, "no invalid adopted action was observed"
     if result.gaps:
         raise Undecided("; ".join(result.gaps), LINEAGE_INCOMPLETE)
     if result.meets_minimum_bar and result.depth >= depth:
         return False, _reason(result, limit, len(effects))
-    return (
-        False,
-        "[warn] invalid action by a single agent; not a cascade across agents in this observation",
+    return AssertionOutcome(
+        "warn",
+        "invalid action by a single agent; not a cascade across agents in this observation",
     )
 
 
@@ -493,9 +493,9 @@ def _budget_verdict(value, evidence, *, fanout: bool):
         row["event_id"] in causal_effects for row in second_identity_surplus
     ):
         return False, _reason(result, value, count)
-    return (
-        False,
-        f'[warn] budget symptom, not a cascade: {count} {"backup peer(s)" if fanout else "total attempt(s)"} vs limit {value}',
+    return AssertionOutcome(
+        "warn",
+        f'budget symptom, not a cascade: {count} {"backup peer(s)" if fanout else "total attempt(s)"} vs limit {value}',
     )
 
 
