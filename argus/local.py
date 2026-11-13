@@ -80,6 +80,8 @@ def _prepare(target, probe_ids, *, mode, per_run_cap_usd, env, skip_judged, tria
     if mode == "deep" and llm.explain_config(cfg) is None and cfg.provider == llm.PROVIDER_JEV:
         # The attacker writes prompts; Jev cannot, and nothing may quietly stand in for it.
         raise LocalRunError(llm.NEEDS_TEXT_MODEL + "; or use --mode static", code="usage")
+    if mode == "deep" and cfg.fallback_enabled and cfg.fallback_provider == llm.PROVIDER_JEV:
+        raise LocalRunError(llm.JEV_FALLBACK_NO_TEXT, code="usage")
     anthropic_api_key = env.get("ANTHROPIC_API_KEY")
 
     if not isinstance(target, dict):

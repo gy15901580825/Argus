@@ -239,8 +239,9 @@ async def propose_choices(catalog: OperationCatalog, *, operation=None, server_o
     with meter.run_scope("draft-target"):
         try:
             estimate = estimate_call_usd(cfg.model_for("fast"), len(SYSTEM + user), OUTPUT_TOKENS)
-            if cfg.fallback_enabled and cfg.fallback_provider is not None:
-                estimate += estimate_call_usd(llm._DEFAULTS[cfg.fallback_provider]["fast"], len(SYSTEM + user), OUTPUT_TOKENS)
+            # llm.complete never sends text work to a jev fallback.
+            if cfg.fallback_enabled and cfg.fallback_provider not in (None, llm.PROVIDER_JEV):
+                estimate += estimate_call_usd(cfg.fallback_model_for("fast"), len(SYSTEM + user), OUTPUT_TOKENS)
             if estimate > RUN_CAP_USD:
                 raise CostExceededError("Estimated draft proposal cost exceeds the generation cap")
             application_calls = 1

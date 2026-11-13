@@ -131,7 +131,9 @@ class Judge:
                 target_response=target_response, rubric_text=rubric_text, severity=severity,
                 explain_verdicts=self._explain_verdicts,
             )
-        fast_v = await self._call("fast", probe_name, attack_prompt, target_response, rubric_text)
+        fast_v = await self._call("fast", probe_name, attack_prompt, target_response, rubric_text, severity)
+        if self._served_by_jev(fast_v):  # Jev is a single judge: nothing to escalate or decide
+            return fast_v
         if fast_v.verdict == "error":  # nothing was assessed, so there is nothing to escalate
             return replace(fast_v, severity="info")
         should_escalate = (
@@ -152,7 +154,8 @@ class Judge:
             strong_v: Optional[Verdict] = None
             strong_error: Optional[str] = None
             try:
-                strong_v = await self._call("strong", probe_name, attack_prompt, target_response, rubric_text)
+                strong_v = await self._call("strong", probe_name, attack_prompt, target_response, rubric_text,
+                                            severity)
             except llm.AllProvidersFailed as e:
                 # A refusal to review is not a judgement; keep the fast verdict rather
                 # than turning a real finding into an error.
@@ -209,6 +212,7 @@ class Judge:
         attack_prompt: str,
         target_response: str,
         rubric_text: str,
+        severity: Optional[str] = None,
     ) -> Verdict:
         system_prompt, user_prompt = build_judge_prompts(
             probe_name, attack_prompt, target_response, rubric_text
@@ -219,7 +223,9 @@ class Judge:
             )
         except llm.AllProvidersFailed as e:
             llm.record_refusals(self._cost_meter, e.refusals)
-            raise
+            if not self._jev_fallback_applies(e):
+                raise
+            return await self._judge_with_jev(e, probe_name, attack_prompt, target_response, rubric_text, severity)
         # Bill the model that actually answered (a fallback may have changed it) with the refusals.
         model = out.model
         llm.record_completion(self._cost_meter, out)
@@ -247,6 +253,38 @@ class Judge:
             raise ValueError(
                 f"judge returned an unusable verdict ({model} on probe {probe_name!r}): {text[:200]!r}"
             ) from e
+
+
+    def _jev_fallback_applies(self, e: "llm.AllProvidersFailed") -> bool:
+        # llm.complete never dispatches to Jev (it writes no text), so a jev fallback runs here.
+        cfg = self._cfg
+        if not (cfg.fallback_enabled and cfg.fallback_provider == llm.PROVIDER_JEV):
+            return False
+        return cfg.fallback_on_block or not isinstance(e, llm.JudgeBlockedError)
+
+    def _served_by_jev(self, v: Verdict) -> bool:
+        return self._cfg.fallback_provider == llm.PROVIDER_JEV and v.reasoning.startswith(_JEV_FALLBACK_NOTE)
+
+    async def _judge_with_jev(self, e: "llm.AllProvidersFailed", probe_name: str, attack_prompt: str,
+                              target_response: str, rubric_text: str, severity: Optional[str]) -> Verdict:
+        fb = self._cfg.fallback
+        try:
+            v = await jev_judge.judge(fb, self._cost_meter, probe_name=probe_name, attack_prompt=attack_prompt,
+                                      target_response=target_response, rubric_text=rubric_text, severity=severity,
+                                      explain_verdicts=())
+        except llm.AllProvidersFailed as jev_err:
+            # Name both failures: the first one is why Jev was asked.
+            failed = str(jev_err)
+            if isinstance(e, llm.JudgeBlockedError):
+                raise llm.JudgeBlockedError(
+                    f"{e} The jev fallback failed too: {failed}.", provider=e.provider, model=e.model,
+                    categories=e.categories, fallback=failed, refusals=e.refusals) from None
+            raise llm.AllProvidersFailed(f"{e} | {failed}", refusals=e.refusals) from None
+        return replace(v, reasoning=f"{_JEV_FALLBACK_NOTE} {v.reasoning}")
+
+
+# Starts the reasoning of a verdict the jev fallback gave, so a reader and the escalation check can tell.
+_JEV_FALLBACK_NOTE = "primary judge failed; jev fallback:"
 
 
 def _with_decision(fast_v: Verdict, strong_v: Optional[Verdict], d: "decider_mod.Decision") -> Verdict:
