@@ -99,89 +99,10 @@ Request errors on `/redteam/run` and `/redteam/run/preflight` use FastAPI's `{"d
 
 ### Stream contract: `POST /redteam/run`
 
-A 200 response is a Server-Sent Events stream (`Content-Type: text/event-stream`). Each frame ends with a blank line. A frame is either one `data:` line, or an `event:` line followed by one `data:` line. Every `data:` line holds one JSON object. Every stream payload masks registered target-spec secret values with the same function and `***` token as run.json. This includes findings, deep transcripts, `deep_run` metadata, coverage, error details, and cleanup reports. Payloads are normalized to JSON values, as run.json does, then masked at the stream boundary before the frame is encoded. This also masks tuples that JSON converts to arrays.
-
-Deep mode first emits a bare `data:` frame with `type: "deep_run"` and `deep`
-selection metadata. It then emits one finding per persona/strategy thread,
-instead of one finding per round; `evidence.transcript` holds all rounds.
-Static finding frames remain unchanged. Consumers must distinguish metadata
-from findings before computing counts.
-
-After the optional deep metadata frame, the remaining frames come in this order:
-
-1. Zero or more finding frames, one per finding, as bare `data:` lines. The object has exactly the keys of a run.json finding, listed in [the run.json format](../run-json.md#run-summary), and no others.
-2. One coverage frame, a bare `data:` line whose `type` is `"coverage"`.
-3. `event: end` with `data: {}`.
-
-If the run fails after the stream starts, the coverage frame and `event: end` are not sent. The stream ends with `event: error` instead. Findings sent before the failure stay valid.
-
-A finding object never has a `type` key, so `type == "coverage"` tells the coverage frame apart from a finding.
-
-#### Coverage frame
-
-```json
-{"type": "coverage", "coverage": {...}, "summary": {...}, "cost": {"spent_usd": 0.0412, "per_run_cap_usd": 0.5}}
-```
-
-| Field | Type | Meaning |
-|-------|------|---------|
-| `type` | string | Always `"coverage"`. |
-| `coverage` | object | The per-standard coverage table, the same object `GET /redteam/coverage` returns, with this run's results filled in. |
-| `summary` | object | Counts of this run's findings, described below. |
-| `cost` | object | `spent_usd` and `per_run_cap_usd`, both numbers, described below. |
-| `target_cleanup` | object | Optional target cleanup report, described below. Omitted when the target returns no report. |
-
-`summary` counts this run's findings:
-
-```json
-{
-  "total": 0,
-  "evaluated": 0,
-  "evaluated_verdicts": ["fail", "pass", "warn"],
-  "by_verdict": {"fail": 0, "pass": 0, "warn": 0, "skipped": 0, "blocked_by_target": 0, "aborted_cost": 0, "error": 0},
-  "failed_by_severity": {"info": 0, "low": 0, "medium": 0, "high": 0, "critical": 0}
-}
-```
-
-`total` counts findings. `evaluated` counts findings whose verdict is in `evaluated_verdicts`: the probe reached the target and came back with a verdict. This is the same rule coverage uses for `tested`. `blocked_by_target`, `skipped`, `aborted_cost` and `error` findings are not evaluated. `by_verdict` counts every finding and always lists all seven verdicts. `failed_by_severity` counts only `fail` findings and always lists all five severities. A verdict or severity outside these lists gets its own key. The summary has no score and no percentage. If you compute a rate, divide by `evaluated`, not `total`. `summary.total` counts findings, while `coverage.totals.probes_run` counts distinct probes that were evaluated, so the two numbers can differ.
-
-`cost.spent_usd` is the cost of this run's model calls in US dollars, rounded to six decimals. It is the engine's own estimate from model token usage and its price table, not an invoice. `cost.per_run_cap_usd` is the per-run cap the run was held to. It is the request's `per_run_cap_usd` when set, otherwise the server's default for the mode (static or deep). It is always a number. A run stopped at the cap can show `spent_usd` above `per_run_cap_usd` by the one call that crossed it.
-
-#### `event: end`
-
-`data: {}`. The run finished and every finding was sent.
-
-#### `event: error`
-
-```json
-{"detail": "per_run cap $0.05 exceeded: this run has spent $0.0600", "type": "CostExceededError", "cost": {"spent_usd": 0.06, "per_run_cap_usd": 0.05}}
-```
-
-| Field | Type | Meaning |
-|-------|------|---------|
-| `detail` | string | The error message. |
-| `type` | string | The exception class name. `CostExceededError` means the run stopped at a cost cap. Probes that did not start are sent first as `aborted_cost` findings. `CleanupStateUnknown` means the cleanup report could not be read or validated; its detail is "cleanup state unknown". |
-| `cost` | object | The same shape as the coverage frame's `cost`. |
-| `target_cleanup` | object | Optional target cleanup report, described below. Omitted when the target returns no report or its report is invalid. |
-| `judge_blocked` | object | Only when `type` is `JudgeBlockedError`: a provider content filter refused a judge or attacker prompt. It holds `provider` (string), `model` (string, the model or deployment), `categories` (array of strings, empty when the provider names none) and `fallback` (`"off"` when a fallback provider exists but a block does not use it, `"<provider>/<model>: <error type>"` when the other attempt failed too, or null). |
-
-#### `target_cleanup`
-
-The existing coverage payload on success and error payload on failure can include this object. It adds no frame. Targets with no cleanup report omit the key; it is never null.
-
-| Field | Type | Meaning |
-|-------|------|---------|
-| `complete` | boolean | True only when `open` is empty and every abort is `done` or `not_needed`. |
-| `done` | integer | Completed undo intents and delivery aborts. |
-| `open` | array of objects | Unfinished records with `scope`, `step`, `status`, `method`, `url` (string or null), and `http_status` (integer or null). Abort records also have `attempt` (integer) and optional `failure_reason` (string). |
-| `stop_reason` | string or null | The transport stop reason, if any. |
-| `leftover` | array of strings | Required list of resources for manual review, including resources with no undo. |
-| `aborts` | array of objects | Optional delivery abort records with the same fields as an open abort record. |
-
-See [target cleanup in run.json](../run-json.md#target-cleanup) for statuses and completion rules. An invalid report omits `target_cleanup` and produces the "cleanup state unknown" diagnostic introduced with the public cleanup contract. When another exception already stopped the run, its type and original detail remain, and the diagnostic is appended to `detail`.
+A 200 response is a Server-Sent Events stream. [The `/redteam/run` event stream](run-stream.md) lists every frame, its fields, the frame order, which frames end the stream, and the rules API consumers follow for frames and fields they do not know. In short: deep mode sends a `deep_run` frame first, then come zero or more finding frames, then either a `coverage` frame and `event: end`, or `event: error`.
 
 #### Stability policy
 
-Within a major version of `argus-probe`, the stream frames, the `/healthz` body and the route bodies above change only by addition: a new key, a new frame type or a new `event:` name. A client must ignore keys and event names it does not know. Renaming or removing a key, changing a key's type, or changing the frame order needs a new major version, and the release notes announce it. Tests in `tests/test_contract_freeze.py`, `tests/test_server_routes.py`, `tests/test_redteam_coverage_api.py`, `tests/test_server_run_cost_cap.py` and `tests/test_judge_blocked.py` pin these shapes, so a rename fails CI.
+Within a major version of `argus-probe`, the stream frames, the `/healthz` body and the route bodies above change only by addition: a new key, a new frame type or a new `event:` name. A client must ignore keys, `type` values and event names it does not know. Renaming or removing a key, changing a key's type, or changing the frame order needs a new major version, and the release notes announce it. Tests in `tests/test_run_stream_contract.py`, `tests/test_contract_freeze.py`, `tests/test_server_routes.py`, `tests/test_redteam_coverage_api.py`, `tests/test_server_run_cost_cap.py` and `tests/test_judge_blocked.py` pin these shapes, so a rename fails CI.
 
 The `/api/v1/redteam` API the CLI uses in server mode (runs, reports, diffs, stored history) is not part of this repo. It was served by `api_service`, which lives at tag `v0.3-full`.
