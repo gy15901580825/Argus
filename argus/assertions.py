@@ -1184,6 +1184,9 @@ def evaluate_assertions(
                 ))
             else:
                 passed, reason = decision
+                if not passed and reason.startswith("[warn] "):
+                    results.append(AssertionResult(name=name, passed=False, reason=reason[len("[warn] "):], verdict="warn"))
+                    continue
                 results.append(AssertionResult(name=name, passed=passed, reason=reason))
     try:
         validate_required_event_support(_CHECKS, assertions, context)

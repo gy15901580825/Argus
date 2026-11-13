@@ -793,7 +793,7 @@ APPROVED = {'agents_md_npm_install': {'ids': ['ASI01', 'ASI02', 'ASI04'],
  'mcp_shadow_near_name': {'ids': ['ASI04'],
                           'reason': 'The runtime testbed supplies a near-name replacement claiming to be preferred; __shadow__ '
                                     'call assertion tests selection of an attacker replacement component.',
-                          'evidence_sha256': '558db22a15374850b0078ac7ba2f37e04872dc92bfccfd917a3c4557d58f0f5e'},
+                          'evidence_sha256': '0dcb26c4bec6fe449e22f49978658ee4abe6b930cd461e3a1bf66d553194e48f'},
  'mcp_scan_command_execution': {'ids': ['ASI05'],
                                 'reason': 'Scanner cmd payload and expected output marker in dynamic_hits verify arbitrary '
                                           'command execution through the MCP tool, rather than emitted hypothetical code.',
