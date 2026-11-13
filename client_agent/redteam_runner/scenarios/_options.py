@@ -36,14 +36,24 @@ VISUAL_VARIANTS = frozenset({
     "white_on_white", "multilingual", "chart_label", "terminal",
 })
 BROWSER_KINDS = frozenset({"dom_injection", "ui_phishing", "visual_injection", "os_cmd", "cross_origin_bridge", "click_swap"})
+# The options each kind accepts; kinds not listed accept none.
+OPTION_KEYS = {
+    "cross_origin_bridge": frozenset({"canary"}),
+    "visual_injection": frozenset({"variant"}),
+    "os_cmd": frozenset({"title", "heading", "intro"}),
+    "dom_injection": frozenset({"placement"}),
+}
+
+
+def supported_scenarios() -> dict:
+    """What this runner serves, as the client agent advertises it: kind -> option names."""
+    return {kind: sorted(OPTION_KEYS.get(kind, ())) for kind in sorted(BROWSER_KINDS)}
 
 
 def validate_options(kind: str, options: Mapping) -> Mapping:
     if not isinstance(options, Mapping):
         raise ValueError(f"{kind} scenario options must be a mapping")
-    allowed = {"canary"} if kind == "cross_origin_bridge" else {"variant"} if kind == "visual_injection" else (
-        {"title", "heading", "intro"} if kind == "os_cmd" else {"placement"} if kind == "dom_injection" else set()
-    )
+    allowed = OPTION_KEYS.get(kind, frozenset())
     unknown = set(options) - allowed
     if unknown:
         raise ValueError(f"{kind} scenario has unknown option(s): {', '.join(sorted(map(str, unknown)))}")

@@ -68,6 +68,8 @@ orchestrator rejects declarative browser requests before sending a probe when
 the connected client lacks version 1. Legacy `agent_url` targets retain their
 existing request format and timeout.
 
+Clients also advertise `scenarios`: each browser scenario kind they serve and the options it accepts. The orchestrator skips a probe whose kind or option the connected client does not list, with a reason that asks you to upgrade the client agent; nothing is sent to the client for it. A client that sends no `scenarios`, such as 1.12.0, is treated as serving the 1.12.0 set, so only the `dom_injection` probes with a `placement` skip on it.
+
 Remote transport requests cannot authorize their own secret references or private
 network destinations. At startup, the operator must explicitly allow each secret
 directory, environment variable name, and private HTTP origin. The defaults deny

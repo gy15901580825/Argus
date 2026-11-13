@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import contextvars
+import inspect
 import ipaddress
 import json
 import logging
@@ -33,6 +34,7 @@ from fastapi import WebSocketDisconnect
 
 from argus.assertions import canary_in, canary_sequence_requests, trap_canaries
 from argus.targets._base import (
+    ProbeNotApplicable,
     Target,
     TargetDeliveryError,
     TargetBlockedError,
@@ -384,6 +386,7 @@ class BrowserUseTarget(Target):
         if not kind and not payload:
             self._scenario_kind = None
             self._scenario_payload = None
+            self._require_client_support()
             return
         # A declared scenario without a payload would put the benign prompt on
         # the trap page and could only ever pass.
@@ -397,6 +400,19 @@ class BrowserUseTarget(Target):
             )
         self._scenario_kind = kind or None
         self._scenario_payload = payload
+        self._require_client_support()
+
+    def _require_client_support(self) -> None:
+        """Skip, before anything is sent, a scenario the connected client agent cannot serve."""
+        if _LOCAL_RUN.get():
+            return
+        check = getattr(_get_client_agent_ws(), "missing_scenario_support", None)
+        # A bridge without this check keeps the old path: the send itself reports failures.
+        if not inspect.ismethod(check):
+            return
+        reason = check(self._scenario_kind or self.spec.scenario_kind, self._scenario_options)
+        if reason:
+            raise ProbeNotApplicable(reason)
 
     async def send_prompt(
         self, prompt: str, history: tuple[Turn, ...] = ()
