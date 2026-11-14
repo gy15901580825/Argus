@@ -1047,6 +1047,8 @@ def test_second_endpoint_answers_with_mcp_suffix(client):
         called = rpc(client, sid, "tools/call", {"name": "timezone_lookup", "arguments": {"city": "London"}}, path=path)["result"]
         evidence = ev(client, sid)
         recorded = {k: evidence[k] for k in ("attack_delivered", "tool_calls", "interaction_count_by_session")}
+        # The path a call came in on is the one field that should differ.
+        assert [c.pop("transport_path") for c in recorded["tool_calls"]] == [f"/s/{sid}/{path}"]
         return json.loads(json.dumps([listed, called, recorded]).replace(shadow, "SHADOW"))
 
     plain, suffixed = drive("mcp2"), drive("mcp2/mcp")

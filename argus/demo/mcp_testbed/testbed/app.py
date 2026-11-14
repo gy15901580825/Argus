@@ -130,7 +130,11 @@ async def _elicit_stream(
         _lifetime.finish()
 
 
-def _respond(session: Session, body: dict) -> dict | Response:
+def _origin(request: Request) -> dict:
+    return {"user_agent": request.headers.get("user-agent", ""), "path": request.url.path}
+
+
+def _respond(session: Session, body: dict, origin: dict | None = None) -> dict | Response:
     if (
         session.world is not None
         and session.world.spec.elicit is not None
@@ -145,7 +149,7 @@ def _respond(session: Session, body: dict) -> dict | Response:
         counts["requests"] += 1
         session.resolve_elicitation(body)
         return Response(status_code=202)
-    result = handle_request(session, body)
+    result = handle_request(session, body, origin=origin)
     if isinstance(result, ElicitPending):
         lifetime = _ElicitLifetime(session, result)
         try:
@@ -229,7 +233,7 @@ async def second_mcp(sid: str, request: Request):
     session.in_flight += 1
     try:
         body = await request.json()
-        return handle_request(session, body, server="second")
+        return handle_request(session, body, server="second", origin=_origin(request))
     finally:
         session.in_flight -= 1
 
@@ -242,7 +246,7 @@ async def mcp(sid: str, request: Request):
     session.in_flight += 1
     try:
         body = await request.json()
-        return _respond(session, body)
+        return _respond(session, body, _origin(request))
     finally:
         session.in_flight -= 1
 
@@ -335,7 +339,7 @@ async def fixed_mcp(request: Request):
     session = route.session
     session.in_flight += 1
     try:
-        result = _respond(session, body)
+        result = _respond(session, body, _origin(request))
         if "id" not in body and isinstance(method, str) and method.startswith("notifications/"):
             return Response(status_code=202)
         if method == "initialize":

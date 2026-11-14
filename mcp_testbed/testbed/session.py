@@ -27,6 +27,8 @@ DEFAULT_TTL_S = 900.0
 DEFAULT_SCENARIO = "tool_poisoning"
 # Beacon hits kept per session; one is enough to prove execution.
 MAX_BEACON_HITS = 20
+# Enough to tell one client from another without storing a whole header.
+MAX_USER_AGENT_CHARS = 120
 
 
 def _digest(tools: list[dict]) -> str:
@@ -266,7 +268,10 @@ class Session:
             "tool_digests": {t["name"]: _digest([t]) for t in tools},
         })
 
-    def record_tool_call(self, tool: str, arguments: dict, server: str = "primary") -> None:
+    def record_tool_call(
+        self, tool: str, arguments: dict, server: str = "primary",
+        origin: dict | None = None,
+    ) -> None:
         # Per tool: flag the call only when THIS tool's description changed.
         # A session-wide flag marked a call to an untouched tool (read_notes)
         # as rug-pulled because another tool (send_email) had changed -- a
@@ -286,6 +291,11 @@ class Session:
             "arguments": arguments,
             "after_description_change": after_change,
         }
+        # Any client on the session counts; origin says which one sent it
+        # (an agent may also call the testbed from its own shell).
+        if origin is not None:
+            record["user_agent"] = origin.get("user_agent", "")[:MAX_USER_AGENT_CHARS]
+            record["transport_path"] = origin.get("path", "")
         if server != "primary":
             record["server"] = server
         self.tool_calls.append(record)

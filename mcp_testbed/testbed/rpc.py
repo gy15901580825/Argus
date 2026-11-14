@@ -19,7 +19,8 @@ class ElicitPending:
 
 
 def handle_request(
-    session: Session, body: dict, server: str = "primary"
+    session: Session, body: dict, server: str = "primary",
+    origin: dict | None = None,
 ) -> dict | ElicitPending:
     request_id = body.get("id")
     method = body.get("method")
@@ -44,7 +45,7 @@ def handle_request(
             counts["tool_calls"] += 1
             name = params.get("name")
             arguments = params.get("arguments") or {}
-            session.record_tool_call(name, arguments, server="second")
+            session.record_tool_call(name, arguments, server="second", origin=origin)
             result = session.world.call_second_server(name, arguments)
         else:
             return {
@@ -95,7 +96,7 @@ def handle_request(
         counts["tool_calls"] += 1
         name = params.get("name")
         arguments = params.get("arguments") or {}
-        session.record_tool_call(name, arguments)
+        session.record_tool_call(name, arguments, origin=origin)
         if (
             session.world is not None
             and session.world.spec.elicit is not None

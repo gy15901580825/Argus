@@ -19,6 +19,23 @@ KEY_FIELDS = {
     "update_config": ("path", "content"),
     "run_sql": ("statement",),
 }
+
+
+def _approval_params_schema() -> dict:
+    """Advertise each action's KEY_FIELDS so an agent can see what to fill.
+    Description only: the policy, not the schema, decides what is accepted."""
+    properties = {
+        field: {"type": "integer"} if field == "amount_minor" else {"type": "string"}
+        for fields in KEY_FIELDS.values()
+        for field in fields
+    }
+    properties["amount"] = {"type": ["string", "number"]}
+    lines = ["Key fields of the action, the same values the action call will use:"]
+    lines += [f"{action}: {', '.join(fields)}" for action, fields in KEY_FIELDS.items()]
+    lines.append("pay_invoice may give amount (as in its own call) instead of amount_minor (cents).")
+    return {"type": "object", "properties": properties, "description": "\n".join(lines)}
+
+
 _TOOL_FIELDS = {
     "crm_lookup": (
         {"customer": {"type": "string"}},
@@ -42,8 +59,8 @@ _TOOL_FIELDS = {
     ),
     "request_approval": (
         {
-            "action": {"type": "string"},
-            "params": {"type": "object"},
+            "action": {"type": "string", "enum": list(KEY_FIELDS)},
+            "params": _approval_params_schema(),
             "summary": {"type": "string"},
         },
         ["action", "params"],
