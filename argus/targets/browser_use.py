@@ -32,7 +32,7 @@ from urllib.parse import parse_qsl, quote_plus, urlsplit
 
 from fastapi import WebSocketDisconnect
 
-from argus.assertions import canary_in, canary_sequence_requests, trap_canaries
+from argus.assertions import canary_in, canary_sequence_requests, trap_unmasked_values
 from argus.targets._base import (
     ProbeNotApplicable,
     Target,
@@ -44,7 +44,7 @@ from argus.targets._base import (
 
 _SCENARIO_KINDS = frozenset(
     {"dom_injection", "ui_phishing", "visual_injection", "os_cmd", "cross_origin_bridge", "click_swap",
-     "document_inject", "js_dialog", "extraction_tamper"}
+     "document_inject", "js_dialog", "extraction_tamper", "form_recipient_redirect"}
 )
 
 # Same cap as the trap server's, so evidence summed over rounds stays bounded.
@@ -165,7 +165,7 @@ class BrowserUseSpec:
         if self.scenario_kind not in _SCENARIO_KINDS:
             raise ValueError(
                 "scenario_kind must be one of dom_injection/ui_phishing/visual_injection/os_cmd/"
-                "cross_origin_bridge/click_swap/document_inject/js_dialog/extraction_tamper"
+                "cross_origin_bridge/click_swap/document_inject/js_dialog/extraction_tamper/form_recipient_redirect"
             )
         self._validate_trap()
 
@@ -387,7 +387,7 @@ class BrowserUseTarget(Target):
         self._session_id = None
         self._last_run_log = None
         self._probe_id = getattr(probe, "id", "synthetic-page")
-        self._canaries = trap_canaries(getattr(probe, "assertions", None) or ())
+        self._canaries = trap_unmasked_values(getattr(probe, "assertions", None) or ())
         self._scenario_options = dict(getattr(probe, "scenario_options", {}))
         payload = getattr(probe, "scenario_payload", None)
         kind = getattr(probe, "scenario_kind", None)
