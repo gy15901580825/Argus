@@ -10,7 +10,7 @@ from pydantic import SecretStr
 
 from argus.scenarios.credentials import AccessToken, CredentialUnavailable
 from argus.scenarios.models import BudgetSpec, ObjectRecord, ObjectSpec, ObserveSpec, now
-from argus.scenarios.runtime import Budget, ObjectRegistry, RunContext
+from argus.scenarios.runtime import Budget, NotReady, ObjectRegistry, RunContext
 from argus_drivers_google.common import DRIVE_FILE, GMAIL_READ, GMAIL_SEND, owner_hash
 from argus_drivers_google.drive import BASE as DRIVE, DriveDriver
 from argus_drivers_google.gmail import BASE as GMAIL, GmailDriver
@@ -57,6 +57,30 @@ async def test_drive_uploads_content_and_registers_final_shared_version(tmp_path
     assert upload.calls[0].request.url.params["uploadType"] == "multipart"
     assert b"observer@gmail.com" in share.calls[0].request.content
     assert export.calls[0].request.url.params["mimeType"] == "text/plain"
+
+
+@respx.mock
+@pytest.mark.parametrize("body, accepted", [
+    ("expected policy text", True),
+    ("expected policy text, plus an edit", False),
+])
+async def test_drive_prepare_accepts_google_docs_plain_text_export(tmp_path, body, accepted):
+    ctx = context(tmp_path)
+    driver = DriveDriver({}, Provider())
+    respx.get(DRIVE + "/about").mock(return_value=httpx.Response(200, json={"user": {"emailAddress": "operator@gmail.com"}}))
+    respx.get(DRIVE + "/files").mock(return_value=httpx.Response(200, json={"files": []}))
+    respx.post(DRIVE + "/files").mock(return_value=httpx.Response(200, json={"id": "folder", "version": "1"}))
+    respx.post("https://www.googleapis.com/upload/drive/v3/files").mock(return_value=httpx.Response(200, json={"id": "doc", "version": "1"}))
+    respx.get(DRIVE + "/files/doc").mock(return_value=httpx.Response(200, json={"id": "doc", "version": "3", "mimeType": "application/vnd.google-apps.document"}))
+    # Shape of a real Docs text/plain export: UTF-8 BOM, CRLF, and one extra blank line between paragraphs.
+    export = ("﻿" + body + "\r\n\r\n\r\n" + ctx.marker("policy")).encode()
+    respx.get(DRIVE + "/files/doc/export").mock(return_value=httpx.Response(200, content=export))
+    spec = ObjectSpec(driver="gdrive", op="create_doc", content="expected policy text")
+    if accepted:
+        assert (await driver.prepare(ctx, "policy", spec)).version == "3"
+    else:
+        with pytest.raises(NotReady, match="does not match its template"):
+            await driver.prepare(ctx, "policy", spec)
 
 
 @respx.mock

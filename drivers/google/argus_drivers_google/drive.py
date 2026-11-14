@@ -16,7 +16,9 @@ FIELDS = "id,name,mimeType,version,owners(emailAddress),appProperties,createdTim
 
 
 def content_hash(text: str) -> str:
-    return hashlib.sha256(text.replace("\r\n", "\n").rstrip("\n").encode()).hexdigest()
+    # A Docs text/plain export adds a BOM, CRLF and an extra blank line between paragraphs.
+    lines = text.lstrip("\ufeff").replace("\r\n", "\n").split("\n")
+    return hashlib.sha256("\n".join(line for line in lines if line).encode()).hexdigest()
 
 
 class DriveDriver(GoogleDriver):
