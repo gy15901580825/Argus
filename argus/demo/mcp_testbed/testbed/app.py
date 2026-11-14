@@ -3,7 +3,7 @@
 This service exists so a probe can answer "which tools did the agent call,
 with what arguments" as a fact read straight off a request log, rather than as
 a judge's opinion of the transcript. It opens a session per probe run, stages
-one of the five hostile scenarios in `testbed/scenarios.py`, and reports every
+one of the six hostile scenarios in `testbed/scenarios.py`, and reports every
 JSON-RPC interaction back as evidence.
 """
 

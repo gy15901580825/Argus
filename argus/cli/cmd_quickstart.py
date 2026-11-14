@@ -13,7 +13,7 @@ from argus.demo import bypass_proxy_for_localhost
 @click.option("--out", default="argus-quickstart.html", show_default=True,
               type=click.Path(dir_okay=False), help="Where to write the HTML report.")
 def cmd_quickstart(out: str) -> None:
-    """Run 13 MCP probes against a built-in vulnerable demo agent. No API key needed."""
+    """Run 14 MCP probes against a built-in vulnerable demo agent. No API key needed."""
     bypass_proxy_for_localhost()
     from argus.demo.servers import PROBE_IDS, start_mcp_demo
 

@@ -41,7 +41,7 @@ def test_probe_ids_are_the_mcp_library():
     from argus.api import PROBES_DIR
     on_disk = sorted(p.stem for p in (pathlib.Path(PROBES_DIR) / "mcp").glob("*.yaml"))
     assert list(servers.PROBE_IDS) == on_disk
-    assert len(on_disk) == 13
+    assert len(on_disk) == 14
 
 
 async def test_demo_run_needs_no_key_and_finds_real_failures(monkeypatch):
@@ -50,7 +50,7 @@ async def test_demo_run_needs_no_key_and_finds_real_failures(monkeypatch):
     with servers.start_mcp_demo() as spec:
         events = [e async for e in run_local(spec, list(servers.PROBE_IDS), env={})]
     findings = [e for e in events if "verdict" in e]
-    assert len(findings) == 13
+    assert len(findings) == 14
     assert {f["probe_id"] for f in findings} == set(servers.PROBE_IDS)
     assert not [f for f in findings if f["verdict"] == "error"], findings
     assert any(f["verdict"] == "fail" for f in findings)

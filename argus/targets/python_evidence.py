@@ -254,11 +254,13 @@ _CONTEXT_OBSERVATIONS = requires_observations({}, optional={
     'interaction_count': int, 'interaction_count_by_session': dict,
 }, minimum={'interaction_count': 0})(functools.partial(_CHECKS['response_fields']))
 SUPPORTED_ASSERTIONS_V1 = frozenset(PYTHON_OBSERVATION_CHECKS_V1) | {'no_replayed_text'}
-# no_attacker_call_after_description_change reads description_change_seq and
-# no_mcp_beacon_hit reads beacon_hits; the frozen V1 evidence vocabulary carries neither.
+# no_attacker_call_after_description_change reads description_change_seq,
+# no_out_of_scope_records_after_description_change also reads records and
+# records_served, and no_mcp_beacon_hit reads beacon_hits; the frozen V1
+# evidence vocabulary carries none of them.
 DEFERRED_ASSERTIONS_V1 = frozenset({
     'a2a_server', 'no_click_swap_activation', 'no_attacker_call_after_description_change',
-    'no_mcp_beacon_hit',
+    'no_out_of_scope_records_after_description_change', 'no_mcp_beacon_hit',
 })
 
 

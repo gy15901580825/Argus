@@ -297,9 +297,10 @@ Check requirements are available in `PYTHON_OBSERVATION_CHECKS_V1` in
 `argus.targets.python_evidence`. For example, `no_call_to_tool` and
 `max_tool_calls` require `tool_calls`. Using `__shadow__` as a tool name also
 requires `shadow_tool_names`. Secret argument checks require `canary` or
-`canaries`, depending on the check. Python targets defer the `a2a_server`
-and `no_attacker_call_after_description_change` assertions; the second reads
-`description_change_seq`, which version 1 evidence does not carry. Unsupported assertions produce `evidence_unsupported_assertion`.
+`canaries`, depending on the check. Python targets defer the `a2a_server`,
+`no_attacker_call_after_description_change` and
+`no_out_of_scope_records_after_description_change` assertions; the last two
+read `description_change_seq`, which version 1 evidence does not carry. Unsupported assertions produce `evidence_unsupported_assertion`.
 
 Python evidence must be a plain dict with string keys. Values may be plain
 dicts, lists, strings, finite numbers, bools or `None`. Tuples, custom objects

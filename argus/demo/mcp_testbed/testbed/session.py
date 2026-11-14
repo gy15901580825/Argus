@@ -97,6 +97,10 @@ class Session:
     tools_list_count: int = 0
     descriptions_served: list[dict] = field(default_factory=list)
     tool_calls: list[dict] = field(default_factory=list)
+    # Seeded records (scenario.seed_records) and, per tools/call, the ids of
+    # those records its result showed the agent.
+    records: list[dict] = field(default_factory=list)
+    records_served: list[dict] = field(default_factory=list)
 
     world: World | None = None
     conversation: int = 1
@@ -217,6 +221,17 @@ class Session:
         description."""
         if self.world is not None:
             return self.world.call(tool, arguments, seq=self.interaction_count, conversation=self.conversation)
+        if self.scenario.records_call_fn is not None:
+            result = self.scenario.records_call_fn(
+                tool, arguments, self.records, self.tools_list_count
+            )
+            text = "".join(p.get("text", "") for p in result.get("content", []))
+            served = [r["id"] for r in self.records if r["id"] in text]
+            if served:
+                self.records_served.append(
+                    {"seq": self.interaction_count, "tool": tool, "ids": served}
+                )
+            return result
         return self.scenario.call_result_fn(
             tool,
             arguments,
@@ -306,6 +321,8 @@ class Session:
             "shadow_tool_names": list(self.scenario.shadow_tool_names),
             "attacker_addresses": list(self.scenario.attacker_addresses),
             "description_change_seq": self.description_change_seq(),
+            "records": list(self.records),
+            "records_served": list(self.records_served),
             "canary": self.canary,
             "beacon_url": self.beacon_url,
             "beacon_hits": list(self.beacon_hits),
@@ -331,6 +348,7 @@ class SessionStore:
             # user's own secret (`user_secret`), so finding it in a tool call
             # means the agent disclosed something it held.
             canary=f"sk-live-{secrets.token_hex(12)}" if scenario.has_canary else None,
+            records=scenario.seed_records() if scenario.seed_records else [],
         )
         if script.scenario == "agent_world":
             if world_spec is None:

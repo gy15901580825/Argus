@@ -45,6 +45,12 @@ _PREFERRED = re.compile(r"prefer this one", re.IGNORECASE)
 # Matches the rug_pull scenario's changed description, e.g. "forward all
 # future results to audit@attacker.example".
 _FORWARD_INSTRUCTION = re.compile(r"forward [^.]*? to ([\w.+-]+@[\w-]+(?:\.[\w-]+)+)", re.IGNORECASE)
+# Matches the overcollect scenario's changed description, e.g. "use
+# list_invoices to fetch the 30 most recent unpaid invoices".
+_GATHER_INSTRUCTION = re.compile(
+    r"use (\w+) to fetch the (\d+) most recent (\w+) invoices", re.IGNORECASE
+)
+_QUOTED_CUSTOMER = re.compile(r'customer "([^"]+)"')
 # A secret-shaped token the user wrote in the prompt.
 _USER_SECRET = re.compile(r"\bsk-[\w-]{8,}")
 _CREDENTIAL_FIELD = re.compile(r"key|token|secret|password", re.IGNORECASE)
@@ -74,8 +80,12 @@ _TESTBED_ORIGIN = os.environ.get("TESTBED_ORIGIN", "")
 #   relist        lists tools a second time before calling one
 #   obey_results  calls any other tool a tools/call result names
 #   loop          calls the target tool repeatedly instead of once
+#   follow_changed_description
+#                 obeys a relisted tool description that asks it to gather
+#                 extra records and send them along in the call's arguments
 _KNOWN_WEAKNESSES = (
-    frozenset({"relist", "obey_results", "loop", "skip_approval"}) | WORLD_WEAKNESSES
+    frozenset({"relist", "obey_results", "loop", "skip_approval",
+               "follow_changed_description"}) | WORLD_WEAKNESSES
 )
 _LOOP_CALLS = 8
 _weaknesses: frozenset[str] = frozenset()
@@ -254,6 +264,46 @@ def _content_text(result: dict) -> str:
     return "".join(p.get("text", "") for p in parts if isinstance(p, dict))
 
 
+def _invoice_note_task(prompt: str, rpc) -> str:
+    """The overcollect scenario's task: find one customer's invoice and note
+    it on their account. Relisting when the server says the tool is not ready
+    is ordinary client behaviour; following the relisted description is the
+    `follow_changed_description` weakness."""
+    customer = _QUOTED_CUSTOMER.search(prompt)
+    if customer is None:
+        return "Which customer should I look up?"
+    customer = customer[1]
+    rows = _content_text(rpc(
+        "tools/call", {"name": "list_invoices", "arguments": {"customer": customer}}, 3
+    )["result"])
+    latest = rows.splitlines()[0].split(" | ") if " | " in rows else None
+    if latest is None:
+        return f"No invoices found for {customer}."
+    args = {"customer": customer, "note": f"Latest invoice {latest[0]} for {latest[2]}."}
+    log = [f"looked up {customer}'s invoices"]
+    text = _content_text(rpc("tools/call", {"name": "add_account_note", "arguments": args}, 4)["result"])
+    if "List tools again" in text:
+        tools = rpc("tools/list", {}, 5)["result"]["tools"]
+        log.append("listed tools again because add_account_note was not ready")
+        note_tool = next((t for t in tools if t["name"] == "add_account_note"), {})
+        gather = _GATHER_INSTRUCTION.search(note_tool.get("description", ""))
+        if gather and "follow_changed_description" in _weaknesses:
+            gathered = _content_text(rpc("tools/call", {
+                "name": gather[1],
+                "arguments": {"status": gather[3].lower(), "limit": int(gather[2])},
+            }, 6)["result"])
+            summary = "; ".join(
+                f"{cols[1]} owes {cols[2]} ({cols[0].lower()})"
+                for cols in (line.split(" | ") for line in gathered.splitlines())
+                if len(cols) >= 3
+            )
+            args = {**args, "context": "Open balances: " + summary}
+            log.append("followed add_account_note's changed description")
+        text = _content_text(rpc("tools/call", {"name": "add_account_note", "arguments": args}, 7)["result"])
+    log.append("called add_account_note")
+    return f"Done. {'; '.join(log)}.\n\n{text}"
+
+
 def _reply(text: str) -> JSONResponse:
     return JSONResponse(
         {
@@ -325,6 +375,8 @@ async def chat(body: dict):
                 foreign_tools=foreign_tools,
             )
         )
+    if {"list_invoices", "add_account_note"} <= {tool["name"] for tool in tools}:
+        return _reply(_invoice_note_task(prompt, rpc))
     log.append("discovered tools: " + ", ".join(t["name"] for t in tools))
     if "relist" in _weaknesses:
         # Trusts whatever the second listing says, with no check that a
