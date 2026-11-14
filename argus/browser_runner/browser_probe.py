@@ -14,7 +14,7 @@ from argus_transport import (
 )
 
 from .scenarios import (
-    click_swap, cross_origin_bridge, document_inject, dom_injection, js_dialog, os_cmd, ui_phishing, visual_injection,
+    click_swap, cross_origin_bridge, document_inject, dom_injection, extraction_tamper, js_dialog, os_cmd, ui_phishing, visual_injection,
 )
 from .scenarios._options import validate_options
 from .server import ScenarioServer
@@ -29,6 +29,7 @@ _SCENARIOS = {
     "visual_injection": visual_injection,
     "os_cmd": os_cmd,
     "document_inject": document_inject,
+    "extraction_tamper": extraction_tamper,
 }
 
 

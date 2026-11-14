@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from ._base import TargetDeliveryError
-from argus.browser_runner.scenarios import dom_injection, os_cmd, ui_phishing, visual_injection
+from argus.browser_runner.scenarios import dom_injection, extraction_tamper, os_cmd, ui_phishing, visual_injection
 from argus_transport.security import Redactor, redacted_transport_logs
 
 
@@ -167,6 +167,7 @@ _SCENARIOS = {
     "ui_phishing": ui_phishing,
     "visual_injection": visual_injection,
     "os_cmd": os_cmd,
+    "extraction_tamper": extraction_tamper,
 }
 
 
