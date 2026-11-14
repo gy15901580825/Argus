@@ -19,7 +19,7 @@ The package includes the probe engine, so step 3a works without a server. From a
 argus-probe quickstart
 ```
 
-This starts a deliberately insecure demo MCP agent and a hostile MCP testbed on 127.0.0.1, runs the 13 MCP probes against the agent and writes `argus-quickstart.html` (change it with `--out`). It needs no API key and no target of your own. These probes are decided by assertions on what the agent did, so no judge model is involved. The demo agent is meant to fail, so most probes report a finding. Probes that need a judge model (prompt injection, system-prompt leakage and others) still need a key; see step 3a.
+This starts a deliberately insecure demo MCP agent and a hostile MCP testbed on 127.0.0.1, runs the 14 MCP probes against the agent and writes `argus-quickstart.html` (change it with `--out`). It needs no API key and no target of your own. These probes are decided by assertions on what the agent did, so no judge model is involved. The demo agent is meant to fail, so most probes report a finding. Probes that need a judge model (prompt injection, system-prompt leakage and others) still need a key; see step 3a.
 
 ## 2. Generate a target spec
 

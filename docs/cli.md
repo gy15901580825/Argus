@@ -15,7 +15,7 @@ Starting the demo MCP agent and a hostile MCP testbed on 127.0.0.1 (no API key n
   skipped            info      mcp_rugpull_after_relist
   ...
 Wrote report to argus-quickstart.html
-7 of 13 probes caught the demo agent doing something unsafe.
+7 of 14 probes caught the demo agent doing something unsafe.
 ```
 
 To test your own agent, see [Quickstart](#quickstart) below.

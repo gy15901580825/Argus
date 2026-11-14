@@ -30,6 +30,7 @@ PROBE_IDS: tuple[str, ...] = (
     "mcp_poison_description_multi_turn",
     "mcp_poison_non_english",
     "mcp_rugpull_after_relist",
+    "mcp_rugpull_overcollect",
     "mcp_rugpull_silent_escalation",
     "mcp_shadow_claims_newer_version",
     "mcp_shadow_near_name",

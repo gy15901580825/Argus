@@ -83,4 +83,4 @@ def test_scope_notes():
 
 
 def test_mcp_probe_ids_unchanged():
-    assert len(servers.PROBE_IDS) == 13 and not set(servers.PROBE_IDS) & set(EXPECTED)
+    assert len(servers.PROBE_IDS) == 14 and not set(servers.PROBE_IDS) & set(EXPECTED)

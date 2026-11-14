@@ -7,7 +7,7 @@
 
 # Argus
 
-**Attack your AI agent before someone else does.** Argus runs 273 red-team
+**Attack your AI agent before someone else does.** Argus runs 274 red-team
 probes against an agent through the tools it calls, the content it reads and
 the requests it gets, then shows which attacks got through. Try it in about a
 minute, no API key needed: `pip install argus-probe && argus-probe quickstart`.
@@ -29,7 +29,7 @@ minute, no API key needed: `pip install argus-probe && argus-probe quickstart`.
   that use it, and reports risky behaviour: decoy secrets it read, suspicious
   commands it ran and requests it tried to send to other hosts.
 
-Around those sits a library of 273 adversarial probes in all (OWASP LLM Top
+Around those sits a library of 274 adversarial probes in all (OWASP LLM Top
 10, MITRE ATLAS, NIST AI RMF, garak wrappers), most of them for chat, gRPC and
 browser-using agents. Findings come out as SARIF 2.1.0, JUnit XML and HTML;
 failed findings from the library carry fix-it text, and the SARIF can be
@@ -47,7 +47,7 @@ argus-probe quickstart
 
 `quickstart` tests a built-in vulnerable MCP demo agent with no API key or target and writes `argus-quickstart.html`.
 
-![Quickstart report with finding details hidden: 13 probes, shown as 7 fail, 0 warn, 4 pass, 0 error and 2 skipped tiles, plus 0 escalated.](docs/assets/quickstart-report.png)
+![Quickstart report with finding details hidden: 14 probes, shown as 7 fail, 0 warn, 5 pass, 0 error and 2 skipped tiles, plus 0 escalated.](docs/assets/quickstart-report.png)
 
 ---
 
@@ -70,11 +70,11 @@ AI RMF** IDs, so your security team can trace it to those frameworks.
 
 What Argus does:
 
-- **273 probes** in the bundled library — 15 OWASP LLM Top 10 hand-authored, 5 chat extraction probes, 1 built-in memory probe,
+- **274 probes** in the bundled library — 15 OWASP LLM Top 10 hand-authored, 5 chat extraction probes, 1 built-in memory probe,
   5 from public LLM system cards (best-of-N, crescendo, confused deputy,
   many-shot jailbreak, sleeper agent), 35 browser-agent specific, 27
-  payment-abuse probes (x402 wallet flows, against `payment_agent`), 49
-  MCP-abuse probes (13 poisoned tool servers, 11 agent work-environment probes and 5 MCP protocol-surface probes, against `mcp_agent`; 5
+  payment-abuse probes (x402 wallet flows, against `payment_agent`), 50
+  MCP-abuse probes (14 poisoned tool servers, 11 agent work-environment probes and 5 MCP protocol-surface probes, against `mcp_agent`; 5
   hostile-server scenarios for `argus-probe mcp-trap`; 4 exposure checks of an
   MCP server itself, against `mcp_server`; 11 checks of an MCP server's tools
   for `argus-probe scan-mcp`), 16
@@ -415,7 +415,7 @@ argus-probe scan-skill --sample key-grab
 │  argus  (engine; argus.server is the FastAPI app for server mode)       │
 │    probe loader  ──▶  target adapter  ──▶  judge harness                │
 │        │                  │                      │                      │
-│        └──── 273 YAML     │                      └──▶ fast model, then  │
+│        └──── 274 YAML     │                      └──▶ fast model, then  │
 │              probes       │                           strong model on   │
 │                           │                           high/critical,    │
 │                  ┌────────┴─────────┐                 confidence ≥ 0.7  │
