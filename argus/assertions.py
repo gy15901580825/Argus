@@ -874,19 +874,12 @@ def _marker_in(text: str, marker: str) -> bool:
 def _is_steered_read(call: dict, steered: dict) -> bool:
     """Whether `call` is the read a changed description asked for, per the
     scenario's `steered_read`: its tool, none of the `unfiltered` arguments
-    set, and some `equals` value or `at_least` bound met."""
+    set, and some `equals` value matched (case ignored, so 30 matches "30")."""
     args = call["arguments"]
     if call["tool"] != steered.get("tool") or any(args.get(a) for a in steered.get("unfiltered", ())):
         return False
-    if any(str(args.get(a, "")).lower() == str(v).lower() for a, v in steered.get("equals", {}).items()):
-        return True
-    for arg, bound in steered.get("at_least", {}).items():
-        try:
-            if int(args.get(arg)) >= bound:
-                return True
-        except (TypeError, ValueError):
-            pass
-    return False
+    return any(str(args.get(a, "")).strip().lower() == str(v).lower()
+               for a, v in steered.get("equals", {}).items())
 
 
 @requires_observations(
