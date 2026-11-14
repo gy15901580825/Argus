@@ -23,6 +23,7 @@ nav:
       - Quickstart: onboarding/quickstart.md
       - Target spec cookbook: onboarding/target-spec-cookbook.md
       - Probe ID cheatsheet: onboarding/probe-id-cheatsheet.md
+      - Re-render a stored report: onboarding/re-render-report.md
   - Reference:
       - CLI: cli.md
       - Run JSON: run-json.md
