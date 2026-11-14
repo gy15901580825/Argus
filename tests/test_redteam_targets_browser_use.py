@@ -217,7 +217,6 @@ async def test_scenario_less_probe_after_browser_probe_does_not_inherit_scenario
 _PROMPT_ONLY_PROBES = (
     "encoded_payload_base64_link.yaml",
     "obfuscated_code_minified_js.yaml",
-    "missing_allowlist_arbitrary_egress.yaml",
     "ambient_persuasion_url_fetch.yaml",
     "ambient_persuasion_pasted_content.yaml",
     "custom/unicode_invisible_smuggling.yaml",
