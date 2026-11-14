@@ -213,7 +213,7 @@ def test_cli_skips_single_origin_without_contacting_the_target(tmp_path, mode, f
     assert finding["verdict"] == "skipped"
 
 
-def test_cli_all_with_public_url_stays_complete_and_skips_bridge(tmp_path):
+def test_cli_all_with_public_url_stays_complete_and_leaves_out_bridge(tmp_path):
     spec = tmp_path / "target.json"
     spec.write_text(json.dumps({
         "kind": "browser_use", "agent_url": "http://127.0.0.1:1/agent",
@@ -238,9 +238,8 @@ def test_cli_all_with_public_url_stays_complete_and_skips_bridge(tmp_path):
     assert result.exit_code == 0, result.output
     run = json.loads(report.read_text())
     assert run["status"] == "completed", result.output
-    [bridge] = [f for f in run["findings"] if f["probe_id"] == PROBE.id]
-    assert bridge["verdict"] == "skipped"
-    assert "requires two reachable origins" in result.output
+    # --probes all selects only probes the target can run (unsupported_trap_modes).
+    assert run["findings"] and all(f["probe_id"] != PROBE.id for f in run["findings"])
     assert received
     assert all(msg["scenario_kind"] != "cross_origin_bridge" for msg in received)
 

@@ -203,8 +203,10 @@ def test_delivered_reason_used_for_attack_not_delivered(registered):
         registered, run("clean"), run("attack", delivery_error="card was unread")
     )
     assert (
-        result.reason_code == "attack_not_delivered"
+        result.verdict == "skipped"
+        and result.reason_code == "attack_not_delivered"
         and result.reason == "card was unread"
+        and result.as_dict()["exposure"] == "not_exercised"
     )
 
 

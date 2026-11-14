@@ -103,12 +103,32 @@ def _resolve_target_kind(target: Any) -> str:
     return "openai_compat"
 
 
+def _trap_mode_unsupported(probe: Any, target_obj: Any) -> bool:
+    """True when the probe's unsupported_trap_modes cover this browser target's trap mode.
+
+    Mirrors the trap-mode skip in Runner.run_probe.
+    """
+    unsupported = getattr(probe, "unsupported_trap_modes", {})
+    if not unsupported:
+        return False
+    from argus.targets.browser_use import BrowserUseTarget
+
+    if not isinstance(target_obj, BrowserUseTarget):
+        return False
+    spec = target_obj.spec
+    reason = unsupported.get(spec.trap_mode)
+    if reason is None and spec.trap_public_url:
+        reason = unsupported.get("public_url")
+    return reason is not None
+
+
 def compatible_probe_ids(target_obj: Any, *, include_opt_in: bool = True) -> list[str]:
     """Library probes this built target can run; the runner would skip the rest.
 
-    Same two skip rules as Runner.run_probe: the target class (no declared classes
-    on either side means compatible) and conversation history. Reads the instance,
-    because testbed_agent sets its classes per spec and its history per inner target.
+    Same three skip rules as Runner.run_probe: the target class (no declared classes
+    on either side means compatible), conversation history, and the probe's
+    unsupported_trap_modes for a browser target. Reads the instance, because
+    testbed_agent sets its classes per spec and its history per inner target.
     Default selections set include_opt_in=False; explicit ids retain compatibility.
     """
     classes = getattr(target_obj, "compatible_classes", frozenset())
@@ -122,6 +142,7 @@ def compatible_probe_ids(target_obj: Any, *, include_opt_in: bool = True) -> lis
             history
             or not getattr(p, "needs_history", getattr(p, "conversation", False))
         )
+        and not _trap_mode_unsupported(p, target_obj)
     ]
 
 
