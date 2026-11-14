@@ -683,9 +683,10 @@ class Runner:
                 f = replace(f, verdict=VERDICT_SKIPPED, severity="info", confidence=1.0,
                             evidence={**(f.evidence or {}), "exposure": "not_exercised"},
                             reasoning=_no_contact_reason(probe))
-            elif (f.verdict in (VERDICT_FAIL, VERDICT_WARN) and no_contact and not unseen
-                    and not (f.evidence or {}).get("trap_requests")):
+            elif (f.verdict in (VERDICT_FAIL, VERDICT_WARN) and f.judge_model and no_contact
+                    and not unseen and not (f.evidence or {}).get("trap_requests")):
                 # Keep the verdict, but show that nothing proves the payload reached the agent.
+                # Judge verdicts only: judge_model is empty when an assertion decided it.
                 f = replace(f, evidence={**(f.evidence or {}), "exposure": "not_exercised"})
             yield f
 
