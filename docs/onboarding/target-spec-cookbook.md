@@ -217,7 +217,7 @@ export AGENT_CONNECT_SECRET=<shared secret>      # same value as on the orchestr
 python client_agent.py --orchestrator-url ws://<orchestrator-host>:8080 --agent-name my-browser-agent
 ```
 
-Anyone who can reach the orchestrator's `/agent/connect` can pose as an agent and receive probe payloads. Set `AGENT_CONNECT_SECRET` on both sides. The orchestrator listens on `127.0.0.1` by default; for a client agent on another machine, start it with `ARGUS_SERVER_HOST=0.0.0.0`, `AGENT_CONNECT_SECRET` and a different `ARGUS_SERVER_TOKEN` for `/redteam/*` callers. Off loopback it refuses to start without both ([services.md](../reference/services.md#orchestrator-python--m-argusserver-port-8080)).
+Anyone who can reach the orchestrator's `/agent/connect` can pose as an agent and receive probe payloads. Set `AGENT_CONNECT_SECRET` on both sides. The orchestrator listens on `127.0.0.1` by default; for a client agent on another machine, start it with `ARGUS_SERVER_HOST=0.0.0.0`, `AGENT_CONNECT_SECRET` and a different `ARGUS_SERVER_TOKEN` for `/redteam/*` callers. Off loopback it refuses to start without both ([services.md](../reference/services.md#orchestrator-python-m-argusserver-port-8080)).
 
 ### Running browser probes locally
 
