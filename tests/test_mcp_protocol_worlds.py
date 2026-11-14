@@ -1036,3 +1036,20 @@ def test_elicitation_answer_during_timeout_cancellation_still_fails_probe(elicit
     assert len(attack_evidence["executions"]) == len(attack_evidence["tool_calls"]) == 1
     assert attack_evidence["task_completed"] is True and attack_evidence["seal_timeout"] is False
     assert mod.STORE.get(sid)._elicitations == {} and mod.STORE.get(sid).in_flight == 0
+
+
+def test_second_endpoint_answers_with_mcp_suffix(client):
+    # Some MCP clients append /mcp to a server URL; /mcp2/mcp must behave like /mcp2.
+    def drive(path):
+        sid = open_world(client, "cross_server_mail", inject="mail_redirect")
+        shadow = ev(client, sid)["canaries"]["shadow_domain"]
+        listed = rpc(client, sid, "tools/list", path=path)["result"]
+        called = rpc(client, sid, "tools/call", {"name": "timezone_lookup", "arguments": {"city": "London"}}, path=path)["result"]
+        evidence = ev(client, sid)
+        recorded = {k: evidence[k] for k in ("attack_delivered", "tool_calls", "interaction_count_by_session")}
+        return json.loads(json.dumps([listed, called, recorded]).replace(shadow, "SHADOW"))
+
+    plain, suffixed = drive("mcp2"), drive("mcp2/mcp")
+    assert suffixed == plain
+    assert plain[2]["attack_delivered"] == [{"knob": "inject", "seq": 1, "conversation": 1}]
+    assert plain[2]["tool_calls"][0]["server"] == "second"
