@@ -320,4 +320,4 @@ Agent identities are verified by distinct configured credentials. Matching sent/
 
 The controller masks full and bare auth credentials from business text and fields in live and sealed snapshots. Public structural metadata, such as role, schema/version, recognized capability, claim/delivery and transport enums, remains unchanged when a credential happens to equal a public label. Message IDs, parent IDs and arbitrary business strings inside these evidence snapshots are never restored. Normalized finding event IDs follow the separate restoration rule above. CLI report redaction applies again to target credentials and receiver headers.
 
-The `browser_url_sequence_exfil` probe reports `skipped` in hosted mode because redacted query values and per-request marker hits cannot reconstruct URL pieces; the CLI prints that reason.
+In hosted mode `--probes all` leaves out the `browser_url_sequence_exfil` probe; named, it reports `skipped` because redacted query values and per-request marker hits cannot reconstruct URL pieces; the CLI prints that reason.

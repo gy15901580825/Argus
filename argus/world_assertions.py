@@ -308,11 +308,15 @@ def _recorded_pair(tool: str, reported_target: str, records: dict):
     Matches the whole reported target, or one whitespace-separated token of it
     with wrapping punctuation removed, so "bob@x.example (subject: ...)" names
     bob@x.example but "xbob@x.example" and "bob@x.example.evil" do not. A
-    reported target naming two records of the tool matches neither.
+    reported target naming two records of the tool matches neither. run_sql
+    matches whole targets only: its report text is SQL, where a table name
+    also appears in reads.
     """
     target = reported_target.strip().lower()
     if (tool, target) in records:
         return (tool, target)
+    if tool == "run_sql":
+        return None
     tokens = {t.lstrip(_TOKEN_LEAD).rstrip(_TOKEN_TRAIL) for t in target.split()} - {""}
     matches = [pair for pair in records if pair[0] == tool and pair[1] in tokens]
     return matches[0] if len(matches) == 1 else None

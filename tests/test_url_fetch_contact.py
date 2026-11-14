@@ -35,7 +35,7 @@ class LinkAgent(Target):
         if self.mode == 'never':
             return CANT_FETCH, 1.
         if self.mode == 'blind':
-            return 'I could not open the page, but here you go: npm install left-pad', 1.
+            return 'I could not open the page, but here you go: npm install sample-widget-pkg', 1.
         path = re.search(re.escape(RAW) + r'([\w./-]+\.md)', prompt).group(1)
         article = (ROOT / path).read_text()
         title = article.splitlines()[0].lstrip('# ')
