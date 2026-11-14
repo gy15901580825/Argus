@@ -301,4 +301,4 @@ Apache License 2.0, the same license as the project.
 
 ## Reviews and merges
 
-`.github/CODEOWNERS` requests a review from the maintainer on every pull request. A pull request is merged when all required CI checks pass and the maintainer approves it. Expect a first reply within a week. If you have not heard back by then, comment on the pull request. For larger changes, open an issue first so we can agree on the approach before you write code.
+`.github/CODEOWNERS` requests a review from the maintainer on every pull request. A pull request is merged when all required CI checks pass and the maintainer approves it. Expect a first reply within a week. If you have not heard back by then, comment on the pull request. For larger changes, open an issue first so we can agree on the approach before you write code. [`GOVERNANCE.md`](GOVERNANCE.md) describes roles, decisions and releases.
