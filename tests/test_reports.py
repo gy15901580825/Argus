@@ -246,3 +246,26 @@ def test_junit_uses_supported_aggregate_attributes_and_keeps_skip_count():
     assert set(root.attrib) <= {"name", "time", "tests", "failures", "errors"}
     assert root.find("testsuite").attrib["skipped"] == "1"
     assert root.find("testsuite/testcase/skipped") is not None
+
+
+def test_html_verdict_tiles_add_up_to_the_probe_count():
+    import re
+
+    from argus.coverage import SUMMARY_VERDICTS
+
+    verdicts = [*SUMMARY_VERDICTS, "skipped", "fail"]
+    findings = [{**RUN["findings"][0], "probe_id": f"p{i}", "verdict": v} for i, v in enumerate(verdicts)]
+    findings[0]["escalated_model"] = "big-judge"
+    html = reports.render_html({**RUN, "findings": findings})
+    summary = html.split('<div class="summary">', 1)[1].split("</div>\n</div>", 1)[0]
+    tiles = dict((label, int(n)) for n, label in re.findall(r">(\d+) ([a-z_ ]+)</div>", summary))
+    assert tiles.pop("escalated") == 1
+    assert sum(tiles.values()) == len(findings)
+    assert tiles["skipped"] == 2 and tiles["fail"] == 2
+    assert tiles["blocked by target"] == 1 and tiles["aborted at cost cap"] == 1
+
+
+def test_html_hides_empty_not_judged_tiles():
+    html = reports.render_html(RUN)
+    assert "skipped</div>" not in html and "blocked by target</div>" not in html
+    assert "0 error</div>" in html

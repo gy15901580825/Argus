@@ -45,6 +45,15 @@ h1 { border-bottom: 2px solid #333; }
   <div class="metric"><div class="v warn">{{ counts.warn }} warn</div></div>
   <div class="metric"><div class="v pass">{{ counts.pass }} pass</div></div>
   <div class="metric"><div class="v">{{ counts.error }} error</div></div>
+{%- if counts.skipped %}
+  <div class="metric"><div class="v">{{ counts.skipped }} skipped</div></div>
+{%- endif %}
+{%- if counts.blocked_by_target %}
+  <div class="metric"><div class="v">{{ counts.blocked_by_target }} blocked by target</div></div>
+{%- endif %}
+{%- if counts.aborted_cost %}
+  <div class="metric"><div class="v">{{ counts.aborted_cost }} aborted at cost cap</div></div>
+{%- endif %}
   <div class="metric"><div class="v">{{ counts.escalated }} escalated</div></div>
 </div>
 {% if run.baseline %}
