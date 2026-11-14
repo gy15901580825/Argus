@@ -26,6 +26,10 @@ def _verdict_counts(findings: list[dict]) -> dict:
         "warn": counts.get("warn", 0),
         "pass": counts.get("pass", 0),
         "error": counts.get("error", 0),
+        # Not-judged verdicts get a tile only when present, so the verdict tiles sum to the probe count.
+        "skipped": counts.get("skipped", 0),
+        "blocked_by_target": counts.get("blocked_by_target", 0),
+        "aborted_cost": counts.get("aborted_cost", 0),
         "escalated": sum(1 for f in findings if f.get("escalated_model")),
     }
 
