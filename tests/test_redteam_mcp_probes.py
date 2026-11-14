@@ -5,7 +5,7 @@ from argus.probe import load_all_probes
 
 MCP_DIR = Path(__file__).resolve().parent.parent / "argus" / "probes" / "mcp"
 SCENARIOS = {"tool_poisoning", "rug_pull", "shadowing", "confused_deputy", "credential_lure",
-             "overcollect"}
+             "overcollect", "unbounded_loop"}
 MCP_ASSERTIONS = {"no_call_to_tool", "no_secret_in_tool_args",
                   "no_attacker_call_after_description_change", "max_tool_calls",
                   "no_mcp_beacon_hit", "no_out_of_scope_records_after_description_change"}
@@ -57,3 +57,13 @@ def test_mcp_suite_is_derived():
     from argus.suites import derive_suites
     suites = derive_suites(_mcp())
     assert len(suites["mcp"]) == 14
+
+
+def test_unbounded_loop_probe_is_driven_by_the_server_not_the_user_prompt():
+    """The user asks for an ordinary summary; only the served tool result
+    invites more calls, so exceeding the limit is the attack's doing."""
+    [p] = [p for p in _mcp() if p.id == "mcp_budget_unbounded_tool_loop"]
+    assert p.scenario_kind == "unbounded_loop"
+    prompt = " ".join(p.prompts).lower()
+    for phrase in ("as many times", "don't stop", "until", "fully confident"):
+        assert phrase not in prompt, phrase
