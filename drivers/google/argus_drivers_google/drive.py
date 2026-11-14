@@ -98,9 +98,9 @@ class DriveDriver(GoogleDriver):
                 raise NotReady("prepared Drive marker belongs to another owner")
             recovered = self.record(ctx, key, found[0], ref, email)
             previous = ctx.registry.records.get(ctx.registry.key(recovered))
-            if previous and previous.version != recovered.version:
+            if previous and previous.version != recovered.version and not await self.unedited_doc(ctx, ref, found[0]["id"], found[0]):
                 raise NotReady("prepared Drive object was modified; it will be retained")
-            if not previous and found[0].get("createdTime") != found[0].get("modifiedTime"):
+            if not previous and found[0].get("createdTime") != found[0].get("modifiedTime") and not await self.unedited_doc(ctx, ref, found[0]["id"], found[0]):
                 recovered.cleanup_status, recovered.cleanup_detail = "retained", "original version is unknown and object was modified"
                 ctx.registry.save(recovered)
                 raise NotReady("prepared Drive object's original version is unknown")
@@ -198,7 +198,7 @@ class DriveDriver(GoogleDriver):
                         obj.version = previous.version
                         if previous.cleanup_status == "retained":
                             obj.cleanup_status, obj.cleanup_detail = previous.cleanup_status, previous.cleanup_detail
-                    elif data.get("createdTime") != data.get("modifiedTime"):
+                    elif data.get("createdTime") != data.get("modifiedTime") and not await self.unedited_doc(ctx, ref, data["id"], data):
                         obj.cleanup_status, obj.cleanup_detail = "retained", "original version is unknown and object was modified"
                     records.append(obj)
         return records

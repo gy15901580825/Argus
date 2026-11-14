@@ -1,6 +1,7 @@
 import base64
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import httpx
@@ -130,6 +131,63 @@ async def test_drive_cleanup_deletes_doc_whose_version_moved_without_an_edit(tmp
     assert trash.called == deleted
     if deleted:
         assert trash.calls.last.request.content == b'{"trashed":true}'
+
+
+def drive_doc(ctx, content, **extra):
+    marker = ctx.marker("policy")
+    return {"id": "doc", "version": "8", "mimeType": "application/vnd.google-apps.document", "owners": [{"emailAddress": "operator@gmail.com"}],
+            "appProperties": {"argus_marker": marker, "argus_content_sha256": content_hash(content)},
+            "createdTime": "2026-11-14T04:49:19.006Z", "modifiedTime": "2026-11-14T04:49:19.006Z", **extra}
+
+
+@respx.mock
+@pytest.mark.parametrize("case", ["unedited", "other_editor", "unknown_version"])
+async def test_drive_prepare_recovery_ignores_version_bump_on_unedited_doc(tmp_path, case):
+    ctx = context(tmp_path)
+    driver = DriveDriver({}, Provider())
+    content = "expected policy text" + "\n\n" + ctx.marker("policy")
+    data = drive_doc(ctx, content)
+    previous = driver.record(ctx, "policy", {**data, "version": "7"}, ctx.connection("operator"), "operator@gmail.com")
+    if case == "unknown_version":
+        data["modifiedTime"] = "2026-11-14T05:10:00.000Z"
+    else:
+        ctx.registry.save(previous)
+    revisions = [{"lastModifyingUser": {"me": True}}] + ([{"lastModifyingUser": {"me": False}}] if case == "other_editor" else [])
+    respx.get(DRIVE + "/about").mock(return_value=httpx.Response(200, json={"user": {"emailAddress": "operator@gmail.com"}}))
+    respx.get(DRIVE + "/files").mock(return_value=httpx.Response(200, json={"files": [data]}))
+    history = respx.get(DRIVE + "/files/doc/revisions").mock(return_value=httpx.Response(200, json={"revisions": revisions}))
+    respx.get(DRIVE + "/files/doc/export").mock(return_value=httpx.Response(200, text=content))
+    spec = ObjectSpec(driver="gdrive", op="create_doc", content="expected policy text")
+    if case == "unedited":
+        assert await driver.prepare(ctx, "policy", spec) is previous
+    elif case == "unknown_version":
+        recovered = await driver.prepare(ctx, "policy", spec)
+        assert (recovered.version, recovered.cleanup_status) == ("8", "pending")
+    else:
+        with pytest.raises(NotReady, match="was modified"):
+            await driver.prepare(ctx, "policy", spec)
+        assert history.called
+
+
+@respx.mock
+@pytest.mark.parametrize("case, retained", [("unedited", False), ("body_edited", True)])
+async def test_drive_recover_retains_only_edited_doc_of_unknown_version(tmp_path, case, retained):
+    ctx = context(tmp_path)
+    ctx.cleanup_mode = True
+    driver = DriveDriver({}, Provider())
+    content = "expected policy text" + "\n\n" + ctx.marker("policy")
+    data = drive_doc(ctx, content, modifiedTime="2026-11-14T05:10:00.000Z")
+    def listing(request):
+        return httpx.Response(200, json={"files": [data] if ctx.marker("policy") in request.url.params["q"] else []})
+    respx.get(DRIVE + "/about").mock(return_value=httpx.Response(200, json={"user": {"emailAddress": "operator@gmail.com"}}))
+    respx.get(DRIVE + "/files").mock(side_effect=listing)
+    respx.get(DRIVE + "/files/doc/revisions").mock(return_value=httpx.Response(200, json={"revisions": [{"lastModifyingUser": {"me": True}}]}))
+    export = respx.get(DRIVE + "/files/doc/export").mock(
+        return_value=httpx.Response(200, text=content.replace("text", "edited") if case == "body_edited" else content))
+    scenario = SimpleNamespace(objects={"policy": ObjectSpec(driver="gdrive", op="create_doc", content="expected policy text")}, controls=[])
+    recovered = await driver.recover(ctx, scenario)
+    assert [(o.logical_key, o.cleanup_status) for o in recovered] == [("policy", "retained" if retained else "pending")]
+    assert export.called
 
 
 @respx.mock
