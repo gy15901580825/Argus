@@ -12,7 +12,7 @@ from argus.scenarios.credentials import AccessToken, CredentialUnavailable
 from argus.scenarios.models import BudgetSpec, ObjectRecord, ObjectSpec, ObserveSpec, now
 from argus.scenarios.runtime import Budget, NotReady, ObjectRegistry, RunContext
 from argus_drivers_google.common import DRIVE_FILE, GMAIL_READ, GMAIL_SEND, owner_hash
-from argus_drivers_google.drive import BASE as DRIVE, DriveDriver
+from argus_drivers_google.drive import BASE as DRIVE, DriveDriver, content_hash
 from argus_drivers_google.gmail import BASE as GMAIL, GmailDriver
 
 
@@ -101,6 +101,35 @@ async def test_drive_cleanup_preserves_modified_or_foreign_objects(tmp_path, cha
     mutation = respx.patch(DRIVE + "/files/doc").mock(return_value=httpx.Response(200, json={}))
     assert (await driver.cleanup(ctx, obj)).status == "retained"
     assert not mutation.called
+
+
+@respx.mock
+@pytest.mark.parametrize("case, deleted", [("unedited", True), ("body_edited", False), ("other_editor", False), ("no_stored_hash", False)])
+async def test_drive_cleanup_deletes_doc_whose_version_moved_without_an_edit(tmp_path, case, deleted):
+    ctx = context(tmp_path)
+    ctx.cleanup_mode = True
+    driver = DriveDriver({}, Provider())
+    marker = ctx.marker("policy")
+    content = "Policy line one\nPolicy line two" + "\n\n" + marker
+    obj = ObjectRecord(run_id=ctx.run_id, group="test", logical_key="policy", provider="gdrive", external_id="doc", marker=marker,
+                       version="7", owner=owner_hash("operator@gmail.com"), connection_id="op")
+    data = {"id": "doc", "version": "8", "mimeType": "application/vnd.google-apps.document", "owners": [{"emailAddress": "operator@gmail.com"}],
+            "appProperties": {"argus_marker": marker, "argus_content_sha256": content_hash(content)}}
+    export = "\ufeff" + content.replace("\n\n", "\n\n\n").replace("\n", "\r\n")
+    revisions = [{"lastModifyingUser": {"me": True}}]
+    if case == "body_edited": export = export.replace("two", "2")
+    if case == "other_editor": revisions.append({"lastModifyingUser": {"me": False}})
+    if case == "no_stored_hash": del data["appProperties"]["argus_content_sha256"]
+    respx.get(DRIVE + "/about").mock(return_value=httpx.Response(200, json={"user": {"emailAddress": "operator@gmail.com"}}))
+    respx.get(DRIVE + "/files/doc").mock(return_value=httpx.Response(200, json=data))
+    respx.get(DRIVE + "/files/doc/revisions").mock(return_value=httpx.Response(200, json={"revisions": revisions}))
+    respx.get(DRIVE + "/files/doc/export").mock(return_value=httpx.Response(200, text=export))
+    trash = respx.patch(DRIVE + "/files/doc").mock(return_value=httpx.Response(200, json={}))
+    result = await driver.cleanup(ctx, obj)
+    assert result.status == ("deleted" if deleted else "retained")
+    assert trash.called == deleted
+    if deleted:
+        assert trash.calls.last.request.content == b'{"trashed":true}'
 
 
 @respx.mock

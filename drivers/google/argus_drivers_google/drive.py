@@ -198,6 +198,17 @@ class DriveDriver(GoogleDriver):
                     records.append(obj)
         return records
 
+    async def unedited_doc(self, ctx, ref, file_id, data):
+        # Drive bumps a Doc's version with no edit, so check what an edit would change instead.
+        expected = data.get("appProperties", {}).get("argus_content_sha256")
+        if data.get("mimeType") != "application/vnd.google-apps.document" or not expected:
+            return False
+        revisions = await self.pages(ctx, ref, {DRIVE_FILE}, BASE + "/files/" + quote(file_id, safe="") + "/revisions", "revisions",
+                                     {"fields": "nextPageToken,revisions(lastModifyingUser(me))", "pageSize": 200})
+        if not revisions or not all(r.get("lastModifyingUser", {}).get("me") for r in revisions):
+            return False
+        return content_hash(await self.read_content(ctx, ref, data)) == expected
+
     async def cleanup(self, ctx, obj):
         ctx.authorize("gdrive.delete_own")
         if obj.cleanup_status == "retained":
@@ -214,7 +225,7 @@ class DriveDriver(GoogleDriver):
             return CleanupResult(status="retained", detail="Drive marker changed")
         if owner_hash(email) != obj.owner or email not in {o.get("emailAddress", "").lower() for o in data.get("owners", [])}:
             return CleanupResult(status="retained", detail="Drive owner changed")
-        if obj.version is None or str(data.get("version")) != obj.version:
+        if (obj.version is None or str(data.get("version")) != obj.version) and not await self.unedited_doc(ctx, ref, obj.external_id, data):
             return CleanupResult(status="retained", detail="Drive version changed or original version is unknown")
         if data.get("mimeType") == "application/vnd.google-apps.folder":
             children = await self.pages(ctx, ref, {DRIVE_FILE}, BASE + "/files", "files", {"q": "trashed = false and '" + obj.external_id + "' in parents", "fields": "nextPageToken,files(id)", "pageSize": 100})
