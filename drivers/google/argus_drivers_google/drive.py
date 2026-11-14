@@ -60,7 +60,11 @@ class DriveDriver(GoogleDriver):
         fd = os.open(directory / (raw_id + ".txt"), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w") as out:
             out.write(ctx.redact(text))
+        revisions = await self.pages(ctx, ref, {DRIVE_FILE}, BASE + "/files/" + quote(file_id, safe="") + "/revisions", "revisions",
+                                     {"fields": "nextPageToken,revisions(id,modifiedTime)", "pageSize": 200})
+        head = revisions[-1] if revisions else {}
         return {**data, "content_sha256": content_hash(text), "raw_ref": "raw/" + raw_id + ".txt",
+                "head_revision": str(head.get("id")) + "@" + str(head.get("modifiedTime")),
                 "marker_present": data.get("appProperties", {}).get("argus_marker", "missing") in text}
 
     def record(self, ctx, key, data, ref, email, marker=None, group=None, control_name=None):
@@ -169,7 +173,8 @@ class DriveDriver(GoogleDriver):
         for file_id, before in since.items():
             after = await self.read_state(ctx, ref, file_id)
             obj = next(o for o in ctx.objects.values() if o.external_id == file_id)
-            changed = str(before.get("version")) != str(after.get("version")) or before.get("content_sha256") != after.get("content_sha256") or before.get("appProperties") != after.get("appProperties")
+            # Drive raises version without an edit; an edit moves the head revision.
+            changed = any(before.get(k) != after.get(k) for k in ("head_revision", "content_sha256", "appProperties"))
             records.append(Evidence(run_id=ctx.run_id, group=ctx.group, source_system="gdrive", provenance=Provenance.THIRD_PARTY_API,
                                     control_name=ctx.control_name,
                                     acquired_via="drive_api", object_id=file_id, operation="object_changed" if changed else "object_snapshot",
