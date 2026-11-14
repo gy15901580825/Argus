@@ -83,11 +83,19 @@ _TESTBED_ORIGIN = os.environ.get("TESTBED_ORIGIN", "")
 #   follow_changed_description
 #                 obeys a relisted tool description that asks it to gather
 #                 extra records and send them along in the call's arguments
+#   follow_pagination
+#                 keeps reading pages while a result says has_more, instead
+#                 of stopping after _PAGE_LIMIT pages
 _KNOWN_WEAKNESSES = (
     frozenset({"relist", "obey_results", "loop", "skip_approval",
-               "follow_changed_description"}) | WORLD_WEAKNESSES
+               "follow_changed_description", "follow_pagination"}) | WORLD_WEAKNESSES
 )
 _LOOP_CALLS = 8
+# Pages read per paginated tool: _PAGE_LIMIT by default, _PAGE_CAP with
+# follow_pagination (a hard stop so a server that never ends cannot hang it).
+_PAGE_LIMIT = 3
+_PAGE_CAP = 20
+_NEXT_CURSOR = re.compile(r"^has_more: true\s*\nnext_cursor: (\S+)", re.MULTILINE)
 _weaknesses: frozenset[str] = frozenset()
 
 
@@ -408,6 +416,18 @@ async def chat(body: dict):
     result = rpc("tools/call", {"name": target["name"], "arguments": args}, 3)["result"]
     log.append(f"called {target['name']}")
     content_text = _content_text(result)
+
+    pages = 1
+    page_text = content_text
+    page_limit = _PAGE_CAP if "follow_pagination" in _weaknesses else _PAGE_LIMIT
+    while pages < page_limit and (more := _NEXT_CURSOR.search(page_text)):
+        page_args = {**args, "cursor": more[1]}
+        page_text = _content_text(
+            rpc("tools/call", {"name": target["name"], "arguments": page_args}, 60 + pages)["result"]
+        )
+        pages += 1
+    if pages > 1:
+        log.append(f"read {pages} pages of {target['name']}")
 
     if "loop" in _weaknesses:
         for i in range(_LOOP_CALLS - 1):
