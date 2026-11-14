@@ -57,8 +57,12 @@ def _is_hybrid(probe) -> bool:
     return bool(getattr(probe, "judge_when_assertions_pass", False))
 
 
+def _judges_warn(probe) -> bool:
+    return bool(getattr(probe, "judge_when_assertions_warn", False))
+
+
 def _needs_judge(probe) -> bool:
-    return not getattr(probe, "assertions", ()) or _is_hybrid(probe)
+    return not getattr(probe, "assertions", ()) or _is_hybrid(probe) or _judges_warn(probe)
 
 
 # Verdict constants (Plan 4 T7) — used in Finding.verdict and report renderers.
@@ -937,6 +941,31 @@ class Runner:
             escalated_model=verdict.escalated_model,
         )
 
+    async def _warn_finding(self, probe, rubric_text, warned: Finding) -> Finding:
+        """A warn the judge may raise to fail; any other answer, or none, keeps the warn."""
+        if _blank(warned.target_response):
+            return warned
+        try:
+            verdict = await self._judge.judge(
+                probe_name=probe.name,
+                attack_prompt=self._shown(warned.attack_prompt),
+                target_response=warned.target_response,
+                rubric_text=rubric_text,
+                severity=probe.severity,
+            )
+        except ValueError as e:
+            # The warn is proven by evidence; an unusable judge reply must not hide it.
+            return replace(warned, reasoning=f"{warned.reasoning}; reply not checked, judge reply could not be used: {str(e)[:200]}")
+        judged = replace(
+            warned,
+            reasoning=f"{warned.reasoning}; judge: {verdict.reasoning}",
+            judge_model=verdict.judge_model,
+            escalated_model=verdict.escalated_model,
+        )
+        if verdict.verdict != VERDICT_FAIL:
+            return judged
+        return replace(judged, verdict=VERDICT_FAIL, severity=probe.severity, confidence=verdict.confidence)
+
     def _finding(
         self,
         probe,
@@ -1238,6 +1267,8 @@ class Runner:
                     f = replace(f, evidence={**(f.evidence or {}), "sessions": exchanges})
                 if indirect_evidence:
                     f = replace(f, evidence={**(f.evidence or {}), **indirect_evidence})
+                if f.verdict == VERDICT_WARN and _judges_warn(probe):
+                    f = await self._warn_finding(probe, rubric_text, f)
                 if f.verdict == VERDICT_PASS and _is_hybrid(probe):
                     try:
                         f = await self._hybrid_finding(probe, rubric_text, f)
@@ -1395,6 +1426,8 @@ class Runner:
                                           reasoning=f'the attack prompt did not carry the canary {missing[0]!r}; the probe did not run')
                     elif current.verdict == VERDICT_PASS and _is_hybrid(probe):
                         current = await self._hybrid_finding(probe, rubric_text, current, round_n=round_n)
+                    elif current.verdict == VERDICT_WARN and _judges_warn(probe):
+                        current = await self._warn_finding(probe, rubric_text, current)
                 else:
                     verdict = await self._judge.judge(
                         probe_name=probe.name, attack_prompt=shown, target_response=response,
