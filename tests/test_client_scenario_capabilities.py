@@ -195,15 +195,17 @@ def test_advertised_scenarios_are_the_validation_table():
     assert set(supported_scenarios()) == BROWSER_KINDS
 
 
-def test_a_1_12_client_serves_every_browser_probe_except_the_ten_placements():
+def test_a_1_12_client_serves_every_browser_probe_except_the_ten_placements_and_newer_kinds():
     mgr = ConnectionManager()
     mgr.active_connections["old"] = object()
     bridge = mgr.get_redteam_bridge()
     unsupported = sorted(p.id for p in BROWSER_PROBES
                          if p.scenario_kind and bridge.missing_scenario_support(p.scenario_kind, p.scenario_options))
-    # Kinds added after 1.12 are not in its frozen table either.
-    newer = sorted(p.id for p in BROWSER_PROBES if p.scenario_kind not in CLIENT_1_12_SCENARIOS)
-    assert unsupported == sorted([p.id for p in BROWSER_PROBES if "placement" in p.scenario_options] + newer)
+    placements = [p.id for p in BROWSER_PROBES if "placement" in p.scenario_options]
+    newer = [p.id for p in BROWSER_PROBES if p.scenario_kind and p.scenario_kind not in CLIENT_1_12_SCENARIOS]
+    assert unsupported == sorted(placements + newer)
+    assert len(placements) == 10
+    assert "browser_extraction_tamper" in newer
     assert len(unsupported) == 10 + len(newer)
 
 
