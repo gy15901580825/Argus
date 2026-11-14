@@ -608,6 +608,7 @@ class Runner:
         # from it and is left alone. After a failed fetch for this probe, a
         # refetch would attach evidence its error verdict was never based on.
         async for f in inner:
+            unseen = self._evidence_failed
             # Show the prompt as it went on the wire, not the probe's template.
             if not isinstance(probe, PersonaStrategyProbe) and not (
                 getattr(probe, "indirect", ()) and getattr(self._target, "material_channel", False)
@@ -632,6 +633,7 @@ class Runner:
                     except Exception as e:
                         # The verdict was decided without evidence, so a testbed
                         # blip only loses the attachment; say so and keep going.
+                        unseen = True
                         if thread_only:
                             evidence = {**(f.evidence or {}), 'evidence_error': _named(e)}
                             if f.verdict != VERDICT_FAIL:
@@ -676,10 +678,16 @@ class Runner:
                 [row['target_response'] for row in (f.evidence or {}).get('transcript', [])]
                 if isinstance(probe, PersonaStrategyProbe) else [f.target_response]
             )
-            if f.verdict == VERDICT_PASS and all(_no_contact(probe, text) for text in contact_responses):
+            no_contact = all(_no_contact(probe, text) for text in contact_responses)
+            if f.verdict == VERDICT_PASS and no_contact:
                 f = replace(f, verdict=VERDICT_SKIPPED, severity="info", confidence=1.0,
                             evidence={**(f.evidence or {}), "exposure": "not_exercised"},
                             reasoning=_no_contact_reason(probe))
+            elif (f.verdict in (VERDICT_FAIL, VERDICT_WARN) and f.judge_model and no_contact
+                    and not unseen and not (f.evidence or {}).get("trap_requests")):
+                # Keep the verdict, but show that nothing proves the payload reached the agent.
+                # Judge verdicts only: judge_model is empty when an assertion decided it.
+                f = replace(f, evidence={**(f.evidence or {}), "exposure": "not_exercised"})
             yield f
 
     async def _run_static_trials(self, probe, rubric_text) -> AsyncIterator[Finding]:

@@ -106,3 +106,58 @@ async def test_deep_thread_keeps_trap_constraint_before_attacker_or_target(tmp_p
     [finding] = findings
     assert finding.verdict == 'skipped'
     assert 'sequence detection is unavailable on hosted traps' in finding.reasoning
+
+
+def _browser_target(mode):
+    from argus.targets.browser_use import BrowserUseSpec
+
+    settings = {
+        'local': {'trap_port': 9},
+        'hosted': {'trap_mode': 'hosted', 'hosted': {'service_url': 'http://127.0.0.1:9'}},
+        'public_url': {'trap_port': 9, 'trap_public_url': 'http://127.0.0.1:9'},
+    }[mode]
+    return BrowserUseTarget(BrowserUseSpec(scenario_kind='ui_phishing', transport=spec_dict(), **settings))
+
+
+def _expected_skip(probe, mode):
+    reason = probe.unsupported_trap_modes.get('hosted' if mode == 'hosted' else 'local')
+    if reason is None and mode == 'public_url':
+        reason = probe.unsupported_trap_modes.get('public_url')
+    return reason
+
+
+@pytest.mark.parametrize('mode', ['local', 'hosted', 'public_url'])
+async def test_selection_leaves_out_exactly_the_probes_the_runner_skips(tmp_path, mode):
+    from argus.api import PROBES_DIR, compatible_probe_ids
+    from argus.probe import load_probe_library
+    from argus.runner import Runner
+
+    target = _browser_target(mode)
+    selected = set(compatible_probe_ids(target))
+    constrained = [p for p in load_probe_library(PROBES_DIR)
+                   if p.unsupported_trap_modes and set(p.target_class) & target.compatible_classes]
+    assert {p.id for p in constrained} >= {
+        'encoded_payload_base64_link', 'browser_url_sequence_exfil', 'browser_cross_origin_bridge'}
+    runner = Runner(target=target, judge=None, rubrics_dir=tmp_path)
+    for probe in constrained:
+        reason = _expected_skip(probe, mode)
+        assert (probe.id in selected) is (reason is None), (probe.id, mode)
+        if reason is None:
+            continue
+        # The runner skips the same probe before contact when it is named explicitly.
+        with patch.object(target, 'send_prompt', side_effect=AssertionError('contacted target')):
+            [finding] = [f async for f in runner.run_probe(probe)]
+        assert finding.verdict == 'skipped' and finding.reasoning == reason
+
+
+def test_list_probes_target_leaves_out_a_probe_that_cannot_run_on_browser(tmp_path):
+    from argus.cli.cmd_list_probes import cmd_list_probes
+
+    spec = tmp_path / 'target.json'
+    spec.write_text(json.dumps({'kind': 'browser_use', 'scenario_kind': 'ui_phishing',
+                                'trap_port': 9, 'transport': spec_dict()}))
+    result = CliRunner().invoke(cmd_list_probes, ['--target', str(spec)])
+    assert result.exit_code == 0, result.output
+    ids = result.output.split()
+    assert 'encoded_payload_base64_link' not in ids
+    assert 'browser_url_sequence_exfil' in ids
