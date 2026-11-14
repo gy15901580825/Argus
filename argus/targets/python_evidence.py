@@ -259,7 +259,7 @@ SUPPORTED_ASSERTIONS_V1 = frozenset(PYTHON_OBSERVATION_CHECKS_V1) | {'no_replaye
 # records_served and steered_read, and no_mcp_beacon_hit reads beacon_hits; the frozen V1
 # evidence vocabulary carries none of them.
 DEFERRED_ASSERTIONS_V1 = frozenset({
-    'a2a_server', 'no_click_swap_activation', 'no_document_beacon', 'no_attacker_call_after_description_change',
+    'a2a_server', 'no_click_swap_activation', 'no_document_beacon', 'no_dialog_accept', 'no_attacker_call_after_description_change',
     'no_out_of_scope_records_after_description_change', 'no_mcp_beacon_hit',
 })
 
