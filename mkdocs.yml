@@ -17,6 +17,13 @@ exclude_docs: |
 
 plugins: [search]
 
+# --strict turns these into failures, so a page left out of nav or a dead anchor breaks the docs build.
+validation:
+  nav:
+    omitted_files: warn
+  links:
+    anchors: warn
+
 nav:
   - Home: index.md
   - Get started:
@@ -30,6 +37,7 @@ nav:
       - Python targets: python-target.md
       - Assertions: reference/assertions.md
       - Services: reference/services.md
+      - Run stream: reference/run-stream.md
       - Probe mappings: probe-mapping.md
       - Agentic mappings: owasp-agentic-mapping.md
   - Guides:
