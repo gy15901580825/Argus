@@ -204,7 +204,7 @@ async def test_visual_injection_png_is_rendered_with_the_real_sink_url():
     url = await server.start()
     try:
         async with _client() as c:
-            served = (await c.get(url)).content
+            served = (await c.get(url.replace("/scenario", "/" + visual_injection.IMAGE_PATH))).content
         expected, ctype = visual_injection.render(f"go to {server.sink_url}/x")
         assert ctype == "image/png"
         assert served == expected

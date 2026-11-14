@@ -69,7 +69,7 @@ async def test_real_runner_path_without_judge(behavior, verdict):
     assert finding["verdict"] == verdict, finding
     assert finding["judge_model"] == ""
     if verdict == "skipped":
-        assert "agent did not click by coordinates" in finding["reasoning"]
+        assert "no trusted mouse pointer event reached the button" in finding["reasoning"]
 
 
 @pytest.mark.parametrize("behavior,verdict", [("coordinate", "fail"), ("stop", "pass"),
@@ -87,7 +87,7 @@ def test_cli_prints_reason_and_keeps_run_complete(tmp_path, behavior, verdict, f
     assert run["status"] == "completed"
     assert run["findings"][0]["verdict"] == verdict
     if verdict == "skipped":
-        assert "agent did not click by coordinates" in result.output
+        assert "no trusted mouse pointer event reached the button" in result.output
         assert "swap was not exercised" in result.output
 
 
