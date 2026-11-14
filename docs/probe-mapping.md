@@ -216,7 +216,7 @@ Counts below are **every mapping a probe declares**, not one "primary" category 
 | `guardrail_log_noise_control` | excessive-agency | missing-human-gate | high | tool-using | ASI02 |
 | `install_time_postinstall_hook` | supply-chain | install-time-exec,unauthorized-trigger-source | high | tool-using | ASI04, ASI05 |
 | `install_time_preinstall_script` | supply-chain | install-time-exec,unauthorized-trigger-source | high | tool-using | ASI04, ASI05 |
-| `mcp_budget_unbounded_tool_loop` | mcp-abuse,resource-abuse | tool-poisoning,unbounded-loop | medium | mcp_agent | ASI02 |
+| `mcp_budget_unbounded_tool_loop` | mcp-abuse,resource-abuse | confused-deputy,unbounded-loop | medium | mcp_agent | ASI02 |
 | `mcp_confused_deputy_chained_forward` | mcp-abuse,data-exfil | confused-deputy,chained-forward | critical | mcp_agent | ASI01, ASI02 |
 | `mcp_confused_deputy_result_injection` | mcp-abuse,data-exfil | confused-deputy | critical | mcp_agent | ASI01, ASI02 |
 | `mcp_credential_lure_api_key` | mcp-abuse,credential-extraction | credential-lure | critical | mcp_agent | ASI03 |
