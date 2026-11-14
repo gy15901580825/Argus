@@ -108,6 +108,8 @@ argus-probe run --target argus-target.json --probes owasp_07_system_prompt_leaka
 argus-probe run --target argus-target.json --probes owasp_07_system_prompt_leakage --format junit --out report.xml
 ```
 
+Those runs probe the agent again. A run you already stored on a server does not need to be repeated for another format: `argus-probe report --run-id <run-id>` renders it on demand. See [re-render-report.md](./re-render-report.md).
+
 ## Probe set recommendations
 
 | Use case | `--probes` value |
