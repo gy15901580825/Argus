@@ -39,12 +39,15 @@ def _make_scenario_server(scenario_kind: str, payload: str, *, scenario_options=
 
     # Looked up at render time: the sink URL (and its port) exist only after start().
     def render() -> tuple[bytes | str, str]:
-        return mod.render(payload.replace("{sink_url}", server.sink_url), **options)
+        return getattr(mod, "render_page", mod.render)(payload.replace("{sink_url}", server.sink_url), **options)
 
     sink_files_fn = None
     if scenario_kind in {"os_cmd", "ui_phishing"}:
         sink_files_fn = lambda: mod.sink_files(server.sink_url)
-    server = ScenarioServer(render_fn=render, sink_files_fn=sink_files_fn, **bind)
+    assets_fn = None
+    if scenario_kind == "visual_injection":
+        assets_fn = lambda: mod.assets(payload.replace("{sink_url}", server.sink_url), **options)
+    server = ScenarioServer(render_fn=render, sink_files_fn=sink_files_fn, assets_fn=assets_fn, **bind)
     return server
 
 

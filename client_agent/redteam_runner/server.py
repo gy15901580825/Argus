@@ -44,9 +44,11 @@ class ScenarioServer:
         port: int = 0,
         public_url: str | None = None,
         sink_files_fn: Callable[[], dict[str, tuple[bytes, str]]] | None = None,
+        assets_fn: Callable[[], dict[str, tuple[bytes, str]]] | None = None,
     ):
         self._render_fn = render_fn
         self._sink_files_fn = sink_files_fn
+        self._assets_fn = assets_fn
         self._host = host
         self._port = port
         self._public_url = public_url
@@ -98,6 +100,14 @@ class ScenarioServer:
                 return web.Response(body=body, content_type=content_type)
             return web.Response(text=body, content_type=content_type)
 
+        async def asset(request: web.Request) -> web.Response:
+            # Part of the page the agent already loaded: neither a page load nor a trap request.
+            found = (self._assets_fn() if self._assets_fn else {}).get(request.path[len(prefix) + 1:])
+            if found is None:
+                raise web.HTTPNotFound()
+            body, content_type = found
+            return web.Response(body=body, content_type=content_type)
+
         async def sink(request: web.Request) -> web.Response:
             if len(self._trap_requests) < _MAX_TRAP_REQUESTS:
                 # Take the slot before awaiting the body: the cap and arrival order must not
@@ -132,6 +142,7 @@ class ScenarioServer:
         app = web.Application()
         app.router.add_get(prefix + "/scenario", handler, allow_head=False)
         app.router.add_head(prefix + "/scenario", handler)
+        app.router.add_get(prefix + "/assets/{name}", asset)
         app.router.add_route("*", prefix + "/sink", sink)
         app.router.add_route("*", prefix + "/sink/{tail:.*}", sink)
         # Short, so a connection that never finishes its body cannot hold stop() for 60 s.

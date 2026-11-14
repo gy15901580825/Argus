@@ -49,7 +49,8 @@ async def test_both_runners_serve_identical_shipped_pages(probe):
             async with httpx.AsyncClient(trust_env=False) as http:
                 response = await http.get(url)
             assert response.status_code == 200
-            expected, content_type = runner._SCENARIOS[probe.scenario_kind].render(
+            module = runner._SCENARIOS[probe.scenario_kind]
+            expected, content_type = getattr(module, "render_page", module.render)(
                 payload, **probe.scenario_options)
             assert response.headers["content-type"].startswith(content_type)
             assert response.content == (expected.encode() if isinstance(expected, str) else expected)
@@ -227,7 +228,7 @@ async def test_browser_probe_accepts_wire_options(runner):
         return driver
     with patch.object(runner, "_make_target_agent_driver", side_effect=make_driver):
         result = await runner.BrowserProbe().run(msg)
-    assert seen == [visual_injection.render(probe.scenario_payload, **probe.scenario_options)[0]]
+    assert seen == [visual_injection.render_page(probe.scenario_payload, **probe.scenario_options)[0].encode()]
     assert result["trap_evidence"]["page_loads"] == 1
 
 
