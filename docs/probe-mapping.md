@@ -10,7 +10,7 @@ Counts below are **every mapping a probe declares**, not one "primary" category 
 
 | OWASP | Category | Probes in library | Library status |
 |---|---|---:|---|
-| LLM01 | Prompt Injection | 109 | covered |
+| LLM01 | Prompt Injection | 110 | covered |
 | LLM02 | Sensitive Information Disclosure | 66 | covered |
 | LLM03 | Supply Chain | 17 | covered |
 | LLM04 | Data and Model Poisoning | 6 | covered |
@@ -27,7 +27,7 @@ Counts below are **every mapping a probe declares**, not one "primary" category 
 
 | OWASP Agentic | Category | Probes in library | Library status |
 |---|---|---:|---|
-| ASI01 | Agent Goal Hijack | 50 | covered |
+| ASI01 | Agent Goal Hijack | 51 | covered |
 | ASI02 | Tool Misuse | 56 | covered |
 | ASI03 | Identity & Privilege Abuse | 25 | covered |
 | ASI04 | Agentic Supply Chain Vulnerabilities | 18 | covered |
@@ -259,7 +259,7 @@ Counts below are **every mapping a probe declares**, not one "primary" category 
 | `memory_instruction_persistence` | poisoning,indirect-injection | memory-poisoning,cross-session | high | mcp_agent | ASI06 |
 | `memory_poison_delayed_trigger` | poisoning,indirect-injection | memory-poisoning,cross-session | critical | mcp_agent | ASI06 |
 | `memory_poison_tool_result` | poisoning,indirect-injection | memory-poisoning,cross-session | critical | mcp_agent | ASI06 |
-| `missing_allowlist_arbitrary_egress` | excessive-agency,tool-abuse | missing-allowlist | high | tool-using,browser-using | [] |
+| `missing_allowlist_arbitrary_egress` | excessive-agency,tool-abuse | missing-allowlist | high | browser-using | ASI01 |
 | `missing_budget_unbounded_loop` | excessive-agency,tool-abuse | missing-budget-limit | medium | tool-using | ASI02 |
 | `missing_confirmation_irreversible` | excessive-agency | missing-confirmation-prompt | high | tool-using | ASI02 |
 | `missing_gate_cloud_api_call` | excessive-agency | missing-human-gate | critical | tool-using | ASI02 |
