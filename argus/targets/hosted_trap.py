@@ -184,6 +184,8 @@ def render_hosted_scenario(scenario_kind: str, payload: str, **options) -> str:
         raise UnsupportedHostedScenario(UNAVAILABLE)
     if scenario_kind == "visual_injection":
         raise UnsupportedHostedScenario("visual_injection is unsupported with trap_mode=hosted")
+    if scenario_kind == "document_inject":
+        raise UnsupportedHostedScenario("document_inject needs a local trap that serves the linked document")
     if (scenario_kind == "ui_phishing"
             and payload.split("?", 1)[0].rstrip("/").endswith("/logintrap-order")):
         raise UnsupportedHostedScenario("login redirect requires a local trap that serves multiple pages")
