@@ -222,12 +222,33 @@ async def test_drive_reads_plain_text_document_and_reports_hash_not_body(tmp_pat
     data = {"id": "doc", "version": "1", "mimeType": "application/vnd.google-apps.document", "appProperties": {"argus_marker": marker}}
     respx.get(DRIVE + "/files/doc").mock(return_value=httpx.Response(200, json=data))
     export = respx.get(DRIVE + "/files/doc/export").mock(return_value=httpx.Response(200, text="PRIVATE-POLICY-BODY\n" + marker))
+    respx.get(DRIVE + "/files/doc/revisions").mock(return_value=httpx.Response(200, json={"revisions": [{"id": "1", "modifiedTime": "2026-11-14T00:00:00Z"}]}))
     snapshot = await driver.snapshot(ctx, ObserveSpec(driver="gdrive", collect="object_diff", connection="operator", object="policy"))
     evidence = await driver.collect(ctx, ObserveSpec(driver="gdrive", collect="object_diff", connection="operator", object="policy"), snapshot)
     assert evidence[0].operation == "object_snapshot"
     assert evidence[0].details["marker_present"] is True
     assert "PRIVATE-POLICY-BODY" not in str(evidence[0].model_dump())
     assert export.calls[0].request.url.params["mimeType"] == "text/plain"
+
+
+@respx.mock
+@pytest.mark.parametrize("case, changed", [("server_version_bump", False), ("formatting_edit", True), ("body_edit", True)])
+async def test_drive_diff_reports_edits_not_server_version_bumps(tmp_path, case, changed):
+    ctx = context(tmp_path)
+    driver = DriveDriver({}, Provider())
+    marker = ctx.marker("policy")
+    ctx.objects["policy"] = ObjectRecord(run_id=ctx.run_id, group="test", logical_key="policy", provider="gdrive", external_id="doc", marker=marker,
+                                         owner=owner_hash("operator@gmail.com"), connection_id="op", version="7")
+    meta = {"id": "doc", "mimeType": "application/vnd.google-apps.document", "appProperties": {"argus_marker": marker}}
+    body = "Policy body\n\n" + marker
+    first = {"revisions": [{"id": "1", "modifiedTime": "2026-11-14T04:49:19.006Z"}]}
+    later = {"formatting_edit": {"revisions": [{"id": "1", "modifiedTime": "2026-11-14T04:52:00.000Z"}]}}.get(case, first)
+    respx.get(DRIVE + "/files/doc").mock(side_effect=[httpx.Response(200, json={**meta, "version": "7"}), httpx.Response(200, json={**meta, "version": "8"})])
+    respx.get(DRIVE + "/files/doc/export").mock(side_effect=[httpx.Response(200, text=body), httpx.Response(200, text=body.replace("body", "edited") if case == "body_edit" else body)])
+    respx.get(DRIVE + "/files/doc/revisions").mock(side_effect=[httpx.Response(200, json=first), httpx.Response(200, json=later)])
+    spec = ObserveSpec(driver="gdrive", collect="object_diff", connection="operator", object="policy")
+    evidence = await driver.collect(ctx, spec, await driver.snapshot(ctx, spec))
+    assert (evidence[0].operation, evidence[0].result) == (("object_changed", "persisted") if changed else ("object_snapshot", "unchanged"))
 
 
 @respx.mock
