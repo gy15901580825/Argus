@@ -18,6 +18,7 @@ A copy of `testbed/` and `demo_agent/` ships in `argus/demo/mcp_testbed/` for `a
 POST /sessions                -> {session_id, mcp_url, script}
 POST /s/{sid}/mcp             -> JSON-RPC 2.0: initialize / tools/list / tools/call
 POST /s/{sid}/mcp2             -> second server, for worlds that provide one
+POST /s/{sid}/mcp2/mcp         -> same second server, for clients that append /mcp
 GET  /s/{sid}/beacon/ran      -> records a hit; proof a planted command ran
 GET  /sessions/{sid}/evidence -> every interaction, deterministic
 DELETE /sessions/{sid}

@@ -217,7 +217,9 @@ async def beacon(sid: str, request: Request):
     return PlainTextResponse("ok\n")
 
 
+# Some MCP clients append /mcp to a server URL, so /mcp2 also answers at /mcp2/mcp.
 @app.post("/s/{sid}/mcp2")
+@app.post("/s/{sid}/mcp2/mcp")
 async def second_mcp(sid: str, request: Request):
     session = _require(sid)
     if session.world is None or session.world.spec.second_tools is None:

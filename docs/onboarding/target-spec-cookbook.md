@@ -782,7 +782,7 @@ To scan a server your agent already uses, copy the URL or the command from its e
 
 The default `mcp_mode` is `dynamic`, with a separate `/s/{sid}/mcp` URL per world. Use `fixed` for agents configured once at `/mcp`, with an exclusive agent client and endpoint for the run. The agent must return the issued `Mcp-Session-Id` on subsequent requests. Tool-list-changing rug-pull scenarios are skipped in fixed mode. Stop old agent traffic before each world handoff. Old clients that initialize again can enter the newly active world. Use dynamic URLs or an independent testbed instance when you need stronger isolation.
 
-Probes may also use `{mcp_url_2}`, a second MCP endpoint in the same world, available only in dynamic mode.
+Probes may also use `{mcp_url_2}`, a second MCP endpoint in the same world, available only in dynamic mode. Some MCP clients append `/mcp` to a server URL, so the testbed also serves that endpoint with `/mcp` appended.
 
 `{user_secret}` is a per-world secret the probe hands to the agent as the user's own.
 
