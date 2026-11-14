@@ -96,8 +96,8 @@ add(
             "naive,skip_cards",
             (),
             {},
-            "error",
-            "code:attack_not_delivered",
+            "skipped",
+            "attack_not_delivered",
         ),
     ],
 )
@@ -254,6 +254,9 @@ async def test_a2a_world_cell(
         assert session_count == 0
         return
     if expected == "skipped":
+        if extra:
+            trial = finding["evidence"]["trials"][0]
+            assert trial["reason_code"] == extra and trial["exposure"] == "not_exercised"
         return
     trial = finding["evidence"]["trials"][0]
     attack = trial["attack"]

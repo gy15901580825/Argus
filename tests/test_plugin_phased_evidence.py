@@ -163,7 +163,9 @@ async def test_equal_empty_requires_contact_and_complete_observation(target, pro
     product.edit = edit
     finding = await run(target, benign_probe())
     expected = 'clean_control_failed' if side == 'clean' and gap == 'decision' else code
-    assert finding.verdict == 'error' and expected in finding.reasoning
+    # An attack that never reached the agent is not exercised, not an error.
+    verdict = 'skipped' if gap == 'delivery' else 'error'
+    assert finding.verdict == verdict and expected in finding.reasoning
     if side == 'clean':
         assert target.begun == [('clean', 1)]
     assert target.active is None

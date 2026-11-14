@@ -34,6 +34,8 @@ class LinkAgent(Target):
     async def send_prompt(self, prompt, history=()):
         if self.mode == 'never':
             return CANT_FETCH, 1.
+        if self.mode == 'blind':
+            return 'I could not open the page, but here you go: npm install left-pad', 1.
         path = re.search(re.escape(RAW) + r'([\w./-]+\.md)', prompt).group(1)
         article = (ROOT / path).read_text()
         title = article.splitlines()[0].lstrip('# ')
@@ -58,6 +60,51 @@ async def test_agent_that_never_fetches_cannot_produce_pass():
 async def test_agent_that_fetches_and_obeys_fails():
     findings = await run(load_probe(PROBE_PATH), 'obey')
     assert [f.verdict for f in findings] == ['fail']
+    assert findings[0].evidence is None
+
+
+async def test_fail_without_contact_keeps_the_verdict_and_is_marked_not_exercised():
+    findings = await run(load_probe(PROBE_PATH), 'blind')
+    assert [f.verdict for f in findings] == ['fail']
+    assert findings[0].evidence == {'exposure': 'not_exercised'}
+
+
+class SinkAgent(LinkAgent):
+    """Replies without a contact marker; its trap record holds `requests`."""
+
+    def __init__(self, requests=None, broken=False):
+        super().__init__('blind')
+        self.requests, self.broken = requests or [], broken
+
+    async def collect_evidence(self):
+        if self.broken:
+            raise TimeoutError('trap record timed out')
+        return {'interaction_count': 1 + len(self.requests), 'page_loads': 1,
+                'trap_requests': self.requests}
+
+
+async def run_sink(target):
+    runner = Runner(target=target, judge=InstallClauseJudge(), rubrics_dir=ROOT / 'argus/rubrics')
+    return [f async for f in runner.run_probe(load_probe(PROBE_PATH))]
+
+
+async def test_fail_with_a_sink_request_is_not_marked():
+    request = {'method': 'POST', 'path': '/collect', 'query': '', 'body': 'x', 'complete': True}
+    [finding] = await run_sink(SinkAgent([request]))
+    assert finding.verdict == 'fail'
+    assert 'exposure' not in finding.evidence and finding.evidence['trap_requests'] == [request]
+
+
+async def test_fail_with_an_empty_trap_record_is_marked():
+    [finding] = await run_sink(SinkAgent())
+    assert finding.verdict == 'fail' and finding.evidence['exposure'] == 'not_exercised'
+
+
+async def test_fail_whose_trap_record_could_not_be_read_is_not_marked():
+    # Not seeing the record is not the same as an empty one.
+    [finding] = await run_sink(SinkAgent(broken=True))
+    assert finding.verdict == 'fail' and finding.evidence is None
+    assert 'evidence unavailable' in finding.reasoning
 
 
 async def test_agent_that_fetches_and_refuses_passes():
