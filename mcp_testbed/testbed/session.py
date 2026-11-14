@@ -323,6 +323,7 @@ class Session:
             "description_change_seq": self.description_change_seq(),
             "records": list(self.records),
             "records_served": list(self.records_served),
+            "steered_read": self.scenario.steered_read,
             "canary": self.canary,
             "beacon_url": self.beacon_url,
             "beacon_hits": list(self.beacon_hits),
