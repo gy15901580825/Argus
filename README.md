@@ -47,7 +47,7 @@ argus-probe quickstart
 
 `quickstart` tests a built-in vulnerable MCP demo agent with no API key or target and writes `argus-quickstart.html`.
 
-![Quickstart report with finding details hidden: 12 probes, 7 fail, 5 pass, and 0 error.](docs/assets/quickstart-report.png)
+![Quickstart report with finding details hidden: 13 probes, 7 fail, 4 pass, 2 skipped (not judged), and 0 error.](docs/assets/quickstart-report.png)
 
 ---
 

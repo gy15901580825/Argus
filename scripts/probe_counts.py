@@ -64,6 +64,7 @@ REGISTRY: list[tuple[str, str, str]] = [
     # quickstart runs servers.PROBE_IDS, which tests/test_redteam_demo.py pins to argus/probes/mcp.
     ("docs/onboarding/quickstart.md", r"runs the (?P<n>\d+) MCP probes", "dir:mcp"),
     ("docs/cli.md", r"\d+ of (?P<n>\d+) probes caught the demo agent", "dir:mcp"),
+    ("README.md", r"finding details hidden: (?P<n>\d+) probes", "dir:mcp"),
     ("argus/cli/cmd_quickstart.py", r"Run (?P<n>\d+) MCP probes against", "dir:mcp"),
 ]
 
