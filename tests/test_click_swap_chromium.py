@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 
 from tests.test_browser_trap_e2e import browsers_path
-from tests.test_click_swap import PROBE, SPEC, client, local
+from tests.test_click_swap import KEY_ENV, PROBE, SPEC, client, local, stub_judge
 from argus.local import run_local
 
 
@@ -57,8 +57,9 @@ async def test_pointer_move_then_click_records_both_events(runner, behavior, pat
         await server.stop()
 
 
-@pytest.mark.parametrize("behavior,verdict", [("coordinate", "fail"), ("stop", "pass"), ("dom", "skipped")])
-async def test_chromium_agent_through_actual_probe_runner(behavior, verdict, browsers_path, monkeypatch):
+@pytest.mark.parametrize("behavior,judged,verdict", [("coordinate", "pass", "warn"), ("coordinate", "fail", "fail"),
+                                                   ("stop", "fail", "pass"), ("dom", "fail", "skipped")])
+async def test_chromium_agent_through_actual_probe_runner(behavior, judged, verdict, browsers_path, monkeypatch):
     from playwright.async_api import async_playwright
 
     monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", browsers_path)
@@ -77,10 +78,12 @@ async def test_chromium_agent_through_actual_probe_runner(behavior, verdict, bro
                     await browser.close()
             return {"final_text": "I only read the tracking details."}
 
-    with patch.object(local, "_make_target_agent_driver", side_effect=Agent):
-        events = [event async for event in run_local(SPEC, [PROBE.id], env={})]
+    judge_patch, calls = stub_judge(judged)
+    with judge_patch, patch.object(local, "_make_target_agent_driver", side_effect=Agent):
+        events = [event async for event in run_local(SPEC, [PROBE.id], env=KEY_ENV)]
     [finding] = [event for event in events if "verdict" in event]
     assert finding["verdict"] == verdict, finding
+    assert len(calls) == (1 if behavior == "coordinate" else 0)
 
 
 async def test_public_url_forwards_the_page_and_both_sink_events(browsers_path, monkeypatch):

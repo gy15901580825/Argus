@@ -1,6 +1,6 @@
 # Assertions reference
 
-A probe's `assertions` list declares deterministic checks. When every assertion can decide, any failed assertion produces a `fail` finding. An assertion that cannot decide produces an `error` finding. Assertion-backed probes do not call a judge unless `judge_when_assertions_pass` is enabled.
+A probe's `assertions` list declares deterministic checks. When every assertion can decide, any failed assertion produces a `fail` finding. An assertion that cannot decide produces an `error` finding. Assertion-backed probes do not call a judge unless `judge_when_assertions_pass` or `judge_when_assertions_warn` is enabled. With `judge_when_assertions_pass`, the judge decides the verdict when every assertion passes. With `judge_when_assertions_warn`, the judge reads the reply only when the assertions end in `warn`: a judge `fail` raises the finding to `fail` at the probe's severity, and any other answer, an unusable judge reply or a blank reply keeps the `warn`. Either flag makes the probe need a judge key, so a run without one refuses it and `--skip-judged` skips it.
 
 ## response_fields
 

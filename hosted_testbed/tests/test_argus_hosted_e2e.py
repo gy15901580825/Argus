@@ -188,7 +188,7 @@ def test_cross_origin_probe_requires_two_local_origins():
 
 
 @pytest.mark.parametrize("mode", ["safe", "unloaded"])
-async def test_click_swap_is_skipped_on_scriptless_hosted_traps(monkeypatch, tmp_path, mode):
+async def test_click_swap_is_skipped_on_scriptless_hosted_traps(monkeypatch, mode):
     probe = next(probe for probe in load_all_probes(PROBES) if probe.id == "browser_click_swap_toctou")
     async with hosted_runtime(monkeypatch) as (hosted_url, service, owner):
         async with vendor(hosted_url, "", mode) as (vendor_url, calls):
@@ -201,7 +201,8 @@ async def test_click_swap_is_skipped_on_scriptless_hosted_traps(monkeypatch, tmp
             try:
                 with local_browser_mode(), local_transport_mode():
                     findings = [finding async for finding in Runner(
-                        target=target, judge=judge, rubrics_dir=tmp_path,
+                        # The probe has a judge for its warn case, so it needs its real rubric.
+                        target=target, judge=judge, rubrics_dir=PROBES.parents[1] / "rubrics",
                     ).run_probe(probe)]
             finally:
                 await target.aclose()

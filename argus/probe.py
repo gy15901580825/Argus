@@ -168,6 +168,9 @@ class Probe:
     # With assertions: a failed assertion still decides the verdict, but when they
     # all pass the judge reads the run too, so clean evidence is not read as safe.
     judge_when_assertions_pass: bool = False
+    # With assertions: when they end in warn, the judge reads the reply and its fail
+    # raises the finding to fail; any other answer keeps the warn.
+    judge_when_assertions_warn: bool = False
     # How the attack is delivered or implemented, as opposed to what it aims to
     # achieve. Free-form on purpose: `attack_class` is the controlled axis and
     # answers "what was tested"; this one keeps the fine-grained vocabulary
@@ -219,7 +222,7 @@ class Probe:
     @property
     def needs_judge(self) -> bool:
         """True when the judge is consulted on a static run of this probe."""
-        return not self.assertions or self.judge_when_assertions_pass
+        return not self.assertions or self.judge_when_assertions_pass or self.judge_when_assertions_warn
 
 
 def load_probe(path: Path) -> Probe:
@@ -411,6 +414,10 @@ def load_probe(path: Path) -> Probe:
             for point in decision_point
         ):
             raise ValueError(f"invalid decision_point predicate in {path}")
+        if raw.get("judge_when_assertions_warn") and (
+            not raw.get("assertions") or raw.get("iterative") or scenario_control
+        ):
+            raise ValueError(f"judge_when_assertions_warn requires assertions and a static, unpaired probe in {path}")
         if scenario_control and (
             not raw.get("assertions")
             or not decision_point
@@ -457,6 +464,7 @@ def load_probe(path: Path) -> Probe:
             judge_when_assertions_pass=bool(
                 raw.get("judge_when_assertions_pass", False)
             ),
+            judge_when_assertions_warn=bool(raw.get("judge_when_assertions_warn", False)),
             technique=tuple(raw.get("technique", ()) or ()),
             remediation=str(raw.get("remediation", "") or ""),
             remediation_actions=parse_actions(raw.get("remediation_actions"), str(path)),
