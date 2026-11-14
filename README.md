@@ -569,6 +569,7 @@ document the one bypass + 12 false positives in detail.
 ## Documentation
 
 - [Target plugin guide](docs/plugins.md): register a product adapter and supply evidence.
+- [Governance](GOVERNANCE.md): who maintains Argus and how merges and releases happen.
 - [**`RESULTS.md`**](RESULTS.md) — measured demo run with and without guardrail.
 - [**`docs/probe-mapping.md`**](docs/probe-mapping.md) — probe → OWASP / ATLAS / NIST cross-ref.
 - [`docs/onboarding/quickstart.md`](docs/onboarding/quickstart.md) — first 30 minutes.
