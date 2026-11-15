@@ -95,7 +95,7 @@ async def http_server_findings(url: str, headers: tuple[tuple[str, str], ...], t
 def stdio_server_findings(tools: list[ToolInfo], server_info: ServerInfo | None,
                           mask: rules.Mask = rules.same) -> list[dict]:
     evidence = {"interaction_count": 1,
-                "tools": [{"name": t.name, "description": t.description} for t in tools],
+                "tools": [{"name": t.name, "description": t.description, "inputSchema": t.input_schema} for t in tools],
                 "server_info": {"name": server_info.name, "version": server_info.version} if server_info else None}
     # Masked before the cut, as on HTTP: serverInfo and tool names reach here unmasked.
     evidence = rules.mask_strings(evidence, mask)
