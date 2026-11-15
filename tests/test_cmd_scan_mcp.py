@@ -762,3 +762,12 @@ def test_a_finished_scan_stays_successful_in_sarif(monkeypatch, tmp_path):
     assert result.exit_code == 0, result.output
     inv = json.loads((tmp_path / OUT_FILE["sarif"]).read_text())["runs"][0]["invocations"][0]
     assert inv["executionSuccessful"] is True
+
+
+def test_json_includes_masked_tool_notes(monkeypatch, tmp_path):
+    notes = ["lookup [read-only]: called", "store: not exercised; pass --args FILE", SNYK_LINE]
+    _fake(monkeypatch, _result(notes=notes))
+    result = _invoke(URL, "--per-run-cap", "0", "--format", "json")
+    assert result.exit_code == 0, result.output
+    record = json.loads((tmp_path / OUT_FILE["json"]).read_text())
+    assert record["notes"] == notes
