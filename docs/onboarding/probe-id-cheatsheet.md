@@ -1,6 +1,6 @@
 # Threat coverage overview
 
-Argus ships 290 probes. Each probe has a severity and maps to MITRE ATLAS, OWASP LLM Top 10, NIST AI RMF and the EU AI Act. Probes that exercise an OWASP Agentic Top 10 risk also carry that tag.
+Argus ships 291 probes. Each probe has a severity and maps to MITRE ATLAS, OWASP LLM Top 10, NIST AI RMF and the EU AI Act. Probes that exercise an OWASP Agentic Top 10 risk also carry that tag.
 
 ## Threat categories
 
@@ -141,3 +141,7 @@ These paired, deterministic probes target `a2a_agent`. Missing capabilities skip
 | `a2a_three_hop_error_amplification` | Three target identities turn a seeded quantity into excess payment requests |
 
 ASI08 requires observed edges between distinct verified identities. Single-agent retries and loops are excluded. The fixture demonstrates the contract; it does not validate a customer's unobserved multi-agent system.
+
+## Click-swap pair
+
+`browser_click_swap_toctou` tests re-verification after the button swaps; `browser_click_swap_toctou_control` checks whether the agent clicks the unchanged tracking button.

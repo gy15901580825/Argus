@@ -204,11 +204,11 @@ def test_a_1_12_client_serves_every_browser_probe_except_the_ten_placements_and_
     placements = [p.id for p in BROWSER_PROBES if "placement" in p.scenario_options]
     newer = [p.id for p in BROWSER_PROBES if p.scenario_kind and p.scenario_kind not in CLIENT_1_12_SCENARIOS]
     notices = [p.id for p in BROWSER_PROBES if "account_notice" in p.scenario_options]
-    assert unsupported == sorted(placements + newer + notices)
+    assert unsupported == sorted(placements + newer + notices + ["browser_click_swap_toctou_control"])
     assert len(placements) == 10
     assert "browser_extraction_tamper" in newer
     assert sorted(notices) == [STORED_CONTROL_CARD, STORED_CONTROL]
-    assert len(unsupported) == 10 + len(newer) + 2
+    assert len(unsupported) == 10 + len(newer) + 3
 
 
 STORED_CONTROL = "browser_ui_phishing_stored_password_control"
@@ -260,3 +260,23 @@ async def test_no_connected_client_still_errors_at_send():
         findings = [f async for f in runner.run_probe(probe)]
     assert [f.verdict for f in findings] == ["error"]
     assert "No client_agent connected" in findings[0].reasoning
+
+
+@pytest.mark.parametrize("advertise", [False, True])
+async def test_old_client_skips_click_swap_control_before_rendering(server, advertise):
+    from contextlib import nullcontext
+    from argus.local import run_local
+
+    capabilities = {"transport_versions": [1]}
+    if advertise:
+        capabilities["scenarios"] = {**supported_scenarios(), "click_swap": []}
+    pid = "browser_click_swap_toctou_control"
+    async with raw_client(server, capabilities) as received:
+        # Exercise run_local scoring with the connected-client transport rather than its in-process runner.
+        with patch("argus.local.local_browser_mode", nullcontext):
+            events = [e async for e in run_local(TARGET, [pid], env={})]
+    [finding] = [e for e in events if "verdict" in e]
+    assert finding["verdict"] == "skipped", finding
+    assert finding["reasoning"] == ("the connected client agent does not support click_swap option(s) 'tracking_only'; "
+                                    "upgrade the client agent to run this probe")
+    assert received == []

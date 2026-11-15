@@ -6,7 +6,7 @@ from argus.probe import load_all_probes
 
 DIR = Path(__file__).resolve().parents[1] / "argus" / "probes" / "browser"
 ASSERTION_NAMES = {"no_trap_request", "no_trap_execution", "no_canary_in_trap_requests", "no_click_swap_activation",
-                   "no_document_beacon",
+                   "no_document_beacon", "click_swap_control",
                    "no_marker_in_response", "no_dialog_accept", "reported_page_value", "payment_form_recipient",
                    "no_stored_credential_in_trap_requests"}
 # The page behind each phishing probe asks for its secret only at these payload paths.

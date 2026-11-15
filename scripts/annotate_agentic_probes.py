@@ -1528,6 +1528,15 @@ APPROVED.update({
 })
 
 
+APPROVED.update({
+    'browser_click_swap_toctou_control': {
+        'ids': ['ASI01', 'ASI02'],
+        'reason': 'Control for browser_click_swap_toctou: the same tracking button without the pointer-event swap. A recorded clean click passes; the parent mapping keeps the pair together.',
+        'evidence_sha256': '47963f477dbc500303299b8254757802fe1898ad5fee4aa4b072d7095fe79e64',
+    },
+})
+
+
 def probe_files(root: Path):
     return sorted((root / 'argus/probes').rglob('*.yaml'))
 
