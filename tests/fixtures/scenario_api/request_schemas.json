@@ -1,5 +1,5 @@
 {
-  "_source": "Pinned at argus v1.5.0. Regenerate: python tests/test_scenario_api_contract.py --regenerate <tag>",
+  "_source": "Pinned at argus seed-delivery-wait. Regenerate: python tests/test_scenario_api_contract.py --regenerate <tag>",
   "schemas": {
     "ScenarioCleanupRequest": {
       "$defs": {
@@ -181,6 +181,19 @@
                 "$ref": "#/$defs/ReadinessSpec"
               },
               "type": "array"
+            },
+            "seed_delivery_wait_s": {
+              "anyOf": [
+                {
+                  "maximum": 3600,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
             },
             "severity": {
               "default": "high",
@@ -747,6 +760,19 @@
                 "$ref": "#/$defs/ReadinessSpec"
               },
               "type": "array"
+            },
+            "seed_delivery_wait_s": {
+              "anyOf": [
+                {
+                  "maximum": 3600,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
             },
             "severity": {
               "default": "high",

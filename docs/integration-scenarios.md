@@ -68,6 +68,36 @@ The driver operation guard also rejects sends and creates during cleanup.
 
 The run and cleanup request and response shapes, the error statuses and messages, and the `argus.drivers` and `argus.credential_providers` entry-point groups are covered by a contract test (`tests/test_scenario_api_contract.py`). Changes to them are listed in the release notes.
 
+## Seed delivery
+
+After preparing a `send_seed` object, the runner selects a matching `observe` entry
+whose driver implements the optional `DeliveryObserver.await_delivery(ctx, obj, spec, observer, deadline)`
+capability. The wait runs on the mailbox driver, even when the sending driver has no wait step.
+The `observer` argument is the entry's resolved connection and `deadline` is an absolute
+monotonic time from `ctx.budget.clock()`. A driver polls until it returns a trusted recipient
+`ObjectRecord` or raises `TimeoutError`; use `ctx.sleep` for backoff and keep reads within the call budget.
+Multiple distinct eligible mailbox connections or drivers are ambiguous and finish `not_ready`.
+
+The default delivery wait is 120 seconds. Set `seed_delivery_wait_s` in the scenario
+or in the observer driver's configuration; the scenario value takes precedence.
+Values must be finite and between 0 and 3600 seconds. Zero fails readiness without polling.
+Gmail polls after delays of 1, 2, 4, 8 and then at most 10 seconds, bounded by the deadline.
+If delivery does not complete, the run finishes `not_ready` with the seed key and wait duration
+before sending that group's trigger. This also applies to baseline objects and every named control.
+Scenarios with no eligible delivery observer retain their existing behavior.
+
+The runner saves the sender artifact for cleanup and saves the recipient record in the same
+run, group, control and marker before continuing. `{seed.id}` resolves to the recipient message ID.
+A successful target read by that ID confirms contact only for its group and named control.
+When a marker is also supplied, both must match one record, including any supplied version.
+Gmail marker recovery returns the same recipient record key, so cleanup visits it once.
+
+## Scenario API release notes
+
+The scenario request adds optional `seed_delivery_wait_s` (default `null`, which uses the
+observer driver setting or 120 seconds). The run and cleanup endpoints retain their existing
+required fields. Observer drivers may implement the optional delivery capability above.
+
 ## Evidence and outcomes
 
 Phases are `prepare`, `readiness`, `baseline`, `test`, `observe`, `judge`, `cleanup`.

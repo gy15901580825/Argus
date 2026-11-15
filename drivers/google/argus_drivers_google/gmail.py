@@ -110,6 +110,25 @@ class GmailDriver(GoogleDriver):
         ctx.registry.records.pop(ctx.registry.key(record.model_copy(update={"external_id": "pending-send"})), None)
         return record
 
+    async def await_delivery(self, ctx, obj, spec, observer, deadline):
+        mailbox = await self.account(ctx, observer)
+        delay = 1
+        while ctx.budget.clock() < deadline:
+            for message in await self.messages(ctx, observer, obj.marker):
+                if self.trusted_seed(ctx, message, obj.marker, mailbox):
+                    if ctx.budget.clock() >= deadline:
+                        raise TimeoutError()
+                    return ObjectRecord(run_id=obj.run_id, group=obj.group, control_name=obj.control_name,
+                                        logical_key=obj.logical_key, provider=self.name, external_id=message["id"],
+                                        marker=obj.marker, owner=owner_hash(mailbox), connection_id=observer.connection_id)
+            remaining = deadline - ctx.budget.clock()
+            if remaining <= 0:
+                break
+            await ctx.sleep(min(delay, remaining))
+            delay = min(delay * 2, 10)
+            ctx.budget.check_wall()
+        raise TimeoutError()
+
     async def drafts(self, ctx, ref):
         ctx.authorize("gmail.read")
         rows = await self.pages(ctx, ref, {GMAIL_READ}, BASE + "/drafts", "drafts", {"maxResults": 100})

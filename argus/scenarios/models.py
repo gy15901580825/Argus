@@ -155,6 +155,7 @@ class IntegrationScenario(BaseModel):
     controls: list[ControlSpec] = Field(default_factory=list)
     allowed_ops: list[str] = Field(default_factory=list)
     budget: BudgetSpec = Field(default_factory=BudgetSpec)
+    seed_delivery_wait_s: float | None = Field(None, ge=0, le=3600, allow_inf_nan=False)
 
     @field_validator("attack_class")
     @classmethod

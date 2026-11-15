@@ -337,3 +337,48 @@ async def test_owned_child_cleanup_precedes_folder_and_preserves_foreign_childre
     respx.get(DRIVE + "/files").mock(return_value=httpx.Response(200, json={"files": [{"id": "foreign-child"}]}))
     assert (await driver.cleanup(ctx, folder)).status == "retained"
     assert folder_mutation.call_count == 1
+
+
+@respx.mock
+@pytest.mark.parametrize("mismatch", ["sender", "recipient", "marker_header", "body"])
+async def test_gmail_delivery_polls_observer_and_rejects_untrusted_seed(tmp_path, mismatch):
+    ctx = context(tmp_path)
+    ctx.group, ctx.control_name = "control", "benign"
+    driver = GmailDriver({"expected_seed_sender": "seed@example.invalid"}, Provider())
+    marker = ctx.marker("seed")
+    sender = ObjectRecord(run_id=ctx.run_id, group=ctx.group, control_name=ctx.control_name, logical_key="seed",
+                          provider="fake", external_id="sender-id", marker=marker, owner=owner_hash("seed@example.invalid"), connection_id="op")
+    ctx.registry.save(sender)
+    trusted = message(marker, recipients="observer@gmail.com")
+    trusted["id"] = "recipient-id"
+    trusted["payload"]["headers"].append({"name": "From", "value": "seed@example.invalid"})
+    import copy
+    untrusted = copy.deepcopy(trusted)
+    untrusted["id"] = "untrusted-id"
+    if mismatch == "sender":
+        untrusted["payload"]["headers"][-1]["value"] = "other@example.invalid"
+    elif mismatch == "recipient":
+        untrusted["payload"]["headers"][1]["value"] = "other@example.invalid"
+    elif mismatch == "marker_header":
+        untrusted["payload"]["headers"][0]["value"] = marker + "-wrong"
+    else:
+        untrusted["payload"]["body"]["data"] = base64.urlsafe_b64encode(b"no marker").decode()
+    respx.get(GMAIL + "/profile").mock(return_value=httpx.Response(200, json={"emailAddress": "observer@gmail.com"}))
+    listing = respx.get(GMAIL + "/messages").mock(side_effect=[
+        httpx.Response(200, json={"messages": []}),
+        httpx.Response(200, json={"messages": [{"id": "untrusted-id"}]}),
+        httpx.Response(200, json={"messages": [{"id": "recipient-id"}]}),
+    ])
+    respx.get(GMAIL + "/messages/untrusted-id").mock(return_value=httpx.Response(200, json=untrusted))
+    respx.get(GMAIL + "/messages/recipient-id").mock(return_value=httpx.Response(200, json=trusted))
+    from tests.test_scenario_runner import Clock
+    clock = Clock()
+    ctx.budget.clock = clock
+    ctx.budget.started = clock()
+    ctx.sleep = clock.sleep
+    obj = await driver.await_delivery(ctx, sender, ObjectSpec(driver="fake", op="send_seed"), ctx.connection("observer"), 10)
+    assert listing.call_count == 3
+    assert clock() == 3  # Backoff sleeps of one and two seconds.
+    assert (obj.external_id, obj.provider, obj.connection_id) == ("recipient-id", "gmail", "obs")
+    assert (obj.run_id, obj.group, obj.control_name, obj.marker, obj.logical_key) == (ctx.run_id, "control", "benign", marker, "seed")
+    assert obj.owner == owner_hash("observer@gmail.com")
