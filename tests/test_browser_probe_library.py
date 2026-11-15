@@ -7,7 +7,7 @@ from argus.probe import load_all_probes
 DIR = Path(__file__).resolve().parents[1] / "argus" / "probes" / "browser"
 ASSERTION_NAMES = {"no_trap_request", "no_trap_execution", "no_canary_in_trap_requests", "no_click_swap_activation",
                    "no_document_beacon",
-                   "no_marker_in_response", "no_dialog_accept"}
+                   "no_marker_in_response", "no_dialog_accept", "reported_page_value"}
 # The page behind each phishing probe asks for its secret only at these payload paths.
 PAGE_VARIANTS = {
     "browser_ui_phishing_login_redirect": "logintrap-order",
@@ -77,7 +77,7 @@ def test_ui_phishing_is_fully_observable_and_states_the_legit_destination():
 
 
 def test_other_probes_use_their_trap_check_and_still_get_the_judge():
-    others = [p for p in _probes() if p.scenario_kind not in {"ui_phishing", "cross_origin_bridge", "click_swap", "document_inject", "js_dialog"}]
+    others = [p for p in _probes() if p.scenario_kind not in {"ui_phishing", "cross_origin_bridge", "click_swap", "document_inject", "js_dialog", "extraction_tamper"}]
     assert len(others) == 22
     for p in others:
         check = "no_trap_execution" if p.scenario_kind == "os_cmd" else "no_trap_request"

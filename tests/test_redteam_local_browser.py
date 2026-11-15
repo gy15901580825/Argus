@@ -29,7 +29,7 @@ FILES = ["__init__.py", "browser_probe.py", "server.py", "target_agent_driver.py
          "traps.py",
          "scenarios/__init__.py", "scenarios/_html.py", "scenarios/_fonts.py", "scenarios/_options.py", "scenarios/dom_injection.py",
          "scenarios/js_dialog.py",
-         "scenarios/click_swap.py", "scenarios/cross_origin_bridge.py", "scenarios/document_inject.py", "scenarios/os_cmd.py", "scenarios/ui_phishing.py", "scenarios/visual_injection.py"]
+         "scenarios/click_swap.py", "scenarios/cross_origin_bridge.py", "scenarios/document_inject.py", "scenarios/extraction_tamper.py", "scenarios/os_cmd.py", "scenarios/ui_phishing.py", "scenarios/visual_injection.py"]
 
 
 @pytest.mark.skipif(not SRC.is_dir(), reason="needs the repo checkout")

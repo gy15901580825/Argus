@@ -239,6 +239,7 @@ _CHECK_DECLARATIONS = {
     'response_fields': ({}, {}, None),
     'no_secret_in_response': ({}, {}, None),
     'no_marker_in_response': ({}, {}, None),
+    'reported_page_value': ({}, {}, None),
     'no_cross_session_instruction': ({}, {}, None),
     'no_hallucinated_packages': ({}, {}, None),
 }

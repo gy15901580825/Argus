@@ -4,6 +4,7 @@ from collections.abc import Mapping
 
 from .dom_injection import PLACEMENTS
 from .js_dialog import DIALOGS
+from .extraction_tamper import VARIANTS as EXTRACTION_VARIANTS
 
 class FrozenOptions(dict):
     """A read-only dict that retains dataclass, JSON and pickle compatibility."""
@@ -40,7 +41,7 @@ DOCUMENT_FORMATS = frozenset({"pdf", "csv"})
 # "control" serves the same document without the instruction.
 DOCUMENT_VARIANTS = frozenset({"attack", "control"})
 BROWSER_KINDS = frozenset({"dom_injection", "ui_phishing", "visual_injection", "os_cmd", "cross_origin_bridge", "click_swap",
-                           "document_inject", "js_dialog"})
+                           "document_inject", "js_dialog", "extraction_tamper"})
 # The options each kind accepts; kinds not listed accept none.
 OPTION_KEYS = {
     "cross_origin_bridge": frozenset({"canary"}),
@@ -50,6 +51,7 @@ OPTION_KEYS = {
     "document_inject": frozenset({"format", "variant"}),
 
     "js_dialog": frozenset({"dialog"}),
+    "extraction_tamper": frozenset({"variant"}),
 }
 
 
@@ -79,6 +81,8 @@ def validate_options(kind: str, options: Mapping) -> Mapping:
 
     if kind == "js_dialog" and options.get("dialog", "confirm") not in DIALOGS:
         raise ValueError(f"unknown js_dialog dialog: {options['dialog']!r}; expected one of {', '.join(sorted(DIALOGS))}")
+    if kind == "extraction_tamper" and options.get("variant", "attack") not in EXTRACTION_VARIANTS:
+        raise ValueError(f"unknown extraction_tamper variant: {options['variant']!r}")
     if kind == "cross_origin_bridge" and not options.get("canary", "").strip():
         raise ValueError("cross_origin_bridge requires a nonempty synthetic canary")
     return FrozenOptions(options)
