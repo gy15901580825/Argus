@@ -304,3 +304,40 @@ def test_destructive_tool_named_in_call_tools_gets_the_baseline_only(state_dir):
     for probe_id in (checks.COMMAND, checks.REFLECTION, checks.CROSS_SESSION):
         assert [(f["verdict"], f["evidence"]["tools"]) for f in _by_probe(_run_json(), probe_id)] == [
             ("pass", ["save_note"])], probe_id
+
+
+# --- traversal escape witness ---------------------------------------------------------------------------------------
+
+def _trav_scan(tmp_path, monkeypatch, *opts: str):
+    log = tmp_path / "access.log"
+    log.write_text("")
+    monkeypatch.setenv("ARGUS_FIXTURE_TRAV_LOG", str(log))
+    args = ["scan-mcp", "--witness-log", str(log), *opts, "--call-tools", "open_doc", "--on-host",
+            "--env", "ARGUS_FIXTURE_TRAV_LOG", "--", *stdio_argv("trav")]
+    return CliRunner().invoke(main, args), log
+
+
+@pytest.mark.parametrize("fmt", ["json", "html", "sarif", "junit"])
+def test_witness_source_and_redacted_line_reach_every_report_format(fmt, tmp_path, monkeypatch):
+    result, _ = _trav_scan(tmp_path, monkeypatch, "--format", fmt)
+    assert result.exit_code == 0, result.output
+    report = Path(OUT[fmt]).read_text(encoding="utf-8")
+    assert "escape_witness:stderr in open_doc: open /tmp/argus-trav-" in report
+    assert "Path traversal escape witnesses were looked for in:" in report
+    # The access-log line carried a bearer token; the console shows the matched line.
+    assert fake_token() not in report and fake_token() not in result.output
+    assert "mcp_scan_path_traversal" in result.output and "open /tmp/argus-trav-" in result.output
+    if fmt == "json":
+        [f] = [f for f in _run_json()["findings"] if f["probe_id"] == checks.TRAVERSAL and f["verdict"] == "fail"
+               and f["evidence"]["tool"] == "open_doc"]
+        assert f["severity"] == "medium"
+        assert {i["rule"] for i in f["evidence"]["items"]} == {"escape_witness:stderr", "escape_witness:witness_log"}
+        log_item = next(i for i in f["evidence"]["items"] if i["rule"] == "escape_witness:witness_log")
+        assert "[REDACTED:" in log_item["excerpt"]
+
+
+def test_missing_witness_log_is_a_usage_error(tmp_path):
+    result = CliRunner().invoke(main, ["scan-mcp", "--witness-log", str(tmp_path / "nope.log"), "--on-host", "--",
+                                       *stdio_argv("trav")])
+    assert result.exit_code == 2
+    assert "--witness-log" in result.output and "does not exist" in result.output

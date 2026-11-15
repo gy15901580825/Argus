@@ -175,10 +175,15 @@ def _console_line(f: dict, clean) -> str:
 @click.option("--format", "report_format", type=click.Choice(list(_EXTENSIONS)), default="html", show_default=True)
 @click.option("--fail-on", "fail_on", type=click.Choice(SEVERITY_ORDER), default=None,
               help="Exit 3 when any finding has verdict=fail and severity at or above this level.")
+@click.option("--witness-log", "witness_logs", multiple=True,
+              type=click.Path(exists=True, dir_okay=False, readable=True), metavar="PATH",
+              help="Repeatable: a log on this host that the server or its upstream writes, such as an access log. "
+                   "Only bytes appended during the scan are read; the file is never written. For servers you run.")
 @judge_options
 def cmd_scan_mcp(argv: tuple[str, ...], call_tools, tool_args: dict, headers: tuple[tuple[str, str], ...],
                  env_names: tuple[str, ...], on_host: bool, timeout_s: float, max_runtime_s: float, per_run_cap: float,
-                 out_file: str | None, report_format: str, fail_on: str | None) -> None:
+                 out_file: str | None, report_format: str, fail_on: str | None,
+                 witness_logs: tuple[str, ...] = ()) -> None:
     """Scan an MCP server over Streamable HTTP (URL) or stdio (a command after --) and report what its tools do."""
     from argus.mcp_scan import known_secrets
     from argus.mcp_scan.client import ConnectError, HttpServer, StdioServer, host_env
@@ -254,7 +259,8 @@ def cmd_scan_mcp(argv: tuple[str, ...], call_tools, tool_args: dict, headers: tu
 
     cfg = scan.ScanConfig(target=target, call_tools=call_tools, args=tool_args, timeout_s=timeout_s,
                           max_runtime_s=max_runtime_s, per_run_cap_usd=per_run_cap, judge_config=judge_config,
-                          judge_off_reason=judge_off, transport="http" if url is not None else "stdio-host")
+                          judge_off_reason=judge_off, transport="http" if url is not None else "stdio-host",
+                          witness_logs=tuple(witness_logs))
     if on_host:
         say(_HOST_NOTE)
     judged_by = [f"Judged by {llm.describe(judge_config)}"] if judge_config is not None else []

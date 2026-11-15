@@ -190,3 +190,120 @@ async def test_trickling_server_checks_stop_at_their_deadline():
     assert elapsed < server_checks.CHECKS_TIMEOUTS * 1.0 + 15, elapsed
     # The rest of the scan still ran.
     assert by(result, checks.INJECTION, "pass")
+
+
+# --- traversal escape witnesses --------------------------------------------------------------------------------
+
+from argus.mcp_scan import scan as scan_module  # noqa: E402
+from mcp_scan_harness import fake_token  # noqa: E402
+
+TRAV = "mcp_scan_path_traversal"
+
+
+def _trav_env(log: Path | None) -> dict:
+    env = host_env([])
+    if log is not None:
+        env["ARGUS_FIXTURE_TRAV_LOG"] = str(log)
+    return env
+
+
+def _failing(result) -> dict:
+    return {f["evidence"]["tool"]: f for f in by(result, TRAV, "fail")}
+
+
+async def test_stdio_stderr_and_witness_log_witness_an_escape(tmp_path, monkeypatch):
+    monkeypatch.setattr(scan_module, "new_run_id", lambda: "abc123")
+    log = tmp_path / "access.log"
+    # Lines written before the scan name every marker this run will send; none of them may count.
+    log.write_text("".join(f"GET /tmp/argus-trav-abc123-{n} 404\n" for n in range(1, 200)))
+    cfg = ScanConfig(target=StdioServer(argv=stdio_argv("trav"), env=_trav_env(log)), transport="stdio-host",
+                     timeout_s=10.0, judge_off_reason="no judge credentials", witness_logs=(str(log),))
+    result, _ = await scan(cfg)
+    failing = _failing(result)
+    assert set(failing) == {"open_doc", "resolved_doc"}
+    opened = failing["open_doc"]
+    assert opened["severity"] == "medium"  # one step below the probe's high: no file content came back
+    assert opened["evidence"]["witness_source"] == "stderr"
+    assert opened["reasoning"].startswith("escape_witness:stderr in open_doc: open /tmp/argus-trav-abc123-")
+    assert {i["rule"] for i in opened["evidence"]["items"]} == {"escape_witness:stderr", "escape_witness:witness_log"}
+    assert opened["evidence"]["witness_sources"] == ["result", "stderr", "witness_log"]
+    replied = failing["resolved_doc"]
+    assert replied["evidence"]["witness_source"] == "result" and replied["severity"] == "medium"
+    [passed] = by(result, TRAV, "pass")
+    assert {"contained_doc", "raw_doc", "echo_doc"} <= set(passed["evidence"]["tools"])
+    [head] = [n for n in result.notes if n.startswith("Path traversal escape witnesses were looked for in:")]
+    assert "tool results" in head and "the server's stderr" in head and f"witness log {log}" in head
+    assert "byte(s) appended during the scan" in head and "Not looked for in" not in head
+    unresolved = [n for n in result.notes if "arrived unresolved or still inside the root" in n]
+    assert any(n.startswith("Server stderr:") and "(raw_doc, path)" in n for n in unresolved)
+    assert any(n.startswith("Witness log:") and "(contained_doc, path)" in n for n in unresolved)
+    # The log line carried a bearer token: it is redacted everywhere it is shown.
+    import json
+
+    assert fake_token() not in json.dumps(result.findings) + "\n".join(result.notes)
+
+
+async def test_http_scan_says_stderr_was_not_read_and_reads_the_witness_log(tmp_path, monkeypatch):
+    monkeypatch.setattr(scan_module, "new_run_id", lambda: "abc123")
+    log = tmp_path / "upstream.log"
+    log.write_text("")
+    monkeypatch.setenv("ARGUS_FIXTURE_TRAV_LOG", str(log))
+    with serve_http("trav") as url:
+        result, _ = await scan(ScanConfig(target=HttpServer(url), timeout_s=10.0, witness_logs=(str(log),),
+                                          call_tools=frozenset({"open_doc"})))
+    failing = _failing(result)
+    assert set(failing) == {"open_doc", "resolved_doc"}
+    assert failing["open_doc"]["evidence"]["witness_source"] == "witness_log"
+    assert failing["open_doc"]["evidence"]["witness_sources"] == ["result", "witness_log"]
+    [head] = [n for n in result.notes if n.startswith("Path traversal escape witnesses")]
+    assert "Not looked for in: the server's stderr (not visible over HTTP)." in head
+
+
+async def test_without_witness_log_the_note_says_no_log_was_read(monkeypatch):
+    with serve_http("trav") as url:
+        result, _ = await scan(ScanConfig(target=HttpServer(url), timeout_s=10.0,
+                                          call_tools=frozenset({"open_doc"})))
+    # open_doc logs to stderr only, which HTTP cannot see; the result-text witness still works.
+    assert set(_failing(result)) == {"resolved_doc"}
+    [head] = [n for n in result.notes if n.startswith("Path traversal escape witnesses")]
+    assert "pass --witness-log PATH" in head
+
+
+async def test_witness_log_is_never_modified(tmp_path):
+    import os
+
+    log = tmp_path / "quiet.log"
+    log.write_text("before\n")
+    os.utime(log, ns=(1_000_000_000, 1_000_000_000))
+    cfg = ScanConfig(target=StdioServer(argv=stdio_argv("trav"), env=_trav_env(None)), transport="stdio-host",
+                     timeout_s=10.0, witness_logs=(str(log),), call_tools=frozenset({"open_doc"}))
+    result, _ = await scan(cfg)
+    assert log.read_bytes() == b"before\n" and log.stat().st_mtime_ns == 1_000_000_000
+    assert any(f"witness log {log} (0 byte(s) appended during the scan)" in n for n in result.notes)
+
+
+def test_witness_log_reads_only_appended_bytes_up_to_the_cap(tmp_path, monkeypatch):
+    monkeypatch.setattr(scan_module, "WITNESS_LOG_MAX", 64)
+    log = tmp_path / "a.log"
+    log.write_bytes(b"GET /tmp/argus-trav-abc123-1 404\n")
+    start = scan_module._size(str(log))
+    with log.open("ab") as f:
+        f.write(b"GET /tmp/argus-trav-abc123-2 404\n" + b"x" * 64 + b"\nGET /tmp/argus-trav-abc123-3 404\n")
+    lines, what = scan_module._read_log(str(log), start, "abc123")
+    assert lines == ["GET /tmp/argus-trav-abc123-2 404"]
+    assert what == "131 byte(s) appended during the scan, of which the first 64 were read"
+
+
+def test_witness_log_that_shrank_is_read_from_its_start(tmp_path):
+    log = tmp_path / "r.log"
+    log.write_bytes(b"old line\n" * 20)
+    start = scan_module._size(str(log))
+    log.write_bytes(b"GET /tmp/argus-trav-abc123-4 404\n")
+    lines, what = scan_module._read_log(str(log), start, "abc123")
+    assert lines == ["GET /tmp/argus-trav-abc123-4 404"]
+    assert what.startswith("it shrank during the scan (rotated or truncated), so it was read from its start")
+
+
+def test_witness_log_missing_before_the_calls_is_reported_unread(tmp_path):
+    lines, what = scan_module._read_log(str(tmp_path / "gone.log"), None, "abc123")
+    assert lines is None and what == "could not be read before the calls, so it was not checked"

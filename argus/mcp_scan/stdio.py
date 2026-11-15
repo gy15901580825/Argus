@@ -14,6 +14,10 @@ if TYPE_CHECKING:
     from argus.mcp_scan.client import StdioServer
 
 STDERR_KEEP = 4096
+# Every stderr line holding a traversal marker is kept apart from the tail, so an early one is not evicted.
+TRAV_MARK = b"argus-trav-"
+MARKED_LINES_MAX = 200
+MARKED_LINE_KEEP = 4096
 STOP_WAIT_S = 2.0
 _REAP_WAIT_S = 2.0
 
@@ -23,6 +27,8 @@ class StdioProcess:
         self._process = process
         self._stderr = bytearray()
         self._cut_mid_line = False
+        self._partial = bytearray()
+        self.marked_lines: list[str] = []
         self.line_too_long = False
 
     @property
@@ -48,6 +54,35 @@ class StdioProcess:
         if len(self._stderr) > STDERR_KEEP:
             self._cut_mid_line = self._stderr[-STDERR_KEEP - 1] != ord("\n")
             del self._stderr[:-STDERR_KEEP]
+        self._keep_marked(chunk)
+
+    def _keep_marked(self, chunk: bytes) -> None:
+        self._partial += chunk
+        *lines, rest = self._partial.split(b"\n")
+        # A line still open past the cap keeps its end, so memory stays bounded; a marker cut here is missed.
+        self._partial = bytearray(rest[-MARKED_LINE_KEEP:])
+        for line in lines:
+            self._mark(bytes(line))
+
+    def flush_marked(self) -> None:
+        line, self._partial = bytes(self._partial), bytearray()
+        self._mark(line)
+
+    def _mark(self, line: bytes) -> None:
+        i = line.find(TRAV_MARK)
+        if i < 0 or len(self.marked_lines) >= MARKED_LINES_MAX:
+            return
+        if len(line) > MARKED_LINE_KEEP:
+            # Cut around the marker, then drop the partial words at both edges so no secret prefix survives.
+            lo = max(0, min(i - MARKED_LINE_KEEP // 2, len(line) - MARKED_LINE_KEEP))
+            hi = lo + MARKED_LINE_KEEP
+            cut = line[lo:hi]
+            if lo:
+                cut = cut.split(None, 1)[-1]
+            if hi < len(line):
+                cut = cut.rsplit(None, 1)[0]
+            line = cut
+        self.marked_lines.append(line.decode("utf-8", "replace"))
 
 
 def _signal_group(pgid: int, sig: int) -> bool:
@@ -126,12 +161,12 @@ async def stdio_streams(server: StdioServer, *, line_max: int) -> AsyncIterator[
             finally:
                 tg.cancel_scope.cancel()
     finally:
-        await _stop(process)
+        await _stop(process, proc)
         for stream in (read_recv, write_send):
             stream.close()
 
 
-async def _stop(process: Any) -> None:
+async def _stop(process: Any, proc: StdioProcess | None = None) -> None:
     """Close stdin, wait, SIGTERM the process group, wait, SIGKILL; shielded so a cancelled scan still stops it."""
     import anyio
 
@@ -153,8 +188,11 @@ async def _stop(process: Any) -> None:
             # Read the pipes to their end so asyncio closes the subprocess transport now, not at garbage collection.
             for stream in (process.stdout, process.stderr):
                 try:
-                    while await stream.receive():
-                        pass
+                    while chunk := await stream.receive():
+                        if proc is not None and stream is process.stderr:
+                            proc._keep_marked(chunk)
                 except (anyio.EndOfStream, anyio.ClosedResourceError, anyio.BrokenResourceError):
                     pass
             await process.aclose()
+        if proc is not None:
+            proc.flush_marked()

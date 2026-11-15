@@ -609,3 +609,32 @@ def test_readonly_skip_explains_missing_shipped_sandbox():
     [result] = [f for f in fs if f["probe_id"] == READONLY]
     assert result["verdict"] == "skipped"
     assert result["reasoning"] == "not run: no stdio sandbox ships for this check"
+
+
+# --- traversal escape witness -------------------------------------------------------------------------------------
+
+def _trav_findings(hits, **kw):
+    records = full_run("a", 1, path=True)
+    calls = call_run(records, {"a": called(len(records))})
+    return [f for f in build(hits=hits, calls=calls, listed=[tool("a", props=("path",))], **kw)
+            if f["probe_id"] == checks.TRAVERSAL]
+
+
+def test_witness_only_fail_is_one_step_below_the_probe_severity_and_names_its_source():
+    assert PROBES[checks.TRAVERSAL].severity == "high"
+    w = hit(checks.TRAVERSAL, "a", rule="escape_witness:witness_log", seq=4, family="path",
+            excerpt="GET /tmp/argus-trav-abc123-4 404")
+    [f] = _trav_findings([w], witness_sources=["result", "witness_log"])
+    assert (f["verdict"], f["severity"]) == ("fail", "medium")
+    assert f["reasoning"] == "escape_witness:witness_log in a: GET /tmp/argus-trav-abc123-4 404"
+    assert f["evidence"]["witness_source"] == "witness_log"
+    assert f["evidence"]["witness_sources"] == ["result", "witness_log"]
+
+
+def test_file_content_outranks_a_witness_and_keeps_its_severity():
+    w = hit(checks.TRAVERSAL, "a", rule="escape_witness:stderr", seq=4, family="path", excerpt="open /tmp/x")
+    content = hit(checks.TRAVERSAL, "a", rule="etc_passwd", seq=4, family="path", excerpt="root:x:0:0:")
+    [f] = _trav_findings([w, content])
+    assert (f["severity"], f["evidence"]["rule"]) == ("high", "etc_passwd")
+    assert "witness_source" not in f["evidence"]
+    assert f["reasoning"] == "etc_passwd in a: root:x:0:0: (2 matches)"

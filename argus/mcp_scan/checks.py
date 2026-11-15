@@ -8,6 +8,7 @@ from typing import Iterator, Sequence
 
 from argus.mcp_scan import rules
 from argus.mcp_scan.models import CallRecord, Candidate, Hit, ToolInfo
+from argus.mcp_scan.payloads import TRAV_DIR
 from argus.skillscan.decoys import make_decoys
 
 DESCRIPTION = "mcp_scan_description_instructions"
@@ -22,6 +23,11 @@ REFLECTION = "mcp_scan_input_reflection"
 LIST_CHANGED = "mcp_scan_tool_list_changed"
 
 ETC_PASSWD = "root:x:0:0:"
+# A traversal witness: the marker file's path seen resolved outside the root, with no file content needed.
+WITNESS = "escape_witness"
+WITNESS_SOURCES = ("result", "stderr", "witness_log")
+WITNESS_NOTES_MAX = 5
+_SOURCE_NAMES = {"result": "Tool result", "stderr": "Server stderr", "witness_log": "Witness log"}
 _CANARY = re.compile(r"ARGUS-[a-z0-9]{6}-\d+(?!\d)")
 # Sandbox decoys are named by env var or by file kind; only a file decoy's marker proves a file read.
 FILE_DECOY_NAMES = frozenset(d.kind for d in make_decoys(seed="") if d.kind != "env")
@@ -245,3 +251,70 @@ def dynamic_hits(records: list[CallRecord], first_tools: list[ToolInfo], final_t
         note = "notifications/tools/list_changed"
         hits.append(_hit(LIST_CHANGED, None, "list_changed_notification", note, (0, len(note)), decoys))
     return hits, cands
+
+
+
+def _resolved(run_id: str) -> re.Pattern:
+    """This run's marker path with every `../` collapsed: /tmp/<marker> at a word start or a URL's path root.
+
+    Raw (`../../tmp/<marker>`), encoded and still-contained (`/srv/root/tmp/<marker>`) forms do not match."""
+    return re.compile(r"(?:(?<![^\s\"'`=(\[<,;|>])|\b[a-z][a-z0-9+.-]*://[^/\s\"'<>]*)" + re.escape(TRAV_DIR)
+                      + r"(argus-trav-" + re.escape(run_id) + r"-(\d+))(?!\d)", re.I)
+
+
+def _one_line(text: str, start: int, end: int, decoys: Sequence[tuple[str, str]]) -> str:
+    return " ".join(rules.excerpt(text, start, end, decoys).split())
+
+
+def witness_hits(records: list[CallRecord], lines: Sequence[tuple[str, str]], run_id: str, *,
+                 decoys: Sequence[tuple[str, str]] = ()) -> tuple[list[Hit], list[str]]:
+    """Traversal hits from this run's markers seen resolved, in call results and in `lines` of (source, text), plus
+    a note per stderr or log line where a marker arrived only unresolved or still inside the root.
+
+    `lines` must already be masked; a marker maps to its own call by the seq it carries, wherever it shows up."""
+    marked = {r.seq: r for r in records if r.call.family == "path" and r.call.expect}
+    if not marked:
+        return [], []
+    resolved = _resolved(run_id)
+    raw = re.compile(r"argus-trav-" + re.escape(run_id) + r"-(\d+)(?!\d)")
+    sent = sorted({r.call.payload for r in marked.values() if r.call.payload}, key=len, reverse=True)
+    texts: list[tuple[str, str]] = []
+    for rec in records:
+        text = rec.result.text or (rec.result.detail if rec.result.status == "rpc_error" else "")
+        # An echo of what Argus sent never counts: only the server's own resolved path does.
+        for payload in sent:
+            text = rules.strip_payload(text, payload)
+        if raw.search(text):
+            texts.append(("result", text))
+    texts += [(src, line) for src, line in lines if raw.search(line)]
+    hits: list[Hit] = []
+    seen: set[tuple[str, int]] = set()
+    notes: dict[str, list[str]] = {}
+    for source, text in texts:
+        found = False
+        for m in resolved.finditer(text):
+            rec = marked.get(int(m.group(2)))
+            if rec is None or rec.call.expect != m.group(1).lower():
+                continue
+            found = True
+            if (source, rec.seq) not in seen:
+                seen.add((source, rec.seq))
+                hits.append(_hit(TRAVERSAL, rec.call.tool, f"{WITNESS}:{source}", text, m.span(), decoys,
+                                 seq=rec.seq, family="path"))
+        if found or source == "result":
+            continue
+        m = next((m for m in raw.finditer(text) if int(m.group(1)) in marked), None)
+        if m is not None:
+            rec = marked[int(m.group(1))]
+            tool = _one_line(rec.call.tool, 0, len(rec.call.tool), ())
+            notes.setdefault(source, []).append(
+                f"{_SOURCE_NAMES[source]}: the traversal payload of call {rec.seq} ({tool}, {rec.call.param}) "
+                f"arrived unresolved or still inside the root, so it is not counted as an escape: "
+                f"{_one_line(text, m.start(), m.end(), decoys)}")
+    out: list[str] = []
+    for source, found_notes in notes.items():
+        out += found_notes[:WITNESS_NOTES_MAX]
+        if len(found_notes) > WITNESS_NOTES_MAX:
+            out.append(f"{_SOURCE_NAMES[source]}: {len(found_notes) - WITNESS_NOTES_MAX} more line(s) held a "
+                       "traversal payload unresolved.")
+    return hits, out

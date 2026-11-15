@@ -188,25 +188,27 @@ async def test_order_baseline_then_payloads_then_relist_then_replay():
     families = [(r.session, r.call.tool, r.call.family) for r in res.records]
     assert families == [
         ("A", "t1", "baseline"), ("A", "t1", "cmd"), ("A", "t1", "cmd"), ("A", "t1", "path"), ("A", "t1", "path"),
-        ("A", "t1", "relay"),
+        ("A", "t1", "path"), ("A", "t1", "relay"),
         ("A", "t2", "baseline"), ("A", "t2", "cmd"), ("A", "t2", "cmd"), ("A", "t2", "relay"),
         ("B", "t1", "replay"), ("B", "t2", "replay"),
     ]
     # The relist runs on session A after the last call and before session B opens.
     methods = [(label, m) for label, m, _, _ in world.log]
-    assert methods.index(("a", "tools/list")) == 10
-    assert methods[11:] == [("s1", "tools/call"), ("s1", "tools/call")]
+    assert methods.index(("a", "tools/list")) == 11
+    assert methods[12:] == [("s1", "tools/call"), ("s1", "tools/call")]
     assert res.final_tools == world.tools
     # Replays carry the baseline arguments.
     assert res.records[-2].call.arguments == res.records[0].call.arguments == {"path": "argus"}
     assert res.records[-1].call.arguments == {"q": "argus"}
-    # Seqs are unique, and every relay canary names the seq of the record that planted it.
+    # Seqs are unique, and every relay canary and traversal marker names the seq of the record that sent it.
     seqs = [r.seq for r in res.records]
     assert len(set(seqs)) == len(seqs)
     for r in res.records:
         if r.call.family == "relay":
             assert r.call.expect == f"ARGUS-abc123-{r.seq}"
-    assert {n: (o.status, o.calls) for n, o in res.outcomes.items()} == {"t1": ("called", 7), "t2": ("called", 5)}
+    markers = [(r.seq, r.call.expect, r.call.payload) for r in res.records if r.call.family == "path" and r.call.expect]
+    assert markers == [(6, "argus-trav-abc123-6", "../../../../../../tmp/argus-trav-abc123-6")]
+    assert {n: (o.status, o.calls) for n, o in res.outcomes.items()} == {"t1": ("called", 8), "t2": ("called", 5)}
     assert res.list_changed is False
     assert world.opened[0].closed  # session B is closed by the runner
 
@@ -351,7 +353,7 @@ async def test_timeouts_must_be_consecutive():
 
     world = World([tool("flaky", schema=_schema("path"))], behave)
     _, res = await run(world)
-    assert len([r for r in res.records if r.session == "A"]) == 6
+    assert len([r for r in res.records if r.session == "A"]) == 7
     assert res.outcomes["flaky"].status == "called"
 
 
@@ -361,16 +363,16 @@ async def test_call_cap_leaves_room_for_replays():
     _, res = await run(world)
     assert len(res.records) <= CALLS_MAX == 400
     a_counts = {t.name: sum(1 for r in res.records if r.session == "A" and r.call.tool == t.name) for t in tools}
-    assert a_counts["t00"] == 16  # 1 baseline + 3 params x 5 payloads; the replay makes 17
+    assert a_counts["t00"] == 19  # 1 baseline + 3 params x 6 payloads; the replay makes 20
     called = [n for n, o in res.outcomes.items() if o.status == "called"]
     capped = [n for n, o in res.outcomes.items() if o.status == "not_tested_cap"]
-    assert called == [f"t{i:02d}" for i in range(23)]
-    assert capped == [f"t{i:02d}" for i in range(23, 30)]
+    assert called == [f"t{i:02d}" for i in range(20)]
+    assert capped == [f"t{i:02d}" for i in range(20, 30)]
     assert all(res.outcomes[n].detail == policy.REASON_CAP for n in capped)
     assert all(res.outcomes[n].calls == 0 for n in capped)
     replays = [r.call.tool for r in res.records if r.session == "B"]
     assert replays == called
-    assert len(res.records) == 23 * 17
+    assert len(res.records) == 20 * 20
 
 
 async def test_dead_session_reconnects_then_gives_up_after_three():
@@ -492,7 +494,7 @@ async def test_hooks_not_called_for_untested_tools():
     world = World(tools)
     hooks = RecordingHooks(world.log)
     _, res = await run(world, hooks=hooks)
-    assert [t for _, m, t, _ in world.log if m == "after_tool"] == [f"t{i:02d}" for i in range(23)]
+    assert [t for _, m, t, _ in world.log if m == "after_tool"] == [f"t{i:02d}" for i in range(20)]
 
 
 async def test_echo_shows_progress_without_secrets_or_control_bytes():
