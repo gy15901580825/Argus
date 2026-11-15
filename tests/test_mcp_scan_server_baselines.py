@@ -49,3 +49,16 @@ def test_version_check_requires_matching_product_name(monkeypatch, matches):
         assert "server reported a different name" in result["reasoning"]
     else:
         assert "below 2.0.0" in result["reasoning"]
+
+
+@pytest.mark.parametrize("name,description", [
+    ("get_environment_variable", "Look up a setting."),
+    ("lookup", "Returns an environment variable."),
+])
+def test_sensitive_tools_singular_environment_variable_is_detected(name, description):
+    assert check([tool(name, description)])["mcp_server_sensitive_tools"]["verdict"] == "fail"
+
+
+def test_sensitive_tools_terminal_state_and_test_environment_are_benign():
+    listed = tool("status", "Reports the terminal state in a test environment.")
+    assert check([listed])["mcp_server_sensitive_tools"]["verdict"] == "pass"

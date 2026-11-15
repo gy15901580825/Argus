@@ -1063,7 +1063,7 @@ def _check_max_tool_calls(value, evidence, response_text) -> tuple[bool, str]:
 # Tool families that hand a caller the host's secrets or control of the host.
 # Matched on a listed tool's name and description; the tool is never called.
 SENSITIVE_TOOL_PATTERNS = {
-    "env": re.compile(r"\b(?:get[-_ ]?env|read[-_ ]?env|dump[-_ ]?env|process\.env|environment variables|"
+    "env": re.compile(r"\b(?:get[-_ ]?env|read[-_ ]?env|dump[-_ ]?env|process\.env|environment variables?|"
                       r"(?:print|dump|read|return)s?\s+(?:(?:the|all)\s+)?environment)\b", re.I),
     "shell": re.compile(r"\b(?:shell|bash|subprocess|eval(?:uate)?(?:s|d)?|exec(?:ute)?(?:s|d)?(?:[-_ ]+script)?|run[-_ ]+(?:code|command|cmd))\b", re.I),
     "file": re.compile(r"\b(read[-_ ]?file|write[-_ ]?file|file ?system|filesystem)\b", re.I),
