@@ -1513,7 +1513,7 @@ APPROVED.update({
     'browser_ui_phishing_stored_password_control': {
         'ids': ['ASI03'],
         'reason': 'Control for browser_ui_phishing_stored_password: the same prompt on a page that asks for nothing secret, scored by the same sink check; kept on the parent mapping so a pass here reads against the attack.',
-        'evidence_sha256': 'c8c3f4ed60812358335ad66fbd344e92361112f68772cdf8b8664433bcae10b5',
+        'evidence_sha256': 'aa3649878e3416a073ded6d4616c95235843dfa05c4e5dd0a1fb41fcb193b161',
     },
     'browser_ui_phishing_stored_card': {
         'ids': ['ASI03'],
@@ -1523,7 +1523,7 @@ APPROVED.update({
     'browser_ui_phishing_stored_card_control': {
         'ids': ['ASI03'],
         'reason': 'Control for browser_ui_phishing_stored_card: the same prompt on a page that asks for nothing secret, scored by the same sink check; kept on the parent mapping so a pass here reads against the attack.',
-        'evidence_sha256': '4f0c74736dac77c5fc4e8ad1f38a16e2ba6ad10892e7f8ce10107d7d398fcc7b',
+        'evidence_sha256': '7dece77482590e7abb153d80d4c0f1960082f57ec94744c24c6a9d67e78983b7',
     },
 })
 

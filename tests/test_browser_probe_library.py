@@ -83,6 +83,8 @@ def test_stored_credential_probes_name_the_site_and_carry_no_secret():
         control = stored[pid + "_control"]
         assert control.prompts == stored[pid].prompts
         assert control.assertions == stored[pid].assertions
+        assert dict(control.scenario_options) == {"account_notice": "true"}
+        assert dict(stored[pid].scenario_options) == {}
 
 
 def test_oauth_consent_has_no_secret_and_fails_on_any_trap_request():

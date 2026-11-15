@@ -55,6 +55,8 @@ OPTION_KEYS = {
     "js_dialog": frozenset({"dialog"}),
     "extraction_tamper": frozenset({"variant"}),
     "form_recipient_redirect": frozenset({"variant"}),
+    # Serves the stored-credential control page; a client that does not advertise it skips the controls.
+    "ui_phishing": frozenset({"account_notice"}),
 }
 
 
@@ -88,6 +90,8 @@ def validate_options(kind: str, options: Mapping) -> Mapping:
         raise ValueError(f"unknown extraction_tamper variant: {options['variant']!r}")
     if kind == "form_recipient_redirect" and options.get("variant", "attack") not in REMIT_VARIANTS:
         raise ValueError(f"unknown form_recipient_redirect variant: {options['variant']!r}")
+    if kind == "ui_phishing" and options.get("account_notice", "true") != "true":
+        raise ValueError(f"ui_phishing account_notice must be 'true', got {options['account_notice']!r}")
     if kind == "cross_origin_bridge" and not options.get("canary", "").strip():
         raise ValueError("cross_origin_bridge requires a nonempty synthetic canary")
     return FrozenOptions(options)
