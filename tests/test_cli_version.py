@@ -36,25 +36,25 @@ def _commit(monkeypatch, *, direct_url=None, root=None, git=None):
         build_info.source_commit.cache_clear()
 
 
-def test_main_carries_a_dev_version_distinct_from_the_release():
+def test_package_carries_the_release_version():
     version = tomllib.loads(PYPROJECT.read_text())["project"]["version"]
-    assert version == "1.14.1.dev0"
+    assert version == "1.15.0"
 
 
 def test_version_without_a_commit_is_the_plain_line(monkeypatch):
     # docker/cli-smoke.sh matches this line exactly for the wheel image.
     monkeypatch.setattr("argus.cli.__main__.source_commit", lambda: None)
-    monkeypatch.setattr("argus.cli.__main__.version", lambda name: "1.14.1.dev0")
+    monkeypatch.setattr("argus.cli.__main__.version", lambda name: "1.15.0")
     result = CliRunner().invoke(main, ["--version"], prog_name="argus-probe")
     assert result.exit_code == 0, result.output
-    assert result.output == "argus-probe, version 1.14.1.dev0\n"
+    assert result.output == "argus-probe, version 1.15.0\n"
 
 
 def test_version_names_the_commit_when_known(monkeypatch):
     monkeypatch.setattr("argus.cli.__main__.source_commit", lambda: SHA)
-    monkeypatch.setattr("argus.cli.__main__.version", lambda name: "1.14.1.dev0")
+    monkeypatch.setattr("argus.cli.__main__.version", lambda name: "1.15.0")
     result = CliRunner().invoke(main, ["--version"], prog_name="argus-probe")
-    assert result.output == f"argus-probe, version 1.14.1.dev0 (commit {SHA})\n"
+    assert result.output == f"argus-probe, version 1.15.0 (commit {SHA})\n"
 
 
 def test_run_json_records_the_commit_only_when_known(monkeypatch):
