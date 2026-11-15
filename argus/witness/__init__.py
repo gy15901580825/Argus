@@ -200,7 +200,7 @@ class WitnessRun:
                             timeout=ClientTimeout(total=None, sock_connect=10, sock_read=300))
                 else:
                     app.router.add_post(prefix + "v1/traces", self._export)
-                server = web.AppRunner(app, access_log=None, logger=_HTTP_LOGGER)
+                server = web.AppRunner(app, access_log=None, logger=_HTTP_LOGGER, auto_decompress=False)
                 self._servers[channel] = server
                 await server.setup()
                 site = web.TCPSite(server, "127.0.0.1" if self.spec.bind == "localhost" else self.spec.bind, 0)

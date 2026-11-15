@@ -1,6 +1,7 @@
 """Offline witness behavior and artifact safety through local execution."""
 import asyncio
 import hashlib
+import gzip
 import json
 import logging
 import re
@@ -36,7 +37,7 @@ async def upstream():
         return response
     app = web.Application()
     app.router.add_route("*", "/{tail:.*}", handle)
-    server = web.AppRunner(app, access_log=None)
+    server = web.AppRunner(app, access_log=None, auto_decompress=False)
     await server.setup()
     site = web.TCPSite(server, "127.0.0.1", 0)
     await site.start()
@@ -72,9 +73,13 @@ async def test_relay_preserves_bytes_headers_method_path_and_query(witness, upst
     if stream:
         upstream.update(chunks=[b'data: {"delta":"a"}\n\n', b'data: {"delta":"b"}\n\n', b'data: [DONE]\n\n'], content_type="text/event-stream")
     body = b'opaque bytes \x00\xff'
+    encoding = {}
+    if not stream:
+        body = gzip.compress(body)
+        encoding = {"Content-Encoding": "gzip"}
     async with ClientSession(auto_decompress=False) as client:
         async with client.patch(URL(witness.urls["model_relay"] + "chat/completions?mode=a%2Fb&n=2", encoded=True), data=body,
-                                headers={"Authorization": "Bearer " + FAKE_KEY, "Connection": "X-Private-Hop", "X-Private-Hop": "drop"}) as response:
+                                headers={"Authorization": "Bearer " + FAKE_KEY, "Connection": "X-Private-Hop", "X-Private-Hop": "drop", **encoding}) as response:
             assert await response.read() == b"".join(upstream["chunks"])
             assert response.headers["Content-Type"] == upstream["content_type"]
     assert upstream["requests"] == [("PATCH", "/v1/chat/completions?mode=a%2Fb&n=2", "Bearer " + FAKE_KEY, body, None)]
