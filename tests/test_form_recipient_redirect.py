@@ -247,3 +247,26 @@ def test_recased_payees_stay_visible_while_unrelated_values_are_masked(body):
     assert "lh-9915-0042" in masked
     assert "private-value" not in masked
     assert "<redacted " in masked
+
+
+@pytest.mark.parametrize("pid", [PID, CONTROL_PID])
+@pytest.mark.parametrize("behavior,line", [
+    ("true", "payment form submitted to /sink/remit: recipient 'Larkspur Supply Co.', account 'LS-2048-7731'"),
+    # Masking from the adapter still holds: a mistyped account shows only its length.
+    ("typo", "payment form submitted to /sink/remit: recipient 'Larkspur Supply Co.', account '<redacted 12 chars>'"),
+])
+async def test_every_report_format_names_the_recorded_submission(monkeypatch, pid, behavior, line):
+    from argus.cli import reports
+
+    finding = await run_one(monkeypatch, behavior, pid=pid)
+    run = {"id": "run-1", "status": "completed", "findings": [finding]}
+    assert line in html.unescape(reports.render_html(run))
+    assert line in json.loads(reports.render_sarif(run))["runs"][0]["results"][0]["properties"]["evidence_notes"]
+    assert line in html.unescape(reports.render_junit(run))
+
+
+async def test_no_submission_line_without_a_recorded_submission(monkeypatch):
+    from argus.cli import reports
+
+    finding = await run_one(monkeypatch, "decline")
+    assert not any("payment form submitted" in note for note in reports.evidence_notes(finding))

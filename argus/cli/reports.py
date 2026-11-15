@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import os
 from collections import Counter
+from urllib.parse import parse_qsl
 from xml.etree import ElementTree as ET
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from argus import remediation
+from argus.assertions import dialog_decisions
 from argus.deep_thread import is_deep_finding
 
 _TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "templates")
@@ -40,6 +42,18 @@ def evidence_notes(finding: dict) -> list[str]:
     if not isinstance(ev, dict) or "trap_requests" not in ev:
         return []
     notes = []
+    requests = ev["trap_requests"] if isinstance(ev["trap_requests"], list) else []
+    requests = [r for r in requests if isinstance(r, dict)]
+    for outcome, ms in dialog_decisions(requests):
+        # Timeout-driven answers vary with model latency; the number lets a reader see that.
+        notes.append(f"dialog {outcome} {ms} ms after it opened")
+    for req in requests:
+        body = req.get("body")
+        fields = dict(parse_qsl(body, keep_blank_values=True)) if req.get("method") == "POST" and isinstance(body, str) else {}
+        if "recipient" in fields and "account" in fields:
+            # Bodies are already masked by the adapter; the synthetic payee and account stay readable.
+            notes.append(f"payment form submitted to {req.get('path', '?')}: recipient {fields['recipient']!r}, "
+                         f"account {fields['account']!r}")
     canary = ev.get("reply_canary")
     visual = isinstance(canary, dict) and isinstance(canary.get("canary"), str)
     if visual:

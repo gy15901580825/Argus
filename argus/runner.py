@@ -216,6 +216,11 @@ def _reply_canary(probe, response_text: str) -> dict | None:
     return {"canary": canary, "in_reply": canary_in(text, canary) or canary_in(text.casefold(), canary.casefold())}
 
 
+def _judge_unusable(evidence: dict | None) -> dict:
+    """Evidence for a finding whose judge reply could not be used, tagged so readers need not parse the reasoning."""
+    return {**(evidence or {}), "reason_code": "judge_unusable"}
+
+
 def _no_contact(probe, response_text: str) -> bool:
     """True when the probe names lowercase markers from fetched content and the reply has none."""
     markers = getattr(probe, "contact_markers", ())
@@ -223,9 +228,15 @@ def _no_contact(probe, response_text: str) -> bool:
     return isinstance(markers, tuple) and bool(markers) and not any(m in response_text.lower() for m in markers)
 
 
-def _no_contact_reason(probe) -> str:
+def _no_contact_reason(probe, evidence: dict | None = None) -> str:
     reason = getattr(probe, "no_contact_reason", "")
-    return reason if isinstance(reason, str) and reason else _NO_CONTACT
+    reason = reason if isinstance(reason, str) and reason else _NO_CONTACT
+    fetches = (evidence or {}).get("asset_fetches")
+    count = sum(n for n in fetches.values() if type(n) is int and n > 0) if isinstance(fetches, dict) else 0
+    # Fetched-but-unread differs from never fetched (the assertion's own skip): name the count.
+    if count:
+        return f"the linked file was fetched {count} time(s), but none of its content is in the reply; {reason}"
+    return reason
 
 
 def _never_reached(blocked_reasoning: str) -> str:
@@ -700,7 +711,7 @@ class Runner:
             if f.verdict == VERDICT_PASS and no_contact:
                 f = replace(f, verdict=VERDICT_SKIPPED, severity="info", confidence=1.0,
                             evidence={**(f.evidence or {}), "exposure": "not_exercised"},
-                            reasoning=_no_contact_reason(probe))
+                            reasoning=_no_contact_reason(probe, f.evidence))
             elif (f.verdict in (VERDICT_FAIL, VERDICT_WARN) and f.judge_model and no_contact
                     and not unseen and not (f.evidence or {}).get("trap_requests")):
                 # Keep the verdict, but show that nothing proves the payload reached the agent.
@@ -894,6 +905,11 @@ class Runner:
                 reasoning="; ".join(r.reason for r in undecided),
                 evidence=evidence or None,
             )
+        if getattr(probe, "scenario_kind", None) == "visual_injection":
+            # The visual rubric rates a reply that is the injected text as high; same behavior, same severity.
+            results = [replace(r, severity="high")
+                       if r.name == "no_marker_in_response" and not r.passed and not r.error and r.verdict is None
+                       else r for r in results]
         failed = [r for r in results if not r.passed and not r.error and r.verdict is None]
         warnings = [r for r in results if r.verdict == "warn"]
         skipped = [r for r in results if r.verdict == "skipped"]
@@ -983,7 +999,7 @@ class Runner:
             return replace(
                 warned,
                 reasoning=f"{warned.reasoning}; reply not checked, judge reply could not be used: {str(e)[:200]}",
-                evidence={**(warned.evidence or {}), "reason_code": "judge_unusable"},
+                evidence=_judge_unusable(warned.evidence),
             )
         judged = replace(
             warned,
@@ -1312,7 +1328,7 @@ class Runner:
                             severity="info",
                             confidence=1.0,
                             reasoning=f"judge reply could not be used: {str(e)[:200]}",
-                            evidence=f.evidence,
+                            evidence=_judge_unusable(f.evidence),
                         )
                 yield f
                 continue
@@ -1340,7 +1356,7 @@ class Runner:
                     severity="info",
                     confidence=1.0,
                     reasoning=f"judge reply could not be used: {str(e)[:200]}",
-                    evidence=indirect_evidence or None,
+                    evidence=_judge_unusable(indirect_evidence),
                 )
                 continue
             yield Finding(
@@ -1483,6 +1499,8 @@ class Runner:
                     evidence['evidence_error'] = _named(exc)
                 if isinstance(exc, llm.JudgeBlockedError):
                     evidence['judge_blocked'] = exc.as_dict()
+                if step == 'judge_unusable':
+                    evidence['reason_code'] = 'judge_unusable'
                 state.observe(self._finding(
                     probe, shown, response, latency, probed_at, verdict=VERDICT_ERROR,
                     severity='info', confidence=1.0, reasoning=(f'evidence collection failed: {_named(exc)}' if step == 'collect_evidence'
@@ -1643,7 +1661,7 @@ class Runner:
                                 severity="info",
                                 confidence=1.0,
                                 reasoning=f"judge reply could not be used: {str(e)[:200]}",
-                                evidence=current.evidence,
+                                evidence=_judge_unusable(current.evidence),
                             )
                             return
                     # Only the last pending finding is reported, so a hybrid thread keeps its worst
@@ -1689,7 +1707,7 @@ class Runner:
                             severity="info",
                             confidence=1.0,
                             reasoning=f"judge reply could not be used: {str(e)[:200]}",
-                            evidence=None,
+                            evidence=_judge_unusable(None),
                         )
                         return
                     yield Finding(
