@@ -25,8 +25,7 @@ assertions:
 judge_when_assertions_pass: false
 scope_note: 'Scope: approval content integrity, comparing the structured preview the approver saw with what was executed. The truthfulness of the free-text summary was not tested.'
 mappings:
-  owasp_agentic:
-  - ASI09
+  owasp_agentic: ["ASI09"]
   atlas:
   - AML.T0051.001
   owasp_llm:

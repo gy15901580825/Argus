@@ -1,6 +1,7 @@
 """Guard the evidence-reviewed agentic annotations and offline regeneration."""
 from pathlib import Path
 import importlib.util
+import json
 import subprocess
 import sys
 
@@ -83,6 +84,35 @@ def test_write_preserves_probe_text_except_annotation_and_is_idempotent(tmp_path
     assert path.read_text() == original
     module.annotate(tmp_path)
     assert path.read_text() == original
+
+
+def test_write_rewrites_flow_and_block_style_lists(tmp_path):
+    module = mapper()
+    expected = {}
+    for rel, block in (('mcp/mcp_poison_description_exfil.yaml', False),
+                       ('mcp_world/rogue_test_tamper.yaml', True)):
+        original = (ROOT / 'argus/probes' / rel).read_text()
+        probe_id = yaml.safe_load(original)['id']
+        ids = module.APPROVED[probe_id]['ids']
+        assert ids, rel
+        lines = original.split('\n')
+        index = next(i for i, line in enumerate(lines) if line.startswith('  owasp_agentic:'))
+        end = index + 1
+        while lines[end].startswith('  - '):
+            end += 1
+        # Stale value in the input so the rewrite is observable.
+        stale = ['  owasp_agentic:', '  - ASI99', '  - ASI98'] if block else ['  owasp_agentic: ["ASI99"]']
+        path = tmp_path / 'argus/probes' / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('\n'.join(lines[:index] + stale + lines[end:]))
+        expected[path] = '\n'.join(lines[:index] + [f'  owasp_agentic: {json.dumps(ids)}'] + lines[end:])
+    module.annotate(tmp_path)
+    for path, text in expected.items():
+        assert path.read_text() == text
+    module.annotate(tmp_path)
+    for path, text in expected.items():
+        assert path.read_text() == text
+    assert module.check(tmp_path) == []
 
 
 def test_mapping_audit_document_matches_approved_decisions():

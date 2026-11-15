@@ -1549,7 +1549,8 @@ def annotate(root: Path = ROOT) -> None:
         value = json.dumps(APPROVED[data['id']]['ids'])
         line = f'  owasp_agentic: {value}'
         if 'owasp_agentic' in data.get('mappings', {}):
-            content = re.sub(r'^  owasp_agentic:.*$', line, content, flags=re.MULTILINE)
+            # Consume block-style items too, or they are left behind and break the YAML.
+            content = re.sub(r'^  owasp_agentic:.*(?:\n  +- .*)*$', line, content, count=1, flags=re.MULTILINE)
         else:
             content = content.replace('mappings:\n', 'mappings:\n' + line + '\n', 1)
         if yaml.safe_load(content).get('mappings', {}).get('owasp_agentic') != APPROVED[data['id']]['ids']:
