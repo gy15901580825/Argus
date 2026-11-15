@@ -72,7 +72,7 @@ Each finding carries one of:
 | `mcp_scan_schema_instructions` | A schema default, enum, example or property description holds instruction text |
 | `mcp_scan_hidden_characters` | Tool text or a result hides zero-width, bidirectional or control characters |
 | `mcp_scan_command_execution` | A tool runs a shell command built from its input; a computed arithmetic marker comes back |
-| `mcp_scan_path_traversal` | A tool reads `/etc/passwd` or a sandbox decoy file when given a traversal path |
+| `mcp_scan_path_traversal` | A tool reads `/etc/passwd` or a sandbox decoy file when given a traversal path, or a traversal resolves outside its root in a result, stderr or `--witness-log` file (one severity lower) |
 | `mcp_scan_secret_in_result` | A result carries a decoy marker or a secret-shaped value |
 | `mcp_scan_result_injection` | A result holds instruction text aimed at the model |
 | `mcp_scan_cross_session_leak` | A canary sent in one session shows up in another session's result |

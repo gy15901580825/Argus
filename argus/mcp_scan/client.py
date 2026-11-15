@@ -191,6 +191,11 @@ class McpSession:
     def stderr_tail(self) -> str:
         return self._proc.stderr_tail if self._proc is not None else ""
 
+    @property
+    def stderr_marked(self) -> list[str]:
+        """The server's stderr lines that hold a traversal marker; complete once the session has closed."""
+        return list(self._proc.marked_lines) if self._proc is not None else []
+
     # --- lifecycle -----------------------------------------------------------------------------------------------
 
     async def _own(self) -> None:

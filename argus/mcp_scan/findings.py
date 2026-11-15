@@ -11,7 +11,7 @@ from argus import remediation
 from argus.mcp_scan import rules
 from argus.mcp_scan.calls import CallRun, ToolOutcome, good_result, show_text
 from argus.mcp_scan.checks import (COMMAND, CROSS_SESSION, DESCRIPTION, HIDDEN, INJECTION, LIST_CHANGED, REFLECTION,
-                                   SCHEMA, SECRET, TRAVERSAL)
+                                   SCHEMA, SECRET, TRAVERSAL, WITNESS)
 from argus.mcp_scan.judging import BLOCKED_REASON, CAP_REASON, ERROR_REASON, OFF_REASON, UNSURE_REASON, JudgeOutcome
 from argus.mcp_scan.models import RESULT_KEEP, CallRecord, Hit, ToolInfo
 from argus.mcp_scan.payloads import PATH_LIKE
@@ -38,6 +38,8 @@ _STATIC = frozenset({DESCRIPTION, SCHEMA})
 _PAYLOAD_FAMILIES = frozenset({"cmd", "path", "relay"})
 # A text the judge did not decide is never a pass; only cap and error make the run inconclusive.
 _UNJUDGED = frozenset({"cap", "error", "off"})
+# A traversal seen only as a resolved path, with no file content, ranks one step below a file read.
+_ONE_BELOW = {"critical": "high", "high": "medium", "medium": "low", "low": "info", "info": "info"}
 
 
 def finding(probe: Probe, *, verdict: str, severity: str, reasoning: str, evidence: dict, attack_prompt: str = "",
@@ -86,7 +88,7 @@ class _Ctx:
 def build_findings(*, probes: Mapping[str, Probe], hits: list[Hit], outcomes: list[JudgeOutcome],
                    calls: CallRun | None, listed: list[ToolInfo], transport: str, sandbox: bool,
                    decoys: Sequence[tuple[str, str]] = (), mask: rules.Mask = rules.same, truncated: bool = False,
-                   tools_listed: int | None = None) -> list[dict]:
+                   tools_listed: int | None = None, witness_sources: Sequence[str] | None = None) -> list[dict]:
     """One `fail` per (probe, tool), one `error` per unjudged (probe, tool), then per probe one `pass` for the clean
     tools, one `error` for the tools it could not exercise, or one `skipped` when it never ran."""
     tools: dict[str, ToolInfo] = {}
@@ -109,6 +111,10 @@ def build_findings(*, probes: Mapping[str, Probe], hits: list[Hit], outcomes: li
             if pid in _STATIC or pid == HIDDEN:
                 for f in found:
                     f["evidence"].update(listing)
+            # So "no hit" is not read as "checked the log": the sources this scan could read.
+            if pid == TRAVERSAL and witness_sources is not None:
+                for f in found:
+                    f["evidence"]["witness_sources"] = list(witness_sources)
             out += found
     return out
 
@@ -259,8 +265,10 @@ def _call_text(ctx: _Ctx, rec: CallRecord) -> tuple[str, str]:
 def _fail(ctx: _Ctx, probe: Probe, name: str | None) -> dict:
     pid = probe.id
     shown_name = show_text(name) if name is not None else None
-    # Provider-shaped secrets (confidence 1.0) rank ahead of generic secret-named assignments.
-    hits = sorted(ctx.hits.get((pid, name), []), key=lambda h: -h.confidence)
+    # Provider-shaped secrets (confidence 1.0) rank ahead of generic secret-named assignments, file content ahead
+    # of an escape witness.
+    hits = sorted(ctx.hits.get((pid, name), []), key=lambda h: (-h.confidence, h.rule.startswith(WITNESS)))
+    severity = probe.severity
     if hits:
         top = hits[0]
         seq, family, excerpt = top.call_seq, top.family, rules.redact(top.excerpt, ctx.decoys)
@@ -275,6 +283,9 @@ def _fail(ctx: _Ctx, probe: Probe, name: str | None) -> dict:
                           excerpt=excerpt)
         if ctx.sandbox:
             ev["decoy"] = top.decoy
+        if top.rule.startswith(WITNESS):
+            ev["witness_source"] = top.rule.partition(":")[2]
+            severity = _ONE_BELOW.get(probe.severity, probe.severity)
         judge = (top.confidence, "", None)
     else:
         fails = [o for o in ctx.judged[(pid, name)] if o.status == "judged" and o.verdict == VERDICT_FAIL]
@@ -304,7 +315,7 @@ def _fail(ctx: _Ctx, probe: Probe, name: str | None) -> dict:
             else f"tools/call {shown_name}"
         response, latency = excerpt, 0.0
     ev.update(items=items, tools=[shown_name] if shown_name is not None else [])
-    return finding(probe, verdict=VERDICT_FAIL, severity=probe.severity, reasoning=reasoning, evidence=ev,
+    return finding(probe, verdict=VERDICT_FAIL, severity=severity, reasoning=reasoning, evidence=ev,
                     attack_prompt=prompt, target_response=response, latency_ms=latency, confidence=judge[0],
                     judge_model=judge[1], escalated_model=judge[2])
 

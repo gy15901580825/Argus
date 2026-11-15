@@ -2,6 +2,7 @@ import itertools
 import random
 import re
 import time
+from pathlib import Path
 
 from argus.mcp_scan.payloads import (
     PARAMS_MAX,
@@ -194,15 +195,16 @@ def test_non_string_params_are_not_eligible():
     assert baseline(s).string_params == ("s",)
 
 
-def test_max_calls_per_tool_is_17():
+def test_max_calls_per_tool_is_20():
     s = obj({"file_path": {"type": "string"}, "dir": {"type": "string"}, "url": {"type": "string"}})
     b = baseline(s)
     calls = payload_calls("t", b, "abc123", seqs())
-    assert len(calls) == 3 * 5
+    assert len(calls) == 3 * 6
     extra = payload_calls("t", baseline(obj({"path": {"type": "string"}})), "abc123", seqs(),
                           extra_paths=("/home/app/.aws/credentials",))
     paths = [c.payload for c in extra if c.family == "path"]
-    assert paths == ["../../../../../../etc/passwd", "/etc/passwd", "/home/app/.aws/credentials"]
+    assert paths == ["../../../../../../etc/passwd", "/etc/passwd", "/home/app/.aws/credentials",
+                     "../../../../../../tmp/argus-trav-abc123-1"]
 
 
 def test_non_path_param_gets_no_path_payloads():
@@ -214,7 +216,7 @@ def test_payload_order_and_other_params_keep_baseline():
     s = obj({"path": {"type": "string"}, "q": {"type": "string", "default": "hello"}})
     calls = payload_calls("t", baseline(s), "abc123", seqs(), rng=random.Random(1))
     assert [(c.param, c.family) for c in calls] == (
-        [("path", f) for f in ("cmd", "cmd", "path", "path", "relay")]
+        [("path", f) for f in ("cmd", "cmd", "path", "path", "path", "relay")]
         + [("q", f) for f in ("cmd", "cmd", "relay")])
     for c in calls:
         assert c.tool == "t"
@@ -335,3 +337,28 @@ def test_nullable_outer_default_survives_reference_branch():
     schema = obj({"mode": {"anyOf": [{"$ref": "#/$defs/Mode"}, {"type": "null"}], "default": "alternate"}})
     schema["$defs"] = {"Mode": {"type": "string", "enum": ["standard", "alternate"]}}
     assert baseline(schema).args == {"mode": "alternate"}
+
+
+def test_each_path_param_gets_one_traversal_marker_unique_per_call():
+    s = obj({"file_path": {"type": "string"}, "dir": {"type": "string"}, "q": {"type": "string"}})
+    calls = payload_calls("t", baseline(s), "abc123", seqs())
+    marked = [c for c in calls if c.family == "path" and c.expect]
+    # One per path-like parameter, none for q; the marker is the payload's file name and unique per call.
+    assert [c.param for c in marked] == ["file_path", "dir"]
+    assert len({c.expect for c in marked}) == 2
+    for c in marked:
+        assert re.fullmatch(r"argus-trav-abc123-\d+", c.expect)
+        assert c.payload == "../../../../../../tmp/" + c.expect
+    # Markers and relay canaries draw from one counter, so no two calls share a seq.
+    numbers = [int(c.expect.rsplit("-", 1)[1]) for c in calls if c.family in ("path", "relay") and c.expect]
+    assert len(set(numbers)) == len(numbers)
+
+
+def test_traversal_marker_names_no_real_file():
+    from argus.mcp_scan.payloads import new_run_id, trav_marker
+
+    # The run id is random, so two runs never send the same name for the same call.
+    a, b = trav_marker(new_run_id(), 4), trav_marker(new_run_id(), 4)
+    assert a != b
+    assert re.fullmatch(r"argus-trav-[a-z0-9]{6}-4", a)
+    assert not Path("/tmp", a).exists()

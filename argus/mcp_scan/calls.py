@@ -52,6 +52,8 @@ class CallRun:
     hook_hits: list[Hit]
     notes: list[str]
     out_of_time: bool = False
+    # Every session the calls used; their stderr is read for traversal witnesses once all have closed.
+    sessions: list[McpSession] = dataclasses.field(default_factory=list)
 
 
 def show_text(text: str) -> str:
@@ -84,9 +86,11 @@ def _plan(tool: ToolInfo, base: Baseline, run_id: str, start: int,
     # A payload could make a destructive tool delete or change more than the baseline would, even when opted in.
     if tool.destructive:
         return [first]
-    # A dry run finds where the relay calls sit, so canary seq equals record seq without assuming the layout.
+    # A dry run finds where the relay and traversal-marker calls sit, so each marker's seq equals its record seq
+    # without assuming the layout.
     shape = payload_calls(tool.name, base, run_id, lambda: 0, extra_paths=extra_paths)
-    slots = iter([start + 1 + i for i, c in enumerate(shape) if c.family == "relay"])
+    slots = iter([start + 1 + i for i, c in enumerate(shape)
+                  if c.family == "relay" or (c.family == "path" and c.expect)])
     return [first, *payload_calls(tool.name, base, run_id, lambda: next(slots), extra_paths=extra_paths)]
 
 
@@ -257,7 +261,8 @@ async def run_calls(session_a: McpSession, open_session: Callable[[], AbstractAs
 
     outcomes = _outcomes(tools, records, bases, skipped, stopped)
     return CallRun(records=records, final_tools=final_tools, list_changed=any(s.list_changed for s in run.sessions),
-                   outcomes=outcomes, hook_hits=hook_hits, notes=run.notes, out_of_time=out_of_time)
+                   outcomes=outcomes, hook_hits=hook_hits, notes=run.notes, out_of_time=out_of_time,
+                   sessions=run.sessions)
 
 
 def _note_skipped(skipped: dict[str, ToolOutcome], notes: list[str]) -> None:

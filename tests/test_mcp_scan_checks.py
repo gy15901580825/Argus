@@ -407,3 +407,87 @@ def test_secret_echo_exclusion_is_limited_to_this_call():
     leaked = _rec(text=GHP, seq=2)
     hits = _by_probe(dynamic_hits([sent, leaked], TOOLS, TOOLS, False)[0], "mcp_scan_secret_in_result")
     assert [h.call_seq for h in hits] == [2]
+
+
+# --- traversal escape witness ------------------------------------------------------------------
+
+import pytest  # noqa: E402
+
+from argus.mcp_scan.checks import witness_hits  # noqa: E402
+
+MARK = "argus-trav-abc123-5"
+TRAV = "../../../../../../tmp/" + MARK
+
+
+def _trav(text="Not found.", *, status="ok", detail="", seq=5, tool="read_doc"):
+    call = PlannedCall(tool=tool, family="path", param="path", arguments={"path": TRAV}, payload=TRAV,
+                       expect=f"argus-trav-abc123-{seq}")
+    return CallRecord(seq=seq, session="A", call=call,
+                      result=CallResult(status=status, is_error=False, text=text, detail=detail, latency_ms=1.0))
+
+
+@pytest.mark.parametrize("line", [
+    f"GET /tmp/{MARK} 404",
+    f"open '/tmp/{MARK}': no such file",
+    f"path=/tmp/{MARK}",
+    f"raw {TRAV} then resolved /tmp/{MARK}",
+    f"proxy -> http://upstream:8080/tmp/{MARK} 404",
+])
+def test_resolved_marker_in_a_log_line_is_a_witness(line):
+    hits, notes = witness_hits([_trav()], [("witness_log", line)], "abc123")
+    [h] = hits
+    assert (h.probe_id, h.tool, h.rule, h.call_seq, h.family) == (
+        "mcp_scan_path_traversal", "read_doc", "escape_witness:witness_log", 5, "path")
+    assert f"/tmp/{MARK}" in h.excerpt
+    assert notes == []
+
+
+@pytest.mark.parametrize("line", [
+    f"GET /api/files/{TRAV} 404",
+    f"open /srv/root/tmp/{MARK}",
+    f"open /srv/root/../../tmp/{MARK}",
+    f"GET /files/..%2F..%2Ftmp%2F{MARK}",
+    'GET {"path": "..\\/..\\/tmp\\/' + MARK + '"}',
+])
+def test_unresolved_or_contained_marker_is_only_a_note(line):
+    hits, notes = witness_hits([_trav()], [("stderr", line)], "abc123")
+    assert hits == []
+    [note] = notes
+    assert note.startswith("Server stderr: the traversal payload of call 5 (read_doc, path) arrived unresolved")
+    assert MARK in note
+
+
+def test_resolved_marker_in_the_result_is_a_witness_but_a_raw_echo_is_not():
+    echo = _trav(f"No such document: {TRAV}")
+    assert witness_hits([echo], [], "abc123") == ([], [])
+    resolved = _trav(f"No such document: /tmp/{MARK}")
+    [h] = witness_hits([resolved], [], "abc123")[0]
+    assert h.rule == "escape_witness:result" and h.call_seq == 5
+    # A JSON-RPC error carries its text in detail, not in the result text.
+    err = _trav("", status="rpc_error", detail=f"JSON-RPC error -32000: ENOENT /tmp/{MARK}")
+    [h] = witness_hits([err], [], "abc123")[0]
+    assert h.rule == "escape_witness:result"
+
+
+def test_witness_maps_to_the_call_its_marker_names_and_ignores_other_runs():
+    a, b = _trav(seq=5, tool="read_doc"), _trav(seq=12, tool="open_file")
+    hits, _ = witness_hits([a, b], [("stderr", "open /tmp/argus-trav-abc123-12"),
+                                    ("stderr", "open /tmp/argus-trav-zzz999-5"),
+                                    ("stderr", "open /tmp/argus-trav-abc123-1")], "abc123")
+    assert [(h.tool, h.call_seq) for h in hits] == [("open_file", 12)]
+
+
+def test_witness_excerpt_is_redacted():
+    hits, _ = witness_hits([_trav()], [("witness_log", f"GET /tmp/{MARK} 404 token={GHP}")], "abc123")
+    assert GHP not in hits[0].excerpt and "[REDACTED:" in hits[0].excerpt
+
+
+def test_unresolved_notes_are_capped_per_source():
+    recs = [_trav(seq=n) for n in range(1, 10)]
+    lines = [("stderr", f"GET ../../tmp/argus-trav-abc123-{n}") for n in range(1, 10)]
+    _, notes = witness_hits(recs, lines, "abc123")
+    assert len(notes) == 6 and notes[-1] == "Server stderr: 4 more line(s) held a traversal payload unresolved."
+
+
+def test_no_marker_call_means_no_witness_work():
+    assert witness_hits([_rec(text=f"/tmp/{MARK}")], [("stderr", f"/tmp/{MARK}")], "abc123") == ([], [])

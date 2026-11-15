@@ -476,3 +476,36 @@ def test_cut_keeps_text_under_the_limit():
     assert keep_text("short") == "short"
     whole = "a" * (TEXT_KEEP - 1) + " "
     assert keep_text(whole + "b") == whole
+
+
+def test_stderr_marker_lines_are_kept_after_the_tail_moves_on():
+    from argus.mcp_scan.stdio import StdioProcess
+
+    proc = StdioProcess(None)
+    # The marker is split across chunks, and far more stderr follows it than the tail keeps.
+    proc._keep_stderr(b"noise\nopen /tmp/argus-tr")
+    proc._keep_stderr(b"av-abc123-6\n" + b"z" * (STDERR_KEEP * 3) + b"\n")
+    assert "argus-trav" not in proc.stderr_tail
+    # A last line with no line end is kept once the stream is flushed.
+    proc._keep_stderr(b"last open /tmp/argus-trav-abc123-9")
+    proc.flush_marked()
+    assert proc.marked_lines == ["open /tmp/argus-trav-abc123-6", "last open /tmp/argus-trav-abc123-9"]
+
+
+def test_stderr_marker_capture_is_bounded():
+    from argus.mcp_scan.stdio import MARKED_LINE_KEEP, MARKED_LINES_MAX, StdioProcess
+
+    proc = StdioProcess(None)
+    proc._keep_stderr(b"".join(b"argus-trav-abc123-%d\n" % i for i in range(MARKED_LINES_MAX + 50)))
+    assert len(proc.marked_lines) == MARKED_LINES_MAX
+    long_line = StdioProcess(None)
+    long_line._keep_stderr(b"word " * MARKED_LINE_KEEP + b"/tmp/argus-trav-abc123-1 " + b"tail " * MARKED_LINE_KEEP
+                           + b"\n")
+    [kept] = long_line.marked_lines
+    assert len(kept) <= MARKED_LINE_KEEP and "/tmp/argus-trav-abc123-1" in kept
+    # Whole words only at both cut edges.
+    assert kept.startswith("word ") and kept.endswith("tail")
+    # A line that never ends keeps only its last MARKED_LINE_KEEP bytes while it is open.
+    open_line = StdioProcess(None)
+    open_line._keep_stderr(b"x" * (MARKED_LINE_KEEP * 4))
+    assert len(open_line._partial) == MARKED_LINE_KEEP
