@@ -149,19 +149,23 @@ def resolve_secret(ref: SecretRef, policy: ExecutionPolicy):
     return value
 
 
-_LOG_REDACTOR = contextvars.ContextVar("transport_log_redactor", default=None)
+_LOG_REDACTORS = contextvars.ContextVar("transport_log_redactors", default=())
 
 
 class _TransportLogFilter(logging.Filter):
     def filter(self, record):
-        redactor = _LOG_REDACTOR.get()
-        if redactor is not None:
-            record.msg = redactor.clean(record.getMessage())
+        redactors = _LOG_REDACTORS.get()
+        if redactors:
+            message = record.getMessage()
+            for redactor in reversed(redactors):
+                message = redactor.clean(message)
+            record.msg = message
             record.args = ()
         return True
 
 
 for _logger_name in (
+    "aiohttp.access",
     "httpx",
     "httpcore.connection",
     "httpcore.http11",
@@ -174,8 +178,8 @@ for _logger_name in (
 
 @contextmanager
 def redacted_transport_logs(redactor):
-    token = _LOG_REDACTOR.set(redactor)
+    token = _LOG_REDACTORS.set((*_LOG_REDACTORS.get(), redactor))
     try:
         yield
     finally:
-        _LOG_REDACTOR.reset(token)
+        _LOG_REDACTORS.reset(token)
