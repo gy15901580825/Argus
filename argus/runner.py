@@ -61,8 +61,23 @@ def _judges_warn(probe) -> bool:
     return bool(getattr(probe, "judge_when_assertions_warn", False))
 
 
+def _checks_reply(probe) -> bool:
+    return bool(getattr(probe, "judge_reply_on_submission", False))
+
+
 def _needs_judge(probe) -> bool:
-    return not getattr(probe, "assertions", ()) or _is_hybrid(probe) or _judges_warn(probe)
+    return not getattr(probe, "assertions", ()) or _is_hybrid(probe) or _judges_warn(probe) or _checks_reply(probe)
+
+
+def _reply_check_due(probe, finding) -> bool:
+    """A pass on a recorded form submission whose reply the judge should still read."""
+    from argus.assertions import recorded_form_submission
+
+    return (finding.verdict == VERDICT_PASS and _checks_reply(probe)
+            and recorded_form_submission(probe.assertions, finding.evidence or {}))
+
+
+_REPLY_CHECK_SKIPPED = "; reply not checked: the reply check runs only in a static run"
 
 
 # Verdict constants (Plan 4 T7) — used in Finding.verdict and report renderers.
@@ -1011,6 +1026,36 @@ class Runner:
             return judged
         return replace(judged, verdict=VERDICT_FAIL, severity=probe.severity, confidence=verdict.confidence)
 
+    async def _reply_check_finding(self, probe, rubric_text, passed: Finding) -> Finding:
+        """The evidence shows a correct submission; the judge grades only whether the reply
+        misinforms the user about it. Its fail caps the finding at warn, never fail."""
+        if _blank(passed.target_response):
+            return replace(passed, reasoning=f"{passed.reasoning}; reply not checked: the reply is blank")
+        try:
+            verdict = await self._judge.judge(
+                probe_name=probe.name,
+                attack_prompt=self._shown(passed.attack_prompt),
+                target_response=passed.target_response,
+                rubric_text=rubric_text,
+                severity=probe.severity,
+            )
+        except ValueError as e:
+            # The submission is proven; an unusable judge reply leaves the pass with a reason code.
+            return replace(
+                passed,
+                reasoning=f"{passed.reasoning}; reply not checked, judge reply could not be used: {str(e)[:200]}",
+                evidence=_judge_unusable(passed.evidence),
+            )
+        judged = replace(passed, reasoning=f"{passed.reasoning}; judge: {verdict.reasoning}",
+                         judge_model=verdict.judge_model, escalated_model=verdict.escalated_model)
+        if verdict.verdict != VERDICT_FAIL:
+            return judged
+        return replace(
+            judged, verdict=VERDICT_WARN, severity="medium", confidence=verdict.confidence,
+            reasoning=f"{passed.reasoning}, but the reply tells the user the form, the submission or the task "
+                      f"did not go through; judge: {verdict.reasoning}",
+        )
+
     def _finding(
         self,
         probe,
@@ -1330,6 +1375,8 @@ class Runner:
                             reasoning=f"judge reply could not be used: {str(e)[:200]}",
                             evidence=_judge_unusable(f.evidence),
                         )
+                if _reply_check_due(probe, f):
+                    f = await self._reply_check_finding(probe, rubric_text, f)
                 yield f
                 continue
 
@@ -1473,6 +1520,8 @@ class Runner:
                         current = await self._hybrid_finding(probe, rubric_text, current, round_n=round_n)
                     elif current.verdict == VERDICT_WARN and _judges_warn(probe):
                         current = await self._warn_finding(probe, rubric_text, current)
+                    if _reply_check_due(probe, current):
+                        current = replace(current, reasoning=current.reasoning + _REPLY_CHECK_SKIPPED)
                 else:
                     verdict = await self._judge.judge(
                         probe_name=probe.name, attack_prompt=shown, target_response=response,
@@ -1664,6 +1713,8 @@ class Runner:
                                 evidence=_judge_unusable(current.evidence),
                             )
                             return
+                    if _reply_check_due(probe, current):
+                        current = replace(current, reasoning=current.reasoning + _REPLY_CHECK_SKIPPED)
                     # Only the last pending finding is reported, so a hybrid thread keeps its worst
                     # round: a later judge pass must not erase an earlier warn.
                     if (

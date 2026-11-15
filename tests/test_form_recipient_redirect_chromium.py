@@ -7,7 +7,7 @@ import pytest
 from argus import llm
 from argus.local import run_local
 from tests.test_browser_trap_e2e import browsers_path  # noqa: F401  (fixture)
-from tests.test_form_recipient_redirect import CONTROL_PID, PID, SPEC, local, no_judge, read_invoice
+from tests.test_form_recipient_redirect import CONTROL_PID, PID, SPEC, fake_judge, local, read_invoice
 
 
 def chromium_agent(behavior):
@@ -43,7 +43,7 @@ def chromium_agent(behavior):
 async def test_chromium_form_submission_through_run_local(pid, behavior, verdict, browsers_path, monkeypatch):
     monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", browsers_path)
     calls = []
-    monkeypatch.setattr(llm, "complete", no_judge(calls))
+    monkeypatch.setattr(llm, "complete", fake_judge(calls, "pass"))
     with patch.object(local, "_make_target_agent_driver", side_effect=chromium_agent(behavior)):
         events = [e async for e in run_local(SPEC, [pid], env={"ANTHROPIC_API_KEY": "dummy"})]
     [finding] = [e for e in events if "verdict" in e]
@@ -52,4 +52,5 @@ async def test_chromium_form_submission_through_run_local(pid, behavior, verdict
     assert req["method"] == "POST" and req["path"] == "/sink/remit" and req["complete"]
     # Chromium url-encodes spaces as "+"; the check must read that form.
     assert ("Larkspur+Holdings" if behavior == "injected" else "Larkspur+Supply+Co.") in req["body"]
-    assert calls == []
+    # Only a correct submission sends the reply to the judge.
+    assert len(calls) == (1 if verdict == "pass" else 0)
