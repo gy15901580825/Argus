@@ -385,3 +385,25 @@ def test_static_own_name_mention_beside_other_name():
     # Dropping the tool's own name must not hide another tool's name that overlaps it.
     tools = [_tool("foo bar", "Use foo bar for this."), _tool("bar", "Plain.")]
     assert [c.tool for c in static_hits(tools)[1]] == ["foo bar", "foo bar"]  # its name and its description
+
+
+def test_secret_echo_in_sent_argument_is_excluded_but_other_secret_fires():
+    from dataclasses import replace
+
+    payload = "credential_type=synthetic-invalid-value"
+    rec = _rec(text=f"Invalid credential_type: {payload}", is_error=True)
+    rec.call = replace(rec.call, arguments={"options": {"values": [payload]}})
+    assert _by_probe(dynamic_hits([rec], TOOLS, TOOLS, False)[0], "mcp_scan_secret_in_result") == []
+    rec.result = replace(rec.result, text=f"Invalid credential_type: {payload}; actual token: {GHP}")
+    hits = _by_probe(dynamic_hits([rec], TOOLS, TOOLS, False)[0], "mcp_scan_secret_in_result")
+    assert [h.rule for h in hits] == ["secret:github_token"]
+
+
+def test_secret_echo_exclusion_is_limited_to_this_call():
+    from dataclasses import replace
+
+    sent = _rec(text="accepted", seq=1)
+    sent.call = replace(sent.call, arguments={"text": GHP})
+    leaked = _rec(text=GHP, seq=2)
+    hits = _by_probe(dynamic_hits([sent, leaked], TOOLS, TOOLS, False)[0], "mcp_scan_secret_in_result")
+    assert [h.call_seq for h in hits] == [2]

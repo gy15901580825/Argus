@@ -124,7 +124,7 @@ def _marker_spans(text: str, decoys: Sequence[tuple[str, str]]) -> list[tuple[in
     return spans
 
 
-def _secret_hits(rec: CallRecord, text: str, decoys) -> list[Hit]:
+def _secret_hits(rec: CallRecord, text: str, decoys, mask: rules.Mask) -> list[Hit]:
     tool, seq, family = rec.call.tool, rec.seq, rec.call.family
     out = []
     for name, marker in decoys:
@@ -137,7 +137,9 @@ def _secret_hits(rec: CallRecord, text: str, decoys) -> list[Hit]:
         out.append(_hit(SECRET, tool, f"decoy:{name}", text, span, decoys, seq=seq, family=family, decoy=name))
     # A decoy is reported as a decoy, not again as the secret shape it imitates.
     markers = _marker_spans(text, decoys)
-    spans = [(k, s, e) for k, s, e in rules.secret_hits(text) if not any(s < me and ms < e for ms, me in markers)]
+    echoes = _marker_spans(text, [("sent", mask(value)) for value in _strings(rec.call.arguments)])
+    spans = [(k, s, e) for k, s, e in rules.secret_hits(text) if not any(s < me and ms < e for ms, me in markers)
+             and not any(es <= s and e <= ee for es, ee in echoes)]
     first = sorted(_first_by_rule(spans).items(), key=lambda kv: (-secret_confidence(kv[0]), kv[1][0]))
     for kind, span in first:
         generic = kind in _GENERIC_SECRET_KINDS
@@ -216,7 +218,7 @@ def dynamic_hits(records: list[CallRecord], first_tools: list[ToolInfo], final_t
         if ETC_PASSWD in text:
             i = text.index(ETC_PASSWD)
             hits.append(_hit(TRAVERSAL, tool, "etc_passwd", text, (i, i + len(ETC_PASSWD)), decoys, seq=seq, family=family))
-        hits += _secret_hits(rec, text, decoys)
+        hits += _secret_hits(rec, text, decoys, mask)
         # The server's own words only: an echo of any payload is reflection or a cross-session leak, not injection.
         stripped = rules.strip_payload(text, payload)
         own_words = _strip_sent(stripped, sent)
