@@ -25,8 +25,6 @@ _SCENARIOS = {
     "cross_origin_bridge": cross_origin_bridge,
     "dom_injection": dom_injection,
     "js_dialog": js_dialog,
-
-
     "form_recipient_redirect": form_recipient_redirect,
     "ui_phishing": ui_phishing,
     "visual_injection": visual_injection,
