@@ -165,6 +165,7 @@ class _TransportLogFilter(logging.Filter):
 
 
 for _logger_name in (
+    "aiohttp.access",
     "httpx",
     "httpcore.connection",
     "httpcore.http11",

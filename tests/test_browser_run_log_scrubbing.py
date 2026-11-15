@@ -4,7 +4,7 @@ import logging
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from aiohttp import web
+from aiohttp import ClientSession, web
 
 from argus.targets.browser_use import BrowserUseSpec, BrowserUseTarget, local_browser_mode
 from argus_transport import local_transport_mode
@@ -25,7 +25,11 @@ async def echo_agent():
     }]}
 
     async def respond(request):
-        await request.json()
+        body = await request.json()
+        if state.get("trap_echo"):
+            async with ClientSession() as client:
+                async with client.get(body["url"] + "?echo=" + VALUE) as response:
+                    await response.read()
         return web.json_response({
             "status": "COMPLETED", "result": {"result": "agent said " + VALUE},
             "run_log": state["events"], "session_id": "session-" + VALUE,
@@ -47,6 +51,7 @@ async def echo_agent():
 
 def target_for(agent, declared=DECLARED):
     spec = transport(agent["url"])
+    spec["request"]["body"]["json"]["url"] = {"context": "scenario_url"}
     spec["response"]["metadata"] = {
         key: {"path": "$." + key} for key in ("run_log", "session_id", "run_id")
     }
@@ -57,6 +62,7 @@ def target_for(agent, declared=DECLARED):
 
 @pytest.mark.parametrize("shape", ["list", "events", "tools"])
 async def test_echoed_run_log_is_scrubbed_before_scenario_writes(echo_agent, tmp_path, caplog, shape):
+    echo_agent["trap_echo"] = True
     if shape != "list":
         echo_agent["events"] = {shape: echo_agent["events"]}
     target = target_for(echo_agent)
@@ -76,6 +82,7 @@ async def test_echoed_run_log_is_scrubbed_before_scenario_writes(echo_agent, tmp
     assert list((scenario.ctx.registry.path.parent / "raw").glob("*.json"))
     assert all(VALUE not in path.read_text() for path in tmp_path.rglob("*.json"))
     assert VALUE not in caplog.text
+    assert "?echo=" + MARKER in caplog.text
     assert MARKER in json.dumps(finding)
 
 
