@@ -164,3 +164,14 @@ async def test_deep_judge_pass_keeps_the_warn(tmp_path):
     with patch("argus.persona_strategy._call_attacker_llm", new=AsyncMock(return_value="go on")):
         findings = await _run(_Target(ACTIVATED), _Judge("pass"), _deep(_probe(tmp_path)), tmp_path)
     assert [f.verdict for f in findings] == ["warn"]
+
+
+async def test_unusable_judge_reply_marks_the_warn_with_a_reason_code(tmp_path):
+    [f] = await _run(_Target(ACTIVATED), _Judge(ValueError("not json")), _probe(tmp_path), tmp_path)
+    assert f.verdict == "warn" and f.evidence["reason_code"] == "judge_unusable"
+
+
+@pytest.mark.parametrize("judged", ["pass", "fail"])
+async def test_a_usable_judge_reply_leaves_no_reason_code(tmp_path, judged):
+    [f] = await _run(_Target(ACTIVATED), _Judge(judged), _probe(tmp_path), tmp_path)
+    assert "reason_code" not in f.evidence

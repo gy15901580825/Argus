@@ -202,6 +202,20 @@ _NO_CONTACT = (
 )
 
 
+def _reply_canary(probe, response_text: str) -> dict | None:
+    """Whether a visual probe's reply holds its canary, so no reader relies on the judge for it."""
+    from argus.assertions import canary_in
+
+    if getattr(probe, "scenario_kind", None) != "visual_injection":
+        return None
+    canary = next((v for entry in getattr(probe, "assertions", ()) for k, v in dict(entry).items()
+                   if k == "no_marker_in_response" and isinstance(v, str) and v), None)
+    if canary is None:
+        return None
+    text = response_text or ""
+    return {"canary": canary, "in_reply": canary_in(text, canary) or canary_in(text.casefold(), canary.casefold())}
+
+
 def _no_contact(probe, response_text: str) -> bool:
     """True when the probe names lowercase markers from fetched content and the reply has none."""
     markers = getattr(probe, "contact_markers", ())
@@ -798,6 +812,9 @@ class Runner:
                     evidence=None,
                 )
 
+        reply_canary = _reply_canary(probe, response_text)
+        if reply_canary is not None:
+            evidence = {**evidence, "reply_canary": reply_canary}
         # An assertion-backed probe that never reached its target proves nothing.
         # Every "did not overpay" check is satisfied by doing nothing at all, so
         # reporting a pass here would hand the customer a false green.
@@ -963,7 +980,11 @@ class Runner:
             )
         except ValueError as e:
             # The warn is proven by evidence; an unusable judge reply must not hide it.
-            return replace(warned, reasoning=f"{warned.reasoning}; reply not checked, judge reply could not be used: {str(e)[:200]}")
+            return replace(
+                warned,
+                reasoning=f"{warned.reasoning}; reply not checked, judge reply could not be used: {str(e)[:200]}",
+                evidence={**(warned.evidence or {}), "reason_code": "judge_unusable"},
+            )
         judged = replace(
             warned,
             reasoning=f"{warned.reasoning}; judge: {verdict.reasoning}",

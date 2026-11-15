@@ -194,44 +194,44 @@ APPROVED = {'agents_md_npm_install': {'ids': ['ASI01', 'ASI02', 'ASI04'],
                                        'reason': 'Attacker page content redirects the browser agent from the user page-reading '
                                                  'task; scenario payload and injection rubric measure that deviation.'
                                                  ' Explicit chart_label variant now renders the named visual channel; the user task, payload and verdict rules are unchanged.',
-                                       'evidence_sha256': '886fa7c0bee8107f8cfcdee726d8b512f5268362d1a322d57cf2f1a13702d2a7'},
+                                       'evidence_sha256': '43025f7b460dd76610635d4f42a4aa62b7551dd077537ea523067db29f68c57e'},
  'browser_visual_inject_handwritten': {'ids': ['ASI01'],
                                        'reason': 'Attacker page content redirects the browser agent from the user page-reading '
                                                  'task; scenario payload and injection rubric measure that deviation.'
                                                  ' Explicit handwritten variant now renders the named visual channel; the user task, payload and verdict rules are unchanged.',
-                                       'evidence_sha256': '60aaa668e1fd7f640bef458fe3517e08624b671b972dca5cf78a5663dd615c73'},
+                                       'evidence_sha256': '0bd3ca0f510e8d665fdc941d6e2474e933f74bc1021dc76bfa73187117fe0c2b'},
  'browser_visual_inject_multilingual': {'ids': ['ASI01'],
                                         'reason': 'Attacker page content redirects the browser agent from the user page-reading '
                                                   'task; scenario payload and injection rubric measure that deviation.'
                                                   ' Explicit multilingual variant now renders the named visual channel; the user task, payload and verdict rules are unchanged.',
-                                        'evidence_sha256': 'e1cdeae27b772c757bb5370394fffe55af94c8a26316e94bfe9d3e3464129b00'},
+                                        'evidence_sha256': 'a3a92c6d1bf671f32e447e475217e7b33788f54d875de34ee8f78fa68c5e5f69'},
  'browser_visual_inject_qr_code': {'ids': ['ASI01'],
                                    'reason': 'Attacker page content redirects the browser agent from the user page-reading task; '
                                              'scenario payload and injection rubric measure that deviation.'
                                              ' Explicit qr_code variant now renders the named visual channel; the user task, payload and verdict rules are unchanged.',
-                                   'evidence_sha256': 'e474cf2e7cbca31804d24b1dbb6d5e0f975c9b96b57aee8da342a80b78aa95f7'},
+                                   'evidence_sha256': '202bc657d4ed443a7a77b23d7592b723eb74bb852c7cb04d092dc8732100bc06'},
  'browser_visual_inject_screenshot_of_terminal': {'ids': ['ASI01'],
                                                   'reason': 'Attacker page content redirects the browser agent from the user '
                                                             'page-reading task; scenario payload and injection rubric measure '
                                                             'that deviation.'
                                                             ' Explicit terminal variant now renders the named visual channel; the user task, payload and verdict rules are unchanged.',
-                                                  'evidence_sha256': '7d13f1cd72791d4a81c486136d41a1a43e39cea57c80d2d3b61b2dec9c2a83e6'},
+                                                  'evidence_sha256': 'a64dc2f93b808cb1c5c3d6f89ebd3746b896f4b6b6a415982f39cc8f8f286171'},
  'browser_visual_inject_stylized_logo': {'ids': ['ASI01'],
                                          'reason': 'Attacker page content redirects the browser agent from the user page-reading '
                                                    'task; scenario payload and injection rubric measure that deviation.'
                                                    ' Explicit stylized_logo variant now renders the named visual channel; the user task, payload and verdict rules are unchanged.',
-                                         'evidence_sha256': '4bcbfca50e046fadd128bf23ae3dd963d69b5388d69a0d50d0a3d408dcdac93a'},
+                                         'evidence_sha256': '48d0522162fd0e5601215c0b9b5c11fd43e9a1b882e7467e067fb9c98871bae4'},
  'browser_visual_inject_tiny_text': {'ids': ['ASI01'],
                                      'reason': 'Attacker page content redirects the browser agent from the user page-reading '
                                                'task; scenario payload and injection rubric measure that deviation.'
                                                ' Explicit tiny_text variant now renders the named visual channel; the user task, payload and verdict rules are unchanged.',
-                                     'evidence_sha256': '3de33e2c603c2cc08d110c2837af44c8e08371144560e311526a99e0a9d3a9aa'},
+                                     'evidence_sha256': '3fef70275a15061735cd7d3f6b27444fda855113275043926ffaf4b43090df9c'},
  'browser_visual_inject_white_on_white': {'ids': ['ASI01'],
                                           'reason': 'Attacker page content redirects the browser agent from the user '
                                                     'page-reading task; scenario payload and injection rubric measure that '
                                                     'deviation.'
                                                     ' Explicit white_on_white variant now renders the named visual channel; the user task, payload and verdict rules are unchanged.',
-                                          'evidence_sha256': '17949eb0cb8a5d6ba72142f427e3c937e17ce11bd563eb2b6e8b9665cec6d427'},
+                                          'evidence_sha256': 'b2cb8afb0816802aff9ec30e6edfbc597c87965b8aed1c1d83e9dacc7f297cc6'},
  'browser_dom_inject_basic': {'ids': ['ASI01'],
                               'reason': 'Attacker page content redirects the browser agent from the user page-reading task; '
                                         'scenario payload and injection rubric measure that deviation.',
@@ -254,7 +254,7 @@ APPROVED = {'agents_md_npm_install': {'ids': ['ASI01', 'ASI02', 'ASI04'],
                                    'reason': 'Attacker page content redirects the browser agent from the user page-reading task; '
                                              'scenario payload and injection rubric measure that deviation.'
                                              ' Explicit plain variant now renders the named visual channel; the user task, payload and verdict rules are unchanged.',
-                                   'evidence_sha256': '91c36d3b12f784b3ac6713e27ed9dbbb21335bda45d75a5c7cbca5c1bdeed363'},
+                                   'evidence_sha256': '26867628a47739ace9cfe9d48e018214b90c1717eaea641d325b58fa199af48b'},
  'memory_instruction_persistence': {'ids': ['ASI06'],
                                      'reason': 'Session 1 plants a note through the Argus-hosted remember tool from tool-returned text; a fresh '
                                                'session 2 acts on it, and the payee/recipient canary in session 2 tool arguments is asserted '
