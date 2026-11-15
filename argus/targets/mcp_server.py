@@ -141,7 +141,8 @@ class MCPServerTarget(Target):
                                     json={"jsonrpc": "2.0", "id": 4, "method": "tools/list"})
                 body = _rpc_body(listed) if listed is not None else None
                 if body and isinstance(body.get("result"), dict):
-                    tools = [{"name": str(t.get("name", "")), "description": str(t.get("description") or "")}
+                    tools = [{"name": str(t.get("name", "")), "description": str(t.get("description") or ""),
+                              **({"inputSchema": t["inputSchema"]} if isinstance(t.get("inputSchema"), dict) else {})}
                              for t in body["result"].get("tools") or [] if isinstance(t, dict)]
             ev["tools"] = tools
             ev["server_info"] = _server_info(init) or _server_info(noauth) or _server_info(foreign)

@@ -72,7 +72,7 @@ def _pointer(root: dict, ref: str) -> Any:
 
 
 def _resolve(schema: Any, ctx: _Ctx) -> tuple[dict, list[str]]:
-    """Follow $ref and anyOf/oneOf first branches; return the schema and the refs entered."""
+    """Follow $ref and the first non-null anyOf/oneOf branch, retaining outer literals; return the schema and the refs entered."""
     entered: list[str] = []
     for _ in range(_HOP_MAX):
         if not isinstance(schema, dict):
@@ -90,12 +90,15 @@ def _resolve(schema: Any, ctx: _Ctx) -> tuple[dict, list[str]]:
                 ctx.unsatisfied = True
                 return {"type": "object", "_cycle": True}, entered
             entered.append(ref)
-            schema = target
+            literals = {k: schema[k] for k in ("default", "enum", "const") if k in schema}
+            schema = {**target, **literals}
             continue
         for key in ("anyOf", "oneOf"):
             branches = schema.get(key)
             if isinstance(branches, list) and branches:
-                schema = branches[0]
+                branch = next((b for b in branches if isinstance(b, dict) and b.get("type") != "null"), branches[0])
+                literals = {k: schema[k] for k in ("default", "enum", "const") if k in schema}
+                schema = {**branch, **literals} if isinstance(branch, dict) else branch
                 break
         else:
             return schema, entered
@@ -131,11 +134,13 @@ def _small(v: Any, depth: int = 0, budget: list[int] | None = None) -> bool:
     return True
 
 
-def _value(schema: Any, ctx: _Ctx, depth: int) -> Any:
+def _value(schema: Any, ctx: _Ctx, depth: int, *, required: bool = False) -> Any:
     ctx.steps += 1
     if ctx.steps > _STEPS_MAX:
         ctx.unsatisfied = True
         return "argus"
+    if required and isinstance(schema, dict) and schema.get("default", False) is None:
+        schema = {k: v for k, v in schema.items() if k != "default"}
     resolved, entered = _resolve(schema, ctx)
     ctx.active.update(entered)
     try:
@@ -183,8 +188,8 @@ def _typed(s: dict, ctx: _Ctx, depth: int) -> Any:
                 break
             if not isinstance(name, str):
                 continue
-            if name in required or (isinstance(sub, dict) and "default" in sub):
-                out[name] = _value(sub, ctx, depth + 1)
+            if name in required or (isinstance(sub, dict) and sub.get("default") is not None):
+                out[name] = _value(sub, ctx, depth + 1, required=name in required)
         return out
     fmt = s.get("format")
     return _FORMATS.get(fmt, "argus") if isinstance(fmt, str) else "argus"

@@ -7,6 +7,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 import argus
+from argus import assertions
 from argus.assertions import evaluate_assertions
 from argus.mcp_scan import rules
 from argus.mcp_scan.findings import finding
@@ -64,6 +65,12 @@ def _assertion_finding(probe: Probe, evidence: dict, latency_ms: float) -> dict:
     if probe.requires_interaction and not evidence.get("interaction_count"):
         return finding(probe, verdict=VERDICT_ERROR, severity="info", reasoning=NOT_REACHED,
                        evidence={**shown, "items": []}, **common)
+    info = evidence.get("server_info")
+    if (probe.id == "mcp_server_known_vulnerable_version" and isinstance(info, dict)
+            and info.get("name") not in assertions.KNOWN_VULNERABLE_MCP_SERVERS):
+        return finding(probe, verdict=VERDICT_SKIPPED, severity="info",
+                       reasoning="version comparison skipped: the server reported a different name from the products in the vulnerability data",
+                       evidence={**shown, "items": []}, **common)
     results = evaluate_assertions(probe.assertions, evidence, raw)
     failed = [r for r in results if not r.passed]
     reasoning = rules.redact("; ".join(r.reason for r in (failed or results)))
@@ -95,7 +102,7 @@ async def http_server_findings(url: str, headers: tuple[tuple[str, str], ...], t
 def stdio_server_findings(tools: list[ToolInfo], server_info: ServerInfo | None,
                           mask: rules.Mask = rules.same) -> list[dict]:
     evidence = {"interaction_count": 1,
-                "tools": [{"name": t.name, "description": t.description} for t in tools],
+                "tools": [{"name": t.name, "description": t.description, "inputSchema": t.input_schema} for t in tools],
                 "server_info": {"name": server_info.name, "version": server_info.version} if server_info else None}
     # Masked before the cut, as on HTTP: serverInfo and tool names reach here unmasked.
     evidence = rules.mask_strings(evidence, mask)

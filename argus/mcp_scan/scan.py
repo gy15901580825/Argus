@@ -14,7 +14,7 @@ from argus.mcp_scan.calls import CallHooks, CallRun, run_calls, show_text
 from argus.mcp_scan.client import HttpServer, StdioServer, open_session
 from argus.mcp_scan.findings import (SNYK_LINE, all_selected_unexercised, build_findings, inventory_notes,
                                      inventory_summary, unjudged_count)
-from argus.mcp_scan.judging import JudgeGate
+from argus.mcp_scan.judging import CAP_REASON, JudgeGate
 from argus.mcp_scan.models import ServerInfo
 from argus.mcp_scan.payloads import new_run_id
 from argus.mcp_scan.policy import CallTools
@@ -102,7 +102,7 @@ async def scan_mcp(cfg: ScanConfig, *, mask: Callable[[str], str], echo: Callabl
     gate = JudgeGate(cfg.per_run_cap_usd, cfg.judge_config, RUBRIC_PATH.read_text(encoding="utf-8"))
     if cands and gate.config is not None and cfg.per_run_cap_usd > 0:
         echo(f"Judging {len(cands)} text(s)")
-    outcomes = await gate.judge_all(cands, mask)
+    outcomes = await gate.judge_all(cands, mask, hits=hits)
     scan = build_findings(probes={p.id: p for p in _scan_probes()}, hits=hits, outcomes=outcomes, calls=calls,
                           listed=listed, transport=cfg.transport, sandbox=cfg.transport == "stdio-sandbox",
                           decoys=cfg.decoys, mask=mask, truncated=truncated, tools_listed=tools_listed)
@@ -126,6 +126,8 @@ async def scan_mcp(cfg: ScanConfig, *, mask: Callable[[str], str], echo: Callabl
         notes.append(ARGS_NOTE)
     if blocked := sum(o.error_code == "content_filter" for o in outcomes):
         notes.append(f"The provider content filter blocked {blocked} judge item(s); review the filter policy.")
+    if capped := unjudged_count(scan, (CAP_REASON,)):
+        notes.append(f"Cost cap: {capped} probe result(s) were not judged; raise --per-run-cap to judge them.")
     notes.append(SNYK_LINE)
     return ScanResult(findings=scan + server, notes=notes, server_info=server_info,
                       all_selected_unexercised=all_selected_unexercised(calls), unjudged=unjudged_count(scan),

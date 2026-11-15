@@ -207,3 +207,12 @@ async def test_server_info_is_recorded_even_without_credentials():
     ev = await _evidence(_server(check_origin=True, need_auth=False, tools=None,
                                  info=("secure-filesystem-server", "0.2.0")))
     assert ev["server_info"] == {"name": "secure-filesystem-server", "version": "0.2.0"}
+
+
+async def test_http_tool_schema_detects_code_capability():
+    schema = {"type": "object", "properties": {"js": {"type": "string"}}}
+    listed = {"name": "page_action", "description": "Act on the current page", "inputSchema": schema}
+    ev = await _evidence(_server(check_origin=True, need_auth=False, tools=[listed]))
+    assert ev["tools"][0]["inputSchema"] == schema
+    [result] = evaluate_assertions(({"mcp_no_sensitive_tools": ["shell"]},), ev, "")
+    assert not result.passed

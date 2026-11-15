@@ -4,14 +4,14 @@ from __future__ import annotations
 import hashlib
 import logging
 from dataclasses import dataclass, replace
-from typing import Callable, Literal
+from typing import Callable, Literal, Sequence
 
 from argus import llm
 from argus.cost_meter import CostExceededError, CostMeter, estimate_call_usd
 from argus.judge import Judge, JUDGE_MAX_TOKENS
 from argus.jev_judge import EXPLAIN_MAX_TOKENS
 from argus.mcp_scan.calls import show_text
-from argus.mcp_scan.models import Candidate
+from argus.mcp_scan.models import Candidate, Hit
 
 logger = logging.getLogger(__name__)
 
@@ -69,8 +69,9 @@ class JudgeGate:
         self.rubric_text = rubric_text
         self.judge_factory = judge_factory
 
-    async def judge_all(self, candidates: list[Candidate], mask: Callable[[str], str]) -> list[JudgeOutcome]:
-        """One outcome per candidate, in order. Duplicate texts share one judge call."""
+    async def judge_all(self, candidates: list[Candidate], mask: Callable[[str], str], *,
+                        hits: Sequence[Hit] = ()) -> list[JudgeOutcome]:
+        """Judge rule-hit calls first; return one outcome per candidate in input order. Duplicate texts share a call."""
         if self.config is None or not self.per_run_cap_usd > 0:  # a NaN cap means off, not unbounded
             return [JudgeOutcome(c, "off", reasoning=OFF_REASON) for c in candidates]
         if not candidates:
@@ -80,19 +81,22 @@ class JudgeGate:
         meter = CostMeter(daily_cap_usd=float("inf"), per_run_cap_usd=cap)
         judge = self.judge_factory(meter, self.config)
         done: dict[str, JudgeOutcome] = {}
-        out: list[JudgeOutcome] = []
         capped = False
+        rule_hits = {(h.tool, h.call_seq) for h in hits}
+        ordered = sorted(enumerate(candidates), key=lambda pair:
+                         (pair[1].tool, pair[1].call_seq) not in rule_hits)
+        results: dict[int, JudgeOutcome] = {}
         with meter.run_scope("scan-mcp"):
-            for cand in candidates:
+            for index, cand in ordered:
                 key = hashlib.sha256(cand.text.encode("utf-8", "surrogatepass")).hexdigest()
                 if key not in done:
                     if capped:
-                        out.append(JudgeOutcome(cand, "cap", reasoning=CAP_REASON))
+                        results[index] = JudgeOutcome(cand, "cap", reasoning=CAP_REASON)
                         continue
                     done[key] = await self._judge_one(judge, meter, cand, mask)
                     capped = done[key].status == "cap"
-                out.append(replace(done[key], candidate=cand))
-        return out
+                results[index] = replace(done[key], candidate=cand)
+        return [results[i] for i in range(len(candidates))]
 
     async def _judge_one(self, judge: Judge, meter: CostMeter, cand: Candidate,
                          mask: Callable[[str], str]) -> JudgeOutcome:

@@ -88,7 +88,7 @@ def _argus_version() -> str:
 
 
 def render_json(run: dict, secret_values: Iterable[str] = (), include_notes: bool = False) -> str:
-    """`include_notes`: `run` writes its few run notes; scan-mcp's notes list every tool and stay out."""
+    """`include_notes`: write masked run notes, including scan-mcp's per-tool inventory."""
     plain = scrub_run(run, secret_values)
     record = {
         "schema_version": SCHEMA_VERSION,

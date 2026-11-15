@@ -315,7 +315,7 @@ def cmd_scan_mcp(argv: tuple[str, ...], call_tools, tool_args: dict, headers: tu
         if f.get("verdict") == "fail":
             say(_console_line(f, clean))
     if report_format == "json":
-        report = run_json.render_json(run, secret_values)
+        report = run_json.render_json(run, secret_values, include_notes=True)
     else:
         render = {"html": reports.render_html, "sarif": reports.render_sarif,
                   "junit": reports.render_junit}[report_format]
