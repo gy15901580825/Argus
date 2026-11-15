@@ -86,13 +86,24 @@ class WitnessSpec:
         return cls(**raw)
 
 
-def binds_canary(value):
-    """Whether a transport expression references the run's declared canary."""
-    if isinstance(value, dict):
-        return value.get("context") == "secret_canary" or any(binds_canary(v) for v in value.values())
-    if isinstance(value, (tuple, list)):
-        return any(binds_canary(v) for v in value)
-    return False
+def binds_canary(request):
+    """Whether a request binding references the canary, ignoring literal data."""
+    if not isinstance(request, dict):
+        return False
+
+    def expression(value):
+        if not isinstance(value, dict) or "literal" in value:
+            return False
+        if value.get("context") == "secret_canary":
+            return True
+        return (any(expression(v) for v in value.get("object", {}).values())
+                or any(expression(v) for v in value.get("array", ())))
+
+    body = request.get("body", {})
+    bindings = [*body.get("json", {}).values(), *request.get("query", {}).values()]
+    if "text" in body:
+        bindings.append(body["text"])
+    return any(expression(value) for value in bindings)
 
 
 @dataclass(frozen=True)

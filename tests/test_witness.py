@@ -207,6 +207,13 @@ def test_secret_context_bindings_and_binding_presence():
     loaded = BrowserUseSpec(transport=spec, scenario_kind="dom_injection")
     assert loaded.binds_secret_canary is True
     assert BrowserUseSpec(transport=transport("http://127.0.0.1:1/run"), scenario_kind="dom_injection").binds_secret_canary is False
+    literal = transport("http://127.0.0.1:1/run")
+    literal["request"]["body"]["json"] = {"data": {"literal": {"context": "secret_canary"}}}
+    assert BrowserUseSpec(transport=literal, scenario_kind="dom_injection").binds_secret_canary is False
+    literal["request"]["body"]["json"] = {"literal": {"context": "secret_canary"}}
+    assert BrowserUseSpec(transport=literal, scenario_kind="dom_injection").binds_secret_canary is True
+    literal["request"]["body"] = {"text": {"context": "secret_canary"}}
+    assert BrowserUseSpec(transport=literal, scenario_kind="dom_injection").binds_secret_canary is True
 
 
 @pytest.mark.parametrize("mode", ["server", "hosted", "missing_channel", "missing_binding"])

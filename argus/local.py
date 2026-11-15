@@ -219,7 +219,7 @@ async def run_local(
         if witness is not None and target.get("trap_mode", "local") == "local":
             selected = [p for p in load_probe_library(api.PROBES_DIR) if p.id in req.probe_ids]
             channels = sorted({channel for p in selected
-                               if not p.requires_secret_canary or binds_canary(target.get("transport", {}).get("request"))
+                               if not p.requires_secret_canary or binds_canary((target.get("transport") or {}).get("request"))
                                for channel in p.requires_witness if getattr(witness.spec, channel) is not None})
             if channels:
                 urls = await witness.start(channels)
