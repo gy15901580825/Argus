@@ -32,7 +32,7 @@ from urllib.parse import parse_qsl, quote_plus, urlsplit
 
 from fastapi import WebSocketDisconnect
 
-from argus.assertions import canary_in, canary_sequence_requests, trap_canaries
+from argus.assertions import canary_in, canary_sequence_requests, trap_unmasked_values
 from argus.targets._base import (
     ProbeNotApplicable,
     Target,
@@ -44,7 +44,7 @@ from argus.targets._base import (
 
 _SCENARIO_KINDS = frozenset(
     {"dom_injection", "ui_phishing", "visual_injection", "os_cmd", "cross_origin_bridge", "click_swap",
-     "document_inject", "js_dialog", "extraction_tamper"}
+     "document_inject", "js_dialog", "extraction_tamper", "form_recipient_redirect"}
 )
 
 # Same cap as the trap server's, so evidence summed over rounds stays bounded.
@@ -165,7 +165,7 @@ class BrowserUseSpec:
         if self.scenario_kind not in _SCENARIO_KINDS:
             raise ValueError(
                 "scenario_kind must be one of dom_injection/ui_phishing/visual_injection/os_cmd/"
-                "cross_origin_bridge/click_swap/document_inject/js_dialog/extraction_tamper"
+                "cross_origin_bridge/click_swap/document_inject/js_dialog/extraction_tamper/form_recipient_redirect"
             )
         self._validate_trap()
 
@@ -263,14 +263,15 @@ def _mask_json(value, canaries: tuple[str, ...]):
     if isinstance(value, bool) or value is None:
         return value
     text = value if isinstance(value, str) else json.dumps(value)
-    return text if _holds_canary(text, canaries) else _redacted(text)
+    return text if _holds_unmasked_value(text, canaries) else _redacted(text)
 
 
 _TEXT_FIELD_SEP = re.compile(r"(\r?\n|;|&)")
 
 
-def _holds_canary(text: str, canaries: tuple[str, ...]) -> bool:
-    return any(canary_in(text, c) for c in canaries)
+def _holds_unmasked_value(text: str, canaries: tuple[str, ...]) -> bool:
+    """Masking alone ignores case; assertions retain their own matching rules."""
+    return any(canary_in(text, c) or canary_in(text.casefold(), c.casefold()) for c in canaries)
 
 
 def _mask_text(text: str, canaries: tuple[str, ...]) -> str:
@@ -290,10 +291,10 @@ def _mask_text(text: str, canaries: tuple[str, ...]) -> str:
             pairs = []
         if pairs:
             masked = "&".join(
-                f"{quote_plus(k)}={quote_plus(v) if _holds_canary(v, canaries) else _redacted(v)}"
+                f"{quote_plus(k)}={quote_plus(v) if _holds_unmasked_value(v, canaries) else _redacted(v)}"
                 for k, v in pairs
             )
-    if masked is None and not _holds_canary(text, canaries):
+    if masked is None and not _holds_unmasked_value(text, canaries):
         masked = _redacted(text)
     if masked is None:
         # Free text (multipart, text/plain): keep only the lines or fields that hold a canary.
@@ -303,13 +304,13 @@ def _mask_text(text: str, canaries: tuple[str, ...]) -> str:
                 part
                 if not part
                 or _TEXT_FIELD_SEP.fullmatch(part)
-                or _holds_canary(part, canaries)
+                or _holds_unmasked_value(part, canaries)
                 else _redacted(part)
             )
             for part in parts
         )
     # A canary split across fields (an unencoded "&" inside it) must stay visible to the check.
-    if any(canary_in(text, c) and not canary_in(masked, c) for c in canaries):
+    if any(_holds_unmasked_value(text, (c,)) and not _holds_unmasked_value(masked, (c,)) for c in canaries):
         return text
     return masked
 
@@ -387,7 +388,7 @@ class BrowserUseTarget(Target):
         self._session_id = None
         self._last_run_log = None
         self._probe_id = getattr(probe, "id", "synthetic-page")
-        self._canaries = trap_canaries(getattr(probe, "assertions", None) or ())
+        self._canaries = trap_unmasked_values(getattr(probe, "assertions", None) or ())
         self._scenario_options = dict(getattr(probe, "scenario_options", {}))
         payload = getattr(probe, "scenario_payload", None)
         kind = getattr(probe, "scenario_kind", None)

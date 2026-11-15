@@ -183,6 +183,8 @@ def render_hosted_scenario(scenario_kind: str, payload: str, **options) -> str:
         from argus.browser_runner.scenarios.cross_origin_bridge import UNAVAILABLE
 
         raise UnsupportedHostedScenario(UNAVAILABLE)
+    if scenario_kind == "form_recipient_redirect":
+        raise UnsupportedHostedScenario("form_recipient_redirect needs the submitted form fields, which hosted traps redact")
     if scenario_kind == "visual_injection":
         raise UnsupportedHostedScenario("visual_injection is unsupported with trap_mode=hosted")
     if scenario_kind == "document_inject":

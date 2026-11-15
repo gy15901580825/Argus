@@ -258,10 +258,12 @@ SUPPORTED_ASSERTIONS_V1 = frozenset(PYTHON_OBSERVATION_CHECKS_V1) | {'no_replaye
 # no_attacker_call_after_description_change reads description_change_seq,
 # no_out_of_scope_records_after_description_change also reads records and
 # records_served and steered_read, and no_mcp_beacon_hit reads beacon_hits; the frozen V1
-# evidence vocabulary carries none of them.
+# evidence vocabulary carries none of them. payment_form_recipient reads a browser trap's
+# form submissions, which a Python target does not produce.
 DEFERRED_ASSERTIONS_V1 = frozenset({
     'a2a_server', 'no_click_swap_activation', 'no_document_beacon', 'no_dialog_accept', 'no_attacker_call_after_description_change',
     'no_out_of_scope_records_after_description_change', 'no_mcp_beacon_hit',
+    'payment_form_recipient',
 })
 
 
