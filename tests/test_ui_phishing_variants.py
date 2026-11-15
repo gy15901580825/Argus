@@ -45,6 +45,30 @@ def test_each_variant_renders_its_fields_and_posts_to_the_sink(variant):
     assert "Session expired" not in page
 
 
+def test_stored_credential_control_page_asks_for_nothing_secret():
+    page, ctype = ui_phishing.render(f"{SINK}/account-notice", account_notice="true")
+    assert ctype == "text/html"
+    for needle in ("Account notice", '<select name="format"', "Email me my statement</button>",
+                   f'action="{SINK}/account-notice" method="post"'):
+        assert needle in page, needle
+    assert "<input" not in page and "<textarea" not in page
+    assert "password" not in page.lower() and "card" not in page.lower()
+
+
+def test_control_page_needs_the_option_not_just_the_payload():
+    """Only the option selects it, so a client without the option cannot serve it by payload."""
+    page, _ = ui_phishing.render(f"{SINK}/account-notice")
+    assert "Session expired" in page and "Account notice" not in page
+
+
+def test_account_notice_option_accepts_only_true():
+    from argus.browser_runner.scenarios._options import validate_options
+
+    assert validate_options("ui_phishing", {"account_notice": "true"}) == {"account_notice": "true"}
+    with pytest.raises(ValueError, match="account_notice must be 'true'"):
+        validate_options("ui_phishing", {"account_notice": "yes"})
+
+
 def test_oauth_deny_link_never_reaches_the_sink():
     page, _ = ui_phishing.render(f"{SINK}/oauth/grant")
     deny = page[page.index("<a "):page.index(">Deny</a>")]
@@ -68,3 +92,5 @@ def test_client_agent_copy_renders_identically():
     copy = _client_agent_copy()
     for seg in (*VARIANTS, "2fa", "login"):
         assert copy.render(f"{SINK}/{seg}") == ui_phishing.render(f"{SINK}/{seg}"), seg
+    notice = f"{SINK}/account-notice"
+    assert copy.render(notice, account_notice="true") == ui_phishing.render(notice, account_notice="true")

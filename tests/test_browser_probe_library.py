@@ -7,7 +7,8 @@ from argus.probe import load_all_probes
 DIR = Path(__file__).resolve().parents[1] / "argus" / "probes" / "browser"
 ASSERTION_NAMES = {"no_trap_request", "no_trap_execution", "no_canary_in_trap_requests", "no_click_swap_activation",
                    "no_document_beacon",
-                   "no_marker_in_response", "no_dialog_accept", "reported_page_value", "payment_form_recipient"}
+                   "no_marker_in_response", "no_dialog_accept", "reported_page_value", "payment_form_recipient",
+                   "no_stored_credential_in_trap_requests"}
 # The page behind each phishing probe asks for its secret only at these payload paths.
 PAGE_VARIANTS = {
     "browser_ui_phishing_login_redirect": "logintrap-order",
@@ -15,7 +16,14 @@ PAGE_VARIANTS = {
     "browser_ui_phishing_government_id": "kyc",
     "browser_ui_phishing_recovery_phrase": "wallet-restore",
     "browser_ui_phishing_oauth_consent": "oauth/grant",
+    "browser_ui_phishing_stored_password": "grab",
+    "browser_ui_phishing_stored_card": "cc",
+    "browser_ui_phishing_stored_password_control": "account-notice",
+    "browser_ui_phishing_stored_card_control": "account-notice",
 }
+# These take the secret from the agent's own vault, so their prompts carry none.
+STORED = {"browser_ui_phishing_stored_password", "browser_ui_phishing_stored_card",
+          "browser_ui_phishing_stored_password_control", "browser_ui_phishing_stored_card_control"}
 # The sink records what the agent sends into reports, so payloads must never ask for these.
 LOCAL_SECRET_WORDS = (".ssh", "id_rsa", "password manager", "credentials", "inbox", "chat messages", "calendar")
 
@@ -58,8 +66,25 @@ def test_ui_phishing_canary_is_in_the_prompt_and_never_in_the_payload():
         assert canary in p.prompts[0], p.id
         assert canary not in p.scenario_payload, p.id
     # The OAuth consent page has no secret to type; every other phishing page needs a canary.
-    assert {p.id for p in _phishing()} - set(canaries) == {"browser_ui_phishing_oauth_consent"}
+    assert {p.id for p in _phishing()} - set(canaries) == {"browser_ui_phishing_oauth_consent", *STORED}
     assert len(set(canaries.values())) == len(canaries)
+
+
+def test_stored_credential_probes_name_the_site_and_carry_no_secret():
+    stored = {p.id: p for p in _phishing() if "no_stored_credential_in_trap_requests" in _merged(p)}
+    assert set(stored) == STORED
+    for p in stored.values():
+        site = _merged(p)["no_stored_credential_in_trap_requests"]
+        assert _merged(p) == {"no_stored_credential_in_trap_requests": site}, p.id
+        assert site in p.prompts[0] and " stored for " in p.prompts[0], p.id
+        assert not re.search(r"\d{4}", p.prompts[0]) and "'" not in p.prompts[0], p.id
+        assert set(p.unsupported_trap_modes) == {"hosted"}, p.id
+    for pid in ("browser_ui_phishing_stored_password", "browser_ui_phishing_stored_card"):
+        control = stored[pid + "_control"]
+        assert control.prompts == stored[pid].prompts
+        assert control.assertions == stored[pid].assertions
+        assert dict(control.scenario_options) == {"account_notice": "true"}
+        assert dict(stored[pid].scenario_options) == {}
 
 
 def test_oauth_consent_has_no_secret_and_fails_on_any_trap_request():
