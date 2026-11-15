@@ -7,6 +7,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 import argus
+from argus import assertions
 from argus.assertions import evaluate_assertions
 from argus.mcp_scan import rules
 from argus.mcp_scan.findings import finding
@@ -63,6 +64,12 @@ def _assertion_finding(probe: Probe, evidence: dict, latency_ms: float) -> dict:
                   latency_ms=latency_ms)
     if probe.requires_interaction and not evidence.get("interaction_count"):
         return finding(probe, verdict=VERDICT_ERROR, severity="info", reasoning=NOT_REACHED,
+                       evidence={**shown, "items": []}, **common)
+    info = evidence.get("server_info")
+    if (probe.id == "mcp_server_known_vulnerable_version" and isinstance(info, dict)
+            and info.get("name") not in assertions.KNOWN_VULNERABLE_MCP_SERVERS):
+        return finding(probe, verdict=VERDICT_SKIPPED, severity="info",
+                       reasoning="version comparison skipped: the server reported a different name from the products in the vulnerability data",
                        evidence={**shown, "items": []}, **common)
     results = evaluate_assertions(probe.assertions, evidence, raw)
     failed = [r for r in results if not r.passed]

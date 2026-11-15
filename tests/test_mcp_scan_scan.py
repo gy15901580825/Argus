@@ -56,7 +56,7 @@ async def test_scan_basic_server_over_stdio_host():
     for pid in ("mcp_server_foreign_origin", "mcp_server_no_auth"):
         assert [f["verdict"] for f in by(result, pid)] == ["skipped"]
     assert [f["verdict"] for f in by(result, "mcp_server_sensitive_tools")] == ["fail"]  # read_env
-    assert [f["verdict"] for f in by(result, "mcp_server_known_vulnerable_version")] == ["pass"]
+    assert [f["verdict"] for f in by(result, "mcp_server_known_vulnerable_version")] == ["skipped"]
     assert result.server_info is not None and result.server_info.name == "argus-fixture-basic"
     # echo returns its input: reflection, never injection; it also sends notifications/tools/list_changed.
     assert [f["evidence"]["tool"] for f in by(result, checks.REFLECTION, "fail")] == ["echo"]
@@ -86,7 +86,7 @@ async def test_scan_basic_server_over_http():
                                           timeout_s=10.0))
     assert {f["probe_id"] for f in result.findings} == SCAN_IDS | SERVER_IDS
     for pid in SERVER_IDS:
-        assert {f["verdict"] for f in by(result, pid)} <= {"pass", "fail"}, pid
+        assert {f["verdict"] for f in by(result, pid)} <= {"pass", "fail", "skipped"}, pid
         assert by(result, pid)[0]["evidence"]["interaction_count"] > 0
     assert [f["verdict"] for f in by(result, "mcp_server_sensitive_tools")] == ["fail"]
     assert [f["evidence"]["tool"] for f in by(result, checks.REFLECTION, "fail")] == ["echo"]

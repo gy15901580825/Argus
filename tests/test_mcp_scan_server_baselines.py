@@ -36,3 +36,16 @@ def test_sensitive_tools_code_execution_is_detected(name, description, schema):
 
 def test_sensitive_tools_environment_dump_remains_detected():
     assert check([tool("dump", "Prints the environment")])["mcp_server_sensitive_tools"]["verdict"] == "fail"
+
+@pytest.mark.parametrize("matches", [False, True])
+def test_version_check_requires_matching_product_name(monkeypatch, matches):
+    monkeypatch.setattr(assertions, "KNOWN_VULNERABLE_MCP_SERVERS", {
+        "fixture-product": ((2, 0, 0), "fixture-advisory"),
+    })
+    info = ServerInfo("fixture-product" if matches else "fixture-framework", "1.0.0")
+    result = check([], info)["mcp_server_known_vulnerable_version"]
+    assert result["verdict"] == ("fail" if matches else "skipped")
+    if not matches:
+        assert "server reported a different name" in result["reasoning"]
+    else:
+        assert "below 2.0.0" in result["reasoning"]

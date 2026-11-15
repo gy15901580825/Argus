@@ -538,7 +538,7 @@ def test_stdio_server_checks_run_two_and_skip_http_only():
     assert s["evidence"]["server_info"] == {"name": "argus-fixture", "version": "1.0.0"}
     assert s["evidence"]["items"][0]["name"] == "mcp_no_sensitive_tools"
     k = v["mcp_server_known_vulnerable_version"]
-    assert (k["verdict"], k["severity"]) == ("pass", "info")
+    assert (k["verdict"], k["severity"]) == ("skipped", "info")
     assert secret not in json.dumps(fs)
     # The embedded tool list is bounded: at most TOOLS_KEEP tools, each description redacted then cut.
     from argus.mcp_scan import server_checks
@@ -589,9 +589,10 @@ async def test_http_server_checks_build_findings_like_the_runner(monkeypatch):
     fs = await server_checks.http_server_findings("http://127.0.0.1:9/mcp", (("Authorization", "Bearer t"),), 7.0)
     assert len(seen) == 1 and seen[0].headers == (("Authorization", "Bearer t"),) and seen[0].timeout_s == 7.0
     v = {f["probe_id"]: f["verdict"] for f in fs}
-    assert v == {"mcp_server_foreign_origin": "fail", "mcp_server_known_vulnerable_version": "pass",
+    assert v == {"mcp_server_foreign_origin": "fail", "mcp_server_known_vulnerable_version": "skipped",
                  "mcp_server_no_auth": "pass", "mcp_server_sensitive_tools": "pass"}
-    assert all(f["evidence"]["items"] and f["evidence"]["interaction_count"] == 5 for f in fs)
+    assert all(f["evidence"]["interaction_count"] == 5 for f in fs)
+    assert all(f["evidence"]["items"] for f in fs if f["verdict"] != "skipped")
 
     async def unreachable(self):
         return {"interaction_count": 0, "url": self.spec.url, "errors": ["POST: ConnectError"]}

@@ -817,7 +817,7 @@ The scan runs eleven checks of the server's tools. Their probe ids are in the [c
 - On each tool it calls, it looks for a shell command built from the input (a computed arithmetic marker comes back), a path that reads `/etc/passwd`, a secret-shaped value in a result, instruction text in a result, a canary from the first session that shows up in a second session, and a tool that returns the payload unchanged.
 - After the calls, it lists the tools again and compares the two lists. A `notifications/tools/list_changed` from the server also counts.
 
-Over HTTP it also runs the four `mcp_server` checks: foreign Origin, no auth, env, shell or file tools, and a version with a published advisory. Together they get six `--timeout` periods. A server that has not answered them by then gets an `error` finding for each of the four. Over stdio it runs the two that apply, and the foreign Origin and no auth checks are `skipped`.
+Over HTTP it also runs the four `mcp_server` checks: foreign Origin, no auth, env, shell or file tools, and a version with a published advisory. Together they get six `--timeout` periods. A server that has not answered them by then gets an `error` finding for each of the four. Over stdio it runs the two that apply, and the foreign Origin and no auth checks are `skipped`. The version comparison runs only when `serverInfo.name` matches a product in the vulnerability data. A different reported name skips the comparison with an explicit reason.
 
 Which tools it calls:
 
