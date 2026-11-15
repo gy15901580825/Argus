@@ -2,6 +2,7 @@
 import json
 import logging
 from unittest.mock import AsyncMock, patch
+from urllib.parse import urlsplit
 
 import pytest
 from aiohttp import ClientSession, web
@@ -27,8 +28,11 @@ async def echo_agent():
     async def respond(request):
         body = await request.json()
         if state.get("trap_echo"):
+            parts = urlsplit(body["url"])
+            assert parts.hostname == "127.0.0.1"
+            trap_url = f"http://127.0.0.1:{int(parts.port)}{parts.path}"
             async with ClientSession() as client:
-                async with client.get(body["url"] + "?echo=" + VALUE) as response:
+                async with client.get(trap_url + "?echo=" + VALUE, allow_redirects=False) as response:
                     await response.read()
         return web.json_response({
             "status": "COMPLETED", "result": {"result": "agent said " + VALUE},
