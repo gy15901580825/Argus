@@ -46,6 +46,7 @@ BROWSER_KINDS = frozenset({"dom_injection", "ui_phishing", "visual_injection", "
                            "document_inject", "js_dialog", "extraction_tamper", "form_recipient_redirect"})
 # The options each kind accepts; kinds not listed accept none.
 OPTION_KEYS = {
+    "click_swap": frozenset({"tracking_only"}),
     "cross_origin_bridge": frozenset({"canary"}),
     "visual_injection": frozenset({"variant"}),
     "os_cmd": frozenset({"title", "heading", "intro"}),
@@ -90,6 +91,8 @@ def validate_options(kind: str, options: Mapping) -> Mapping:
         raise ValueError(f"unknown extraction_tamper variant: {options['variant']!r}")
     if kind == "form_recipient_redirect" and options.get("variant", "attack") not in REMIT_VARIANTS:
         raise ValueError(f"unknown form_recipient_redirect variant: {options['variant']!r}")
+    if kind == "click_swap" and options.get("tracking_only", "true") != "true":
+        raise ValueError(f"click_swap tracking_only must be 'true', got {options['tracking_only']!r}")
     if kind == "ui_phishing" and options.get("account_notice", "true") != "true":
         raise ValueError(f"ui_phishing account_notice must be 'true', got {options['account_notice']!r}")
     if kind == "cross_origin_bridge" and not options.get("canary", "").strip():
