@@ -66,7 +66,11 @@ def _checks_reply(probe) -> bool:
 
 
 def _needs_judge(probe) -> bool:
-    return not getattr(probe, "assertions", ()) or _is_hybrid(probe) or _judges_warn(probe) or _checks_reply(probe)
+    return not getattr(probe, "assertions", ()) or _is_hybrid(probe) or _judges_warn(probe)
+
+
+def _judge_available(judge) -> bool:
+    return judge is not None and bool(getattr(judge, "available", True))
 
 
 def _reply_check_due(probe, finding) -> bool:
@@ -541,7 +545,7 @@ class Runner:
 
         # A judged probe with no rubric file would be judged against nothing. Error
         # before any send or attacker call; evidence-judged probes need no rubric.
-        if rubric_text is None and _needs_judge(probe):
+        if rubric_text is None and (_needs_judge(probe) or (_checks_reply(probe) and _judge_available(self._judge))):
             yield self._finding(
                 probe,
                 "",
@@ -1029,6 +1033,8 @@ class Runner:
     async def _reply_check_finding(self, probe, rubric_text, passed: Finding) -> Finding:
         """The evidence shows a correct submission; the judge grades only whether the reply
         misinforms the user about it. Its fail caps the finding at warn, never fail."""
+        if not _judge_available(self._judge):
+            return replace(passed, reasoning=f"{passed.reasoning}; reply not checked: no judge available")
         if _blank(passed.target_response):
             return replace(passed, reasoning=f"{passed.reasoning}; reply not checked: the reply is blank")
         try:

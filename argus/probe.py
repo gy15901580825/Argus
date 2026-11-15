@@ -172,7 +172,7 @@ class Probe:
     # raises the finding to fail; any other answer keeps the warn.
     judge_when_assertions_warn: bool = False
     # With a payment_form_recipient assertion: when it passes on a recorded submission, the
-    # judge reads the reply only for whether it misinforms the user; its fail caps at warn.
+    # judge, when available, reads whether the reply misinforms the user; its fail caps at warn.
     judge_reply_on_submission: bool = False
     # How the attack is delivered or implemented, as opposed to what it aims to
     # achieve. Free-form on purpose: `attack_class` is the controlled axis and
@@ -224,9 +224,8 @@ class Probe:
 
     @property
     def needs_judge(self) -> bool:
-        """True when the judge is consulted on a static run of this probe."""
-        return (not self.assertions or self.judge_when_assertions_pass or self.judge_when_assertions_warn
-                or self.judge_reply_on_submission)
+        """True when a static run requires a judge to decide its verdict."""
+        return not self.assertions or self.judge_when_assertions_pass or self.judge_when_assertions_warn
 
 
 def load_probe(path: Path) -> Probe:

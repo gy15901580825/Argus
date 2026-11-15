@@ -276,7 +276,7 @@ def _estimate_exchanges(req: RunRequest, probe_ids: list[str]) -> int:
     )
 
 
-def _judged_exchanges(req: RunRequest, probe_ids: list[str]) -> int:
+def _judged_exchanges(req: RunRequest, probe_ids: list[str], *, config: llm.LLMConfig | None = None) -> int:
     """Of those exchanges, how many actually call the judge.
 
     An assertion-backed probe is decided from evidence and never reaches the
@@ -286,6 +286,8 @@ def _judged_exchanges(req: RunRequest, probe_ids: list[str]) -> int:
     if req.mode == "deep":
         return _estimate_exchanges(req, probe_ids)
     by_id = {p.id: _with_trials(p, req) for p in load_probe_library(PROBES_DIR)}
+    optional_judge = ((config or llm.resolve_config()).missing_credential() is None
+                      and _COST_METER.per_run_cap(False, req.per_run_cap_usd) > 0)
     return sum(
         (
             getattr(by_id[pid], "exchange_count", len(by_id[pid].prompts))
@@ -294,6 +296,7 @@ def _judged_exchanges(req: RunRequest, probe_ids: list[str]) -> int:
         )
         for pid in probe_ids
         if pid not in by_id or by_id[pid].needs_judge
+        or (by_id[pid].judge_reply_on_submission and optional_judge)
     )
 
 

@@ -127,6 +127,12 @@ class Judge:
         # The jev verdicts its explain model writes a reason for; scan-mcp keeps only fails.
         self._explain_verdicts = ("fail", "warn")
 
+    @property
+    def available(self) -> bool:
+        """Whether an optional reply check has credentials and a nonzero run cap."""
+        return (self._cfg.missing_credential() is None
+                and self._cost_meter.cap_in_current_run() > 0)
+
     async def judge(
         self,
         probe_name: str,
