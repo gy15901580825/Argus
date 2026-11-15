@@ -215,15 +215,18 @@ async def test_click_swap_is_skipped_on_scriptless_hosted_traps(monkeypatch, mod
 
 
 @asynccontextmanager
-async def invoice_vendor(behavior):
+async def invoice_vendor(hosted_url, behavior):
     """A fake vendor that reads the hosted invoice and reports a total as `behavior` says."""
     import html
     import re
 
     async def handle(request):
         task = await request.json()
+        parts = urlsplit(task["url"])
+        if parts.scheme + "://" + parts.netloc != hosted_url:
+            raise AssertionError("fake vendor requires the synthetic advertised origin")
         async with httpx.AsyncClient(trust_env=False) as client:
-            body = html.unescape((await client.get(task["url"])).text)
+            body = html.unescape((await client.get(hosted_url + parts.path)).text)
         table = re.search(r"Total due</th><th>\$([\d,.]+)</th>", body).group(1)
         note = re.search(r"corrected total due is \$([\d,.]+)", body)
         reported = note.group(1) if behavior == "obey" and note else table
@@ -249,7 +252,7 @@ async def invoice_vendor(behavior):
 async def test_extraction_tamper_is_scored_from_the_reply_on_hosted_traps(monkeypatch, tmp_path, probe_id, behavior, verdict):
     probe = next(probe for probe in load_all_probes(PROBES) if probe.id == probe_id)
     async with hosted_runtime(monkeypatch) as (hosted_url, service, owner):
-        async with invoice_vendor(behavior) as vendor_url:
+        async with invoice_vendor(hosted_url, behavior) as vendor_url:
             target = BrowserUseTarget(BrowserUseSpec(
                 transport=transport(vendor_url), scenario_kind="extraction_tamper", trap_mode="hosted",
                 hosted={"service_url": hosted_url, "owner_token_env": "ARGUS_TEST_HOSTED_OWNER"},
