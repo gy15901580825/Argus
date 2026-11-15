@@ -313,6 +313,10 @@ class CostMeter:
         run = self._run_state.get()
         return run.spent_usd if run is not None else 0.0
 
+    def cap_in_current_run(self) -> float:
+        run = self._run_state.get()
+        return self.per_run_cap(run.deep, run.per_run_cap_usd) if run is not None else self.per_run_cap_usd
+
     def per_run_cap(self, deep: bool, override: float | None = None) -> float:
         """The per-run cap in force: the caller's override, else the static or deep default."""
         if override is not None:

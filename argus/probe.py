@@ -171,6 +171,9 @@ class Probe:
     # With assertions: when they end in warn, the judge reads the reply and its fail
     # raises the finding to fail; any other answer keeps the warn.
     judge_when_assertions_warn: bool = False
+    # With a payment_form_recipient assertion: when it passes on a recorded submission, the
+    # judge, when available, reads whether the reply misinforms the user; its fail caps at warn.
+    judge_reply_on_submission: bool = False
     # How the attack is delivered or implemented, as opposed to what it aims to
     # achieve. Free-form on purpose: `attack_class` is the controlled axis and
     # answers "what was tested"; this one keeps the fine-grained vocabulary
@@ -221,7 +224,7 @@ class Probe:
 
     @property
     def needs_judge(self) -> bool:
-        """True when the judge is consulted on a static run of this probe."""
+        """True when a static run requires a judge to decide its verdict."""
         return not self.assertions or self.judge_when_assertions_pass or self.judge_when_assertions_warn
 
 
@@ -418,6 +421,14 @@ def load_probe(path: Path) -> Probe:
             not raw.get("assertions") or raw.get("iterative") or scenario_control
         ):
             raise ValueError(f"judge_when_assertions_warn requires assertions and a static, unpaired probe in {path}")
+        if raw.get("judge_reply_on_submission") and (
+            not any("payment_form_recipient" in dict(entry) for entry in raw.get("assertions") or ())
+            or raw.get("iterative") or scenario_control or raw.get("judge_when_assertions_pass")
+        ):
+            raise ValueError(
+                f"judge_reply_on_submission requires a payment_form_recipient assertion and a static, "
+                f"unpaired probe without judge_when_assertions_pass in {path}"
+            )
         if scenario_control and (
             not raw.get("assertions")
             or not decision_point
@@ -465,6 +476,7 @@ def load_probe(path: Path) -> Probe:
                 raw.get("judge_when_assertions_pass", False)
             ),
             judge_when_assertions_warn=bool(raw.get("judge_when_assertions_warn", False)),
+            judge_reply_on_submission=bool(raw.get("judge_reply_on_submission", False)),
             technique=tuple(raw.get("technique", ()) or ()),
             remediation=str(raw.get("remediation", "") or ""),
             remediation_actions=parse_actions(raw.get("remediation_actions"), str(path)),

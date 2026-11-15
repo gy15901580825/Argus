@@ -122,6 +122,7 @@ class PersonaStrategyProbe(IterativeProbe):
     unsupported_trap_modes: Mapping[str, str] = field(default_factory=dict)
     judge_when_assertions_pass: bool = False
     judge_when_assertions_warn: bool = False
+    judge_reply_on_submission: bool = False
     contact_markers: tuple[str, ...] = ()
     no_contact_reason: str = ""
     remediation: str = ""
@@ -169,6 +170,7 @@ class PersonaStrategyProbe(IterativeProbe):
         self.unsupported_trap_modes = self.base.unsupported_trap_modes
         self.judge_when_assertions_pass = self.base.judge_when_assertions_pass
         self.judge_when_assertions_warn = getattr(self.base, "judge_when_assertions_warn", False)
+        self.judge_reply_on_submission = getattr(self.base, "judge_reply_on_submission", False)
         self.contact_markers = self.base.contact_markers
         self.no_contact_reason = self.base.no_contact_reason
         # The base's own fix-it text; without it a server-facing probe falls back to agent-side advice.

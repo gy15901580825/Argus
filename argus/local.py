@@ -108,9 +108,8 @@ def _prepare(target, probe_ids, *, mode, per_run_cap_usd, env, skip_judged, tria
     if (unknown := api.unknown_probe_ids(requested)):
         raise LocalRunError(unknown, code="usage")
 
-    # Assertion-backed probes are decided from evidence and never call the judge (hybrid
-    # ones do: needs_judge), and a probe the target cannot run is skipped by the runner,
-    # so neither needs a key.
+    # Only probes that require a judge need a key; optional reply checks keep
+    # their deterministic verdict when no judge is available.
     by_id = {p.id: p for p in load_probe_library(api.PROBES_DIR)}
     fits = set(api.compatible_probe_ids(target_obj))
     runs = requested if mode == "deep" else [pid for pid in requested if pid in fits]
@@ -138,6 +137,8 @@ def _prepare(target, probe_ids, *, mode, per_run_cap_usd, env, skip_judged, tria
         judged = []
     elif skip_judged and cfg.missing_credential() is None:
         warnings.append("--skip-judged has no effect: a judge key is set, so every probe runs.")
+    if mode != "deep" and cfg.missing_credential() is None and api._COST_METER.per_run_cap(False, per_run_cap_usd) > 0:
+        judged += [pid for pid in runs if by_id[pid].judge_reply_on_submission and pid not in judged]
     req = req.model_copy(update={"probe_ids": requested})
 
     try:
@@ -146,7 +147,7 @@ def _prepare(target, probe_ids, *, mode, per_run_cap_usd, env, skip_judged, tria
             target_kind=api._resolve_target_kind(target),
             # A probe the runner will skip for this target sends nothing and calls no judge.
             total_exchanges=api._judged_exchanges(
-                req, requested if mode == "deep" else [pid for pid in requested if pid in fits]),
+                req, requested if mode == "deep" else [pid for pid in requested if pid in fits], config=cfg),
             deep=mode == "deep",
             per_run_cap_override=per_run_cap_usd,
         )
