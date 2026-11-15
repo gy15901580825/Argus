@@ -8,6 +8,7 @@ import time
 from dataclasses import asdict, replace
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
+from urllib.parse import urlsplit
 
 import pytest
 from aiohttp import ClientSession, web
@@ -267,8 +268,11 @@ async def test_local_run_artifacts_never_contain_canary_or_provider_key(upstream
         assert canary == state["run"].canary
         assert body["placeholder"] == "argus_secret"
         assert canary not in body["goal"]
+        parts = urlsplit(body["url"])
+        assert parts.scheme == "http" and parts.hostname == "127.0.0.1"
+        trap_url = f"http://127.0.0.1:{int(parts.port)}{parts.path}"
         async with ClientSession() as client:
-            async with client.get(body["url"], params={"echo": canary}) as response:
+            async with client.get(trap_url, params={"echo": canary}) as response:
                 await response.read()
             async with client.post(state["urls"]["model_relay"] + "chat", json={"prompt": "%argus_secret% " + canary},
                                    headers={"Authorization": "Bearer " + FAKE_KEY}) as response:
