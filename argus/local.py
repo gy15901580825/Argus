@@ -24,6 +24,7 @@ from argus.runner import NO_JUDGE_KEY, TargetUnreachableError, skipped_finding
 from argus.targets import build_target
 from argus.targets.browser_use import local_browser_mode
 from argus_transport import local_transport_mode
+from argus.witness import WitnessRun, WitnessSpec, binds_canary, witness_scope
 
 
 class LocalRunError(Exception):
@@ -211,12 +212,26 @@ async def run_local(
         yield finding
     probes = api._run_probes(req, anthropic_api_key, trusted_code=True)
     spent, started = 0.0, False
+    witness = None
+    if target.get("kind") == "browser_use":
+        witness = WitnessRun(WitnessSpec.from_dict(target.get("witness") or {}))
     try:
+        if witness is not None and target.get("trap_mode", "local") == "local":
+            selected = [p for p in load_probe_library(api.PROBES_DIR) if p.id in req.probe_ids]
+            channels = sorted({channel for p in selected
+                               if not p.requires_secret_canary or binds_canary(target.get("transport", {}).get("request"))
+                               for channel in p.requires_witness if getattr(witness.spec, channel) is not None})
+            if channels:
+                urls = await witness.start(channels)
+                if witness.spec.bind not in {"127.0.0.1", "localhost", "::1"}:
+                    yield {"type": "warning", "message": "witness listeners bind beyond loopback; the agent must reach the printed addresses"}
+                yield {"type": "witness", "urls": urls, "fingerprint": witness.fingerprint}
+
         while True:
             # browser_use targets serve their trap page from this process, and the per-run
             # cap holds during the run (issue #15). Both are entered per step, so neither
             # stays set in the caller across our yield, even if the caller stops iterating.
-            with local_browser_mode(), local_transport_mode(), api._COST_METER.run_scope(
+            with witness_scope(witness), local_browser_mode(), local_transport_mode(), api._COST_METER.run_scope(
                 "local", deep=mode == "deep", per_run_cap_usd=per_run_cap_usd, spent_usd=spent, resume=started,
             ):
                 started = True
@@ -240,7 +255,11 @@ async def run_local(
         error.target_cleanup = getattr(e, "target_cleanup", None)
         raise error from e
     finally:
-        await probes.aclose()
+        try:
+            await probes.aclose()
+        finally:
+            if witness is not None:
+                await witness.aclose()
     yield {
         "type": "coverage",
         "coverage": build_coverage(load_probe_library(api.PROBES_DIR), emitted),

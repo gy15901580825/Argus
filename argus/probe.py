@@ -163,6 +163,10 @@ class Probe:
     requires_interaction: bool = True
     # Mode -> printed skip reason; public_url means trap_public_url is set.
     unsupported_trap_modes: Mapping[str, str] = field(default_factory=dict)
+    # Run-scoped observation channels; no witness starts for an ordinary probe.
+    requires_witness: tuple[str, ...] = ()
+    requires_secret_canary: bool = False
+    witness_values: tuple[str, ...] = ()
     # Persistent or otherwise intrusive probes require selection by id.
     opt_in: bool = False
     # With assertions: a failed assertion still decides the verdict, but when they
@@ -259,6 +263,15 @@ def load_probe(path: Path) -> Probe:
                                  "expected local, hosted or public_url")
             if not isinstance(reason, str) or not reason.strip():
                 raise ValueError(f"unsupported_trap_modes[{mode!r}] needs a nonempty reason in {path}")
+        requires_witness = raw.get("requires_witness", [])
+        if not isinstance(requires_witness, list) or any(not isinstance(c, str) or c not in {"model_relay", "otlp"} for c in requires_witness):
+            raise ValueError("requires_witness must list model_relay or otlp")
+        requires_secret_canary = raw.get("requires_secret_canary", False)
+        if type(requires_secret_canary) is not bool:
+            raise ValueError("requires_secret_canary must be a boolean")
+        witness_values = raw.get("witness_values", [])
+        if not isinstance(witness_values, list) or any(not isinstance(v, str) or not v for v in witness_values):
+            raise ValueError("witness_values must list nonempty plain strings")
         opt_in = raw.get("opt_in", False)
         if type(opt_in) is not bool:
             raise ValueError(f"opt_in must be a boolean in {path}")
@@ -471,6 +484,9 @@ def load_probe(path: Path) -> Probe:
             assertions=tuple(raw.get("assertions", ()) or ()),
             requires_interaction=bool(raw.get("requires_interaction", True)),
             unsupported_trap_modes=unsupported_trap_modes,
+            requires_witness=tuple(requires_witness),
+            requires_secret_canary=requires_secret_canary,
+            witness_values=tuple(witness_values),
             opt_in=opt_in,
             judge_when_assertions_pass=bool(
                 raw.get("judge_when_assertions_pass", False)

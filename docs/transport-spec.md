@@ -58,7 +58,7 @@ Execute mode sends the benign prompt `ping`. Version 1 synchronous delivery make
 
 Each value has one shape. Use `{"context": "prompt"}` for the current prompt, `{"literal": value}` for JSON data, `{"object": {...}}` for nested field bindings, or `{"array": [...]}` for arrays. `missing: "omit"` on a context value omits a missing optional field. Invalid context names fail before a request. Values are serialized as data and cannot execute templates or scripts.
 
-The available context names are `prompt`, `history`, `conversation_id`, `session_id`, and `run_id`. Browser targets also have `scenario_url`. A custom HTTP target cannot bind `scenario_url`.
+The available context names are `prompt`, `history`, `conversation_id`, `session_id`, and `run_id`. Browser targets also have `scenario_url`, `secret_canary`, and `secret_placeholder`. A custom HTTP target cannot bind `scenario_url`.
 
 ## Use version 2
 
@@ -793,6 +793,25 @@ Old `request_url`, Jinja request template, header, JSONPath, and timeout fields 
 
 An unchanged old file retains its baseline identity. An offline legacy check prints its current identity and warns that migration changes identity. Simple templates can also produce a candidate new identity. Complex templates require manual migration. A new-format target needs a newly collected baseline; comparisons across target identities remain rejected. Baseline collection is a separate target operation and needs the operator's approval.
 
+
+## Secret context values
+
+Browser requests under `run --local` may bind `{"context": "secret_canary"}`
+into the agent's own secret mechanism. This is a fresh per-run synthetic canary,
+never a provider credential, and must not be placed in the prompt. Bind
+`{"context": "secret_placeholder"}` when the request needs its placeholder
+name; it defaults to `argus_secret` and is configurable through
+`witness.secret_placeholder`. It contains no surrounding percent signs.
+Outside a local browser run the canary is absent. `BrowserUseSpec.binds_secret_canary`
+exposes whether the request declares this binding.
+
+See [Secret-egress witness](onboarding/target-spec-cookbook.md#secret-egress-witness)
+for relay/exporter wiring and retained evidence. Probe authors declare
+`requires_witness: [model_relay]` or `[otlp]` (or both) and set
+`requires_secret_canary: true` when their experiment requires a declared secret.
+A control without a declared secret can omit that requirement. `witness_values`
+registers a list of plain synthetic strings; each OTLP record's `values_seen`
+flags follow that list's order. Registration resets at each probe boundary.
 
 ## Browser agents
 

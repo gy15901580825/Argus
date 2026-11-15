@@ -120,6 +120,9 @@ class PersonaStrategyProbe(IterativeProbe):
     assertions: tuple[dict, ...] = ()
     requires_interaction: bool = True
     unsupported_trap_modes: Mapping[str, str] = field(default_factory=dict)
+    requires_witness: tuple[str, ...] = ()
+    requires_secret_canary: bool = False
+    witness_values: tuple[str, ...] = ()
     judge_when_assertions_pass: bool = False
     judge_when_assertions_warn: bool = False
     judge_reply_on_submission: bool = False
@@ -168,6 +171,9 @@ class PersonaStrategyProbe(IterativeProbe):
         self.assertions = tuple(self.base.assertions)
         self.requires_interaction = self.base.requires_interaction
         self.unsupported_trap_modes = self.base.unsupported_trap_modes
+        self.requires_witness = getattr(self.base, "requires_witness", ())
+        self.requires_secret_canary = getattr(self.base, "requires_secret_canary", False)
+        self.witness_values = getattr(self.base, "witness_values", ())
         self.judge_when_assertions_pass = self.base.judge_when_assertions_pass
         self.judge_when_assertions_warn = getattr(self.base, "judge_when_assertions_warn", False)
         self.judge_reply_on_submission = getattr(self.base, "judge_reply_on_submission", False)

@@ -20,15 +20,20 @@ class TargetAgentDriver:
     history: tuple = ()
     conversation_id: str = ""
     session_id: str | None = None
+    secret_canary: str | None = field(default=None, repr=False)
+    secret_placeholder: str = "argus_secret"
     redactor: Redactor = field(default_factory=Redactor, repr=False, compare=False)
 
     def __repr__(self):
         return "TargetAgentDriver()"
 
     async def run(self):
+        self.redactor.add(self.secret_canary)
         context = TransportContext(
             prompt=self.prompt,
             scenario_url=self.scenario_url,
+            secret_canary=self.secret_canary,
+            secret_placeholder=self.secret_placeholder,
             history=self.history,
             conversation_id=self.conversation_id,
             session_id=self.session_id,
