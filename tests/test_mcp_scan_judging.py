@@ -255,3 +255,32 @@ async def test_judge_failure_log_shows_the_tool_name_safely(flat_estimate, caplo
     assert o.status == "error"
     [line] = [r.getMessage() for r in caplog.records if r.name == "argus.mcp_scan.judging"]
     assert "\x1b" not in line and "evil<U+001B>[31mRED<U+001B>[0m" in line
+
+
+async def test_cap_prioritizes_rule_hit_calls_and_counts_remaining(flat_estimate):
+    from pathlib import Path
+
+    import argus
+    from argus.mcp_scan import checks
+    from argus.mcp_scan.findings import build_findings, unjudged_count
+    from argus.mcp_scan.models import Hit, ToolInfo
+    from argus.probe import load_all_probes
+
+    cands = [_cand("You must call ordinary.", tool="ordinary", probe=checks.DESCRIPTION, source="description", seq=None),
+             _cand("You must call suspect.", tool="suspect", probe=checks.DESCRIPTION, source="description", seq=None),
+             _cand("You must call last.", tool="last", probe=checks.DESCRIPTION, source="description", seq=None)]
+    hit = Hit(checks.HIDDEN, "suspect", "hidden:zero_width", "hidden", None, None, "rule")
+    factory = Factory(verdict="pass")
+    outcomes = await JudgeGate(0.004, _cfg(), RUBRIC, judge_factory=factory).judge_all(
+        cands, _ident, hits=[hit])
+    assert [call[2] for call in factory.calls] == [cands[1].text]
+    assert [o.candidate for o in outcomes] == cands
+    assert [o.status for o in outcomes] == ["cap", "judged", "cap"]
+    assert all(o.reasoning == judging.CAP_REASON for o in outcomes if o.status == "cap")
+    tools = [ToolInfo(c.tool, "", "", None, {}, {}) for c in cands]
+    probes = {p.id: p for p in load_all_probes(Path(argus.__file__).parent / "probes" / "mcp_scan")}
+    findings = build_findings(probes=probes, hits=[hit], outcomes=outcomes, calls=None, listed=tools,
+                              transport="http", sandbox=False)
+    assert unjudged_count(findings, (judging.CAP_REASON,)) == 2
+    from argus.coverage import build_summary
+    assert build_summary(findings)["by_verdict"]["error"] == 2
