@@ -1,6 +1,8 @@
 """Declared stored values must not escape through run logs or failed deliveries."""
 import json
 import logging
+from dataclasses import asdict
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from urllib.parse import urlsplit
 
@@ -9,6 +11,7 @@ from aiohttp import ClientSession, web
 
 from argus.targets.browser_use import BrowserUseSpec, BrowserUseTarget, local_browser_mode
 from argus_transport import local_transport_mode
+from test_redteam_targets_browser_use import _browser_probe
 from test_scenario_runner import runner
 from test_transport_integration import transport
 
@@ -101,18 +104,16 @@ async def test_undeclared_run_log_is_byte_identical(echo_agent):
 
 
 async def test_http_error_body_is_not_stored_or_logged(echo_agent, tmp_path, caplog):
-    from argus.targets._base import TargetTransportError
-    from argus.runner import _send_failure
+    from argus.runner import Runner
     echo_agent["status"] = 500
     target = target_for(echo_agent)
     with local_browser_mode(), local_transport_mode(), caplog.at_level(logging.DEBUG):
-        with pytest.raises(TargetTransportError) as caught:
-            await target.send_prompt("read the page")
-        logging.getLogger(__name__).exception("delivery failed: %s", caught.value,
-                                              exc_info=caught.value)
-    finding = {"reasoning": _send_failure(caught.value)[1]}
+        probe_runner = Runner(target, AsyncMock(), Path(__file__).resolve().parents[1] / "argus" / "rubrics")
+        findings = [finding async for finding in probe_runner.run_probe(_browser_probe())]
+    assert len(findings) == 1 and findings[0].verdict == "error"
+    finding = asdict(findings[0])
     path = tmp_path / "finding.json"
-    path.write_text(json.dumps(finding))
+    path.write_text(json.dumps(finding, default=str))
     assert target.last_run_log() is None
     assert VALUE not in path.read_text()
     assert VALUE not in caplog.text
