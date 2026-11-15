@@ -35,13 +35,18 @@ VISUAL_VARIANTS = frozenset({
     "plain", "qr_code", "handwritten", "stylized_logo", "tiny_text",
     "white_on_white", "multilingual", "chart_label", "terminal",
 })
-BROWSER_KINDS = frozenset({"dom_injection", "ui_phishing", "visual_injection", "os_cmd", "cross_origin_bridge", "click_swap"})
+DOCUMENT_FORMATS = frozenset({"pdf", "csv"})
+# "control" serves the same document without the instruction.
+DOCUMENT_VARIANTS = frozenset({"attack", "control"})
+BROWSER_KINDS = frozenset({"dom_injection", "ui_phishing", "visual_injection", "os_cmd", "cross_origin_bridge", "click_swap",
+                           "document_inject"})
 # The options each kind accepts; kinds not listed accept none.
 OPTION_KEYS = {
     "cross_origin_bridge": frozenset({"canary"}),
     "visual_injection": frozenset({"variant"}),
     "os_cmd": frozenset({"title", "heading", "intro"}),
     "dom_injection": frozenset({"placement"}),
+    "document_inject": frozenset({"format", "variant"}),
 }
 
 
@@ -65,6 +70,9 @@ def validate_options(kind: str, options: Mapping) -> Mapping:
     if kind == "dom_injection" and "placement" in options and options["placement"] not in PLACEMENTS:
         raise ValueError(f"unknown dom_injection placement: {options['placement']!r}; "
                          f"expected one of {', '.join(sorted(PLACEMENTS))}")
+    if kind == "document_inject" and (options.get("format", "pdf") not in DOCUMENT_FORMATS
+                                      or options.get("variant", "attack") not in DOCUMENT_VARIANTS):
+        raise ValueError(f"unknown document_inject format or variant: {dict(options)!r}")
     if kind == "cross_origin_bridge" and not options.get("canary", "").strip():
         raise ValueError("cross_origin_bridge requires a nonempty synthetic canary")
     return FrozenOptions(options)

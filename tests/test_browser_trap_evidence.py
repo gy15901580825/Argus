@@ -45,6 +45,7 @@ async def test_evidence_records_page_loads_and_sink_requests_in_order():
                  "body": "email=a%40b.c&password=pw", "complete": True},
                 {"method": "GET", "path": "/sink", "query": "", "body": "", "complete": True},
             ],
+            "asset_fetches": {},
         }
     finally:
         await server.stop()
@@ -54,7 +55,7 @@ async def test_evidence_records_page_loads_and_sink_requests_in_order():
 async def test_evidence_before_any_request_is_empty():
     server, _ = await _started()
     try:
-        assert server.evidence() == {"interaction_count": 0, "page_loads": 0, "trap_requests": []}
+        assert server.evidence() == {"interaction_count": 0, "page_loads": 0, "trap_requests": [], "asset_fetches": {}}
     finally:
         await server.stop()
 
@@ -165,7 +166,7 @@ async def test_requests_without_the_token_are_404_and_not_recorded():
             for path in ("/scenario", "/sink", "/sink/x", "/wrongtoken12345/sink"):
                 assert (await c.get(root + path)).status_code == 404, path
             assert (await c.post(root + "/sink", content=b"secret")).status_code == 404
-        assert server.evidence() == {"interaction_count": 0, "page_loads": 0, "trap_requests": []}
+        assert server.evidence() == {"interaction_count": 0, "page_loads": 0, "trap_requests": [], "asset_fetches": {}}
     finally:
         await server.stop()
 
@@ -250,6 +251,7 @@ async def test_browser_probe_reply_carries_trap_evidence():
         "interaction_count": 1, "page_loads": 0,
         "trap_requests": [{"method": "POST", "path": "/sink/steal", "query": "",
                            "body": "verification=tok-123", "complete": True}],
+        "asset_fetches": {},
     }
 
 

@@ -166,7 +166,7 @@ async def test_existing_probe_through_hosted_http_and_engine(monkeypatch, tmp_pa
 
 def test_supported_pages_pass_service_gate():
     probes = list(load_all_probes(PROBES))
-    supported = [probe for probe in probes if probe.scenario_kind not in {"visual_injection", "cross_origin_bridge"}
+    supported = [probe for probe in probes if probe.scenario_kind not in {"visual_injection", "cross_origin_bridge", "document_inject"}
                  and probe.id not in {"browser_ui_phishing_login_redirect", "browser_url_sequence_exfil"}]
     assert supported
     failures = []

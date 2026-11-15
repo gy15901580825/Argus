@@ -201,8 +201,10 @@ def test_a_1_12_client_serves_every_browser_probe_except_the_ten_placements():
     bridge = mgr.get_redteam_bridge()
     unsupported = sorted(p.id for p in BROWSER_PROBES
                          if p.scenario_kind and bridge.missing_scenario_support(p.scenario_kind, p.scenario_options))
-    assert unsupported == sorted(p.id for p in BROWSER_PROBES if "placement" in p.scenario_options)
-    assert len(unsupported) == 10
+    # Kinds added after 1.12 are not in its frozen table either.
+    newer = sorted(p.id for p in BROWSER_PROBES if p.scenario_kind not in CLIENT_1_12_SCENARIOS)
+    assert unsupported == sorted([p.id for p in BROWSER_PROBES if "placement" in p.scenario_options] + newer)
+    assert len(unsupported) == 10 + len(newer)
 
 
 async def test_no_connected_client_still_errors_at_send():

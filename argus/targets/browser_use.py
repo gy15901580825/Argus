@@ -43,7 +43,8 @@ from argus.targets._base import (
 )
 
 _SCENARIO_KINDS = frozenset(
-    {"dom_injection", "ui_phishing", "visual_injection", "os_cmd", "cross_origin_bridge", "click_swap"}
+    {"dom_injection", "ui_phishing", "visual_injection", "os_cmd", "cross_origin_bridge", "click_swap",
+     "document_inject"}
 )
 
 # Same cap as the trap server's, so evidence summed over rounds stays bounded.
@@ -163,7 +164,8 @@ class BrowserUseSpec:
             )
         if self.scenario_kind not in _SCENARIO_KINDS:
             raise ValueError(
-                "scenario_kind must be one of dom_injection/ui_phishing/visual_injection/os_cmd/cross_origin_bridge/click_swap"
+                "scenario_kind must be one of dom_injection/ui_phishing/visual_injection/os_cmd/"
+                "cross_origin_bridge/click_swap/document_inject"
             )
         self._validate_trap()
 
@@ -237,6 +239,14 @@ def _valid_evidence(ev) -> bool:
             )
             and isinstance(r.get("complete"), bool)
             for r in ev["trap_requests"]
+        )
+        and (
+            "asset_fetches" not in ev
+            or isinstance(ev["asset_fetches"], dict)
+            and all(
+                isinstance(k, str) and type(v) is int and v >= 0
+                for k, v in ev["asset_fetches"].items()
+            )
         )
     )
 
@@ -609,6 +619,12 @@ class BrowserUseTarget(Target):
             "page_loads": page_loads,
             "trap_requests": requests,
         }
+        # Absent on a runner that predates asset tracking; stays absent so a check can tell.
+        if "asset_fetches" in new:
+            fetches = dict(old.get("asset_fetches", {}))
+            for name, count in new["asset_fetches"].items():
+                fetches[name] = fetches.get(name, 0) + count
+            self._evidence["asset_fetches"] = fetches
         if "inbox_page_loads" in new:
             self._evidence["inbox_page_loads"] = (
                 old.get("inbox_page_loads", 0) + new["inbox_page_loads"]

@@ -58,6 +58,7 @@ class ScenarioServer:
         self._sink_url: str | None = None
         self._page_loads = 0
         self._trap_requests: list[dict] = []
+        self._asset_fetches: dict[str, int] = {}
         self._in_flight = 0
         self._idle = asyncio.Event()
         self._idle.set()
@@ -87,6 +88,8 @@ class ScenarioServer:
             "interaction_count": self._page_loads + len(self._trap_requests),
             "page_loads": self._page_loads,
             "trap_requests": [dict(r) for r in self._trap_requests],
+            # GETs per served asset path, so a check can tell a linked file was never opened.
+            "asset_fetches": dict(self._asset_fetches),
         }
 
     async def start(self) -> str:
@@ -102,9 +105,12 @@ class ScenarioServer:
 
         async def asset(request: web.Request) -> web.Response:
             # Part of the page the agent already loaded: neither a page load nor a trap request.
-            found = (self._assets_fn() if self._assets_fn else {}).get(request.path[len(prefix) + 1:])
+            name = request.path[len(prefix) + 1:]
+            found = (self._assets_fn() if self._assets_fn else {}).get(name)
             if found is None:
                 raise web.HTTPNotFound()
+            if request.method == "GET":
+                self._asset_fetches[name] = self._asset_fetches.get(name, 0) + 1
             body, content_type = found
             return web.Response(body=body, content_type=content_type)
 
