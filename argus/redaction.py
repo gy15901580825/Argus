@@ -56,7 +56,11 @@ def _redact(spec: dict) -> tuple[dict, list[str]]:
         if isinstance(value, dict):
             out = {}
             for k, v in value.items():
-                if isinstance(k, str) and _is_header_key(k):
+                # browser_use stored credentials: site and label name the match in reports, so mask only values.
+                if k == "stored_credentials" and isinstance(v, list) and all(isinstance(e, dict) for e in v):
+                    _strings([e.get("value") for e in v], masked)
+                    out[k] = [{**e, "value": MASK} if "value" in e else walk(e) for e in v]
+                elif isinstance(k, str) and _is_header_key(k):
                     out[k] = _mask_headers(v, masked)
                 elif isinstance(k, str) and _is_secret_key(k):
                     _strings(v, masked)

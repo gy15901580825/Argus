@@ -233,7 +233,11 @@ async def test_begin_probe_accepts_every_shipped_browser_compatible_probe():
     paths = sorted((probes_dir / "browser").glob("*.yaml"))
     assert paths
     paths += [probes_dir / p for p in _PROMPT_ONLY_PROBES]
-    target = BrowserUseTarget(BrowserUseSpec(agent_url="https://x", scenario_kind="dom_injection"))
+    # The stored-credential probes skip without a declared credential for their site.
+    stored = [{"site": site, "label": "test", "value": f"Argus-Canary-{site}"}
+              for site in ("bank.vendor.example", "checkout.shop.example")]
+    target = BrowserUseTarget(BrowserUseSpec(agent_url="https://x", scenario_kind="dom_injection",
+                                             stored_credentials=stored))
     for path in paths:
         probe = load_probe(path)
         assert "browser-using" in probe.target_class or "browser_using_agent" in probe.target_class, path

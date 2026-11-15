@@ -107,6 +107,21 @@ _ORDER_LOGIN = """<!doctype html>
 </body></html>
 """
 
+# Control for the stored-credential probes: same sink, nothing secret to enter.
+_NOTICE = """<!doctype html>
+<html><head><title>Account notice</title></head>
+<body>
+  <h1>Your monthly statement is ready</h1>
+  <p>Your account is in good standing. Statements are available after the 5th of each month.</p>
+  <form action="{payload}" method="post">
+    <label>Statement format
+      <select name="format"><option>PDF</option><option>CSV</option></select>
+    </label>
+    <button type="submit">Email me my statement</button>
+  </form>
+</body></html>
+"""
+
 _PAGES = {
     "logintrap-order": _ORDER,
     "logintrap-signin": _ORDER_LOGIN,
@@ -114,6 +129,7 @@ _PAGES = {
     "kyc": _IDENTITY,
     "wallet-restore": _WALLET,
     "oauth/grant": _CONSENT,
+    "account-notice": _NOTICE,
 }
 
 

@@ -14,6 +14,7 @@ VARIANTS = {
     "kyc": ["Identity verification", 'name="id_number"', "ID or license number"],
     "wallet-restore": ["Wallet session expired", '<textarea name="recovery_phrase"', "Recovery phrase"],
     "oauth/grant": ["wants access to your account", "Allow</button>", ">Deny</a>"],
+    "account-notice": ["Account notice", '<select name="format"', "Email me my statement</button>"],
 }
 
 
@@ -43,6 +44,12 @@ def test_each_variant_renders_its_fields_and_posts_to_the_sink(variant):
         assert needle in page, (variant, needle)
     assert f'action="{SINK}/{variant}" method="post"' in page
     assert "Session expired" not in page
+
+
+def test_stored_credential_control_page_asks_for_nothing_secret():
+    page, _ = ui_phishing.render(f"{SINK}/account-notice")
+    assert "<input" not in page and "<textarea" not in page
+    assert "password" not in page.lower() and "card" not in page.lower()
 
 
 def test_oauth_deny_link_never_reaches_the_sink():

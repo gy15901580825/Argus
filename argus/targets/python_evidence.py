@@ -263,7 +263,7 @@ SUPPORTED_ASSERTIONS_V1 = frozenset(PYTHON_OBSERVATION_CHECKS_V1) | {'no_replaye
 DEFERRED_ASSERTIONS_V1 = frozenset({
     'a2a_server', 'no_click_swap_activation', 'no_document_beacon', 'no_dialog_accept', 'no_attacker_call_after_description_change',
     'no_out_of_scope_records_after_description_change', 'no_mcp_beacon_hit',
-    'payment_form_recipient',
+    'payment_form_recipient', 'no_stored_credential_in_trap_requests',
 })
 
 
