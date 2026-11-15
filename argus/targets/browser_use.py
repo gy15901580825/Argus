@@ -27,6 +27,7 @@ from argus_transport import (
     TransportOutcome,
     execution_policy,
 )
+from argus_transport.security import redacted_transport_logs
 from dataclasses import dataclass, field, fields
 from typing import ClassVar
 from urllib.parse import parse_qsl, quote_plus, unquote_plus, urlsplit
@@ -386,6 +387,29 @@ def _scrub_stored(text, creds: tuple[StoredCredential, ...]):
     return text
 
 
+@dataclass(frozen=True)
+class _StoredCredentialLogRedactor:
+    creds: tuple[StoredCredential, ...] = field(repr=False)
+
+    def clean(self, text):
+        return _scrub_stored(text, self.creds)
+
+
+def _scrub_stored_data(value, creds: tuple[StoredCredential, ...]):
+    """Scrub declared values throughout run metadata, including keys and identifiers."""
+    if not creds:
+        return value
+    if isinstance(value, dict):
+        return {_scrub_stored(k, creds): _scrub_stored_data(v, creds) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_scrub_stored_data(v, creds) for v in value]
+    if isinstance(value, (int, float)):
+        text = str(value)
+        scrubbed = _scrub_stored(text, creds)
+        return scrubbed if scrubbed != text else value
+    return _scrub_stored(value, creds)
+
+
 def _scrub_stored_request(req: dict, creds: tuple[StoredCredential, ...], piece: bool) -> dict:
     """A request that carries one piece of a stored value spelled across several URLs loses that piece."""
     out = {k: _scrub_stored(req[k], creds) for k in ("path", "query", "body")}
@@ -522,7 +546,25 @@ class BrowserUseTarget(Target):
     async def send_prompt(
         self, prompt: str, history: tuple[Turn, ...] = ()
     ) -> tuple[str, float]:
-        text, latency = await self._send_prompt(prompt, history)
+        creds = self.spec.stored_credentials
+        log_scope = (redacted_transport_logs(_StoredCredentialLogRedactor(creds))
+                     if creds else contextlib.nullcontext())
+        with log_scope:
+            try:
+                text, latency = await self._send_prompt(prompt, history)
+            except Exception as exc:
+                if not creds:
+                    raise
+                # Keep the exception type and metadata used to classify failed deliveries.
+                message = str(exc)
+                scrubbed = _scrub_stored(message, creds)
+                if scrubbed != message:
+                    exc.args = (scrubbed,)
+                    # Some exception types format attributes rather than their args.
+                    if _scrub_stored(str(exc), creds) != str(exc):
+                        raise TargetDeliveryError(scrubbed) from None
+                # Validation and bridge causes can quote raw agent output in a traceback.
+                raise exc from None
         # The reply can echo a stored value; it must not reach reports in plaintext.
         return _scrub_stored(text, self.spec.stored_credentials), latency
 
@@ -678,7 +720,9 @@ class BrowserUseTarget(Target):
                     else events
                 )
                 try:
-                    self._last_run_log = TargetRunLog.model_validate(log_fields)
+                    self._last_run_log = TargetRunLog.model_validate(
+                        _scrub_stored_data(log_fields, self.spec.stored_credentials)
+                    )
                 except ValueError as exc:
                     raise TargetTransportError(
                         "mapping_error: invalid target run log"
