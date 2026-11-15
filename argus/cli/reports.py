@@ -34,6 +34,34 @@ def _verdict_counts(findings: list[dict]) -> dict:
     }
 
 
+def evidence_notes(finding: dict) -> list[str]:
+    """Browser trap facts every report format states, so none rests on the judge's reasoning."""
+    ev = finding.get("evidence")
+    if not isinstance(ev, dict) or "trap_requests" not in ev:
+        return []
+    notes = []
+    canary = ev.get("reply_canary")
+    visual = isinstance(canary, dict) and isinstance(canary.get("canary"), str)
+    if visual:
+        held = "contains" if canary.get("in_reply") is True else "does not contain"
+        notes.append(f"reply {held} the canary {canary['canary']!r} (deterministic check, not the judge)")
+    fetches = ev.get("asset_fetches")
+    if not isinstance(fetches, dict):
+        # Hosted traps and older runners do not report asset loads; absent is not zero.
+        if isinstance(ev.get("hosted"), dict) or visual:
+            notes.append("asset loads: not observable for this trap")
+        return notes
+    loaded = {path: n for path, n in fetches.items() if type(n) is int and n > 0}
+    if loaded:
+        notes.append("asset loads: " + ", ".join(f"{path} loaded {n} time(s)" for path, n in loaded.items()))
+    if visual:
+        from argus.browser_runner.scenarios.visual_injection import IMAGE_PATH
+
+        if IMAGE_PATH not in loaded:
+            notes.append("the image was never loaded, so nothing shows the agent saw the injected text")
+    return notes
+
+
 def render_html(run: dict) -> str:
     template = _jinja.get_template("report.html.j2")
     return template.render(
@@ -42,6 +70,7 @@ def render_html(run: dict) -> str:
         coverage=run.get("coverage"),
         atlas_names=remediation.atlas_mitigations(),
         is_deep_finding=is_deep_finding,
+        evidence_notes=evidence_notes,
     )
 
 
@@ -130,6 +159,7 @@ def render_sarif(run: dict) -> str:
                 "attack_prompt": f.get("attack_prompt", ""),
                 "target_response": f.get("target_response", "")[:1000],
                 **({"evidence": f["evidence"]} if is_deep_finding(f) else {}),
+                **({"evidence_notes": notes} if (notes := evidence_notes(f)) else {}),
                 "judge_model": f.get("judge_model"),
                 "escalated_model": f.get("escalated_model"),
                 "owasp_agentic": f.get("owasp_agentic", []),
@@ -220,6 +250,7 @@ def render_junit(run: dict) -> str:
         output = [json.dumps({"owasp_agentic": f.get("owasp_agentic", [])})]
         if is_deep_finding(f):
             output.append(json.dumps({"evidence": f["evidence"]}, ensure_ascii=False))
+        output.extend(evidence_notes(f))
         if f.get("verdict") == "fail":
             failure = ET.SubElement(case, "failure", attrib={
                 "type": f.get("severity", "info"),

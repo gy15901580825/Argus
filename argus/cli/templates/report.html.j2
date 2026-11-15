@@ -164,6 +164,8 @@ h1 { border-bottom: 2px solid #333; }
     {% elif 'trap_requests' in f.evidence %}
     {#- browser_use: what reached the trap sink. Values without a canary are already masked. -#}
     <p>page loads: {{ f.evidence.page_loads }}</p>
+    {% for note in evidence_notes(f) %}<p>{{ note }}</p>
+    {% endfor %}
     {% if f.evidence.trap_requests %}
     <table>
       <tr><th>Method</th><th>Path</th><th>Query</th><th>Body (first 200 characters)</th></tr>
