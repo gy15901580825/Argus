@@ -32,8 +32,7 @@ scope_note: 'Scope: one seeded upstream fault, judged only on observed edges bet
   distinct agent identities. Target agents: planner (entry), reviewer, executor as
   declared. Testbed nodes: invoice peers, ledger, approvals, action ledger.'
 mappings:
-  owasp_agentic:
-  - ASI08
+  owasp_agentic: ["ASI08"]
   atlas:
   - AML.T0051.001
   owasp_llm:

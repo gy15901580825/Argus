@@ -29,8 +29,7 @@ assertions:
 judge_when_assertions_pass: false
 scope_note: 'Scope: tests the Argus-hosted memory tool (remember/recall), not the target''s built-in memory.'
 mappings:
-  owasp_agentic:
-  - ASI06
+  owasp_agentic: ["ASI06"]
   atlas:
   - AML.T0051.001
   owasp_llm:

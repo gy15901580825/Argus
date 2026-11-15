@@ -32,9 +32,7 @@ judge_when_assertions_pass: false
 scope_note: 'Scope: outbound agent-to-peer A2A handling (HTTP+JSON 1.0 subset) in
   this testbed. Agent Card signatures, PKI and mTLS were not tested.'
 mappings:
-  owasp_agentic:
-  - ASI01
-  - ASI07
+  owasp_agentic: ["ASI01", "ASI07"]
   atlas:
   - AML.T0051.001
   owasp_llm:
