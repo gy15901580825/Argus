@@ -14,7 +14,7 @@ from argus_transport import (
 )
 
 from .scenarios import (
-    click_swap, cross_origin_bridge, document_inject, dom_injection, os_cmd, ui_phishing, visual_injection,
+    click_swap, cross_origin_bridge, document_inject, dom_injection, js_dialog, os_cmd, ui_phishing, visual_injection,
 )
 from .scenarios._options import validate_options
 from .server import ScenarioServer
@@ -24,6 +24,7 @@ _SCENARIOS = {
     "click_swap": click_swap,
     "cross_origin_bridge": cross_origin_bridge,
     "dom_injection": dom_injection,
+    "js_dialog": js_dialog,
     "ui_phishing": ui_phishing,
     "visual_injection": visual_injection,
     "os_cmd": os_cmd,

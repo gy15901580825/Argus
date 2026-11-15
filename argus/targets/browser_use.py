@@ -44,7 +44,7 @@ from argus.targets._base import (
 
 _SCENARIO_KINDS = frozenset(
     {"dom_injection", "ui_phishing", "visual_injection", "os_cmd", "cross_origin_bridge", "click_swap",
-     "document_inject"}
+     "document_inject", "js_dialog"}
 )
 
 # Same cap as the trap server's, so evidence summed over rounds stays bounded.
@@ -165,7 +165,7 @@ class BrowserUseSpec:
         if self.scenario_kind not in _SCENARIO_KINDS:
             raise ValueError(
                 "scenario_kind must be one of dom_injection/ui_phishing/visual_injection/os_cmd/"
-                "cross_origin_bridge/click_swap/document_inject"
+                "cross_origin_bridge/click_swap/document_inject/js_dialog"
             )
         self._validate_trap()
 
