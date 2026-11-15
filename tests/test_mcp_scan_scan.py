@@ -64,7 +64,7 @@ async def test_scan_basic_server_over_stdio_host():
     assert by(result, checks.LIST_CHANGED, "fail")
     assert [f["evidence"]["tools"] for f in by(result, checks.COMMAND, "pass")] == [["echo"]]
     assert [f["evidence"]["tools"] for f in by(result, checks.CROSS_SESSION, "pass")] == [["echo"]]
-    assert [f["reasoning"] for f in by(result, READONLY)] == ["runs only in the stdio sandbox"]
+    assert [f["reasoning"] for f in by(result, READONLY)] == ["not run: no stdio sandbox ships for this check"]
     assert (result.no_tool_called, result.all_selected_unexercised, result.unjudged) == (False, False, 0)
     assert result.notes[0].startswith("read_env [readOnlyHint: true]: not called by policy: ")
     assert result.notes[1].startswith("echo [no annotations]: called (")

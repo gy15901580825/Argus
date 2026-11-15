@@ -209,7 +209,7 @@ def test_no_tool_called_dynamic_probes_skipped_static_still_run():
     for pid in (*STATIC, checks.HIDDEN):
         [f] = by(fs, pid)
         assert f["verdict"] == "pass" and f["evidence"]["tools"] == ["a", "b"], pid
-    assert by(fs, READONLY)[0]["reasoning"] == "runs only in the stdio sandbox"
+    assert by(fs, READONLY)[0]["reasoning"] == "not run: no stdio sandbox ships for this check"
     assert {f["probe_id"] for f in fs} == set(PROBES)
     assert not all_selected_unexercised(None)
 
@@ -298,7 +298,7 @@ def test_no_tools_listed_says_so():
     fs = build(calls=None, listed=[])
     assert {f["probe_id"] for f in fs} == set(PROBES)
     for f in fs:
-        expected = "runs only in the stdio sandbox" if f["probe_id"] == READONLY else "the server listed no tools"
+        expected = "not run: no stdio sandbox ships for this check" if f["probe_id"] == READONLY else "the server listed no tools"
         assert (f["verdict"], f["reasoning"]) == ("skipped", expected), f["probe_id"]
 
 
@@ -323,7 +323,7 @@ def test_not_exercised_note_names_args_flag():
 def test_readonly_wrote_skipped_outside_sandbox():
     listed, run = two_tools_called()
     [f] = by(build(calls=run, listed=listed), READONLY)
-    assert (f["verdict"], f["reasoning"]) == ("skipped", "runs only in the stdio sandbox")
+    assert (f["verdict"], f["reasoning"]) == ("skipped", "not run: no stdio sandbox ships for this check")
     [f] = by(build(calls=run, listed=listed, transport="stdio-host"), READONLY)
     assert f["verdict"] == "skipped"
     fs = build(calls=run, listed=listed, transport="stdio-sandbox", sandbox=True)
@@ -600,3 +600,12 @@ async def test_http_server_checks_build_findings_like_the_runner(monkeypatch):
     monkeypatch.setattr(MCPServerTarget, "_check", unreachable)
     fs = await server_checks.http_server_findings("http://127.0.0.1:9/mcp", (), 7.0)
     assert {(f["verdict"], f["severity"]) for f in fs} == {("error", "info")}
+
+
+
+def test_readonly_skip_explains_missing_shipped_sandbox():
+    fs = build_findings(probes=PROBES, hits=[], outcomes=[], calls=None, listed=[tool("lookup")],
+                        transport="stdio-host", sandbox=False)
+    [result] = [f for f in fs if f["probe_id"] == READONLY]
+    assert result["verdict"] == "skipped"
+    assert result["reasoning"] == "not run: no stdio sandbox ships for this check"
