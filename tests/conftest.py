@@ -102,6 +102,14 @@ def _isolate_env(monkeypatch, request, _test_home):
 
 
 @pytest.fixture(autouse=True)
+def _no_source_commit(monkeypatch):
+    """run.json and --version carry the commit only from a git install or a checkout, so golden
+    outputs would differ by environment; tests/test_cli_version.py covers the commit."""
+    monkeypatch.setattr("argus.cli.run_json.source_commit", lambda: None)
+    monkeypatch.setattr("argus.cli.__main__.source_commit", lambda: None)
+
+
+@pytest.fixture(autouse=True)
 def llm_call_guard(request, monkeypatch):
     """Refuse and record any real judge/attacker call (litellm, the Anthropic client or TypeSafe); the test then fails.
 

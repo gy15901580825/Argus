@@ -341,6 +341,16 @@ def test_workflow_leaves_the_version_to_the_action_from_an_uninstalled_tree(tmp_
     assert "argus-version" not in step["with"]
 
 
+def test_workflow_does_not_pin_a_main_build_version_pypi_lacks(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("argus.cli.cmd_init._installed_version", lambda: "1.14.1.dev0")
+    result = CliRunner().invoke(init_command, ["--kind", "mcp_agent", "--workflow"], input="\n\n")
+    assert result.exit_code == 0, result.output
+    workflow = yaml.safe_load((tmp_path / ".github/workflows/argus-probe.yml").read_text())
+    step = next(s for s in workflow["jobs"]["redteam"]["steps"] if "with" in s)
+    assert "argus-version" not in step["with"]
+
+
 def test_every_known_kind_has_init_questions():
     # --kind offers every known kind, so a kind without questions crashes init.
     from argus.targets import _BUILDERS, _BUILTIN_KINDS

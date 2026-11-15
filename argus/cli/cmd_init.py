@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -187,7 +188,8 @@ def init_command(kind: str | None, output: str, workflow: bool | None) -> None:
         # The Action installs its own default version otherwise, which may predate this spec's
         # features (testbed_url "local", target-fitting `all`).
         v = _installed_version()
-        version_line = f'          argus-version: "{v}"\n' if v else ""
+        # A main build's .devN version is not on PyPI, so the Action could not install it.
+        version_line = f'          argus-version: "{v}"\n' if v and re.fullmatch(r"\d+\.\d+\.\d+", v) else ""
         wf_path.write_text(
             _WORKFLOW_TEMPLATE.format(
                 target_path=target_path.name,

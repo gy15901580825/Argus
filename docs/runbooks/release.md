@@ -34,7 +34,7 @@ Never upload to either index by hand with `twine`. A manual upload creates the p
 
 ## Release
 
-1. Bump `version` in `pyproject.toml` at the repo root. It is the only place the version is set: `argus-probe --version` and run.json read it from the installed package metadata.
+1. Bump `version` in `pyproject.toml` at the repo root from the `.dev0` version to the release version. It is the only place the version is set: `argus-probe --version` and run.json read it from the installed package metadata.
 2. Merge to `main`, then tag that commit with `v` plus the argus-probe version and push the tag:
 
 ```bash
@@ -43,6 +43,8 @@ git push origin v0.10.0
 ```
 
 The build job fails if the tag does not match the version in `pyproject.toml`.
+
+3. After the release is on PyPI, open a PR that bumps `main` to the next patch with a `.dev0` suffix (after `1.14.0`, set `1.14.1.dev0`). This does not choose the next release number; the next release PR still sets the real version. It keeps a run from `main` distinguishable from the release in `argus-probe --version` and in run.json's `argus_version`. Don't dispatch the Release workflow with `target: pypi` from `main` while it carries a `.dev0` version: that path skips the tag check and would publish the dev build.
 
 The tags `v0.1.0`, `v0.2.0` and `v0.3.0` belong to GitHub Releases from before argus-probe was on PyPI, so those versions cannot be used. The next version after 0.1.4 is 0.4.0.
 
