@@ -329,3 +329,30 @@ def test_unknown_probe_ids_are_a_422_naming_them(route):
     })
     assert resp.status_code == 422
     assert "unknown probe id(s): no_such_probe" in resp.json()["detail"]
+
+
+@pytest.mark.parametrize("pid", ["browser_form_recipient_redirect", "browser_form_recipient_redirect_control"])
+def test_preflight_estimates_form_with_invalid_judge_provider(monkeypatch, pid):
+    monkeypatch.setenv("REDTEAM_MODEL_PROVIDER", "invalid-provider")
+    response = TestClient(app).post("/redteam/run/preflight", json={
+        "target": {"kind": "browser_use", "agent_url": "http://127.0.0.1:1/agent",
+                   "scenario_kind": "dom_injection"},
+        "probe_ids": [pid],
+    })
+    assert response.status_code == 200, response.text
+    assert response.json() == {}
+
+
+@pytest.mark.parametrize("probe_ids,expected", [
+    ([], 0), (["browser_extraction_tamper"], 0), (["owasp_01_prompt_injection_basic"], 2),
+])
+def test_estimate_without_form_probes_does_not_resolve_optional_judge(monkeypatch, probe_ids, expected):
+    from argus import api, llm
+
+    def no_resolution():
+        pytest.fail("an estimate without form probes must not resolve the optional judge")
+
+    monkeypatch.setattr(llm, "resolve_config", no_resolution)
+    req = api.RunRequest(target={"kind": "openai_compat", "endpoint_url": "http://127.0.0.1:1", "model": "m"},
+                         probe_ids=probe_ids)
+    assert api._judged_exchanges(req, probe_ids) == expected

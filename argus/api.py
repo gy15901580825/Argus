@@ -286,8 +286,14 @@ def _judged_exchanges(req: RunRequest, probe_ids: list[str], *, config: llm.LLMC
     if req.mode == "deep":
         return _estimate_exchanges(req, probe_ids)
     by_id = {p.id: _with_trials(p, req) for p in load_probe_library(PROBES_DIR)}
-    optional_judge = ((config or llm.resolve_config()).missing_credential() is None
-                      and _COST_METER.per_run_cap(False, req.per_run_cap_usd) > 0)
+    optional_judge = False
+    if (any(pid in by_id and by_id[pid].judge_reply_on_submission for pid in probe_ids)
+            and _COST_METER.per_run_cap(False, req.per_run_cap_usd) > 0):
+        try:
+            cfg = config if config is not None else llm.resolve_config()
+            optional_judge = cfg.missing_credential() is None
+        except ValueError:
+            pass
     return sum(
         (
             getattr(by_id[pid], "exchange_count", len(by_id[pid].prompts))
