@@ -312,3 +312,26 @@ def test_many_properties_sharing_a_huge_required_list_is_fast():
     t0 = time.monotonic()
     baseline(s)
     assert time.monotonic() - t0 < 1
+
+
+def test_nullable_baselines_honor_outer_literals():
+    for union in ("anyOf", "oneOf"):
+        nullable = {union: [{"type": "string"}, {"type": "null"}]}
+        schema = obj({
+            "session_id": {**nullable, "default": None},
+            "mode": {**nullable, "default": "standard"},
+            "required_value": nullable,
+            "required_default": {**nullable, "default": None},
+            "enum_value": {**nullable, "enum": ["chosen"]},
+            "constant": {**nullable, "const": "fixed"},
+        }, required=["required_value", "required_default", "enum_value", "constant"])
+        assert baseline(schema).args == {
+            "mode": "standard", "required_value": "argus", "required_default": "argus",
+            "enum_value": "chosen", "constant": "fixed",
+        }
+
+
+def test_nullable_outer_default_survives_reference_branch():
+    schema = obj({"mode": {"anyOf": [{"$ref": "#/$defs/Mode"}, {"type": "null"}], "default": "alternate"}})
+    schema["$defs"] = {"Mode": {"type": "string", "enum": ["standard", "alternate"]}}
+    assert baseline(schema).args == {"mode": "alternate"}
