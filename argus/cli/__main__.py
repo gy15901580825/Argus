@@ -1,7 +1,10 @@
 """argus-probe entry point."""
 
+from importlib.metadata import PackageNotFoundError, version
+
 import click
 
+from argus.cli.build_info import source_commit
 from argus.cli.cmd_init import init_command
 from argus.cli.cmd_run import cmd_run
 from argus.cli.cmd_report import cmd_report
@@ -17,9 +20,22 @@ from argus.cli.cmd_web_login import cmd_web_login
 from argus.cli.cmd_draft_target import cmd_draft_target
 
 
+def _print_version(ctx, _param, value):
+    if not value or ctx.resilient_parsing:
+        return
+    try:
+        installed = version("argus-probe")
+    except PackageNotFoundError:
+        installed = "unknown"
+    # A main build carries a .devN version; the commit tells two of them apart.
+    commit = source_commit()
+    click.echo(f"{ctx.find_root().info_name}, version {installed}" + (f" (commit {commit})" if commit else ""))
+    ctx.exit()
+
+
 @click.group()
-# The dist is argus-probe; click would otherwise look up "argus", which is not installed.
-@click.version_option(package_name="argus-probe")
+@click.option("--version", is_flag=True, expose_value=False, is_eager=True, callback=_print_version,
+              help="Show the version and exit.")
 def main():
     """Argus red-team CLI."""
 

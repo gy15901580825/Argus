@@ -11,6 +11,7 @@ from argus.redaction import (
     MASK, _SECRET_KEY_SUFFIXES, _SECRET_KEY_PARTS, _is_secret_key, _is_header_key, _strings, _mask_headers,
     _redact, redact, _ordered, mask_text, run_secrets, _scrub,
 )
+from argus.cli.build_info import source_commit
 from argus.coverage import build_summary
 from argus.deep_thread import THREAD_STRUCTURE_FIELDS, ROUND_STRUCTURE_FIELDS, ROUND_FIELDS, is_deep_finding
 from argus.events import EVENT_STRUCTURE_FIELDS, normalize_redacted_event
@@ -99,6 +100,7 @@ def render_json(run: dict, secret_values: Iterable[str] = (), include_notes: boo
         "started_at": plain.get("started_at"),
         "finished_at": plain.get("finished_at"),
         "argus_version": _argus_version(),
+        **({"argus_commit": commit} if (commit := source_commit()) else {}),
         "target_spec": plain["target_spec"],
         "coverage": plain.get("coverage"),
         # Count after redaction restores verdict/severity, so short secrets cannot corrupt summary labels.

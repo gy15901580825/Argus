@@ -26,7 +26,8 @@ The top-level keys appear in this order. `incomplete_reason`, `notes`, `judge`, 
 | `incomplete_reason` | string | `run` only, and only when `status` is `"incomplete"`. Why, in the console's words: for example `2 of 9 probes errored; run incomplete; target returned HTTP 401 (unauthorized; check credentials)`. |
 | `started_at` | string | ISO 8601 timestamp, UTC. |
 | `finished_at` | string | ISO 8601 timestamp, UTC. |
-| `argus_version` | string | The installed `argus-probe` version. It is `"unknown"` when the CLI runs from a source tree that was never installed. |
+| `argus_version` | string | The installed `argus-probe` version. It is `"unknown"` when the CLI runs from a source tree that was never installed. Between releases `main` carries the next patch with `.dev0` (for example `1.14.1.dev0`), so a build from `main` never reports a released version. |
+| `argus_commit` | string | Optional. The source commit this build came from: `vcs_info.commit_id` from the install's PEP 610 `direct_url.json` after `pip install git+...`, else `git rev-parse HEAD` when the CLI runs from a source checkout. Absent for a PyPI wheel, or when git is missing or does not answer within 2 seconds. `argus-probe --version` prints the same commit in parentheses. |
 | `target_spec` | object | The target spec after `${VAR}` expansion, with secrets masked (see below). |
 | `coverage` | object or null | The coverage summary per standard, as the engine reports it. Null if the engine sent none. |
 | `summary` | object | Counts of this run's findings: `total`, `evaluated`, `evaluated_verdicts`, `by_verdict` and `failed_by_severity`. Always present. See below. |
@@ -280,7 +281,7 @@ A target spec can reference environment variables as `$VAR` or `${VAR}` in any s
 
 This rule does not know which variables are secret. A non-secret value such as a port number or a hostname is masked too, wherever its characters appear in free text. This over-redaction is deliberate. These fields are always written as the engine produced them, never masked:
 
-- run: `schema_version`, `argus_version`, `id`, `status`, `started_at`, `finished_at`, `coverage`, `summary`, the deep replay metadata block and `target_spec.kind`
+- run: `schema_version`, `argus_version`, `argus_commit`, `id`, `status`, `started_at`, `finished_at`, `coverage`, `summary`, the deep replay metadata block and `target_spec.kind`
 - each finding: `id`, `probe_id`, `verdict`, `severity`, `probed_at`, `created_at`, `confidence`, `target_latency_ms`, `atlas_id`, `owasp_id`, `owasp_agentic`, `nist_id`, `eu_ai_act_id`, `judge_model`, `escalated_model`, `remediation` and `remediation_actions`
 - each `events` entry: `event_id`, `parent_event_ids`, `ts`, `operation`, `basis`, `source`, `atlas_technique` and `seq`
 
