@@ -46,7 +46,7 @@ Labels and names use [ATLAS 2026.10](https://raw.githubusercontent.com/mitre-atl
 |---|---|---:|
 | AML.T0010 | Supply Chain Compromise | 15 |
 | AML.T0020 | Training Data Poisoning | 2 |
-| AML.T0024 | Exfiltration via AI Inference API | 30 |
+| AML.T0024 | Exfiltration via AI Inference API | 32 |
 | AML.T0029 | Denial of AI Service | 3 |
 | AML.T0040 | AI Model Inference API Access | 27 |
 | AML.T0048 | External Harms | 1 |
@@ -70,7 +70,7 @@ Article 15(5) addresses resilience to third-party attacks. Article 15(3) address
 | Article 10(5) | 2 |
 | Article 13 | 1 |
 | Article 14 | 52 |
-| Article 15 | 2 |
+| Article 15 | 4 |
 | Article 15(2) | 11 |
 | Article 15(4) | 13 |
 | Article 15(5) | 240 |
