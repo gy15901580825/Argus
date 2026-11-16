@@ -47,6 +47,7 @@ from collections import Counter
 from typing import Iterable
 
 from argus.agentic import OWASP_AGENTIC_TOP10
+from argus.atlas import ATLAS_TECHNIQUES
 
 THIN_THRESHOLD = 2
 
@@ -135,6 +136,8 @@ def _build_standard(cell_key: str, finding_key: str, probes: list, findings: lis
         cell_ids = sorted(set(library_probe_ids) | set(run_verdicts))
 
     names = dict(closed_universe) if closed_universe is not None else {}
+    if cell_key == "atlas":
+        names = ATLAS_TECHNIQUES
 
     cells = []
     for cell_id in cell_ids:

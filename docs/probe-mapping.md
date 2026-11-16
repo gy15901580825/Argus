@@ -38,15 +38,52 @@ Counts below are **every mapping a probe declares**, not one "primary" category 
 | ASI09 | Human-Agent Trust Exploitation | 5 | covered |
 | ASI10 | Rogue Agents | 4 | covered |
 
+## MITRE ATLAS
+
+Labels and names use [ATLAS 2026.10](https://raw.githubusercontent.com/mitre-atlas/atlas-data/v2026.10/dist/v6/ATLAS-2026.10.yaml). Counts describe declared probe mappings.
+
+| ATLAS | Technique | Probes in library |
+|---|---|---:|
+| AML.T0010 | Supply Chain Compromise | 15 |
+| AML.T0020 | Training Data Poisoning | 2 |
+| AML.T0024 | Exfiltration via AI Inference API | 30 |
+| AML.T0029 | Denial of AI Service | 3 |
+| AML.T0040 | AI Model Inference API Access | 27 |
+| AML.T0048 | External Harms | 1 |
+| AML.T0049 | Exploit Public-Facing Application | 44 |
+| AML.T0050 | Command and Scripting Interpreter | 7 |
+| AML.T0051 | LLM Prompt Injection | 1 |
+| AML.T0051.000 | LLM Prompt Injection: Direct | 28 |
+| AML.T0051.001 | LLM Prompt Injection: Indirect | 120 |
+| AML.T0055 | Unsecured Credentials | 3 |
+| AML.T0085.002 | Data from AI Services: Conversation Context and Memory | 11 |
+| AML.T0085.003 | Data from AI Services: System Instructions | 4 |
+| AML.T0102 | Generate Malicious Commands | 3 |
+
+## EU AI Act
+
+Article 15(5) addresses resilience to third-party attacks. Article 15(3) addresses declared accuracy metrics and is not an attack-probe label.
+
+| Article | Probes in library |
+|---|---:|
+| Article 10 | 3 |
+| Article 10(5) | 2 |
+| Article 13 | 1 |
+| Article 14 | 52 |
+| Article 15 | 2 |
+| Article 15(2) | 11 |
+| Article 15(4) | 13 |
+| Article 15(5) | 240 |
+
 ## Cells touched, per standard
 
 | Standard | Cells touched |
 |---|---:|
 | OWASP LLM Top 10 (owasp-llm-top10) | 10 |
 | OWASP Agentic Top 10 (owasp-agentic-top10) | 10 |
-| MITRE ATLAS (mitre-atlas) | 16 |
+| MITRE ATLAS (mitre-atlas) | 15 |
 | NIST AI RMF (nist-ai-rmf) | 13 |
-| EU AI Act (eu-ai-act) | 9 |
+| EU AI Act (eu-ai-act) | 8 |
 
 ## Probes
 

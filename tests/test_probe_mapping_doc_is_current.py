@@ -47,3 +47,20 @@ def test_agentic_mapping_validation_reports_invalid_ids():
 def test_no_builtin_probe_declares_invalid_agentic_ids():
     probes = list(gen_probe_mapping.load_all_probes(gen_probe_mapping.PROBES_DIR))
     assert gen_probe_mapping.invalid_owasp_agentic_ids(probes) == []
+
+
+def test_attack_probes_use_resilience_article_instead_of_accuracy_declaration():
+    probes = list(gen_probe_mapping.load_all_probes(gen_probe_mapping.PROBES_DIR))
+    errors = gen_probe_mapping.invalid_attack_eu_labels(probes)
+    assert not errors, "Incorrect EU attack labels:\n" + "\n".join(
+        f"{probe_id}: {label}" for probe_id, label in errors
+    )
+
+
+def test_eu_validation_names_attack_probe_and_article():
+    from argus.probe import ProbeMappings
+    from types import SimpleNamespace
+
+    probe = SimpleNamespace(id="attack", attack_class=("jailbreak",),
+                            mappings=ProbeMappings(eu_ai_act=("Article 15(3)", "Article 15(5)")))
+    assert gen_probe_mapping.invalid_attack_eu_labels([probe]) == [("attack", "Article 15(3)")]

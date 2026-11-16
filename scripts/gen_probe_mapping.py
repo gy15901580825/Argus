@@ -16,6 +16,7 @@ Usage (from the repo root):
 from __future__ import annotations
 
 import sys
+import argparse
 from pathlib import Path
 
 # Run as a plain script, so Python only puts scripts/ on sys.path.
@@ -25,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from argus.coverage import OWASP_LLM_TOP10, build_coverage  # noqa: E402
 from argus.agentic import OWASP_AGENTIC_METADATA, VALID_OWASP_AGENTIC_IDS  # noqa: E402
 from argus.probe import load_all_probes  # noqa: E402
+from argus.atlas import ATLAS_METADATA, invalid_atlas_ids  # noqa: E402
 
 PROBES_DIR = Path(__file__).resolve().parent.parent / "argus" / "probes"
 
@@ -45,8 +47,7 @@ def invalid_owasp_ids(probes) -> list[tuple[str, str]]:
     Such an id is silently dropped from the closed-universe OWASP cells in
     `build_coverage` — the run can only look less tested, never more, but a
     typo like `LLM011` would erase that probe's coverage with no signal.
-    ATLAS, NIST AI RMF and the EU AI
-    Act are open-ended vocabularies with no fixed list to validate against.
+    ATLAS labels are validated separately against the pinned release.
     """
     return [
         (probe.id, owasp_id)
@@ -63,6 +64,16 @@ def invalid_owasp_agentic_ids(probes) -> list[tuple[str, str]]:
         for probe in probes
         for agentic_id in probe.mappings.owasp_agentic
         if agentic_id not in VALID_OWASP_AGENTIC_IDS
+    ]
+
+
+def invalid_attack_eu_labels(probes) -> list[tuple[str, str]]:
+    """Article 15(3) concerns declared accuracy metrics, not attack resilience."""
+    return [
+        (probe.id, article)
+        for probe in probes
+        for article in probe.mappings.eu_ai_act
+        if probe.attack_class and article == "Article 15(3)"
     ]
 
 
@@ -112,6 +123,30 @@ def render(probes: list) -> str:
     for cell in coverage["standards"]["owasp-agentic-top10"]["cells"]:
         lines.append(f"| {cell['id']} | {cell['name']} | {cell['probes_in_library']} | {cell['library_status']} |")
     lines.append("")
+    lines.append("## MITRE ATLAS")
+    lines.append("")
+    lines.append(
+        f'Labels and names use [ATLAS {ATLAS_METADATA["version"]}]'
+        f'({ATLAS_METADATA["source_url"]}). Counts describe declared probe mappings.'
+    )
+    lines.append("")
+    lines.append("| ATLAS | Technique | Probes in library |")
+    lines.append("|---|---|---:|")
+    for cell in coverage["standards"]["mitre-atlas"]["cells"]:
+        lines.append(f"| {cell['id']} | {cell.get('name', '')} | {cell['probes_in_library']} |")
+    lines.append("")
+    lines.append("## EU AI Act")
+    lines.append("")
+    lines.append(
+        "Article 15(5) addresses resilience to third-party attacks. "
+        "Article 15(3) addresses declared accuracy metrics and is not an attack-probe label."
+    )
+    lines.append("")
+    lines.append("| Article | Probes in library |")
+    lines.append("|---|---:|")
+    for cell in coverage["standards"]["eu-ai-act"]["cells"]:
+        lines.append(f"| {cell['id']} | {cell['probes_in_library']} |")
+    lines.append("")
     lines.append("## Cells touched, per standard")
     lines.append("")
     lines.append("| Standard | Cells touched |")
@@ -136,7 +171,18 @@ def render(probes: list) -> str:
 
 
 def main() -> None:
-    probes = list(load_all_probes(PROBES_DIR))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--probes-dir", type=Path, default=PROBES_DIR)
+    parser.add_argument("--check", action="store_true", help="Validate labels without rendering docs")
+    args = parser.parse_args()
+    probes = list(load_all_probes(args.probes_dir))
+
+    bad_labels = invalid_atlas_ids(probes) + invalid_attack_eu_labels(probes)
+    if bad_labels:
+        print("ERROR: probe labels outside the pinned ATLAS release or attack EU policy:", file=sys.stderr)
+        for probe_id, label in bad_labels:
+            print(f"  {probe_id}: {label}", file=sys.stderr)
+        sys.exit(1)
 
     bad = invalid_owasp_ids(probes)
     if bad:
@@ -151,7 +197,10 @@ def main() -> None:
             print(f"  {probe_id}: {agentic_id!r}", file=sys.stderr)
         sys.exit(1)
 
-    sys.stdout.write(render(probes))
+    if args.check:
+        print(f"{len(probes)} probes have valid standards labels.")
+    else:
+        sys.stdout.write(render(probes))
 
 
 if __name__ == "__main__":
