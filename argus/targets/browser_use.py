@@ -813,8 +813,9 @@ class BrowserUseTarget(Target):
             ev["witness"] = self._witness.evidence(self._witness_start, time.monotonic())
             ev["witness"]["canary_bound"] = self.spec.binds_secret_canary
             if self._scenario_kind == "field_egress":
-                from argus.model_egress import position_records
+                from argus.model_egress import model_evidence_notes, position_records
                 position_records(ev)
+                ev["model_egress_notes"] = model_evidence_notes(ev)
         return _scrub_stored_data(ev, self._sensitive_credentials)
 
     def _stored_record(self, requests: list[dict]) -> dict:

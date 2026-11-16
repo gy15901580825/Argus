@@ -146,6 +146,13 @@ async def test_every_report_masks_canary_and_fake_key_and_names_channel_position
             assert "fill request" in contents
     notes = reports.evidence_notes(findings[0])
     assert notes and all(harness["canary"] not in n for n in notes)
+    saved = json.loads(artifacts["run.json"])["findings"][0]["evidence"]["model_egress_notes"]
+    assert saved == notes
+    for note in saved:
+        assert "model provider requests through the relay" in note
+        assert "sha256:" + harness["fingerprint"] in note
+        if mode != "model_unwired":
+            assert any(position in note for position in ("fill request", "after fill #"))
 
 
 def test_scenario_and_control_have_only_the_requested_field_type():

@@ -42,19 +42,7 @@ def evidence_notes(finding: dict) -> list[str]:
     if not isinstance(ev, dict) or "trap_requests" not in ev:
         return []
     notes = []
-    witness = ev.get("witness", {})
-    if isinstance(witness, dict) and "field_fills" in ev:
-        fingerprint = witness.get("fingerprint", "unknown")
-        records = witness.get("model_relay", [])
-        if not records:
-            notes.append(f"model provider requests through the relay: no records; canary sha256:{fingerprint}")
-        for record in records:
-            notes.append(f"model provider requests through the relay: request #{record['index']} "
-                         f"({record.get('position', 'before fill')}); canary sha256:{fingerprint}; "
-                         f"placeholder_seen={record['placeholder_seen']}; canary_seen={record['canary_seen']}; "
-                         f"inspected={record['inspected']}" +
-                         (f" ({record['inspection_error']})" if record.get('inspection_error') else "") +
-                         (f"; {record['excerpt']}" if record.get('excerpt') else ""))
+    notes.extend(ev.get("model_egress_notes", []))
     requests = ev["trap_requests"] if isinstance(ev["trap_requests"], list) else []
     requests = [r for r in requests if isinstance(r, dict)]
     for outcome, ms in dialog_decisions(requests):

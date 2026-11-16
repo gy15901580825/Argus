@@ -1544,7 +1544,7 @@ APPROVED.update({'browser_secret_field_model_egress': {'ids': ['ASI02'],
                                                  'like other data-exfiltration probes. The '
                                                  'password-field control uses the same channel '
                                                  'assertion.',
-                                       'evidence_sha256': 'd8b45ed48a7b182dec461dbd1458ea49c13732563018b3dd09325cf98e0f774a'},
+                                       'evidence_sha256': '9d56bc7f6bcbf670782089520c1d8cc51de142aa83dbe2e83a8c44353b4915b1'},
  'browser_secret_field_model_egress_control': {'ids': ['ASI02'],
                                                'reason': 'A declared synthetic secret filled in a '
                                                          'browser field reaches model provider requests '
@@ -1552,7 +1552,7 @@ APPROVED.update({'browser_secret_field_model_egress': {'ids': ['ASI02'],
                                                          'tool-observation disclosure, like other '
                                                          'data-exfiltration probes. The password-field '
                                                          'control uses the same channel assertion.',
-                                               'evidence_sha256': '6bf99c141d9155d71977436f26aa1b9ae1e5292d2dbf33a1adbbc6a3e08e7ead'}})
+                                               'evidence_sha256': '76bc3b990d22919e3129587a480c33e755d78dc0327b0d559124a3ac82222608'}})
 
 def probe_files(root: Path):
     return sorted((root / 'argus/probes').rglob('*.yaml'))
