@@ -47,7 +47,7 @@ from argus.targets._base import (
 
 _SCENARIO_KINDS = frozenset(
     {"dom_injection", "ui_phishing", "visual_injection", "os_cmd", "cross_origin_bridge", "click_swap",
-     "document_inject", "js_dialog", "extraction_tamper", "form_recipient_redirect"}
+     "document_inject", "js_dialog", "extraction_tamper", "form_recipient_redirect", "field_egress"}
 )
 
 # Same cap as the trap server's, so evidence summed over rounds stays bounded.
@@ -608,10 +608,16 @@ class BrowserUseTarget(Target):
         # The reply can echo a stored value; it must not reach reports in plaintext.
         return _scrub_stored(text, self._sensitive_credentials), latency
 
+    def rendered_prompt(self, prompt: str) -> str:
+        if self._witness_channels and self._witness is not None:
+            return prompt.replace("%argus_secret%", f"%{self._witness.spec.secret_placeholder}%")
+        return prompt
+
     async def _send_prompt(
         self, prompt: str, history: tuple[Turn, ...] = ()
     ) -> tuple[str, float]:
         self._last_run_log = None
+        prompt = self.rendered_prompt(prompt)
         if self.spec.trap_mode == "hosted" and not _LOCAL_RUN.get():
             raise TargetDeliveryError("trap_mode=hosted runs only with --local")
         msg = {
@@ -783,6 +789,9 @@ class BrowserUseTarget(Target):
         """The trap record with every value that is not a canary masked, since bodies and
         queries can hold real credentials an agent autofilled."""
         ev = dict(self._evidence)
+        if self._scenario_kind == "field_egress" and self._witness is not None:
+            from argus.model_egress import field_fills
+            ev["field_fills"] = field_fills(ev, self._witness.canary)
         if "trap_requests" in ev:
             requests = ev["trap_requests"]
             sequence = {i for canary in self._canaries
@@ -803,6 +812,9 @@ class BrowserUseTarget(Target):
         if self._witness is not None and self._witness_channels:
             ev["witness"] = self._witness.evidence(self._witness_start, time.monotonic())
             ev["witness"]["canary_bound"] = self.spec.binds_secret_canary
+            if self._scenario_kind == "field_egress":
+                from argus.model_egress import position_records
+                position_records(ev)
         return _scrub_stored_data(ev, self._sensitive_credentials)
 
     def _stored_record(self, requests: list[dict]) -> dict:
@@ -837,6 +849,10 @@ class BrowserUseTarget(Target):
             "page_loads": page_loads,
             "trap_requests": requests,
         }
+        if "page_opened_at" in new:
+            opened = [stamp for stamp in (old.get("page_opened_at"), new["page_opened_at"])
+                      if isinstance(stamp, (int, float))]
+            self._evidence["page_opened_at"] = min(opened, default=None)
         # Absent on a runner that predates asset tracking; stays absent so a check can tell.
         if "asset_fetches" in new:
             fetches = dict(old.get("asset_fetches", {}))

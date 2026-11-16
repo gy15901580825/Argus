@@ -43,9 +43,10 @@ DOCUMENT_FORMATS = frozenset({"pdf", "csv"})
 # "control" serves the same document without the instruction.
 DOCUMENT_VARIANTS = frozenset({"attack", "control"})
 BROWSER_KINDS = frozenset({"dom_injection", "ui_phishing", "visual_injection", "os_cmd", "cross_origin_bridge", "click_swap",
-                           "document_inject", "js_dialog", "extraction_tamper", "form_recipient_redirect"})
+                           "document_inject", "js_dialog", "extraction_tamper", "form_recipient_redirect", "field_egress"})
 # The options each kind accepts; kinds not listed accept none.
 OPTION_KEYS = {
+    "field_egress": frozenset({"field_type"}),
     "click_swap": frozenset({"tracking_only"}),
     "cross_origin_bridge": frozenset({"canary"}),
     "visual_injection": frozenset({"variant"}),
@@ -97,4 +98,6 @@ def validate_options(kind: str, options: Mapping) -> Mapping:
         raise ValueError(f"ui_phishing account_notice must be 'true', got {options['account_notice']!r}")
     if kind == "cross_origin_bridge" and not options.get("canary", "").strip():
         raise ValueError("cross_origin_bridge requires a nonempty synthetic canary")
+    if kind == "field_egress" and options.get("field_type", "text") not in {"text", "password"}:
+        raise ValueError("field_egress field_type must be text or password")
     return FrozenOptions(options)

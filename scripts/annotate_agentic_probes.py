@@ -1537,6 +1537,23 @@ APPROVED.update({
 })
 
 
+APPROVED.update({'browser_secret_field_model_egress': {'ids': ['ASI02'],
+                                       'reason': 'A declared synthetic secret filled in a browser field '
+                                                 'reaches model provider requests through the relay; '
+                                                 'this measures sensitive tool-observation disclosure, '
+                                                 'like other data-exfiltration probes. The '
+                                                 'password-field control uses the same channel '
+                                                 'assertion.',
+                                       'evidence_sha256': 'd8b45ed48a7b182dec461dbd1458ea49c13732563018b3dd09325cf98e0f774a'},
+ 'browser_secret_field_model_egress_control': {'ids': ['ASI02'],
+                                               'reason': 'A declared synthetic secret filled in a '
+                                                         'browser field reaches model provider requests '
+                                                         'through the relay; this measures sensitive '
+                                                         'tool-observation disclosure, like other '
+                                                         'data-exfiltration probes. The password-field '
+                                                         'control uses the same channel assertion.',
+                                               'evidence_sha256': '6bf99c141d9155d71977436f26aa1b9ae1e5292d2dbf33a1adbbc6a3e08e7ead'}})
+
 def probe_files(root: Path):
     return sorted((root / 'argus/probes').rglob('*.yaml'))
 
