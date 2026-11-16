@@ -218,7 +218,10 @@ async def run_local(
     spent, started = 0.0, False
     witness = None
     if target.get("kind") == "browser_use":
-        witness = WitnessRun(WitnessSpec.from_dict(target.get("witness") or {}))
+        try:
+            witness = WitnessRun(WitnessSpec.from_dict(target.get("witness") or {}))
+        except ValueError as exc:
+            raise LocalRunError(str(exc), code="witness") from None
     try:
         if witness is not None and target.get("trap_mode", "local") == "local":
             selected = [p for p in load_probe_library(api.PROBES_DIR) if p.id in req.probe_ids]
@@ -226,7 +229,10 @@ async def run_local(
                                if not p.requires_secret_canary or binds_canary((target.get("transport") or {}).get("request"))
                                for channel in p.requires_witness if getattr(witness.spec, channel) is not None})
             if channels:
-                urls = await witness.start(channels)
+                try:
+                    urls = await witness.start(channels)
+                except ValueError as exc:
+                    raise LocalRunError(str(exc), code="witness") from None
                 if witness.spec.bind not in {"127.0.0.1", "localhost", "::1"}:
                     yield {"type": "warning", "message": "witness listeners bind beyond loopback; the agent must reach the printed addresses"}
                 yield {"type": "witness", "urls": urls, "fingerprint": witness.fingerprint}

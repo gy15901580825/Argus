@@ -91,7 +91,7 @@ def _isolate_env(monkeypatch, request, _test_home):
     elif request.node.get_closest_marker("live_skillscan"):
         scrub.remove("ANTHROPIC_API_KEY")
     # Server secrets from a developer's .env would 401 /redteam/* or refuse /agent/connect tests.
-    scrub += ["ARGUS_SERVER_TOKEN", "ARGUS_SERVER_HOST", "ARGUS_SERVER_ALLOW_UNAUTHENTICATED",
+    scrub += ["ARGUS_WITNESS_TOKEN", "ARGUS_SERVER_TOKEN", "ARGUS_SERVER_HOST", "ARGUS_SERVER_ALLOW_UNAUTHENTICATED",
               "AGENT_CONNECT_SECRET"]
     # Declared judge prices change every cost estimate.
     if not rubric_live:  # a live Azure deployment may need its declared price

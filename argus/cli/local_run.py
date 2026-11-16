@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import sys
 import uuid
-from contextlib import nullcontext
+from contextlib import aclosing, nullcontext
 from datetime import datetime, timezone
+from threading import Thread
 from typing import Iterable, NamedTuple
 
 import click
@@ -76,6 +79,7 @@ def run_local_and_render(
     max_rounds: int = 20,
     seed: str | None = None,
     baseline_run: dict | None = None,
+    witness_wait: bool = False,
 ) -> LocalRunResult:
     """Run the probes, print one line per finding, return the rendered report and findings.
 
@@ -84,6 +88,7 @@ def run_local_and_render(
     `secret_values` are masked in every format. A spec with `testbed_url: "local"` runs against
     the bundled testbed, started on 127.0.0.1 for this call only.
     """
+    secret_values = (*secret_values, os.environ.get("ARGUS_WITNESS_TOKEN", ""))
     options = run_options(mode, deep_pairs, max_rounds, seed)
     if isinstance(spec, dict) and spec.get("testbed_url") == "local":
         from argus.demo import servers
@@ -117,8 +122,37 @@ def run_local_and_render(
             trials,
             baseline_run,
             baseline_key(spec),
+            witness_wait=witness_wait,
             **options,
         )
+
+
+async def _read_witness_confirmation() -> str:
+    loop = asyncio.get_running_loop()
+    confirmed = loop.create_future()
+    stdin = sys.stdin
+
+    def finish(line, error):
+        if not confirmed.done():
+            if error is not None:
+                confirmed.set_exception(error)
+            else:
+                confirmed.set_result(line)
+
+    def read():
+        line, error = None, None
+        try:
+            line = stdin.readline()
+        except Exception as exc:
+            error = exc
+        try:
+            loop.call_soon_threadsafe(finish, line, error)
+        except RuntimeError:
+            pass  # The run was interrupted and its event loop already closed.
+
+    # A blocked stdin read must not delay loop shutdown after Ctrl-C.
+    Thread(target=read, daemon=True).start()
+    return await confirmed
 
 
 def run_options(
@@ -144,6 +178,7 @@ def _run_and_render(
     deep_pairs: int = 3,
     max_rounds: int = 20,
     seed: str | None = None,
+    witness_wait: bool = False,
 ) -> LocalRunResult:
     from argus.local import LocalRunError, run_local
     from argus_transport.runtime_v2 import TargetRunStopped
@@ -159,42 +194,49 @@ def _run_and_render(
     async def _consume() -> None:
         nonlocal coverage, judge, target_cleanup, deep, cleanup_diagnostic
         try:
-            async for event in run_local(
+            async with aclosing(run_local(
                 spec, probe_ids, per_run_cap_usd=per_run_cap, skip_judged=skip_judged,
                 **run_options(mode, deep_pairs, max_rounds, seed),
                 **({"trials": trials} if trials is not None else {})
-            ):
-                if event.get("type") == "witness":
-                    for channel, url in event["urls"].items():
-                        click.echo(f"Witness {channel}: {url}")
-                    click.echo(f"Witness canary sha256:{event['fingerprint']}")
-                    continue
-                if event.get("type") == "estimate":
-                    click.echo(f"Estimated judge/attacker cost: ${event['estimated_usd']:.4f}. Target costs are separate.")
-                    continue
-                if event.get("type") == "deep_run":
-                    deep = event["deep"]
-                    if deep.get("history") is False and deep.get("threads"):
-                        click.echo("The target keeps no conversation, so deep rounds are independent.")
-                    continue
-                if event.get("type") == "target_cleanup":
-                    target_cleanup = event["target_cleanup"]
-                    continue
-                if event.get("type") == "coverage":
-                    coverage = event.get("coverage")
-                    continue
-                if event.get("type") == "judge":
-                    judge = event
-                    click.echo(f"Judge: {judge['judge']}")
-                    click.echo(judge["disclosure"])
-                    continue
-                if event.get("type") == "warning":
-                    click.echo(f"Warning: {event['message']}", err=True)
-                    continue
-                findings.append(event)
-                click.echo(
-                    f"  {event.get('verdict', '?'):<18} {event.get('severity', '?'):<9} {event.get('probe_id', '?')}"
-                )
+            )) as events:
+                async for event in events:
+                    if event.get("type") == "witness":
+                        for channel, url in event["urls"].items():
+                            click.echo(f"Witness {channel}: {url}")
+                        click.echo(f"Witness canary sha256:{event['fingerprint']}")
+                        if witness_wait:
+                            click.echo("Point the agent's model base URL / OTLP exporter at these addresses, then press Enter to start the probes.")
+                            if not await _read_witness_confirmation():
+                                raise LocalRunError("stdin reached EOF before witness wiring was confirmed; no probes started", code="witness_wait")
+                        else:
+                            click.echo("Witness addresses change on every run unless fixed ports and ARGUS_WITNESS_TOKEN are configured; --witness-wait pauses for wiring.")
+                        continue
+                    if event.get("type") == "estimate":
+                        click.echo(f"Estimated judge/attacker cost: ${event['estimated_usd']:.4f}. Target costs are separate.")
+                        continue
+                    if event.get("type") == "deep_run":
+                        deep = event["deep"]
+                        if deep.get("history") is False and deep.get("threads"):
+                            click.echo("The target keeps no conversation, so deep rounds are independent.")
+                        continue
+                    if event.get("type") == "target_cleanup":
+                        target_cleanup = event["target_cleanup"]
+                        continue
+                    if event.get("type") == "coverage":
+                        coverage = event.get("coverage")
+                        continue
+                    if event.get("type") == "judge":
+                        judge = event
+                        click.echo(f"Judge: {judge['judge']}")
+                        click.echo(judge["disclosure"])
+                        continue
+                    if event.get("type") == "warning":
+                        click.echo(f"Warning: {event['message']}", err=True)
+                        continue
+                    findings.append(event)
+                    click.echo(
+                        f"  {event.get('verdict', '?'):<18} {event.get('severity', '?'):<9} {event.get('probe_id', '?')}"
+                    )
         except BaseException as exc:
             target_cleanup = getattr(exc, "target_cleanup", None) or target_cleanup
             cleanup_diagnostic = getattr(exc, "cleanup_diagnostic", None)

@@ -509,7 +509,8 @@ class BrowserUseTarget(Target):
 
     @property
     def _sensitive_credentials(self):
-        extra = ((StoredCredential("run", "canary", self._witness.canary),)
+        extra = ((StoredCredential("run", "canary", self._witness.canary),
+                  StoredCredential("run", "witness_token", self._witness.token))
                  if self._witness is not None else ())
         return self.spec.stored_credentials + extra
 
