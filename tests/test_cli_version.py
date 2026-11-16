@@ -6,6 +6,7 @@ import tomllib
 from pathlib import Path
 
 from click.testing import CliRunner
+from packaging.version import Version
 
 from argus.cli import build_info
 from argus.cli.__main__ import main
@@ -38,7 +39,11 @@ def _commit(monkeypatch, *, direct_url=None, root=None, git=None):
 
 def test_package_carries_a_dev_version_distinct_from_the_release():
     version = tomllib.loads(PYPROJECT.read_text())["project"]["version"]
-    assert version == "1.15.2.dev0"
+    assert version == "1.16.0.dev0"
+    driver = PYPROJECT.parent / "drivers/google/pyproject.toml"
+    assert tomllib.loads(driver.read_text())["project"]["version"] == version
+    assert Version(version) > Version("1.15.2")
+    assert Version(version) > Version("1.15.3")
 
 
 def test_version_without_a_commit_is_the_plain_line(monkeypatch):

@@ -67,10 +67,10 @@ def test_shared_build_gates_both_publish_paths():
         ("1.15.2", "1.15.1", "none", "v1.15.2", False),
         ("1.15.2", "1.15.2", "pypi", "", True),
         ("1.15.2", "1.15.1", "pypi", "", False),
-        ("1.15.2.dev0", "1.15.2.dev0", "pypi", "", False),
-        ("1.15.2.dev0", "1.15.2.dev0", "none", "v1.15.2.dev0", False),
-        ("1.15.2.dev0", "1.15.2.dev0", "testpypi", "", True),
-        ("1.15.2.dev0", "1.15.1", "testpypi", "", True),
+        ("1.16.0.dev0", "1.16.0.dev0", "pypi", "", False),
+        ("1.16.0.dev0", "1.16.0.dev0", "none", "v1.16.0.dev0", False),
+        ("1.16.0.dev0", "1.16.0.dev0", "testpypi", "", True),
+        ("1.16.0.dev0", "1.15.1", "testpypi", "", True),
     ],
 )
 def test_google_driver_release_version(tmp_path, version, driver_version, target, tag, allowed):
