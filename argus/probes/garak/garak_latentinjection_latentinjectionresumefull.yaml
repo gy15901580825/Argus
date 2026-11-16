@@ -135,7 +135,7 @@ mappings:
   - MAP-2.3
   - MEASURE-2.6
   eu_ai_act:
-  - Article 15(3)
+  - Article 15(5)
 judge:
   model: claude-haiku-4-5-20251001
   rubric_path: rubrics/prompt_injection.md

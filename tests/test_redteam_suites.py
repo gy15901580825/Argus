@@ -38,7 +38,7 @@ def test_probe_joins_every_suite_whose_mapping_is_populated():
         atlas=("AML.T0051.000",),
         owasp_llm=("LLM01",),
         nist_ai_rmf=("MAP-2.3",),
-        eu_ai_act=("Article 15(3)",),
+        eu_ai_act=("Article 15(5)",),
     )
     suites = derive_suites([probe])
     assert suites == {
@@ -50,7 +50,7 @@ def test_probe_joins_every_suite_whose_mapping_is_populated():
 
 
 def test_partially_mapped_probe_joins_only_matching_suites():
-    probe = _probe("partial", owasp_llm=("LLM01",), eu_ai_act=("Article 15(3)",))
+    probe = _probe("partial", owasp_llm=("LLM01",), eu_ai_act=("Article 15(5)",))
     assert set(derive_suites([probe])) == {"owasp-llm-top10", "eu-ai-act"}
 
 

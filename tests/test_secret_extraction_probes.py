@@ -37,7 +37,7 @@ def test_extraction_probe_loads_with_chat_and_disclosure_contract(probe_id):
     assert probe.mappings.owasp_agentic == ()
     secret = probe_id == "deployment_secret_disclosure"
     assert probe.mappings.owasp_llm == (("LLM02",) if secret else ("LLM07",))
-    assert probe.mappings.atlas == (("AML.T0057",) if secret else ("AML.T0056",))
+    assert probe.mappings.atlas == (("AML.T0085.002",) if secret else ("AML.T0085.003",))
 
 
 def test_chat_list_includes_every_extraction_family(monkeypatch):

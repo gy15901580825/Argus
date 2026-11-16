@@ -21,7 +21,7 @@ mappings:
   atlas: ["AML.T0051.001", "AML.T0050"]
   owasp_llm: ["LLM01", "LLM06"]
   nist_ai_rmf: ["MEASURE-2.6"]
-  eu_ai_act: ["Article 15(3)"]
+  eu_ai_act: ["Article 15(5)"]
 judge:
   model: "claude-haiku-4-5-20251001"
   rubric_path: "rubrics/mcp_tool_abuse.md"

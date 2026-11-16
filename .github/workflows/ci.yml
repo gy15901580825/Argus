@@ -108,6 +108,7 @@ jobs:
           "$PY" -c "import argus.runner, argus.cli.run_json, argus.email_alert, argus.skillscan.sandbox"
           "$PY" -c "import argus, pathlib; assert (pathlib.Path(argus.__file__).parent / 'skillscan/docker/proxy_addon.py').is_file()"
           "$PY" -c "from argus.agentic import OWASP_AGENTIC_TOP10, VALID_OWASP_AGENTIC_IDS; assert len(OWASP_AGENTIC_TOP10) == 10; assert 'ASI10' in VALID_OWASP_AGENTIC_IDS"
+          "$PY" -c "from argus.atlas import ATLAS_TECHNIQUES; assert ATLAS_TECHNIQUES['AML.T0010'] == 'Supply Chain Compromise'"
           "$RUNNER_TEMP/venv/bin/argus-probe" --help
           "$RUNNER_TEMP/venv/bin/argus-probe" mcp-trap --print-config --target '{"kind":"openai_compat","endpoint_url":"http://127.0.0.1:9/v1/chat/completions","model":"m"}'
           "$RUNNER_TEMP/venv/bin/argus-probe" scan-mcp --help
@@ -287,6 +288,7 @@ jobs:
           import sys, glob, yaml
           from pathlib import Path
           from argus.agentic import VALID_OWASP_AGENTIC_IDS
+          from argus.atlas import VALID_ATLAS_IDS
           from argus.probe import load_probe
 
           probes = sorted(glob.glob("argus/probes/**/*.yaml", recursive=True))
@@ -306,6 +308,11 @@ jobs:
                   continue
               if ("prompts" in d) == ("sessions" in d):
                   errors.append(f"{f}: exactly one of prompts and sessions is required")
+              for tag in (d.get("mappings") or {}).get("atlas", []):
+                  if tag not in VALID_ATLAS_IDS:
+                      errors.append(f"{f}: {d.get('id')}: invalid mappings.atlas ID {tag!r}")
+              if d.get("attack_class") and "Article 15(3)" in (d.get("mappings") or {}).get("eu_ai_act", []):
+                  errors.append(f"{f}: {d.get('id')}: Article 15(3) is not an attack-resilience label")
               if "prompts" in d and (
                   not isinstance(d["prompts"], list) or not d["prompts"]
                   or any(not isinstance(p, str) or not p.strip() for p in d["prompts"])

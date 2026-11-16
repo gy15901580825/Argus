@@ -256,7 +256,7 @@
         "universe": "open",
         "cells": [
           {
-            "id": "Article 15(3)",
+            "id": "Article 15(5)",
             "probes_in_library": 1,
             "probes_run": 1,
             "library_status": "thin",
@@ -322,7 +322,7 @@
         "MANAGE-2.2"
       ],
       "eu_ai_act_id": [
-        "Article 15(3)"
+        "Article 15(5)"
       ],
       "created_at": "<timestamp>",
       "evidence": {
