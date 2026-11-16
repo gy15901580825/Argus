@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from typing import ClassVar
 
 import httpx
+from argus_transport.address_policy import target_client
 
 from argus.targets._base import Target, Turn
 
@@ -109,7 +110,7 @@ class MCPServerTarget(Target):
         base = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
         auth = dict(self.spec.headers)
         ev: dict = {"interaction_count": 0, "url": self.spec.url}
-        async with httpx.AsyncClient(timeout=self.spec.timeout_s, transport=self._transport) as c:
+        async with target_client(httpx, timeout=self.spec.timeout_s, transport=self._transport) as c:
             async def call(method: str, **kw) -> httpx.Response | None:
                 try:
                     r = await c.request(method, self.spec.url, **kw)

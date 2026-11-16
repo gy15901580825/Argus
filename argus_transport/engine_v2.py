@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Mapping
 from urllib.parse import unquote, quote, urlencode, urljoin, urlsplit, urlunsplit
 
 import httpx
+from argus_transport.address_policy import target_client, require_guarded_client, TargetAddressPolicyError
 
 from .engine import _MISSING, _OMIT, evaluate_response, matches_predicate, outcome_match, select
 from .models import (
@@ -465,9 +466,10 @@ class TransportEngineV2:
     @asynccontextmanager
     async def _client(self):
         if self.client is not None:
+            require_guarded_client(self.client)
             yield self.client
         else:
-            async with httpx.AsyncClient(follow_redirects=False, trust_env=False) as client:
+            async with target_client(httpx, follow_redirects=False, trust_env=False) as client:
                 yield client
 
     def _headers(self, request):
@@ -716,6 +718,9 @@ class TransportEngineV2:
         except asyncio.CancelledError:
             intent.status = 'interrupted'
             raise
+        except TargetAddressPolicyError:
+            intent.failure_reason = 'address_policy'
+            raise
         except TargetRunStopped:
             intent.status = 'skipped_stopped' if self.runtime.ledger.stopped is not None else 'failed'
         except (TimeoutError, httpx.HTTPError, ValueError, OSError, TypeError, AttributeError, OverflowError, RecursionError):
@@ -804,6 +809,10 @@ class TransportEngineV2:
                 if interrupted is None:
                     interrupted = exc
                 if primary is None:
+                    raise
+            except TargetAddressPolicyError:
+                diagnostics['cleanup_address_policy_refused'] = True
+                if interrupted is None:
                     raise
             except Exception:
                 if abort is None or (primary is None and result is None):

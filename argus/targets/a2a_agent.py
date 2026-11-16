@@ -8,6 +8,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
+from argus_transport.address_policy import target_client
 
 from argus.a2a.protocol import Interface, build_request, decode_response
 from argus.a2a.world import CAPABILITIES
@@ -143,7 +144,7 @@ async def deliver_ingress(
         if name.lower() not in ("a2a-version", "content-type")
     }
     headers.update({"A2A-Version": "1.0", "Content-Type": "application/a2a+json"})
-    async with httpx.AsyncClient(timeout=spec.timeout_s) as client:
+    async with target_client(httpx, timeout=spec.timeout_s) as client:
         for index, delivery in enumerate(deliveries):
             request = build_request(iface, "SendMessage", delivery, index)
             row = {

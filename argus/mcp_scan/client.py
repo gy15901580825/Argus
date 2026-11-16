@@ -12,6 +12,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Literal, Mapping, Sequence
 
+from argus_transport.address_policy import TargetAddressPolicyError
 from argus.mcp_scan import rules
 from argus.mcp_scan.models import TEXT_KEEP, CallResult, ServerInfo, ToolInfo
 from argus.mcp_scan.stdio import StdioProcess, stdio_streams
@@ -47,7 +48,7 @@ class StdioServer:
 
 
 class ConnectError(Exception):
-    def __init__(self, code: Literal["auth", "refused", "timeout", "protocol", "died"], message: str,
+    def __init__(self, code: Literal["auth", "refused", "timeout", "protocol", "died", "address_policy"], message: str,
                  stderr_tail: str = "") -> None:
         super().__init__(message)
         self.code = code
@@ -107,6 +108,7 @@ class _HttpState:
     error_status: int | None = None
     session_id: str | None = None
     body_too_large: bool = False
+    address_refused: bool = False
 
 
 def _http_client(target: HttpServer, timeout_s: float, state: _HttpState) -> Any:
@@ -145,8 +147,13 @@ def _http_client(target: HttpServer, timeout_s: float, state: _HttpState) -> Any
         if session_id := response.headers.get("mcp-session-id"):
             state.session_id = session_id
 
+    def refused():
+        # The SDK can swallow failures during reconnection or session termination.
+        state.address_refused = True
+
     # Read timeout off: it would keep cutting the standing GET stream; requests are bounded by the session.
-    return httpx2.AsyncClient(headers=dict(target.headers), timeout=httpx2.Timeout(timeout_s, read=None),
+    from argus_transport.address_policy import target_client
+    return target_client(httpx2, on_address_refused=refused, headers=dict(target.headers), timeout=httpx2.Timeout(timeout_s, read=None),
                               event_hooks={"response": [record]})
 
 
@@ -230,6 +237,8 @@ class McpSession:
             else:
                 self._connect_error = self._classify(exc)
         finally:
+            if self._http.address_refused:
+                self._connect_error = ConnectError("address_policy", str(TargetAddressPolicyError()))
             self.alive = False
             self._done.set()
             self._ready.set()
@@ -239,6 +248,8 @@ class McpSession:
         from mcp.shared.exceptions import MCPError
         from mcp_types import CONNECTION_CLOSED, REQUEST_TIMEOUT
 
+        if self._http.address_refused:
+            return ConnectError("address_policy", str(TargetAddressPolicyError()))
         tail = self.stderr_tail
         if self._http.auth_status is not None:
             status = self._http.auth_status
@@ -248,6 +259,8 @@ class McpSession:
             return ConnectError("auth", f"The server answered HTTP {status}; pass the credentials its clients send "
                                         "with --header 'Name: value'.")
         leaves = _leaves(exc)
+        if any(isinstance(leaf, TargetAddressPolicyError) for leaf in leaves):
+            return ConnectError("address_policy", str(TargetAddressPolicyError()))
         for leaf in leaves:
             if isinstance(leaf, (TimeoutError, httpx2.TimeoutException)) or (
                     isinstance(leaf, MCPError) and leaf.code == REQUEST_TIMEOUT):
@@ -271,6 +284,8 @@ class McpSession:
         return ConnectError("protocol", f"The server did not complete the MCP handshake ({reason}).", tail)
 
     def _end(self, reason: str) -> None:
+        if self._http.address_refused:
+            reason = str(TargetAddressPolicyError())
         if self.alive:
             self.alive = False
             self._death = reason
@@ -314,6 +329,8 @@ class McpSession:
         from mcp.shared.exceptions import MCPError
         from pydantic import ValidationError
 
+        if self._http.address_refused:
+            return None, ("transport_error", str(TargetAddressPolicyError()))
         if not self.alive:
             return None, ("transport_error", self._death or "the session is closed")
         failure: tuple[str, str] | None = None
@@ -335,6 +352,8 @@ class McpSession:
         if failure is None:  # the scope was cancelled: a flood closed the session, or the backstop fired
             failure = ("transport_error", self._death) if not self.alive else (
                 "timeout", f"no reply within {self._timeout_s:g} s")
+        if self._http.address_refused:
+            failure = ("transport_error", str(TargetAddressPolicyError()))
         return None, failure
 
     def _failure(self, exc: Any) -> tuple[str, str]:

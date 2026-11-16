@@ -15,6 +15,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, ClassVar
 
 import httpx
+from argus_transport.address_policy import target_client, TargetAddressPolicyError
 
 from argus.targets._base import ProbeNotApplicable, Target, Turn
 
@@ -56,7 +57,7 @@ class TestbedAgentTarget(Target):
             if self.controlled
             else {}
         )
-        async with self._httpx().AsyncClient(timeout=self.spec.timeout_s) as client:
+        async with target_client(self._httpx(), timeout=self.spec.timeout_s) as client:
             kwargs = {"headers": headers} if headers else {}
             if json is not None:
                 kwargs["json"] = json
@@ -171,6 +172,8 @@ class TestbedAgentTarget(Target):
         sid = session.get("session_id")
         try:
             await self._control("delete", f"/sessions/{sid}")
+        except TargetAddressPolicyError:
+            raise
         except Exception:
             logger.warning(
                 "%s refused teardown of session %s; it will expire by TTL",

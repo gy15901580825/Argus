@@ -16,7 +16,10 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, ClassVar
 
+import anyio
 import grpc
+from urllib.parse import urlsplit
+from argus_transport.address_policy import checked_address, public_only, TargetAddressPolicyError
 from google.protobuf import descriptor_pb2, descriptor_pool, message_factory
 from grpc_reflection.v1alpha import reflection_pb2, reflection_pb2_grpc
 
@@ -43,13 +46,31 @@ class GRPCSpec:
 
 
 @contextlib.asynccontextmanager
-async def _make_channel(endpoint: str, tls: bool):
+async def _make_channel(endpoint: str, tls: bool, timeout_s: float = 60.0):
+    options = ()
+    if public_only():
+        try:
+            parsed = urlsplit('//'+endpoint)
+            host, port = parsed.hostname, parsed.port
+        except ValueError:
+            raise TargetAddressPolicyError() from None
+        if (not host or port is None or parsed.path or parsed.query or parsed.fragment
+                or parsed.username is not None or parsed.password is not None):
+            raise TargetAddressPolicyError()
+        try:
+            with anyio.fail_after(timeout_s):
+                ip = await checked_address(host, port)
+        except TimeoutError:
+            raise TimeoutError('target connection timed out') from None
+        endpoint = f'[{ip}]:{port}' if ':' in ip else f'{ip}:{port}'
+        options = (('grpc.ssl_target_name_override', host), ('grpc.default_authority', host),
+                   ('grpc.enable_http_proxy', 0))
     if tls:
         credentials = grpc.ssl_channel_credentials()
-        async with grpc.aio.secure_channel(endpoint, credentials) as channel:
+        async with grpc.aio.secure_channel(endpoint, credentials, **({"options": options} if options else {})) as channel:
             yield channel
     else:
-        async with grpc.aio.insecure_channel(endpoint) as channel:
+        async with grpc.aio.insecure_channel(endpoint, **({"options": options} if options else {})) as channel:
             yield channel
 
 
@@ -138,7 +159,7 @@ class GRPCTarget(Target):
     async def send_prompt(
         self, prompt: str, history: tuple[Turn, ...] = ()
     ) -> tuple[str, float]:
-        async with _make_channel(self.spec.endpoint, self.spec.tls) as channel:
+        async with _make_channel(self.spec.endpoint, self.spec.tls, self.spec.timeout_s) as channel:
             request, request_class, response_class = await _build_dynamic_request_async(
                 channel, self.spec.service_method, self.spec.prompt_field, prompt
             )

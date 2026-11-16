@@ -27,6 +27,7 @@ from argus import llm, remediation
 from argus.redaction import _scrub, run_secrets
 from argus_transport.cleanup import CleanupReport, CleanupStateUnknown, run_error_detail, validate_cleanup_report
 from argus_transport.stops import RunStopped
+from argus_transport.address_policy import TargetAddressPolicyError
 from argus.coverage import build_coverage, build_summary
 from argus.cost_meter import CostExceededError, CostMeter
 from argus.judge import Judge
@@ -495,7 +496,7 @@ async def preflight(req: RunRequest):
         # Validate target dict is buildable before we run cost math — C1 fix.
         # Off the event loop: building renders the spec's templates once.
         target_obj = await asyncio.to_thread(build_target, req.target)
-    except ValueError as e:
+    except (ValueError, TargetAddressPolicyError) as e:
         raise HTTPException(status_code=422, detail=str(e))
 
     # 422s on suite/probe_ids conflict or unknown suite id, before any cost math.
@@ -554,7 +555,7 @@ async def run(req: RunRequest):
         # Validate early, off the event loop (building renders the spec's templates once);
         # the actual target is rebuilt inside _run_probes.
         target_obj = await asyncio.to_thread(build_target, req.target)
-    except ValueError as e:
+    except (ValueError, TargetAddressPolicyError) as e:
         raise HTTPException(status_code=422, detail=str(e))
 
     # 422s on suite/probe_ids conflict or unknown suite id, before SSE streaming starts.
