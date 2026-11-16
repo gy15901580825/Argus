@@ -342,3 +342,25 @@ async def test_startup_self_check_refuses_unchecked_response(monkeypatch):
     with pytest.raises(RuntimeError, match='target address policy self-check failed'):
         await policy.startup_self_check()
     assert requests == ['http://127.0.0.1:9/']
+
+
+async def test_pool_drift_refuses_server_startup(monkeypatch):
+    import argus.server as server_module
+    monkeypatch.setenv('ARGUS_TARGET_ADDRESS_POLICY', 'public_only')
+    original = httpx.AsyncHTTPTransport
+    transports = []
+
+    def missing_backend(**kwargs):
+        transport = original(**kwargs)
+        del transport._pool._network_backend
+        transports.append(transport)
+        return transport
+
+    monkeypatch.setattr(httpx, 'AsyncHTTPTransport', missing_backend)
+    try:
+        with pytest.raises(TargetAddressPolicyError):
+            async with server_module._lifespan(server_module.app):
+                pass
+    finally:
+        for transport in transports:
+            await transport.aclose()

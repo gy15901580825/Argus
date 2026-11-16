@@ -132,11 +132,11 @@ async def startup_self_check() -> None:
     """Refuse startup unless the real target client blocks a loopback request."""
     if not public_only():
         return
-    try:
-        async with target_client(timeout=1) as client:
+    async with target_client(timeout=1) as client:
+        try:
             await client.get('http://127.0.0.1:9/')
-    except TargetAddressPolicyError:
-        return
-    except Exception:
-        raise RuntimeError('target address policy self-check failed') from None
+        except TargetAddressPolicyError:
+            return
+        except Exception:
+            raise RuntimeError('target address policy self-check failed') from None
     raise RuntimeError('target address policy self-check failed')
