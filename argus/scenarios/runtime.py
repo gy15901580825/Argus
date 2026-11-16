@@ -30,9 +30,10 @@ class NotReady(RuntimeError):
 class SeedNotDeliverable(RuntimeError):
     """A trusted recipient copy exists but cannot be used by the target."""
 
-    def __init__(self, reason: str, recipient: ObjectRecord):
+    def __init__(self, reason: str, recipient: ObjectRecord, *, evidence: Evidence | None = None):
         super().__init__(reason)
         self.recipient = recipient
+        self.evidence = evidence
 
 
 def read_template(catalog_dir: Path, name: str) -> str:

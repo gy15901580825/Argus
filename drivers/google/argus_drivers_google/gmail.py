@@ -121,7 +121,21 @@ class GmailDriver(GoogleDriver):
                                              marker=obj.marker, owner=owner_hash(mailbox), connection_id=observer.connection_id)
                     for label in ("SPAM", "TRASH"):
                         if label in message.get("labelIds", []):
-                            raise SeedNotDeliverable(f"seed {obj.logical_key} was delivered to {label.lower()}", recipient)
+                            label_ids = sorted(l for l in message.get("labelIds", []) if re.fullmatch(r"[A-Z][A-Z_]*", l))
+                            user_label_count = len(message.get("labelIds", [])) - len(label_ids)
+                            thread_id = message.get("threadId")
+                            detail = "message labels: " + ", ".join(label_ids)
+                            if user_label_count:
+                                detail += f"; user labels: {user_label_count}"
+                            detail += f"; thread {thread_id or 'unknown'}"
+                            evidence = Evidence(run_id=obj.run_id, group=obj.group, control_name=obj.control_name,
+                                                source_system=self.name, provenance=Provenance.THIRD_PARTY_API,
+                                                acquired_via="gmail_api", object_id=recipient.external_id,
+                                                operation="seed_delivery", result=label.lower(),
+                                                details={"label_ids": label_ids, "user_label_count": user_label_count,
+                                                         "thread_id": thread_id})
+                            raise SeedNotDeliverable(f"seed {obj.logical_key} was delivered to {label.lower()} ({detail})",
+                                                     recipient, evidence=evidence)
                     if ctx.budget.clock() >= deadline:
                         raise TimeoutError()
                     return recipient

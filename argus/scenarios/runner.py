@@ -147,7 +147,10 @@ class ScenarioRunner:
             root = Path(os.getenv("ARGUS_SCENARIO_CATALOG_DIR", str(Path(__file__).parent / "catalog")))
             spec = spec.model_copy(update={"content": read_template(root, spec.template)})
         content = self.render(spec.content).replace("{marker}", self.ctx.marker(key)).replace("{" + key + ".marker}", self.ctx.marker(key))
-        spec = spec.model_copy(update={"content": content})
+        updates = {"content": content}
+        if spec.op == "send_seed":
+            updates["subject"] = self.render(spec.subject) + f" [{self.ctx.run_id}]"
+        spec = spec.model_copy(update=updates)
         driver = self.drivers[spec.driver]
         obj = await driver.prepare(self.ctx, key, spec)
         if obj.run_id != self.ctx.run_id or obj.group != self.ctx.group or obj.control_name != self.ctx.control_name or obj.marker != self.ctx.marker(key):
@@ -199,6 +202,8 @@ class ScenarioRunner:
         self.ctx.objects[key] = recipient
         await self.object_events()
         if delivery_failure is not None:
+            if delivery_failure.evidence is not None:
+                self.evidence.append(delivery_failure.evidence)
             raise NotReady(str(delivery_failure)) from delivery_failure
 
     async def connections_ready(self):

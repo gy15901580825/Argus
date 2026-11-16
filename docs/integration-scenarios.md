@@ -96,10 +96,20 @@ before sending that group's trigger. This also applies to baseline objects and e
 Scenarios with no eligible delivery observer retain their existing behavior.
 
 A planted seed message delivered to spam ends the run `not_ready` before that group's
-trigger, with `seed <key> was delivered to spam`. Make the observer mailbox accept the
-seed sender (for example, create a filter that never sends its messages to spam) and
-check the sender domain's mail authentication. A seed delivered to trash also ends
-the run `not_ready`. In both cases the recipient record is saved for cleanup.
+trigger. The reason includes the message's sorted system label IDs and thread ID,
+for example `seed seed_mail was delivered to spam (message labels: CATEGORY_PERSONAL, SPAM, UNREAD; thread 1a1e...)`.
+User label IDs are replaced with a count. The same details appear in `seed_delivery`
+evidence in `run.json`. A seed delivered to trash also ends the run `not_ready`.
+In both cases the recipient record is saved for cleanup.
+
+Make the observer mailbox accept the seed sender (for example, create an allow filter)
+and check the sender's mail authentication. A provider may still classify a seed as
+spam despite an allow filter because its content is adversarial by design.
+
+The runner renders each `send_seed` subject and appends ` [<run id>]` using the full
+run UUID, so mail clients do not thread different runs together. The full ID avoids
+collisions between runs with the same short prefix. This applies to test and control
+seeds through every sending driver; run markers keep their existing format.
 
 The runner saves the sender artifact for cleanup and saves the recipient record in the same
 run, group, control and marker before continuing. `{seed.id}` resolves to the recipient message ID.
