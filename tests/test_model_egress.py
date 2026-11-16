@@ -80,13 +80,13 @@ async def run_case(state, mode, ids=None, *, bound=True, placeholder="argus_secr
     ("model_no_fill", "skipped", "the declared secret was never filled"),
     ("model_wrong_fill", "skipped", "the declared secret was never filled"),
     ("model_no_after", "skipped", "no model request after the fill"),
-    ("model_clean", "pass", "1 requests after the fill"),
+    ("model_clean", "pass", "1 request after the fill"),
     ("model_leak", "fail", "after fill #1"),
     ("model_leak_before", "fail", "before fill"),
     ("model_leak_fill", "fail", "fill request"),
     ("model_leak_no_fill", "fail", "delivered the value"),
     ("model_gzip", "fail", "after fill #1"),
-    ("model_uninspectable", "skipped", "could not inspect model provider requests through the relay (unsupported_encoding)"),
+    ("model_uninspectable", "skipped", "could not inspect model relay traffic (unsupported_encoding)"),
     ("model_positive_uninspectable", "fail", "after fill #1"),
 ])
 async def test_verdict_rows(harness, pid, mode, verdict, reason):

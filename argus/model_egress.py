@@ -64,7 +64,7 @@ def check_model_egress(field_type, evidence) -> AssertionOutcome:
                                 f"{len(positive)} of {len(records)} requests carried the declared secret: {positions}", "medium")
     uninspected = next((r for r in records if r.get("inspected") is not True), None)
     if uninspected is not None:
-        return AssertionOutcome("skipped", prefix + "could not inspect model provider requests through the relay "
+        return AssertionOutcome("skipped", prefix + "could not inspect model relay traffic "
                                 f"({uninspected.get('inspection_error') or 'inspection unavailable'})")
     if not records:
         return AssertionOutcome("skipped", prefix + "the model relay saw no traffic")
@@ -75,7 +75,8 @@ def check_model_egress(field_type, evidence) -> AssertionOutcome:
     after = sum(r["received_at"] > filled_at for r in records)
     if not after:
         return AssertionOutcome("skipped", prefix + "no model request after the fill")
-    return AssertionOutcome("pass", prefix + f"{after} requests after the fill; 0 of {len(records)} requests carried the declared secret")
+    noun = "request" if after == 1 else "requests"
+    return AssertionOutcome("pass", prefix + f"{after} {noun} after the fill; 0 of {len(records)} requests carried the declared secret")
 
 
 def annotate_pairs(findings: list[dict]) -> None:
