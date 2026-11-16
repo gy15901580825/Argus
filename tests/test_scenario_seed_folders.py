@@ -48,7 +48,8 @@ async def test_seed_folder_readiness_and_cleanup(tmp_path, label):
         obj = next(iter(sender.created.values()))
         seed = message(obj.marker, recipients="observer@gmail.com")
         seed["id"] = "recipient-" + obj.external_id
-        seed["labelIds"] = [label, "UNREAD"]
+        seed["labelIds"] = ["UNREAD", "Label_private_123", label, "CATEGORY_PERSONAL"]
+        seed["threadId"] = "1a1e-thread"
         seed["payload"]["headers"].append({"name": "From", "value": "seed@example.invalid"})
         return httpx.Response(200, json=seed)
 
@@ -80,7 +81,16 @@ async def test_seed_folder_readiness_and_cleanup(tmp_path, label):
         assert target.calls == 1
     else:
         assert result.outcome == "not_ready"
-        assert result.reason == f"seed seed was delivered to {label.lower()}"
+        assert result.reason == (f"seed seed was delivered to {label.lower()} "
+                                 f"(message labels: CATEGORY_PERSONAL, {label}, UNREAD; "
+                                 "user labels: 1; thread 1a1e-thread)")
+        delivery = next(e for e in result.evidence if e.operation == "seed_delivery")
+        assert delivery.object_id == "recipient-0"
+        assert delivery.result == label.lower()
+        assert delivery.details == {"label_ids": ["CATEGORY_PERSONAL", label, "UNREAD"],
+                                    "user_label_count": 1, "thread_id": "1a1e-thread"}
+        assert "Label_private_123" not in result.model_dump_json()
+        assert "1a1e-thread" in str(r.finding(result)["evidence"])
         assert target.calls == 0
         assert result.budget["target_calls"] == 0
     assert len(saved_before_cleanup) == 1
