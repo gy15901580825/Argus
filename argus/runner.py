@@ -450,6 +450,8 @@ class Runner:
                 raise
 
     async def _run_probe(self, probe, *, deep_state: DeepThread | None = None) -> AsyncIterator[Finding]:
+        from argus.model_egress import prepare_trace_control
+        probe = prepare_trace_control(probe)
         # Template slots ({generator.name}) must never reach the target as literals.
         name = target_model_name(self._target)
         if isinstance(probe, Probe) and any(needs_rendering(p) for p in probe.prompts):

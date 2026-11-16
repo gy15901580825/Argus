@@ -481,6 +481,7 @@ class BrowserUseTarget(Target):
     def __init__(self, spec: BrowserUseSpec) -> None:
         self.spec = spec
         self._witness = current_witness()
+        self._witness_values: tuple[str, ...] = ()
         self._witness_start = time.monotonic()
         self._witness_channels = ()
         # Set by begin_probe; None means a non-probe caller, which keeps the
@@ -518,6 +519,7 @@ class BrowserUseTarget(Target):
         self._witness.register_values(values)
 
     async def begin_probe(self, probe) -> None:
+        self._witness_values = tuple(getattr(probe, "witness_values", ()))
         channels = getattr(probe, "requires_witness", ())
         self._witness_channels = tuple(channels) if isinstance(channels, (tuple, list)) else ()
         self._witness_start = time.monotonic()
@@ -649,8 +651,12 @@ class BrowserUseTarget(Target):
                 session_id=self._session_id,
             )
             if self._witness is not None and _LOCAL_RUN.get():
-                msg.update(secret_canary=self._witness.canary,
-                           secret_placeholder=self._witness.spec.secret_placeholder)
+                from argus.model_egress import TRACE_PROBE, without_secret_bindings
+                if self._probe_id.split("::", 1)[0] == TRACE_PROBE + "_control":
+                    msg["transport"] = without_secret_bindings(msg["transport"])
+                else:
+                    msg.update(secret_canary=self._witness.canary,
+                               secret_placeholder=self._witness.spec.secret_placeholder)
             deadline = self.spec.transport.timeout.total_deadline_s
             cleanup = self.spec.transport.timeout.cleanup_grace_s
         else:
@@ -790,8 +796,10 @@ class BrowserUseTarget(Target):
         queries can hold real credentials an agent autofilled."""
         ev = dict(self._evidence)
         if self._scenario_kind == "field_egress" and self._witness is not None:
-            from argus.model_egress import field_fills
-            ev["field_fills"] = field_fills(ev, self._witness.canary)
+            from argus.model_egress import TRACE_PROBE, field_fills
+            control = self._probe_id.split("::", 1)[0] == TRACE_PROBE + "_control"
+            value = self._witness_values[0] if control else self._witness.canary
+            ev["field_fills"] = field_fills(ev, value)
         if "trap_requests" in ev:
             requests = ev["trap_requests"]
             sequence = {i for canary in self._canaries
@@ -814,8 +822,16 @@ class BrowserUseTarget(Target):
             ev["witness"]["canary_bound"] = self.spec.binds_secret_canary
             if self._scenario_kind == "field_egress":
                 from argus.model_egress import model_evidence_notes, position_records
-                position_records(ev)
-                ev["model_egress_notes"] = model_evidence_notes(ev)
+                if "otlp" in self._witness_channels:
+                    from argus.model_egress import trace_evidence_notes
+                    position_records(ev, "otlp")
+                    ev["trace_egress_notes"] = trace_evidence_notes(ev)
+                    if control:
+                        ev["witness"]["canary_bound"] = False
+                        ev["trace_control_value_seen"] = any(any(r["values_seen"]) for r in ev["witness"]["otlp"])
+                else:
+                    position_records(ev)
+                    ev["model_egress_notes"] = model_evidence_notes(ev)
         return _scrub_stored_data(ev, self._sensitive_credentials)
 
     def _stored_record(self, requests: list[dict]) -> dict:
