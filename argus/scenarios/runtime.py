@@ -200,6 +200,13 @@ class DeliveryObserver(Protocol):
                              observer: ConnRef, deadline: float) -> ObjectRecord: ...
 
 
+class SeedInserter(Protocol):
+    """Optional seed placement capability on a delivery observer."""
+
+    async def insert_seed(self, ctx: RunContext, key: str, spec: ObjectSpec,
+                          observer: ConnRef) -> ObjectRecord: ...
+
+
 def build_drivers(names: set[str], provider: CredentialProvider, config: dict | None = None) -> dict[str, Driver]:
     installed = {}
     for ep in sorted(entry_points(group="argus.drivers"), key=lambda e: (e.name, e.value)):
