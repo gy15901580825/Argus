@@ -90,3 +90,19 @@ def test_google_driver_release_version(tmp_path, version, driver_version, target
         assert f"driver version {driver_version} must equal root version {version}" in result.stderr
     elif not allowed:
         assert "development or local segment" in result.stderr
+
+
+@pytest.mark.parametrize("job", ["publish-testpypi", "publish-pypi"])
+def test_argus_probe_publishes_before_google_driver(job):
+    jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
+    publishers = [
+        step for step in jobs[job]["steps"]
+        if step.get("uses", "").startswith("pypa/gh-action-pypi-publish@")
+    ]
+    directories = [step["with"].get("packages-dir", "dist/") for step in publishers]
+    assert directories == ["dist/argus-probe/", "dist/argus-drivers-google/"]
+    assert directories[0] != directories[1]
+    for step in publishers:
+        assert step["with"]["skip-existing"] is True
+        assert "if" not in step
+        assert not step.get("continue-on-error", False)

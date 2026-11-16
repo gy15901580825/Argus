@@ -62,16 +62,16 @@ jobs:
 
       - name: Build sdist + wheel
         run: |
-          python -m build . --outdir dist
-          python -m build drivers/google --outdir dist
+          python -m build . --outdir dist/argus-probe
+          python -m build drivers/google --outdir dist/argus-drivers-google
 
       - name: Check metadata
-        run: twine check --strict dist/*
+        run: twine check --strict dist/argus-probe/* dist/argus-drivers-google/*
 
       - name: Smoke test Google driver wheels
         run: |
           python -m venv "$RUNNER_TEMP/driver-smoke"
-          "$RUNNER_TEMP/driver-smoke/bin/pip" install dist/argus_probe-*.whl dist/argus_drivers_google-*.whl
+          "$RUNNER_TEMP/driver-smoke/bin/pip" install dist/argus-probe/argus_probe-*.whl dist/argus-drivers-google/argus_drivers_google-*.whl
           cd "$RUNNER_TEMP"
           "$RUNNER_TEMP/driver-smoke/bin/python" - <<'PY'
           from importlib.metadata import distribution
@@ -105,10 +105,19 @@ jobs:
           name: dist
           path: dist/
 
-      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+      - name: Publish argus-probe to TestPyPI
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
+          packages-dir: dist/argus-probe/
           repository-url: https://test.pypi.org/legacy/
           # Lets the rehearsal be re-run without bumping versions.
+          skip-existing: true
+
+      - name: Publish Google drivers to TestPyPI
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          packages-dir: dist/argus-drivers-google/
+          repository-url: https://test.pypi.org/legacy/
           skip-existing: true
 
   publish-pypi:
@@ -127,9 +136,17 @@ jobs:
           name: dist
           path: dist/
 
-      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+      - name: Publish argus-probe to PyPI
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
+          packages-dir: dist/argus-probe/
           # Lets a failed publish be re-run after a partial upload.
+          skip-existing: true
+
+      - name: Publish Google drivers to PyPI
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          packages-dir: dist/argus-drivers-google/
           skip-existing: true
 
   image-build:
@@ -154,7 +171,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/cli-context"
           cp docker/cli.Dockerfile "$RUNNER_TEMP/cli-context/Dockerfile"
-          cp dist/argus_probe-*.whl "$RUNNER_TEMP/cli-context/"
+          cp dist/argus-probe/argus_probe-*.whl "$RUNNER_TEMP/cli-context/"
       - uses: docker/setup-qemu-action@5138f26214adf9d69718655df70f66d2b3c81db3
         with:
           platforms: arm64
@@ -201,7 +218,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/cli-context"
           cp docker/cli.Dockerfile "$RUNNER_TEMP/cli-context/Dockerfile"
-          cp dist/argus_probe-*.whl "$RUNNER_TEMP/cli-context/"
+          cp dist/argus-probe/argus_probe-*.whl "$RUNNER_TEMP/cli-context/"
       - uses: docker/setup-qemu-action@5138f26214adf9d69718655df70f66d2b3c81db3
         with:
           platforms: arm64

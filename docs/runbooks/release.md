@@ -18,9 +18,11 @@
 Before the first tag that includes `argus-drivers-google`, register its trusted
 publisher for this repository, workflow `release.yml`, and environment `pypi`;
 register `testpypi` on TestPyPI before rehearsals. Trusted publishers are per
-project. A missing publisher fails only that project's upload; it does not undo
-another project's successful upload. The publish job can fail after a partial
-upload, so register the missing publisher and rerun with `skip-existing`.
+project. Both publish jobs upload `argus-probe` first from `dist/argus-probe/`,
+then upload `argus-drivers-google` from `dist/argus-drivers-google/` in a separate
+step. If the driver publisher is missing or its upload fails, the job fails
+after argus-probe has already uploaded. Register the missing publisher and rerun
+the job; both steps use `skip-existing` to preserve successful uploads.
 
 A pending publisher does not reserve the project name. Someone else can still register the name until the first upload succeeds, so do the first release soon after setup.
 
