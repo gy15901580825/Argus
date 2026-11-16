@@ -20,6 +20,7 @@ from typing import ClassVar
 from urllib.parse import urlsplit
 
 from argus.targets._base import Target, TargetDeliveryError, Turn
+from argus_transport.address_policy import public_only, TargetAddressPolicyError
 
 _INSTALL_HINT = "pip install 'argus-probe[web]' && playwright install chromium"
 _POLL_S = 0.2
@@ -91,6 +92,8 @@ class WebChatTarget(Target):
     })
 
     def __init__(self, spec: WebChatSpec) -> None:
+        if public_only():
+            raise TargetAddressPolicyError()
         # The browser starts on the first send: this constructor also runs just
         # to validate specs, and in a worker thread.
         if importlib.util.find_spec("playwright") is None:

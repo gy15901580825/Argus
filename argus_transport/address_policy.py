@@ -23,11 +23,21 @@ def public_only() -> bool:
     return value == 'public_only'
 
 
+_EMBEDDED_IPV4_PREFIXES = tuple(ipaddress.IPv6Network(prefix) for prefix in (
+    '64:ff9b::/96', '::/96', '::ffff:0:0:0/96',
+))
+
+
 def is_global_address(address: str) -> bool:
     ip = ipaddress.ip_address(address)
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-        ip = ip.ipv4_mapped
-    return ip.is_global
+    if ip.is_multicast:
+        return False
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped is not None:
+            ip = ip.ipv4_mapped
+        elif any(ip in prefix for prefix in _EMBEDDED_IPV4_PREFIXES):
+            ip = ipaddress.IPv4Address(int(ip) & 0xffffffff)
+    return ip.is_global and not ip.is_multicast
 
 
 async def resolve_addresses(host: str, port: int) -> list[str]:
@@ -93,12 +103,14 @@ def target_client(module=httpx, *, on_address_refused=None, **kwargs):
             raise ValueError('custom target routing is unavailable under public_only')
         if module is httpx:
             import httpcore as core
-            from httpcore._backends.auto import AutoBackend
         else:
             import httpcore2 as core
-            from httpcore2._backends.auto import AutoBackend
         transport = module.AsyncHTTPTransport(trust_env=False)
-        transport._pool._network_backend = _PublicNetworkBackend(AutoBackend(), core, on_address_refused)
+        pool = getattr(transport, '_pool', None)
+        backend = getattr(pool, '_network_backend', None)
+        if not isinstance(backend, core.AsyncNetworkBackend):
+            raise TargetAddressPolicyError()
+        pool._network_backend = _PublicNetworkBackend(core.AnyIOBackend(), core, on_address_refused)
         kwargs.update(transport=transport, trust_env=False)
     return module.AsyncClient(**kwargs)
 
@@ -114,3 +126,17 @@ def require_guarded_client(client) -> None:
         transport is not None for transport in mounts.values()
     ):
         raise TargetAddressPolicyError()
+
+
+async def startup_self_check() -> None:
+    """Refuse startup unless the real target client blocks a loopback request."""
+    if not public_only():
+        return
+    try:
+        async with target_client(timeout=1) as client:
+            await client.get('http://127.0.0.1:9/')
+    except TargetAddressPolicyError:
+        return
+    except Exception:
+        raise RuntimeError('target address policy self-check failed') from None
+    raise RuntimeError('target address policy self-check failed')

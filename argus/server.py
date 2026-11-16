@@ -6,7 +6,7 @@ import os
 import sys
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
-from argus_transport.address_policy import public_only
+from argus_transport.address_policy import public_only, startup_self_check
 
 # Load .env from this directory, then the parent; existing values are never overridden.
 load_dotenv()
@@ -23,7 +23,7 @@ logger = logging.getLogger("OrchestratorAPI")
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
-    public_only()
+    await startup_self_check()
     logger.info("argus server config %s", json.dumps(health_body()))
     yield
 

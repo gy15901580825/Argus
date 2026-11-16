@@ -718,6 +718,9 @@ class TransportEngineV2:
         except asyncio.CancelledError:
             intent.status = 'interrupted'
             raise
+        except TargetAddressPolicyError:
+            intent.failure_reason = 'address_policy'
+            raise
         except TargetRunStopped:
             intent.status = 'skipped_stopped' if self.runtime.ledger.stopped is not None else 'failed'
         except (TimeoutError, httpx.HTTPError, ValueError, OSError, TypeError, AttributeError, OverflowError, RecursionError):
@@ -808,7 +811,9 @@ class TransportEngineV2:
                 if primary is None:
                     raise
             except TargetAddressPolicyError:
-                raise
+                diagnostics['cleanup_address_policy_refused'] = True
+                if interrupted is None:
+                    raise
             except Exception:
                 if abort is None or (primary is None and result is None):
                     raise

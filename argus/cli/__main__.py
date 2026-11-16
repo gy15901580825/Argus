@@ -38,10 +38,12 @@ def _print_version(ctx, _param, value):
               help="Show the version and exit.")
 def main():
     """Argus red-team CLI."""
-    from argus_transport.address_policy import public_only
+    import asyncio
+    from argus_transport.address_policy import public_only, startup_self_check
     try:
-        public_only()
-    except ValueError as exc:
+        if public_only():
+            asyncio.run(startup_self_check())
+    except (ValueError, RuntimeError) as exc:
         raise click.ClickException(str(exc)) from None
 
 
