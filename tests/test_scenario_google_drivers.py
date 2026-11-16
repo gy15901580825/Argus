@@ -355,6 +355,7 @@ async def test_gmail_delivery_polls_observer_and_rejects_untrusted_seed(tmp_path
     import copy
     untrusted = copy.deepcopy(trusted)
     untrusted["id"] = "untrusted-id"
+    untrusted["labelIds"] = ["SPAM"]
     if mismatch == "sender":
         untrusted["payload"]["headers"][-1]["value"] = "other@example.invalid"
     elif mismatch == "recipient":

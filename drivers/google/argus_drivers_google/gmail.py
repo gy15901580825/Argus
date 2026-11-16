@@ -7,7 +7,7 @@ from email.message import EmailMessage
 from email.utils import getaddresses
 
 from argus.scenarios.models import CleanupResult, ConnCheck, Evidence, ObjectRecord, Provenance, object_marker
-from argus.scenarios.runtime import NotReady
+from argus.scenarios.runtime import NotReady, SeedNotDeliverable
 from argus_drivers_google.common import GMAIL_MODIFY, GMAIL_READ, GMAIL_SEND, GoogleDriver, owner_hash
 
 
@@ -116,11 +116,15 @@ class GmailDriver(GoogleDriver):
         while ctx.budget.clock() < deadline:
             for message in await self.messages(ctx, observer, obj.marker):
                 if self.trusted_seed(ctx, message, obj.marker, mailbox):
+                    recipient = ObjectRecord(run_id=obj.run_id, group=obj.group, control_name=obj.control_name,
+                                             logical_key=obj.logical_key, provider=self.name, external_id=message["id"],
+                                             marker=obj.marker, owner=owner_hash(mailbox), connection_id=observer.connection_id)
+                    for label in ("SPAM", "TRASH"):
+                        if label in message.get("labelIds", []):
+                            raise SeedNotDeliverable(f"seed {obj.logical_key} was delivered to {label.lower()}", recipient)
                     if ctx.budget.clock() >= deadline:
                         raise TimeoutError()
-                    return ObjectRecord(run_id=obj.run_id, group=obj.group, control_name=obj.control_name,
-                                        logical_key=obj.logical_key, provider=self.name, external_id=message["id"],
-                                        marker=obj.marker, owner=owner_hash(mailbox), connection_id=observer.connection_id)
+                    return recipient
             remaining = deadline - ctx.budget.clock()
             if remaining <= 0:
                 break
