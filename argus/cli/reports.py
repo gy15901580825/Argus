@@ -43,6 +43,7 @@ def evidence_notes(finding: dict) -> list[str]:
         return []
     notes = []
     notes.extend(ev.get("model_egress_notes", []))
+    notes.extend(ev.get("trace_egress_notes", []))
     requests = ev["trap_requests"] if isinstance(ev["trap_requests"], list) else []
     requests = [r for r in requests if isinstance(r, dict)]
     for outcome, ms in dialog_decisions(requests):
