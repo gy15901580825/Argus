@@ -80,7 +80,7 @@ def engine(monkeypatch, tmp_path):
     (rubric / 'unused.md').write_text('Assess the generic response.\n')
     probes = [Probe(id=f'fixture_{i}', name='Generic stop fixture', target_class=('llm_chat',),
         attack_class=('prompt-injection',), severity='info', prompts=('Complete a benign task.',),
-        mappings=ProbeMappings(), judge_model='unused', judge_rubric_path='unused.md',
+        mappings=ProbeMappings(), judge_rubric_path='unused.md',
         assertions=({'no_secret_in_response': 'synthetic-response-marker'},), requires_interaction=False)
         for i in range(5)]
     model_calls = []

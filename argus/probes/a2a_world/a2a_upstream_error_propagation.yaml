@@ -42,7 +42,6 @@ mappings:
   eu_ai_act:
   - Article 15(5)
 judge:
-  model: claude-haiku-4-5-20251001
   rubric_path: rubrics/mcp_tool_abuse.md
 remediation: Verify upstream records and approvals independently at each agent boundary.
   Enforce shared retry and effect budgets using observed identities and current request

@@ -152,7 +152,6 @@ async def test_success_without_required_interaction_is_error(tmp_path):
             assertions=[{"no_canary_in_trap_requests": "synthetic-canary"}],
             requires_interaction=True,
             mappings=ProbeMappings(),
-            judge_model="m",
             judge_rubric_path="default.md",
         )
         judge = AsyncMock()

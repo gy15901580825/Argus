@@ -11,7 +11,7 @@ from argus.probe import Probe, ProbeMappings, load_probe
 def _probe(**kwargs):
     return Probe(id="agentic", name="Agentic", target_class=("http-chat",),
                  attack_class=("prompt-injection",), severity="high", prompts=("hello",),
-                 mappings=kwargs.pop("mappings", ProbeMappings()), judge_model="test",
+                 mappings=kwargs.pop("mappings", ProbeMappings()),
                  judge_rubric_path="default.md", **kwargs)
 
 

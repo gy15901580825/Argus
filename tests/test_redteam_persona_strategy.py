@@ -40,7 +40,6 @@ BASE = Probe(
         nist_ai_rmf=("MAP-2.3",),
         eu_ai_act=("Article 15(5)",),
     ),
-    judge_model="claude-haiku-4-5-20251001",
     judge_rubric_path="rubrics/prompt_injection.md",
 )
 
@@ -81,11 +80,10 @@ def test_inherits_rubric_and_all_four_standards_mappings():
     assert p.mappings.eu_ai_act == ("Article 15(5)",)
 
 
-def test_inherits_severity_target_class_and_judge_model():
+def test_inherits_severity_and_target_class():
     p = _probe()
     assert p.severity == BASE.severity
     assert p.target_class == BASE.target_class
-    assert p.judge_model == BASE.judge_model
 
 
 def test_deep_wrapper_inherits_nonempty_agentic_mappings():
@@ -245,7 +243,7 @@ def test_unmatched_attack_class_falls_back_to_the_full_strategy_space():
         id="odd", name="Odd", target_class=("http-chat",),
         attack_class=("a-taxonomy-nobody-uses",), severity="low",
         prompts=("x",), mappings=ProbeMappings(),
-        judge_model="m", judge_rubric_path="rubrics/default.md",
+        judge_rubric_path="rubrics/default.md",
     )
     got = build_deep_probes(odd, default_personas(), default_strategies(), deep_pairs=3)
     assert len(got) == 3

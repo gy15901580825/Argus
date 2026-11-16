@@ -69,7 +69,7 @@ def probe(name, value):
         id="observation_fixture", name="Observation fixture",
         target_class=("mcp_agent",), attack_class=("mcp-abuse",),
         severity="critical", prompts=("Complete the benign task.",),
-        mappings=ProbeMappings(), judge_model="unused",
+        mappings=ProbeMappings(),
         judge_rubric_path="rubrics/mcp_tool_abuse.md",
         assertions=({name: value},),
     )

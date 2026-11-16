@@ -25,6 +25,7 @@ from argus.agentic import VALID_OWASP_AGENTIC_IDS
 from argus.remediation import parse_actions
 
 logger = logging.getLogger(__name__)
+_warned_judge_model = False
 
 PROBE_PACK_GROUP = "argus.probe_packs"
 
@@ -145,7 +146,6 @@ class Probe:
     severity: str
     prompts: tuple[str, ...]
     mappings: ProbeMappings
-    judge_model: str
     # judge_rubric_path: resolution (relative path → absolute) is the judge's responsibility, not the loader's.
     judge_rubric_path: str
     # Browser-use probes carry an extra `scenario` block: kind + payload.
@@ -240,6 +240,7 @@ def _parse_probe_yaml(source: str):
 
 
 def load_probe(path: Path) -> Probe:
+    global _warned_judge_model
     # Key by content so edits are visible even when size and mtime are unchanged.
     # Validation stays fresh, and mutable fields never escape the parsing cache.
     raw = deepcopy(_parse_probe_yaml(Path(path).read_text()))
@@ -459,6 +460,13 @@ def load_probe(path: Path) -> Probe:
             raise ValueError(
                 f"paired probes require assertions, decision_point and no judge_when_assertions_pass in {path}"
             )
+        if "model" in raw.get("judge", {}) and not _warned_judge_model:
+            _warned_judge_model = True
+            logger.warning(
+                "%s: judge.model is deprecated and ignored; the judge model comes from "
+                "--judge-model or judge environment variables (REDTEAM_FAST_MODEL).",
+                path,
+            )
         return Probe(
             indirect=tuple(IndirectItem(**item) for item in indirect),
             requires_capabilities=tuple(capabilities),
@@ -482,7 +490,6 @@ def load_probe(path: Path) -> Probe:
                 eu_ai_act=tuple(raw.get("mappings", {}).get("eu_ai_act", [])),
                 owasp_agentic=tuple(agentic),
             ),
-            judge_model=raw.get("judge", {}).get("model", "claude-haiku-4-5-20251001"),
             judge_rubric_path=raw.get("judge", {}).get(
                 "rubric_path", "rubrics/default.md"
             ),

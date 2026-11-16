@@ -275,7 +275,7 @@ If your agent cannot reach your machine at all, use hosted pages, described next
 
 ### Use hosted pages with a local scan
 
-Set `trap_mode` to `hosted` when your browser agent calls a cloud API and cannot reach your machine. Argus uploads its rendered HTML to the hosted trap service and gives your agent a public scenario URL. Your machine does not open a trap port or need a tunnel. Existing browser probe YAML works without changes.
+Set `trap_mode` to `hosted` when your browser agent calls a cloud API and cannot reach your machine. Argus uploads its rendered HTML to the hosted trap service and gives your agent a public scenario URL. Your machine does not open a trap port or need a tunnel. Existing browser probe YAML works without changes. The probe field `judge.model` is ignored and deprecated; choose the judge model with `--judge-model` or judge environment variables.
 
 Use a declarative `transport` for your agent API. This example sends the page URL and user instruction to an API that returns `final_text`.
 

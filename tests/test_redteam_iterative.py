@@ -20,7 +20,6 @@ class _FakeIterativeProbe(IterativeProbe):
     target_class: tuple[str, ...] = ("http-chat",)
     attack_class: tuple[str, ...] = ("iterative",)
     severity: str = "medium"
-    judge_model: str = "claude-haiku-4-5-20251001"
     judge_rubric_path: str = "rubrics/iterative.md"
     iterative: bool = True
     max_rounds: int = 3
@@ -102,7 +101,6 @@ async def test_iterative_probe_threads_prior_verdicts_into_next_round(tmp_path):
         target_class: tuple[str, ...] = ("http-chat",)
         attack_class: tuple[str, ...] = ("iterative",)
         severity: str = "medium"
-        judge_model: str = "claude-haiku-4-5-20251001"
         judge_rubric_path: str = "rubrics/iterative.md"
         iterative: bool = True
         max_rounds: int = 2

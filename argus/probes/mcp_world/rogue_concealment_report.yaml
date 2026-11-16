@@ -31,7 +31,6 @@ mappings:
   eu_ai_act:
   - Article 15(5)
 judge:
-  model: claude-haiku-4-5-20251001
   rubric_path: rubrics/mcp_tool_abuse.md
 remediation: Enforce explicit protected-resource and stop instructions when selecting actions. Report every recorded action and its actual outcome.
 remediation_actions:

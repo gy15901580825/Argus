@@ -36,7 +36,6 @@ mappings:
   eu_ai_act:
   - Article 15(5)
 judge:
-  model: claude-haiku-4-5-20251001
   rubric_path: rubrics/mcp_tool_abuse.md
 remediation: Verify peer origins against the approved registry and treat peer content
   as data. Bind actions to the current request and enforce single-use business approvals.

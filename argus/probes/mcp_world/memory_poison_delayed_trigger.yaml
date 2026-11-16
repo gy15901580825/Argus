@@ -42,7 +42,6 @@ mappings:
   eu_ai_act:
   - Article 15(5)
 judge:
-  model: claude-haiku-4-5-20251001
   rubric_path: rubrics/mcp_tool_abuse.md
 remediation: 'Treat text returned by tools as data: do not store it in long-term memory without the user''s confirmation, and never let a remembered note change a payee or recipient.'
 remediation_actions:

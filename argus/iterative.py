@@ -32,7 +32,6 @@ class IterativeProbe(ABC):
     target_class: tuple[str, ...]
     attack_class: tuple[str, ...]
     severity: str
-    judge_model: str
     judge_rubric_path: str
     iterative: bool
     max_rounds: int

@@ -57,7 +57,7 @@ def _probe(tmp_path, **kw):
     base = dict(
         id="swap", name="swap", target_class=("browser-using",), attack_class=("tool-abuse",),
         severity="high", prompts=("open the tracking details",), mappings=ProbeMappings(),
-        judge_model="m", judge_rubric_path="rubrics/swap.md", requires_interaction=False,
+        judge_rubric_path="rubrics/swap.md", requires_interaction=False,
         assertions=({"no_click_swap_activation": True},), judge_when_assertions_warn=True,
     )
     base.update(kw)

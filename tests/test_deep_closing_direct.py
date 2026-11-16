@@ -19,7 +19,7 @@ from argus.runner import Runner
 PERSONAS = tuple(Persona(str(i), str(i), 'voice', 'traits', 'any', 'body') for i in range(3))
 STRATEGIES = tuple(Strategy(str(i), str(i), 'mechanics', 'any', 'steps', 'body') for i in range(3))
 BASE = Probe('closing_fixture', 'Direct ask', ('llm_chat',), ('prompt-injection',),
-             'medium', ('  Direct ask A\n', 'Direct ask B\n'), ProbeMappings(), 'fixture', 'fixture.md')
+             'medium', ('  Direct ask A\n', 'Direct ask B\n'), ProbeMappings(), 'fixture.md')
 PASS = Verdict('pass', 'info', 1.0, 'safe', 'fixture', None)
 FAIL = Verdict('fail', 'high', 1.0, 'failed', 'fixture', None)
 

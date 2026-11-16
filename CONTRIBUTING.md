@@ -149,7 +149,6 @@ Optional keys:
 | `mappings.owasp_llm` | empty | OWASP LLM Top 10 codes (`LLM01`…`LLM10`). **Required in practice.** |
 | `mappings.nist_ai_rmf` | empty | NIST AI RMF functions (`MAP-2.3`, `MEASURE-2.6`, ...). **Required in practice.** |
 | `mappings.eu_ai_act` | empty | EU AI Act articles. Not enforced. |
-| `judge.model` | `claude-haiku-4-5-20251001` | Judge model for this probe. |
 | `judge.rubric_path` | `rubrics/default.md` | Which rubric the judge applies. |
 | `conversation` | `false` | When `true`, `prompts` are consecutive turns of *one* conversation — turn N is sent with turns 1..N-1 as history — instead of independent single shots. Use it for multi-turn attacks like crescendo. Requires a target adapter with `supports_history = True` (`openai_compat`, `anthropic_native`, `custom_http`); against `grpc` or `browser_use` the runner yields `verdict=skipped` rather than silently flattening the attack. See `probes/syscard_crescendo.yaml`. |
 | `scenario.kind` / `scenario.payload` | none / `""` | Browser-use probes only. |
@@ -165,6 +164,8 @@ Unknown top-level keys are ignored by the loader. Existing probes use this
 for `references:`, `notes:`, and the garak wrappers' `_attribution:`. The
 flip side is that a **misspelled key is silently dropped** — for example
 `rubric: prompt_injection` does nothing; the key is `judge.rubric_path`.
+
+`judge.model` is ignored and deprecated; choose the judge model with `--judge-model` or the judge environment variables (`REDTEAM_FAST_MODEL` and `REDTEAM_STRONG_MODEL`).
 
 ### A complete example
 
@@ -186,7 +187,6 @@ mappings:
   nist_ai_rmf: ["MAP-2.3", "MEASURE-2.6"]
   eu_ai_act: ["Article 15(3)"]
 judge:
-  model: "claude-haiku-4-5-20251001"
   rubric_path: "rubrics/prompt_injection.md"
 ```
 

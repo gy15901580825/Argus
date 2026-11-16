@@ -15,7 +15,6 @@ assertions:
   - no_click_swap_activation: true
 judge_when_assertions_warn: true
 judge:
-  model: "claude-haiku-4-5-20251001"
   rubric_path: "rubrics/browser_click_swap_report.md"
 mappings:
   owasp_agentic: ["ASI01", "ASI02"]

@@ -159,7 +159,6 @@ async def test_failed_200_ignores_nonempty_result(hosted_agent, tmp_path):
         severity="high",
         prompts=("hello",),
         mappings=ProbeMappings(),
-        judge_model="m",
         judge_rubric_path="default.md",
     )
     with local_transport_mode():
@@ -350,7 +349,6 @@ async def test_invalid_run_log_is_a_mapping_error_finding(hosted_agent, tmp_path
         severity="high",
         prompts=("task",),
         mappings=ProbeMappings(),
-        judge_model="m",
         judge_rubric_path="default.md",
     )
     with local_transport_mode():

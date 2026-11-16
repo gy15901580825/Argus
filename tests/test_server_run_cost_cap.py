@@ -19,7 +19,7 @@ def server_run(monkeypatch, tmp_path):
         Probe(
             id=f"probe_{i}", name=f"Probe {i}", target_class=(),
             attack_class=("prompt-injection",), severity="info", prompts=(f"attack_{i}",),
-            mappings=ProbeMappings(), judge_model="test-model", judge_rubric_path="test.md",
+            mappings=ProbeMappings(), judge_rubric_path="test.md",
         )
         for i in range(1, 4)
     ]

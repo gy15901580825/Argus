@@ -58,7 +58,6 @@ def _probe(conversation: bool) -> Probe:
         severity="medium",
         prompts=("turn one", "turn two", "turn three"),
         mappings=ProbeMappings(atlas=("AML.T0051",)),
-        judge_model="stub",
         judge_rubric_path="rubrics/default.md",
         conversation=conversation,
     )

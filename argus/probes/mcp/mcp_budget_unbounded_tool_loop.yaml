@@ -19,5 +19,4 @@ mappings:
   nist_ai_rmf: ["MAP-5.1"]
   eu_ai_act: ["Article 15(2)"]
 judge:
-  model: "claude-haiku-4-5-20251001"
   rubric_path: "rubrics/mcp_tool_abuse.md"

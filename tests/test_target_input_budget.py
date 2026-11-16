@@ -23,7 +23,7 @@ from argus.targets._base import Turn
 
 SPEC = {'kind': 'openai_compat', 'endpoint_url': 'https://example.invalid/chat', 'model': 'fixture'}
 BASE = Probe('budget_fixture', 'Direct ask', ('llm_chat',), ('prompt-injection',),
-             'medium', ('fixed direct ask ' * 10,), ProbeMappings(), 'fixture', 'fixture.md')
+             'medium', ('fixed direct ask ' * 10,), ProbeMappings(), 'fixture.md')
 PERSONA = Persona('fixture', 'Fixture', 'voice', 'traits', 'any', 'body')
 STRATEGY = Strategy('fixture', 'Fixture', 'mechanics', 'any', 'steps', 'body')
 

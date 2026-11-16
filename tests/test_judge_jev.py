@@ -467,7 +467,7 @@ async def test_iterative_runner_hands_the_probe_severity_to_the_judge():
 
     class OneRound(IterativeProbe):
         id, name, target_class, attack_class = "it", "it", (), ()
-        severity, judge_model, judge_rubric_path, iterative, max_rounds = "critical", "", "jailbreak.md", True, 1
+        severity, judge_rubric_path, iterative, max_rounds = "critical", "jailbreak.md", True, 1
 
         async def next_prompt(self, ctx):
             return "attack"

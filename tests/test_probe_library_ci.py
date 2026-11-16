@@ -51,6 +51,13 @@ def test_ci_checks_legacy_prompts_probe(monkeypatch, tmp_path, capsys):
     assert "checked 1 probes" in capsys.readouterr().out
 
 
+def test_ci_accepts_deprecated_judge_model(monkeypatch, tmp_path, capsys):
+    data = fixture_data()
+    data.setdefault("judge", {})["model"] = "legacy-model"
+    validate(monkeypatch, tmp_path, data)
+    assert "checked 1 probes" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize(
     "change",
     [

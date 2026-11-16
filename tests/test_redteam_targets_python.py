@@ -365,7 +365,6 @@ def test_local_run_of_sync_and_async_sample_functions(tmp_path, monkeypatch):
         severity="high",
         prompts=("say hello",),
         mappings=ProbeMappings(atlas=("AML.T0051",), owasp_llm=("LLM01",), nist_ai_rmf=(), eu_ai_act=()),
-        judge_model="m",
         judge_rubric_path="rubrics/default.md",
     )
     judge = MagicMock()

@@ -42,7 +42,7 @@ class _Judge:
 def _probe(**kw):
     base = dict(id="mcp_x", name="x", target_class=("mcp_agent",), attack_class=("mcp-abuse",),
                 severity="high", prompts=("connect to {mcp_url}",), mappings=ProbeMappings(),
-                judge_model="m", judge_rubric_path="rubrics/default.md",
+                judge_rubric_path="rubrics/default.md",
                 assertions=({"no_tool_call": "exfil_notes"},))
     base.update(kw)
     return Probe(**base)

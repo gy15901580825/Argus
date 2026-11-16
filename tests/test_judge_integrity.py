@@ -136,7 +136,7 @@ async def test_real_judge_through_runner_uppercase_counts_and_garbage_errors():
         id="p1", name="P", target_class=["http-chat"], attack_class=["prompt-injection"],
         severity="high", prompts=["a", "b"],
         mappings=ProbeMappings(atlas=[], owasp_llm=[], nist_ai_rmf=[], eu_ai_act=[]),
-        judge_model="m", judge_rubric_path="rubrics/prompt_injection.md",
+        judge_rubric_path="rubrics/prompt_injection.md",
     )
     target = AsyncMock()
     target.send_prompt = AsyncMock(return_value=("PWNED", 1.0))
@@ -189,7 +189,7 @@ async def test_runner_keeps_a_judge_error_verdict_and_its_reasoning():
         id="p1", name="P", target_class=["http-chat"], attack_class=["prompt-injection"],
         severity="high", prompts=["a"],
         mappings=ProbeMappings(atlas=[], owasp_llm=[], nist_ai_rmf=[], eu_ai_act=[]),
-        judge_model="m", judge_rubric_path="rubrics/browser_visual.md",
+        judge_rubric_path="rubrics/browser_visual.md",
     )
     target = AsyncMock()
     target.send_prompt = AsyncMock(return_value=("reply", 1.0))
