@@ -46,9 +46,9 @@ A stream that closes without either frame is an incomplete run. That happens whe
 
 **Judge content-filter block.**
 
-- Static mode: the provider's content filter refusing a judge prompt stops the run. The stream ends with `event: error` whose `type` is `JudgeBlockedError` and which carries `judge_blocked`. The probe being judged sends no finding.
+- Static mode: a provider content filter refusing a judge prompt becomes an `error` finding with severity `info`, `evidence.reason_code` `"judge_blocked"` and `evidence.judge_blocked` holding the provider, model, categories and fallback status. The remaining probes run, including after a blocked strong escalation. The stream ends with coverage and `event: end`; coverage's `summary.judge_blocked` counts affected findings and lists the sorted category union and distinct provider/model pairs. The summary field is absent when no judging was blocked. Configured fallback behavior is unchanged.
 - Deep mode, attacker blocked: the thread ends as a finding with verdict `error`, `evidence.stop_reason` `"attacker_blocked"` and `evidence.attacker_blocked` holding the same object as `judge_blocked`. The run continues, and the stream ends with coverage and `event: end`.
-- Deep mode, judge blocked during a round: the thread ends as a finding with verdict `error`, `evidence.stop_reason` `"judge_unusable"` and `evidence.judge_blocked` holding the same object. The run continues to coverage and `event: end`.
+- Deep mode, judge blocked during a round: the thread ends as a finding with verdict `error`, `evidence.stop_reason` `"judge_unusable"` and `evidence.reason_code` `"judge_blocked"` and `evidence.judge_blocked` holding the same object. The run continues to coverage and `event: end`.
 
 **Client disconnect.** The server sends no terminal frame. See [Terminal frames](#terminal-frames).
 
@@ -133,6 +133,8 @@ One finding per probe result, or per thread in deep mode. The object has exactly
 }
 ```
 
+`summary.judge_blocked` is optional. When present, `count` counts findings with blocked judging, `categories` is the sorted category union, and `providers` is the sorted list of distinct `{"provider", "model"}` pairs. A repeated-trial aggregate counts once, including when a proven fail or warn wins.
+
 `total` counts findings. `evaluated` counts findings whose verdict is in `evaluated_verdicts`: the probe reached the target and came back with a verdict. This is the same rule coverage uses for `tested`. `blocked_by_target`, `skipped`, `aborted_cost` and `error` findings are not evaluated. `by_verdict` counts every finding and always lists all seven verdicts. `failed_by_severity` counts only `fail` findings and always lists all five severities. A verdict or severity outside these lists gets its own key. The summary has no score and no percentage. If you compute a rate, divide by `evaluated`, not `total`. `summary.total` counts findings, while `coverage.totals.probes_run` counts distinct probes that were evaluated, so the two numbers can differ. The `deep_run` frame is not counted.
 
 `cost.spent_usd` is the cost of this run's model calls in US dollars, rounded to six decimals. It is the engine's own estimate from model token usage and its price table, not an invoice. `cost.per_run_cap_usd` is the per-run cap the run was held to. It is the request's `per_run_cap_usd` when set, otherwise the server's default for the mode (static or deep). It is always a number. A run stopped at the cap can show `spent_usd` above `per_run_cap_usd` by the one call that crossed it.
@@ -150,10 +152,10 @@ One finding per probe result, or per thread in deep mode. The object has exactly
 | Field | Type | Meaning |
 |-------|------|---------|
 | `detail` | string | The error message. |
-| `type` | string | The exception class name, an open set. `CostExceededError` means the run stopped at a cost cap; probes that did not start are sent first as `aborted_cost` findings. `JudgeBlockedError` means a provider content filter refused a judge prompt. `CleanupStateUnknown` means the cleanup report could not be read or validated; its detail is "cleanup state unknown". Treat any other value as a generic run failure. |
+| `type` | string | The exception class name, an open set. `CostExceededError` means the run stopped at a cost cap; probes that did not start are sent first as `aborted_cost` findings. `JudgeBlockedError` is reserved for a provider content-filter block outside exchange judging; exchange blocks are error findings. `CleanupStateUnknown` means the cleanup report could not be read or validated; its detail is "cleanup state unknown". Treat any other value as a generic run failure. |
 | `cost` | object | The same shape as the coverage frame's `cost`. |
 | `target_cleanup` | object | Optional target cleanup report, described below. Omitted when the target returns no report or its report is invalid. |
-| `judge_blocked` | object | Only when `type` is `JudgeBlockedError`. It holds `provider` (string), `model` (string, the model or deployment), `categories` (array of strings, empty when the provider names none) and `fallback` (`"off"` when a fallback provider exists but a block does not use it, `"<provider>/<model>: <error type>"` when the other attempt failed too, or null). |
+| `judge_blocked` | object | On a run-level error, only when `type` is `JudgeBlockedError`; the same detail is `evidence.judge_blocked` on blocked exchange findings. It holds `provider` (string), `model` (string, the model or deployment), `categories` (array of strings, empty when the provider names none) and `fallback` (`"off"` when a fallback provider exists but a block does not use it, `"<provider>/<model>: <error type>"` when the other attempt failed too, or null). |
 
 The error frame's `type` is not a frame discriminator like the bare frames' `type`. The `event: error` line identifies the frame; `type` names the exception.
 
@@ -174,7 +176,7 @@ See [target cleanup in run.json](../run-json.md#target-cleanup) for statuses and
 
 ## Machine-readable frame list
 
-`tests/test_run_stream_contract.py` reads the JSON block below. It drives `POST /redteam/run` in static mode, deep mode, a cost-cap error, a judge content-filter error and runs with a cleanup report, and checks every frame against this list. A frame passes when its `event:` name, or its `type` for a bare frame, matches one entry, every `required` field is present with the listed type, and every other field is listed under `optional`. Nested objects with their own `required` list are checked the same way. A type is `string`, `integer`, `number`, `boolean`, `object`, `array` or `null`, and `a|b` allows either. When you change what the server sends, update this list and the tables above in the same change.
+`tests/test_run_stream_contract.py` reads the JSON block below. It drives `POST /redteam/run` in static mode, deep mode, a cost-cap error, judge content-filter blocks recorded as findings and runs with a cleanup report, and checks every frame against this list. A frame passes when its `event:` name, or its `type` for a bare frame, matches one entry, every `required` field is present with the listed type, and every other field is listed under `optional`. Nested objects with their own `required` list are checked the same way. A type is `string`, `integer`, `number`, `boolean`, `object`, `array` or `null`, and `a|b` allows either. When you change what the server sends, update this list and the tables above in the same change.
 
 ```json
 {
@@ -256,6 +258,12 @@ See [target cleanup in run.json](../run-json.md#target-cleanup) for statuses and
             "evaluated_verdicts": "array",
             "by_verdict": "object",
             "failed_by_severity": "object"
+          },
+          "optional": {
+            "judge_blocked": {
+              "type": "object",
+              "required": {"count": "integer", "categories": "array", "providers": "array"}
+            }
           }
         },
         "cost": {

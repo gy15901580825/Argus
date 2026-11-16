@@ -111,6 +111,14 @@ def build_findings(*, probes: Mapping[str, Probe], hits: list[Hit], outcomes: li
             if pid in _STATIC or pid == HIDDEN:
                 for f in found:
                     f["evidence"].update(listing)
+            for f in found:
+                names = set(f["evidence"].get("tools", []))
+                blocks = [o.judge_blocked for o in outcomes if o.candidate.probe_id == pid
+                          and show_text(o.candidate.tool) in names and o.judge_blocked is not None]
+                if blocks:
+                    f["evidence"].update(judge_blocked=blocks[0], judge_blocks=blocks)
+                    if f["verdict"] == VERDICT_ERROR:
+                        f["evidence"]["reason_code"] = "judge_blocked"
             # So "no hit" is not read as "checked the log": the sources this scan could read.
             if pid == TRAVERSAL and witness_sources is not None:
                 for f in found:
@@ -330,6 +338,8 @@ def _unjudged(ctx: _Ctx, probe: Probe, name: str | None) -> dict:
     for item, outcome in zip(items, left):
         if outcome.error_code is not None:
             item.update(error_code=outcome.error_code, reasoning=outcome.reasoning)
+        if outcome.judge_blocked is not None:
+            item.update(judge_blocked=outcome.judge_blocked, reason_code="judge_blocked")
     reasoning = OFF_REASON if left[0].status == "off" else left[0].reasoning
     evidence = ctx.evidence(tool=shown_name, tools=[shown_name] if shown_name else [], items=items)
     if left[0].error_code is not None:

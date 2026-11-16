@@ -136,6 +136,7 @@ class JudgeBlockedError(AllProvidersFailed):
         self.model = model
         self.categories = categories
         self.fallback = fallback
+        self.escalated_from: Optional[str] = None
 
     def as_dict(self) -> dict:
         return {"provider": self.provider, "model": self.model, "categories": list(self.categories),

@@ -70,6 +70,9 @@ async def test_filter_gate_keeps_error_and_continues_distinct_text(monkeypatch):
     assert [o.status for o in outcomes] == ["error", "judged"]
     assert outcomes[1].verdict == "pass" and len(calls) == 2
     assert outcomes[0].error_code == "content_filter"
+    assert outcomes[0].verdict == "error"
+    assert outcomes[0].judge_blocked == {"provider": "azure", "model": DEPLOYMENT,
+                                         "categories": ["jailbreak"], "fallback": None}
     assert "content filter" in outcomes[0].reasoning.lower() and "jailbreak" in outcomes[0].reasoning
 
 
@@ -81,6 +84,8 @@ def test_cached_filtered_items_count_in_real_scan_and_cli(monkeypatch, tmp_path)
     assert result.unjudged == 1
     errors = [f for f in result.findings if f["probe_id"] == checks.DESCRIPTION and f["verdict"] == "error"]
     assert len(errors) == 1 and errors[0]["evidence"]["error_code"] == "content_filter"
+    assert errors[0]["evidence"]["reason_code"] == "judge_blocked"
+    assert errors[0]["evidence"]["judge_blocked"]["categories"] == ["jailbreak"]
     assert len(errors[0]["evidence"]["items"]) == 2
     assert all(i["error_code"] == "content_filter" and "jailbreak" in i["reasoning"]
                for i in errors[0]["evidence"]["items"])
@@ -105,6 +110,9 @@ async def test_filter_summary_survives_known_fail_winning_aggregation(monkeypatc
                             hits=[hit(checks.DESCRIPTION, "echo")])
     selected = [f for f in result.findings if f["probe_id"] == checks.DESCRIPTION and "echo" in f["evidence"]["tools"]]
     assert len(selected) == 1 and selected[0]["verdict"] == "fail"
+    from argus.coverage import build_summary
+    assert selected[0]["evidence"]["judge_blocked"]["categories"] == ["jailbreak"]
+    assert build_summary(result.findings)["judge_blocked"]["count"] == 1
     assert len(calls) == 1
     assert any("2" in note and "content filter" in note.lower() for note in result.notes)
 

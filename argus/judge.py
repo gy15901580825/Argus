@@ -175,6 +175,9 @@ class Judge:
             try:
                 strong_v = await self._call("strong", probe_name, attack_prompt, target_response, rubric_text,
                                             severity)
+            except llm.JudgeBlockedError as e:
+                e.escalated_from = fast_v.verdict
+                raise
             except llm.AllProvidersFailed as e:
                 # A refusal to review is not a judgement; keep the fast verdict rather
                 # than turning a real finding into an error.

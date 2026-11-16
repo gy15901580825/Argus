@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from typing import Callable, Literal, Sequence
 
 from argus import llm
+from argus.judge_blocks import block_reason
 from argus.cost_meter import CostExceededError, CostMeter, estimate_call_usd
 from argus.judge import Judge, JUDGE_MAX_TOKENS
 from argus.jev_judge import EXPLAIN_MAX_TOKENS
@@ -35,6 +36,7 @@ class JudgeOutcome:
     judge_model: str = ""
     escalated_model: str | None = None
     error_code: Literal["content_filter", "completion_truncated"] | None = None
+    judge_blocked: dict | None = None
 
 
 def default_judge_factory(meter: CostMeter, config: llm.LLMConfig) -> Judge:
@@ -111,9 +113,12 @@ class JudgeGate:
         except CostExceededError:
             return JudgeOutcome(cand, "cap", reasoning=CAP_REASON)
         except llm.JudgeBlockedError as exc:
-            categories = ", ".join(show_text(mask(category)) for category in exc.categories)
-            reason = BLOCKED_REASON + (f"; categories: {categories}" if categories else "")
-            return JudgeOutcome(cand, "error", reasoning=reason, error_code="content_filter")
+            safe = llm.JudgeBlockedError("", provider=show_text(mask(exc.provider)), model=show_text(mask(exc.model)),
+                                        categories=tuple(show_text(mask(c)) for c in exc.categories),
+                                        fallback=show_text(mask(exc.fallback)) if exc.fallback is not None else None)
+            safe.escalated_from = exc.escalated_from
+            return JudgeOutcome(cand, "error", verdict="error", reasoning=BLOCKED_REASON + "; " + block_reason(safe),
+                                judge_model=safe.model, error_code="content_filter", judge_blocked=safe.as_dict())
         except Exception as e:  # noqa: BLE001 — a provider failure or malformed reply leaves this text unjudged
             # The tool name is the server's text: shown safely, so it cannot drive the terminal.
             logger.warning("scan-mcp judge failed on %s %s: %s", cand.probe_id, show_text(cand.tool),

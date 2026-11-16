@@ -230,11 +230,14 @@ async def test_cost_cap_ends_with_an_error_frame_and_no_coverage(stream):
     assert error["target_cleanup"] == CLEANUP
 
 
-async def test_static_judge_block_ends_with_an_error_frame(stream):
+async def test_static_judge_block_is_a_finding_and_the_run_completes(stream):
     names, frames = await stream(block="judge")
-    assert names == ["error"]
-    assert frames[0][1]["type"] == "JudgeBlockedError"
-    assert frames[0][1]["judge_blocked"] == BLOCK
+    assert names == ["finding", "finding", "coverage", "end"]
+    for _, finding in frames[:2]:
+        assert finding["verdict"] == "error"
+        assert finding["evidence"]["judge_blocked"] == BLOCK
+        assert finding["evidence"]["reason_code"] == "judge_blocked"
+    assert frames[2][1]["summary"]["judge_blocked"]["count"] == 2
 
 
 # The checker must reject drift, or the tests above prove nothing.
