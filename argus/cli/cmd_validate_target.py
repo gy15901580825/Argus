@@ -319,6 +319,9 @@ def _validate_transport(
         render_request,
     )
     from argus.targets import build_target
+    from argus_transport.security import Redactor
+
+    redactor = Redactor()
 
     try:
         target = build_target(spec, trusted_code=True)
@@ -345,6 +348,8 @@ def _validate_transport(
                 )
             transport = TransportSpec.from_dict(candidate)
         if spec["kind"] == "browser_use":
+            from argus.witness import synthetic_canary
+
             if not offline and not with_scenario and not scenario_url:
                 raise click.UsageError(
                     "browser --execute requires --with-scenario or --scenario-url"
@@ -356,7 +361,13 @@ def _validate_transport(
             context = TransportContext(
                 prompt="ping",
                 scenario_url=scenario_url or "http://127.0.0.1/validation/scenario",
+                secret_canary=synthetic_canary(),
+                secret_placeholder=(
+                    target.spec.witness.secret_placeholder
+                    if target.spec.witness is not None else "argus_secret"
+                ),
             )
+            redactor.add(context.secret_canary)
         else:
             if with_scenario or scenario_url:
                 raise click.UsageError("scenario options require a browser target")
@@ -386,6 +397,8 @@ def _validate_transport(
                 "structure": "object" if "object" in expression else "array"
             }
     click.echo(f"request.bindings: {json.dumps(bindings, ensure_ascii=True)}")
+    if spec["kind"] == "browser_use" and target.spec.binds_secret_canary:
+        click.echo("context.secret_canary: <redacted> (synthetic)")
     for header in transport.auth.headers:
         click.echo(
             f"auth.header: {header.name} = <redacted>; source={header.secret.source}"
@@ -405,7 +418,7 @@ def _validate_transport(
             raise click.ClickException(
                 "sample response must be a readable JSON document"
             ) from exc
-        result = evaluate_response(transport, 200, sample)
+        result = evaluate_response(transport, 200, sample, redactor=redactor)
         requests = {"submit": 0, "poll": 0, "retry": 0}
     else:
 
@@ -430,7 +443,7 @@ def _validate_transport(
                     )
                 with local_transport_mode():
                     result = await TransportEngine(
-                        transport, policy=execution_policy(transport)
+                        transport, policy=execution_policy(transport), redactor=redactor
                     ).run(request_context)
                 if server is not None:
                     try:

@@ -651,13 +651,16 @@ class BrowserUseTarget(Target):
                 conversation_id=self._conversation_id,
                 session_id=self._session_id,
             )
+            from argus.model_egress import TRACE_PROBE, without_secret_bindings
+
             if self._witness is not None and _LOCAL_RUN.get():
-                from argus.model_egress import TRACE_PROBE, without_secret_bindings
                 if self._probe_id.split("::", 1)[0] == TRACE_PROBE + "_control":
                     msg["transport"] = without_secret_bindings(msg["transport"])
                 else:
                     msg.update(secret_canary=self._witness.canary,
                                secret_placeholder=self._witness.spec.secret_placeholder)
+            else:
+                msg["transport"] = without_secret_bindings(msg["transport"])
             deadline = self.spec.transport.timeout.total_deadline_s
             cleanup = self.spec.transport.timeout.cleanup_grace_s
         else:
