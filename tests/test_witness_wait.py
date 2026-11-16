@@ -284,7 +284,8 @@ def test_server_mode_does_not_read_stdin(tmp_path, monkeypatch):
     monkeypatch.setattr(api_client, "poll_until_complete", lambda *a, **k: {"status": "completed", "findings": []})
     monkeypatch.setattr(api_client, "get_report", lambda *a, **k: "<html>fake report</html>")
     target = tmp_path / "target.json"
-    target.write_text(json.dumps({"kind": "openai_compat", "endpoint_url": "http://127.0.0.1:1", "model": "fake"}))
+    target.write_text(json.dumps({"kind": "browser_use", "scenario_kind": "dom_injection",
+                                       "transport": transport("http://127.0.0.1:1/run")}))
     result = CliRunner().invoke(cmd_run, ["--witness-wait", "--target", str(target), "--probes", "fake",
                                         "--api-url", "http://127.0.0.1:1", "--token", "fake",
                                         "--out", str(tmp_path / "report.html")])
