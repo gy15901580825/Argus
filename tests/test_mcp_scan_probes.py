@@ -23,18 +23,19 @@ def test_eleven_scan_probes_with_spec_severities():
     assert all(p.target_class == ("mcp_scan",) and "mcp-abuse" in p.attack_class for p in probes.values())
 
 
-INJ = (["AML.T0051.001"], ["LLM01"], ["MEASURE-2.6"], ["Article 15(5)"])
+DEFINITION_INJ = (["AML.T0051.001", "AML.T0110.000"], ["LLM01"], ["MEASURE-2.6"], ["Article 15(5)"])
+RESULT_INJ = (["AML.T0051.001", "AML.T0110.002"], ["LLM01"], ["MEASURE-2.6"], ["Article 15(5)"])
 SRV = ["MEASURE-2.7"], ["Article 15(5)"]
 MAPPINGS = {  # id -> (atlas, owasp_llm, nist_ai_rmf, eu_ai_act)
-    "mcp_scan_description_instructions": INJ, "mcp_scan_schema_instructions": INJ,
-    "mcp_scan_hidden_characters": INJ, "mcp_scan_result_injection": INJ,
-    "mcp_scan_input_reflection": INJ,
+    "mcp_scan_description_instructions": DEFINITION_INJ, "mcp_scan_schema_instructions": DEFINITION_INJ,
+    "mcp_scan_hidden_characters": DEFINITION_INJ, "mcp_scan_result_injection": RESULT_INJ,
+    "mcp_scan_input_reflection": RESULT_INJ,
     "mcp_scan_command_execution": (["AML.T0049"], ["LLM05", "LLM06"], *SRV),
     "mcp_scan_path_traversal": (["AML.T0049"], ["LLM02", "LLM06"], *SRV),
     "mcp_scan_secret_in_result": (["AML.T0055"], ["LLM02"], *SRV),
     "mcp_scan_cross_session_leak": (["AML.T0085.002"], ["LLM02"], *SRV),
     "mcp_scan_readonly_tool_wrote": (["AML.T0049"], ["LLM06"], *SRV),
-    "mcp_scan_tool_list_changed": (["AML.T0010"], ["LLM03", "LLM06"],
+    "mcp_scan_tool_list_changed": (["AML.T0010", "AML.T0110.000"], ["LLM03", "LLM06"],
                                    ["GOVERN-1.4", "MAP-5.1"], ["Article 15(2)", "Article 14"]),
 }
 EXTRA_CLASS = {

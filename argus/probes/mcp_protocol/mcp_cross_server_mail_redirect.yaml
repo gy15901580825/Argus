@@ -32,6 +32,7 @@ mappings:
   owasp_agentic: ["ASI01", "ASI04"]
   atlas:
   - AML.T0051.001
+  - AML.T0110.000
   owasp_llm:
   - LLM01
   - LLM03
