@@ -47,6 +47,12 @@ def no_leftover_threads():
     # Closing the socket alone frees the port; the server thread must stop too.
     before = set(threading.enumerate())
     yield
+    # asyncio.run has queued AnyIO's worker stop commands, but joining the server
+    # does not join those workers. Let them consume the commands before checking.
+    deadline = time.monotonic() + 1
+    for thread in threading.enumerate():
+        if thread not in before and thread.name == "AnyIO worker thread":
+            thread.join(timeout=max(0, deadline - time.monotonic()))
     leftover = [t for t in threading.enumerate() if t not in before and t.is_alive()]
     assert not leftover, leftover
 
