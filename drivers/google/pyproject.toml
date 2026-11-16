@@ -1,6 +1,6 @@
 [project]
 name = "argus-drivers-google"
-version = "1.15.2.dev0"
+version = "1.15.3.dev0"
 description = "Gmail and Drive drivers for bounded Argus integration scenarios"
 readme = "README.md"
 license = "Apache-2.0"
