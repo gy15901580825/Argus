@@ -18,6 +18,7 @@ import httpx
 from argus_transport.address_policy import TargetAddressPolicyError
 
 from argus import llm
+from argus.judge_blocks import block_evidence, block_reason, blocks_in_evidence
 from argus.input_budget import InputLimits, fit_history
 
 from argus.placeholders import needs_rendering, render_generator_name, target_model_name
@@ -785,10 +786,13 @@ class Runner:
         reasons = " ".join(f"Trial {row.trial}: {row.verdict}: {row.reason}" for row in records)
         reasoning = f"{wording} {summary.counts_line()} {reasons}"
         evidence = {"trial_summary": summary.as_dict(), "trials": [row.as_dict() for row in records]}
+        blocks = blocks_in_evidence(evidence)
+        if blocks:
+            evidence.update(judge_blocked=blocks[0], reason_code="judge_blocked")
         if template is None:
             template = self._finding(probe, "", "", 0.0, probed_at, verdict=summary.verdict,
                                      severity="info", confidence=1.0, reasoning=reasoning, evidence=evidence)
-        yield replace(template, verdict=summary.verdict, severity=severity,
+        yield replace(template, verdict=summary.verdict, severity="info" if summary.verdict == VERDICT_ERROR else severity,
                       target_latency_ms=latency, reasoning=reasoning, evidence=evidence)
         if stop is not None:
             raise stop
@@ -988,15 +992,18 @@ class Runner:
                 confidence=1.0,
                 reasoning=reason if round_n is None else f"round {round_n}: {reason}",
             )
-        verdict = await self._judge.judge(
-            probe_name=probe.name,
-            attack_prompt=(clean.attack_prompt if (getattr(probe, "indirect", ())
-                                                  and getattr(self._target, "material_channel", False))
-                           else self._shown(clean.attack_prompt)),
-            target_response=clean.target_response,
-            rubric_text=rubric_text,
-            severity=probe.severity,
-        )
+        try:
+            verdict = await self._judge.judge(
+                probe_name=probe.name,
+                attack_prompt=(clean.attack_prompt if (getattr(probe, "indirect", ())
+                                                      and getattr(self._target, "material_channel", False))
+                               else self._shown(clean.attack_prompt)),
+                target_response=clean.target_response,
+                rubric_text=rubric_text,
+                severity=probe.severity,
+            )
+        except llm.JudgeBlockedError as exc:
+            return self._blocked_finding(clean, exc)
         return replace(
             clean,
             verdict=verdict.verdict,
@@ -1019,6 +1026,8 @@ class Runner:
                 rubric_text=rubric_text,
                 severity=probe.severity,
             )
+        except llm.JudgeBlockedError as exc:
+            return self._blocked_finding(warned, exc)
         except ValueError as e:
             # The warn is proven by evidence; an unusable judge reply must not hide it.
             return replace(
@@ -1051,6 +1060,8 @@ class Runner:
                 rubric_text=rubric_text,
                 severity=probe.severity,
             )
+        except llm.JudgeBlockedError as exc:
+            return self._blocked_finding(passed, exc)
         except ValueError as e:
             # The submission is proven; an unusable judge reply leaves the pass with a reason code.
             return replace(
@@ -1067,6 +1078,11 @@ class Runner:
             reasoning=f"{passed.reasoning}, but the reply tells the user the form, the submission or the task "
                       f"did not go through; judge: {verdict.reasoning}",
         )
+
+    def _blocked_finding(self, finding: Finding, exc: llm.JudgeBlockedError) -> Finding:
+        return replace(finding, verdict=VERDICT_ERROR, severity="info", confidence=1.0,
+                       reasoning=block_reason(exc), evidence=block_evidence(exc, finding.evidence),
+                       judge_model=exc.model)
 
     def _finding(
         self,
@@ -1400,6 +1416,12 @@ class Runner:
                     rubric_text=rubric_text,
                     severity=probe.severity,
                 )
+            except llm.JudgeBlockedError as exc:
+                yield self._blocked_finding(self._finding(
+                    probe, prompt, response_text, latency_ms, probed_at, verdict=VERDICT_ERROR,
+                    severity="info", confidence=1.0, reasoning="", evidence=indirect_evidence,
+                ), exc)
+                continue
             except ValueError as e:
                 # A judge reply missing a key or not JSON is one unusable
                 # verdict, not a broken scan: it must not turn the run into
@@ -1532,6 +1554,10 @@ class Runner:
                         current = await self._hybrid_finding(probe, rubric_text, current, round_n=round_n)
                     elif current.verdict == VERDICT_WARN and _judges_warn(probe):
                         current = await self._warn_finding(probe, rubric_text, current)
+                    if (current.evidence or {}).get("reason_code") == "judge_blocked":
+                        state.observe(current, input_actions=input_actions)
+                        yield state.finish("judge_unusable")
+                        return
                     if _reply_check_due(probe, current):
                         current = replace(current, reasoning=current.reasoning + _REPLY_CHECK_SKIPPED)
                 else:
@@ -1559,12 +1585,13 @@ class Runner:
                 if step == 'collect_evidence':
                     evidence['evidence_error'] = _named(exc)
                 if isinstance(exc, llm.JudgeBlockedError):
-                    evidence['judge_blocked'] = exc.as_dict()
-                if step == 'judge_unusable':
+                    evidence = block_evidence(exc, evidence)
+                elif step == 'judge_unusable':
                     evidence['reason_code'] = 'judge_unusable'
                 state.observe(self._finding(
                     probe, shown, response, latency, probed_at, verdict=VERDICT_ERROR,
                     severity='info', confidence=1.0, reasoning=(f'evidence collection failed: {_named(exc)}' if step == 'collect_evidence'
+                               else block_reason(exc) if isinstance(exc, llm.JudgeBlockedError)
                                else f'judge reply could not be used: {_named(exc)}'),
                     evidence=evidence or None,
                 ), input_actions=input_actions)
@@ -1725,6 +1752,9 @@ class Runner:
                                 evidence=_judge_unusable(current.evidence),
                             )
                             return
+                    if (current.evidence or {}).get("reason_code") == "judge_blocked":
+                        yield current
+                        return
                     if _reply_check_due(probe, current):
                         current = replace(current, reasoning=current.reasoning + _REPLY_CHECK_SKIPPED)
                     # Only the last pending finding is reported, so a hybrid thread keeps its worst
@@ -1757,6 +1787,12 @@ class Runner:
                             rubric_text=rubric_text,
                             severity=probe.severity,
                         )
+                    except llm.JudgeBlockedError as exc:
+                        yield self._blocked_finding(self._finding(
+                            probe, prompt, response_text, latency_ms, probed_at, verdict=VERDICT_ERROR,
+                            severity="info", confidence=1.0, reasoning="", evidence=None,
+                        ), exc)
+                        return
                     except ValueError as e:
                         # Same reasoning as the static path. The next round needs
                         # this round's verdict, so the attack ends here.

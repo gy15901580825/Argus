@@ -54,5 +54,8 @@ is also its server option.
 The policy does not cover judge or attacker provider calls, page fetches made by
 browser agents, the local trap server, or the operator-configured witness relay
 upstream (witness probes already skip in server mode). Trusted Python targets,
-plugins, and external agents execute their own code and need separate network
-isolation. The default remains suitable for local CLI runs against loopback.
+credential provider plugins (`argus.credential_providers`), scenario drivers,
+and external agents execute their own code and need separate network
+isolation. Credential providers and scenario drivers make their own HTTP calls
+and are not covered. The scenario's agent under test is built with `build_target`
+and is covered. The default remains suitable for local CLI runs against loopback.

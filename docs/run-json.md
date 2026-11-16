@@ -39,6 +39,12 @@ The top-level keys appear in this order. `incomplete_reason`, `notes`, `judge`, 
 | `baseline_key` | string | `run` only. Stable target identity, computed before secret masking and before starting a temporary local testbed. Secret-named keys and browser trap deployment settings are excluded. |
 | `baseline` | object | Only with `run --local --baseline FILE`. The earlier run's `id` and `finished_at`, plus `new`, `fixed`, `still_failing` and `not_run` lists. See below. |
 
+### Partial judging after a content-filter block
+
+A provider content filter blocking a judge prompt makes that exchange an `error` finding with severity `info`, `evidence.reason_code: "judge_blocked"` and `evidence.judge_blocked` containing `provider`, `model`, `categories` and `fallback`. Prompt and response remain in the finding with the usual masking. A blocked strong escalation becomes `error` even when the fast judge returned `pass`. Other probes continue. In repeated trials, an error prevents an aggregate pass; proven fail and warn trials retain precedence, and the block detail stays in the trial observations and aggregate evidence.
+
+When any finding contains blocked judging, `summary.judge_blocked` is present: `count` counts affected findings (including aggregates with a blocked trial), `categories` is the sorted union, and `providers` lists distinct `{"provider", "model"}` pairs in sorted order. It is absent otherwise. The CLI and HTML report include a note explaining that judging was partial. Existing error-finding status and exit rules apply. `scan-mcp` already continues after a block; it records the same metadata on unjudged items and findings, retaining a proven rule failure when one exists. Attacker blocks and optional explanation blocks keep their existing behavior.
+
 ### Local baseline comparison
 
 Pass an earlier `argus.run/1` file with `run --local --baseline baseline.json`.

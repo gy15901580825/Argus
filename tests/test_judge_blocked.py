@@ -1,4 +1,4 @@
-"""A provider content filter that refuses the judge prompt stops the run with a named JudgeBlockedError."""
+"""Provider content-filter errors are named and become exchange error findings."""
 from __future__ import annotations
 
 import json
@@ -203,7 +203,7 @@ async def test_anthropic_filter_block_does_not_fall_back_to_azure(monkeypatch):
 PROBE = "owasp_01_prompt_injection_basic"
 
 
-def test_local_run_reports_the_block_and_stops_incomplete(tmp_path, monkeypatch):
+def test_local_run_records_the_block_and_reports_incomplete_judging(tmp_path, monkeypatch):
     (tmp_path / "agent.py").write_text("def call(prompt, metadata, context):\n    return {'output': 'I cannot help.'}\n")
     (tmp_path / "t.json").write_text(json.dumps({"kind": "python", "entry": "agent.py:call"}))
     judge_calls = _stub_litellm(monkeypatch, _azure_block())
@@ -215,13 +215,17 @@ def test_local_run_reports_the_block_and_stops_incomplete(tmp_path, monkeypatch)
         "--judge-strong-model", DEPLOYMENT, "--judge-price", "0,0",
     ])
     assert result.exit_code == 1, result.output
-    assert "Run stopped early: JudgeBlockedError:" in result.output
+    assert "2 findings could not be judged" in result.output
+    assert "Run stopped early" not in result.output
     run = json.loads(out.read_text())
     assert run["status"] == "incomplete"
-    assert "REDTEAM_LLM_FALLBACK=on. The report covers only the probes that ran." in run["incomplete_reason"]
-    for text in (run["incomplete_reason"], " ".join(run["notes"])):
-        assert "JudgeBlockedError" in text and f"azure deployment {DEPLOYMENT}" in text and "jailbreak" in text
-    assert [f for f in run["findings"] if f["verdict"] == "pass"] == []
+    assert len(run["findings"]) == 2
+    finding = run["findings"][0]
+    assert finding["verdict"] == "error" and finding["severity"] == "info"
+    assert finding["evidence"]["reason_code"] == "judge_blocked"
+    assert finding["evidence"]["judge_blocked"]["fallback"] == "off"
+    assert DEPLOYMENT in finding["reasoning"] and "jailbreak" in finding["reasoning"]
+    assert run["summary"]["judge_blocked"]["count"] == 2
     assert judge_calls and set(judge_calls) == {f"azure/{DEPLOYMENT}"}
     assert fallback_calls == []
 
@@ -276,19 +280,21 @@ async def test_server_stream_handles_the_named_block_by_mode(monkeypatch, tmp_pa
         response = await client.post("/redteam/run", json=body)
     assert response.status_code == 200, response.text
     blocks = response.text.strip().split("\n\n")
-    assert PROMPT_MARK not in response.text
     events = [json.loads(b.split("data: ", 1)[1]) for b in blocks if "data: " in b]
     findings = [e for e in events if "verdict" in e]
+    assert all(PROMPT_MARK not in f["reasoning"] for f in findings)
     expected_block = {"provider": "azure", "model": DEPLOYMENT, "categories": ["jailbreak"],
                       "fallback": "off"}
     if mode == "static":
-        assert blocks[-1].startswith("event: error\ndata: ")
-        error = json.loads(blocks[-1].split("data: ", 1)[1])
-        assert error["type"] == "JudgeBlockedError"
-        assert error["judge_blocked"] == expected_block
-        assert findings == []
-        assert len(systems) == 1 and systems[0].startswith(first_caller)
-        assert target_calls == [probes[0].prompts[0]]
+        assert blocks[-1] == "event: end\ndata: {}"
+        assert all(not block.startswith("event: error\n") for block in blocks)
+        assert len(findings) == len(probes)
+        assert all(f["verdict"] == "error" for f in findings)
+        assert all(f["evidence"]["judge_blocked"] == expected_block for f in findings)
+        assert len(systems) == len(probes) and all(s.startswith(first_caller) for s in systems)
+        assert target_calls == [p.prompts[0] for p in probes]
+        coverage = next(e for e in events if e.get("type") == "coverage")
+        assert coverage["summary"]["judge_blocked"]["count"] == len(probes)
     else:
         assert blocks[-1] == "event: end\ndata: {}"
         assert all(not block.startswith("event: error\n") for block in blocks)

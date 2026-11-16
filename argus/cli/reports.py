@@ -10,6 +10,8 @@ from xml.etree import ElementTree as ET
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from argus.coverage import build_summary
+from argus.judge_blocks import block_note
 from argus import remediation
 from argus.assertions import dialog_decisions
 from argus.deep_thread import is_deep_finding
@@ -82,6 +84,7 @@ def render_html(run: dict) -> str:
     template = _jinja.get_template("report.html.j2")
     return template.render(
         run=run,
+        judge_blocked_note=block_note(build_summary(run.get("findings", []))),
         counts=_verdict_counts(run.get("findings", [])),
         coverage=run.get("coverage"),
         atlas_names=remediation.atlas_mitigations(),

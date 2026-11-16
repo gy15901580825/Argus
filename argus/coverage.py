@@ -46,6 +46,8 @@ from __future__ import annotations
 from collections import Counter
 from typing import Iterable
 
+from argus.judge_blocks import blocks_in_evidence
+
 from argus.agentic import OWASP_AGENTIC_TOP10
 from argus.atlas import ATLAS_TECHNIQUES
 
@@ -197,8 +199,17 @@ def build_summary(findings: Iterable[dict]) -> dict:
     by_verdict = dict.fromkeys(SUMMARY_VERDICTS, 0)
     failed_by_severity = dict.fromkeys(SUMMARY_SEVERITIES, 0)
     total = 0
+    blocked_count = 0
+    categories = set()
+    providers = set()
     for finding in findings:
         total += 1
+        blocks = blocks_in_evidence(finding.get("evidence"))
+        if blocks:
+            blocked_count += 1
+            for block in blocks:
+                categories.update(block["categories"])
+                providers.add((block["provider"], block["model"]))
         verdict = finding["verdict"]
         by_verdict[verdict] = by_verdict.get(verdict, 0) + 1
         if verdict == "fail":
@@ -206,6 +217,9 @@ def build_summary(findings: Iterable[dict]) -> dict:
             failed_by_severity[severity] = failed_by_severity.get(severity, 0) + 1
 
     return {
+        **({"judge_blocked": {"count": blocked_count, "categories": sorted(categories),
+                              "providers": [{"provider": provider, "model": model}
+                                            for provider, model in sorted(providers)]}} if blocked_count else {}),
         "total": total,
         "evaluated": sum(by_verdict[v] for v in _TESTED_VERDICTS),
         "evaluated_verdicts": sorted(_TESTED_VERDICTS),

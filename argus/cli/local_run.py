@@ -15,6 +15,8 @@ import click
 
 from argus_transport.cleanup import run_error_detail
 
+from argus.coverage import build_summary
+from argus.judge_blocks import block_note
 from argus.cli import reports, run_json
 from argus.cli.baseline_key import baseline_key
 from argus.cli.local_baseline import compare_baseline, new_failure_findings
@@ -287,6 +289,8 @@ def _run_and_render(
 
     incomplete = [line.strip() for line in incomplete_lines(findings, stop_reason)]
     notes = list(incomplete)
+    if note := block_note(build_summary(findings)):
+        click.echo(run_json.mask_text(note, run_json.run_secrets(spec, secret_values)))
     if warning := blocked_warning(findings):
         notes.append(warning)
     if skip_note := judge_skip_line(findings):

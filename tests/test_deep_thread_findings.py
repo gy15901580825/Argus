@@ -163,6 +163,11 @@ async def test_provider_block_has_the_correct_boundary_reason(thread_case, bound
     assert len(found) == 1
     assert_thread(found[0], c, 'error', 'attacker_blocked' if boundary == 'attacker' else 'judge_unusable',
                   0 if boundary == 'attacker' else 1)
+    if boundary == 'judge':
+        assert found[0].evidence['reason_code'] == 'judge_blocked'
+        assert found[0].evidence['judge_blocked'] == blocked().as_dict()
+        from argus.coverage import build_summary
+        assert build_summary([asdict(found[0])])['judge_blocked']['count'] == 1
 
 
 @pytest.mark.asyncio
