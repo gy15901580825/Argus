@@ -37,9 +37,9 @@ def _commit(monkeypatch, *, direct_url=None, root=None, git=None):
         build_info.source_commit.cache_clear()
 
 
-def test_package_carries_a_dev_version_distinct_from_the_release():
+def test_package_carries_the_release_version():
     version = tomllib.loads(PYPROJECT.read_text())["project"]["version"]
-    assert version == "1.16.0.dev0"
+    assert version == "1.16.0"
     driver = PYPROJECT.parent / "drivers/google/pyproject.toml"
     assert tomllib.loads(driver.read_text())["project"]["version"] == version
     assert Version(version) > Version("1.15.2")
