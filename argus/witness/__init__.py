@@ -11,6 +11,7 @@ import hashlib
 import ipaddress
 import json
 import logging
+import os
 import re
 import secrets
 import time
@@ -52,8 +53,8 @@ class WitnessSpec:
 
     def __post_init__(self):
         if self.model_relay is not None:
-            if not isinstance(self.model_relay, dict) or set(self.model_relay) != {"upstream"}:
-                raise ValueError("witness.model_relay requires only upstream")
+            if not isinstance(self.model_relay, dict) or ("upstream" not in self.model_relay or set(self.model_relay) - {"upstream", "port"}):
+                raise ValueError("witness.model_relay requires upstream and an optional port")
             upstream = self.model_relay["upstream"]
             try:
                 p = urlsplit(upstream)
@@ -67,8 +68,17 @@ class WitnessSpec:
                 valid = False
             if not valid:
                 raise ValueError("witness upstream must be HTTPS or loopback HTTP origin+path without credentials, query or fragment")
-        if self.otlp is not None and (not isinstance(self.otlp, dict) or self.otlp):
-            raise ValueError("witness.otlp must be an empty object")
+        if self.otlp is not None and (not isinstance(self.otlp, dict) or set(self.otlp) - {"port"}):
+            raise ValueError("witness.otlp accepts only an optional port")
+        for channel in ("model_relay", "otlp"):
+            config = getattr(self, channel)
+            if config is not None and "port" in config:
+                port = config["port"]
+                if type(port) is not int or not 1 <= port <= 65535:
+                    raise ValueError(f"witness.{channel}.port must be an integer from 1 to 65535")
+        if (self.model_relay is not None and self.otlp is not None
+                and "port" in self.model_relay and self.model_relay["port"] == self.otlp.get("port")):
+            raise ValueError("witness.model_relay.port and witness.otlp.port must differ")
         if not isinstance(self.agent_logging, str):
             raise ValueError("witness.agent_logging must be a string")
         if not isinstance(self.bind, str):
@@ -213,7 +223,11 @@ class WitnessRun:
         self.canary = "ARGUS-CANARY-NOTAKEY-" + base64.b32encode(secrets.token_bytes(7)).decode()[:10]
         self.fingerprint = hashlib.sha256(self.canary.encode()).hexdigest()[:8]
         self.marker = f"<canary sha256:{self.fingerprint}>"
-        self.token = secrets.token_urlsafe(24)
+        self.token = os.environ.get("ARGUS_WITNESS_TOKEN")
+        if self.token is None:
+            self.token = secrets.token_urlsafe(24)
+        elif re.fullmatch(r"[A-Za-z0-9_-]{32,}", self.token) is None:
+            raise ValueError("ARGUS_WITNESS_TOKEN must contain at least 32 letters, digits, underscores or hyphens")
         self.relay_records: list[RelayRecord] = []
         self.export_records: list[ExportRecord] = []
         self._values: tuple[str, ...] = ()
@@ -249,8 +263,12 @@ class WitnessRun:
                 server = web.AppRunner(app, access_log=None, logger=_HTTP_LOGGER, auto_decompress=False)
                 self._servers[channel] = server
                 await server.setup()
-                site = web.TCPSite(server, "127.0.0.1" if self.spec.bind == "localhost" else self.spec.bind, 0)
-                await site.start()
+                requested_port = getattr(self.spec, channel).get("port", 0)
+                site = web.TCPSite(server, "127.0.0.1" if self.spec.bind == "localhost" else self.spec.bind, requested_port)
+                try:
+                    await site.start()
+                except OSError:
+                    raise ValueError(f"witness {channel} could not bind port {requested_port}") from None
                 host = self.spec.bind
                 if ":" in host:
                     host = f"[{host}]"
@@ -281,6 +299,7 @@ class WitnessRun:
         # Header-derived masks live only for this request and are never recorded.
         redactor = Redactor(v for k, v in request.headers.items()
                             if any(part in k.lower() for part in ("key", "token", "secret", "credential", "authorization", "cookie", "auth")))
+        redactor.add(self.token)
         for k, v in request.headers.items():
             if k.lower() == "authorization" and " " in v:
                 redactor.add(v.split(" ", 1)[1])
@@ -332,7 +351,7 @@ class WitnessRun:
 
     def evidence(self, start, end):
         return {"fingerprint": self.fingerprint,
-                "agent_logging": self.spec.agent_logging.replace(self.canary, self.marker),
+                "agent_logging": self.spec.agent_logging.replace(self.canary, self.marker).replace(self.token, "<token>"),
                 "model_relay": [asdict(r) for r in self.relay_records if start <= r.received_at <= end],
                 "otlp": [asdict(r) for r in self.export_records if start <= r.received_at <= end]}
 

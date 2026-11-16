@@ -913,6 +913,37 @@ browser target with the channels you need:
 
 Only selected probes that declare a witness requirement start listeners. At run start Argus prints the
 model relay base URL and the OTLP base endpoint, each under `/r/<run token>/`.
+Ports and tokens are random per run by default. For an agent started by hand,
+run `argus-probe run --local --witness-wait --target browser-target.json --probes browser_secret_field_model_egress`.
+Argus prints the addresses and fingerprint, then keeps the started listeners
+serving while it waits for Enter. Wire the agent before confirming; requests made
+during this pause do not count toward any probe. EOF stops the run without
+starting probes. Scripted use can feed the confirmation on stdin with
+`printf '\n' | argus-probe run --local --witness-wait --target browser-target.json --probes browser_secret_field_model_egress`.
+The flag does nothing when no witness listeners start, including server execution
+and hosted traps.
+
+For an agent configured before the run, set optional `witness.model_relay.port`
+and `witness.otlp.port` to different integers from 1 to 65535, and set
+`ARGUS_WITNESS_TOKEN` in Argus's environment. An occupied port stops the run;
+Argus never falls back to another port. The token must contain at least 32
+characters from `A-Za-z0-9_-`. Keep it secret: it is a reusable relay credential.
+The relay only forwards to the configured upstream. The canary still changes on
+every run, even with fixed addresses.
+
+The token is a URL path segment, not a header. An agent can build its model base
+URL as `http://<bind>:<model_relay.port>/r/<ARGUS_WITNESS_TOKEN>/`. Its OTLP traces
+endpoint is `http://<bind>:<otlp.port>/r/<ARGUS_WITNESS_TOKEN>/v1/traces`; use the
+base endpoint without `v1/traces` for exporters that append that path. With
+`bind: "127.0.0.1"`, relay port `19601`, OTLP port `19602`, and the fake token
+`fake-witness-token-0123456789abcdef`, configure:
+
+```text
+Model base URL: http://127.0.0.1:19601/r/fake-witness-token-0123456789abcdef/
+OTLP traces: http://127.0.0.1:19602/r/fake-witness-token-0123456789abcdef/v1/traces
+OTLP base: http://127.0.0.1:19602/r/fake-witness-token-0123456789abcdef/
+```
+
 Configure the agent's model base URL to use the relay address. Configure its
 OTLP/HTTP exporter to use the printed base endpoint, which appends `v1/traces`,
 or set its trace-specific endpoint to `<printed base>v1/traces`. The upstream

@@ -264,9 +264,13 @@ async def test_probe_windows_and_value_registration_reset(witness):
         assert len(first["otlp"]) == 1
 
 
-async def test_local_run_artifacts_never_contain_canary_or_provider_key(upstream, monkeypatch, tmp_path, caplog):
+@pytest.mark.parametrize("fixed_token", [False, True])
+async def test_local_run_artifacts_never_contain_canary_or_provider_key(upstream, monkeypatch, tmp_path, caplog, fixed_token):
     from argus import api, local
     from argus.cli import reports, run_json
+    token = "fake-witness-token-0123456789abcdef"
+    if fixed_token:
+        monkeypatch.setenv("ARGUS_WITNESS_TOKEN", token)
     state = {}
     original_start = WitnessRun.start
     async def remember_start(self, channels):
@@ -286,13 +290,13 @@ async def test_local_run_artifacts_never_contain_canary_or_provider_key(upstream
         async with ClientSession() as client:
             async with client.get(trap_url, params={"echo": canary}) as response:
                 await response.read()
-            async with client.post(state["urls"]["model_relay"] + "chat", json={"prompt": "%argus_secret% " + canary},
+            async with client.post(state["urls"]["model_relay"] + "chat/" + token, json={"prompt": "%argus_secret% " + canary + " " + token},
                                    headers={"Authorization": "Bearer " + FAKE_KEY}) as response:
                 assert await response.read() == b"".join(upstream["chunks"])
             async with client.post(state["urls"]["otlp"] + "v1/traces", json={"resourceSpans": [{"scopeSpans": [{"spans": [{"name": canary}]}]}]}) as response:
                 await response.read()
         return web.json_response({"status": "COMPLETED", "result": canary,
-                                  "run_log": [{"operation": canary, "status": "success", "nested": {canary: canary}}]})
+                                  "run_log": [{"operation": canary + token, "status": "success", "nested": {canary: canary, token: token}}]})
     app = web.Application()
     app.router.add_post("/run", agent)
     server = web.AppRunner(app, access_log=None)
@@ -320,6 +324,8 @@ async def test_local_run_artifacts_never_contain_canary_or_provider_key(upstream
     try:
         with caplog.at_level(logging.DEBUG):
             events = [event async for event in local.run_local(target, [probe.id], env={})]
+        if fixed_token:
+            assert state["run"].token == token
         assert len([e for e in events if e.get("type") == "witness"]) == 1
         findings = [e for e in events if "verdict" in e]
         assert len(findings) == 1 and findings[0]["verdict"] == "pass"
@@ -339,6 +345,8 @@ async def test_local_run_artifacts_never_contain_canary_or_provider_key(upstream
         for path in tmp_path.iterdir():
             assert FAKE_KEY not in path.read_text(), path.name
             assert state["run"].canary not in path.read_text(), path.name
+            if fixed_token:
+                assert token not in path.read_text(), path.name
         assert state["run"]._client is None and state["run"]._servers == {}
     finally:
         await server.cleanup()
@@ -347,11 +355,12 @@ async def test_local_run_artifacts_never_contain_canary_or_provider_key(upstream
 async def test_delivery_error_and_run_log_scrub_use_existing_path(witness):
     with witness_scope(witness):
         target = BrowserUseTarget(BrowserUseSpec(transport=transport("http://127.0.0.1:1/run"), scenario_kind="dom_injection"))
-    with patch.object(target, "_send_prompt", side_effect=OSError("delivery echoed " + witness.canary)):
+    with patch.object(target, "_send_prompt", side_effect=OSError("delivery echoed " + witness.canary + " " + witness.token)):
         with pytest.raises(OSError) as caught:
             await target.send_prompt("hello")
     assert witness.canary not in str(caught.value)
     assert witness.fingerprint in str(caught.value)
+    assert witness.token not in str(caught.value)
 
 
 async def test_unused_witness_starts_no_listener(upstream, monkeypatch):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import os
 import secrets
 import sys
 from pathlib import Path
@@ -72,6 +73,8 @@ def _seed_length(_ctx, _param, value):
               help="Run probes in this process instead of submitting to a server implementing the /api/v1/redteam API. "
                    "Probes judged by an LLM need a judge API key in the environment; without one the run "
                    "is refused unless you pass --skip-judged.")
+@click.option("--witness-wait", is_flag=True, default=False,
+              help="With --local: keep witness listeners serving and wait for Enter before probes start. Ignored when no witness listeners start.")
 @click.option("--skip-judged", "skip_judged", is_flag=True, default=False,
               help="With --local and no judge key: report the probes that need the LLM judge as skipped and "
                    "run the rest, instead of refusing the run. Skipped probes do not change the exit code.")
@@ -80,12 +83,13 @@ def _seed_length(_ctx, _param, value):
 @click.option("--baseline", "baseline_file", type=click.Path(), default=None,
               help="With --local: compare with an earlier run.json and gate only on new failures.")
 @judge_options
-def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, token: str | None, api_url: str | None, max_wait: float, per_run_cap: float | None, fail_on: str | None, local: bool, compare_to: str | None, skip_judged: bool = False, trials: int | None = None, mode: str = "static", deep_pairs: int = 3, max_rounds: int = 20, seed: str | None = None, baseline_file: str | None = None):
+def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, token: str | None, api_url: str | None, max_wait: float, per_run_cap: float | None, fail_on: str | None, local: bool, compare_to: str | None, skip_judged: bool = False, trials: int | None = None, mode: str = "static", deep_pairs: int = 3, max_rounds: int = 20, seed: str | None = None, baseline_file: str | None = None, witness_wait: bool = False):
     """Submit a red-team run and write the report to disk."""
     if baseline_file is not None and not local:
         raise click.UsageError("--baseline needs --local")
     try:
         spec, secret_values = load_target_spec_with_secrets(target)
+        secret_values = (*secret_values, os.environ.get("ARGUS_WITNESS_TOKEN", ""))
     except TargetLoadError as e:
         click.echo(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -132,7 +136,7 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
             raise click.UsageError(f"--local runs in this process; do not pass {' or '.join(typed)}")
         baseline = load_baseline(baseline_file, spec, mode, secret_values) if baseline_file is not None else None
         _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, secret_values, skip_judged, trials,
-                     **options, **({"baseline_run": baseline, "baseline_file": baseline_file} if baseline is not None else {}))
+                     **options, **({"witness_wait": True} if witness_wait else {}), **({"baseline_run": baseline, "baseline_file": baseline_file} if baseline is not None else {}))
         return
     if _uses_python(spec):
         raise click.UsageError("a python target runs a local function; it needs --local")
@@ -320,7 +324,7 @@ def _write_report(out_file: str, report: str, encoding: str | None = None, echo=
 
 def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, secret_values=(),
                  skip_judged=False, trials=None, mode="static", deep_pairs=3, max_rounds=20, seed=None,
-                 baseline_run=None, baseline_file=None) -> None:
+                 baseline_run=None, baseline_file=None, witness_wait=False) -> None:
     from argus_transport.runtime_v2 import TargetRunStopped
 
     click.echo(f"Running {('all probes that fit this target' if not tokens else f'{len(tokens)} probe(s)')} locally ...")
@@ -328,6 +332,7 @@ def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, se
         options = run_options(mode, deep_pairs, max_rounds, seed)
         result = run_local_and_render(spec, tokens, per_run_cap, report_format, secret_values, fail_on,
                                       skip_judged=skip_judged, **options,
+                                      **({"witness_wait": True} if witness_wait else {}),
                                       **({"baseline_run": baseline_run} if baseline_run is not None else {}),
                                       **({"trials": trials} if trials is not None else {}))
     except StopSignalReceived as e:
@@ -345,7 +350,7 @@ def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, se
         if code == "cost":
             click.echo(f"Run rejected for cost: {e}", file=sys.stderr)
             sys.exit(EXIT_COST_CAP)
-        click.echo(f"Error: {e}", file=sys.stderr)
+        click.echo(f"Error: {run_json.mask_text(str(e), run_json.run_secrets(spec, secret_values))}", file=sys.stderr)
         sys.exit(2 if code == "usage" else 1)
     _write_report(out_file, result.report)
     click.echo(f"Wrote report to {out_file}")
