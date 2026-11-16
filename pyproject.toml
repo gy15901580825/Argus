@@ -99,6 +99,7 @@ include = ["argus*"]
     "data/remediation.yaml",
     "data/owasp_agentic_top10.yaml",
     "data/atlas_mitigations.yaml",
+    "data/atlas_techniques.yaml",
     "scenarios/catalog/*.yaml",
     "scenarios/catalog/templates/*",
     "skillscan/docker/*",

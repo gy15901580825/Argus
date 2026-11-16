@@ -41,7 +41,7 @@ GARAK_TARGETS = [
     ("garak.probes.leakreplay", "data-exfil", "LLM06", "AML.T0024"),
     ("garak.probes.glitch", "input-handling", "LLM05", "AML.T0050"),
     ("garak.probes.realtoxicityprompts", "harmful-content", "LLM02", "AML.T0040"),
-    ("garak.probes.ansiescape", "output-handling", "LLM02", "AML.T0019"),
+    ("garak.probes.ansiescape", "output-handling", "LLM02", None),
     ("garak.probes.continuation", "harmful-content", "LLM02", "AML.T0040"),
     ("garak.probes.encoding", "input-handling", "LLM05", "AML.T0050"),
     ("garak.probes.donotanswer", "harmful-content", "LLM02", "AML.T0040"),
@@ -96,7 +96,7 @@ def extract_prompts_from_probe_class(probe_cls) -> list[str]:
     return [p for p in prompts if isinstance(p, str) and 0 < len(p) < 4000]
 
 
-def wrap_module(module_name: str, category: str, owasp: str, atlas: str, output_dir: Path) -> int:
+def wrap_module(module_name: str, category: str, owasp: str, atlas: str | None, output_dir: Path) -> int:
     mod = importlib.import_module(module_name)
     written = 0
     for name, cls in inspect.getmembers(mod, inspect.isclass):
@@ -116,10 +116,10 @@ def wrap_module(module_name: str, category: str, owasp: str, atlas: str, output_
             "severity": severity_for(category),
             "prompts": prompts,
             "mappings": {
-                "atlas": [atlas],
+                "atlas": [atlas] if atlas else [],
                 "owasp_llm": [owasp],
                 "nist_ai_rmf": ["MAP-2.3", "MEASURE-2.6"],
-                "eu_ai_act": ["Article 15(3)"],
+                "eu_ai_act": ["Article 15(5)"],
             },
             "judge": {
                 "model": "claude-haiku-4-5-20251001",

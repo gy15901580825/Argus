@@ -1,7 +1,7 @@
 """What a scan did and did not test, per standard.
 
 The findings answer "what broke". This answers the question a customer cannot
-check for themselves: "what did you not look at?" A library of 293 probes can
+check for themselves: "what did you not look at?" A library of 295 probes can
 still leave a control category with one probe in it, and a run can skip a whole
 category because the target class did not match — neither fact appears anywhere
 in a findings list.
@@ -47,6 +47,7 @@ from collections import Counter
 from typing import Iterable
 
 from argus.agentic import OWASP_AGENTIC_TOP10
+from argus.atlas import ATLAS_TECHNIQUES
 
 THIN_THRESHOLD = 2
 
@@ -135,6 +136,8 @@ def _build_standard(cell_key: str, finding_key: str, probes: list, findings: lis
         cell_ids = sorted(set(library_probe_ids) | set(run_verdicts))
 
     names = dict(closed_universe) if closed_universe is not None else {}
+    if cell_key == "atlas":
+        names = ATLAS_TECHNIQUES
 
     cells = []
     for cell_id in cell_ids:

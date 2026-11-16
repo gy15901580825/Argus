@@ -68,7 +68,7 @@ class GCGProbe(IterativeProbe):
         atlas=("AML.T0051.001",),
         owasp_llm=("LLM01",),
         nist_ai_rmf=("MEASURE-2.6",),
-        eu_ai_act=("Article 15(3)",),
+        eu_ai_act=("Article 15(5)",),
     ))
 
     # Internal state — populated as the probe iterates.

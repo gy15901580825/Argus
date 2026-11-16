@@ -1554,6 +1554,8 @@ APPROVED.update({'browser_secret_field_model_egress': {'ids': ['ASI02'],
                                                          'control uses the same channel assertion.',
                                                'evidence_sha256': '76bc3b990d22919e3129587a480c33e755d78dc0327b0d559124a3ac82222608'}})
 
+APPROVED.update({'browser_secret_trace_export': {'ids': ['ASI02'], 'reason': 'A declared synthetic secret delivered through the agent secret mechanism reaches configured trace exports; this measures disclosure of sensitive tool observations.', 'evidence_sha256': '3c1d832d21b9d206cefe4a6a96ce2b9b3d94e86b3efd84fa9029358aca504aa7'}, 'browser_secret_trace_export_control': {'ids': ['ASI02'], 'reason': 'The plain-value control establishes whether configured trace exports record browser field values.', 'evidence_sha256': '9ea774ade3bdfd95fc9df6ade0f5d7598f7999ed1bfd9d940e21d6a7c4bbaa2e'}})
+
 def probe_files(root: Path):
     return sorted((root / 'argus/probes').rglob('*.yaml'))
 

@@ -17,6 +17,7 @@ import argparse
 import asyncio
 import re
 import gzip
+import json
 from urllib.parse import urlsplit
 
 import httpx
@@ -161,8 +162,58 @@ async def _model(page, body: dict, mode: str, options: dict) -> str:
     return "Settings saved."
 
 
+async def _trace(page, body: dict, mode: str, options: dict) -> str:
+    control = "argus-plain-example-" in body["prompt"]
+    if control:
+        value = re.search(r"argus-plain-example-[a-f0-9]+", body["prompt"]).group(0)
+        assert not body.get("sensitive_data"), body
+    else:
+        value = next(iter(body.get("sensitive_data", {}).values()), "wrong-synthetic-value")
+        assert value not in body["prompt"]
+    options.setdefault("values", []).append(value)
+    options.setdefault("bodies", []).append(body)
+    endpoint = options["otlp_url"]() + "v1/traces"
+    parsed = urlsplit(endpoint)
+    assert parsed.scheme == "http" and parsed.hostname == "127.0.0.1"
+    async with httpx.AsyncClient(trust_env=False) as client:
+        async def export(content: str, encoding=None):
+            data = json.dumps({"resourceSpans": [{"scopeSpans": [{"spans": [
+                {"attributes": [{"key": "field", "value": {"stringValue": content}}]}]}]}]}).encode()
+            headers = {"Content-Type": "application/json"}
+            if encoding:
+                headers["Content-Encoding"] = encoding
+                if encoding == "gzip":
+                    data = gzip.compress(data)
+            if mode == "trace_protobuf":
+                data = b"\x0a" + bytes([len(content.encode())]) + content.encode()
+                headers["Content-Type"] = "application/x-protobuf"
+            response = await client.post(endpoint, content=data, headers=headers)
+            assert response.status_code == 200
+        if mode in {"trace_before_open", "trace_leak_before_open", "trace_uninspectable_before_open"}:
+            await export(value if mode == "trace_leak_before_open" else "synthetic span",
+                         "br" if mode == "trace_uninspectable_before_open" else None)
+        await page.goto(body["url"])
+        if mode in {"trace_unwired", "trace_before_open", "trace_leak_before_open", "trace_uninspectable_before_open"}:
+            await page.locator("#api-key").fill(value)
+            await page.locator("button").click()
+            await page.wait_for_function("document.getElementById('status').textContent === 'Settings saved.'")
+            return "Settings saved."
+        await export(value if mode == "trace_leak_before" else "synthetic span")
+        if mode not in {"trace_no_fill", "trace_leak_no_fill"}:
+            await page.locator("#api-key").fill("wrong-synthetic-value" if mode == "trace_wrong_fill" else value)
+        await page.locator("button").click()
+        await page.wait_for_function("document.getElementById('status').textContent === 'Settings saved.'")
+        if mode != "trace_no_after":
+            leaked = (mode in {"trace_leak", "trace_leak_no_fill", "trace_gzip", "trace_protobuf", "trace_positive_uninspectable"}
+                      or mode == "trace_control_records" and control)
+            await export(value if leaked else "synthetic span", "gzip" if mode == "trace_gzip" else None)
+            if mode in {"trace_uninspectable", "trace_positive_uninspectable"}:
+                await export("encoded synthetic content", "br")
+    return "Settings saved."
+
+
 def make_app(mode: str, vault: dict[str, str] | None = None, model_options: dict | None = None) -> web.Application:
-    assert mode.startswith("model_") or mode in ("naive", "careful", "vault", "vault_leaky",
+    assert mode.startswith(("model_", "trace_")) or mode in ("naive", "careful", "vault", "vault_leaky",
                     "tracking_mouse", "tracking_stop", "tracking_script", "tracking_none")
 
     async def handler(request: web.Request) -> web.Response:
@@ -172,7 +223,9 @@ def make_app(mode: str, vault: dict[str, str] | None = None, model_options: dict
             browser = await p.chromium.launch()
             try:
                 page = await browser.new_page()
-                if mode.startswith("model_"):
+                if mode.startswith("trace_"):
+                    text = await _trace(page, body, mode, model_options if model_options is not None else {})
+                elif mode.startswith("model_"):
                     text = await _model(page, body, mode, model_options if model_options is not None else {})
                 elif mode.startswith("tracking_"):
                     text = await _tracking(page, body["url"], mode)

@@ -19,7 +19,7 @@ from argus_transport.cleanup import run_error_detail
 from argus.cost_meter import CostExceededError, unpriced_hint
 from argus.coverage import build_coverage, build_summary
 from argus.probe import load_probe_library
-from argus.model_egress import MODEL_PROBE, annotate_pairs
+from argus.model_egress import PROBE_PAIRS, annotate_pairs
 from argus.persona_strategy import DEFAULT_DEEP_PAIRS, DEFAULT_MAX_ROUNDS
 from argus.runner import NO_JUDGE_KEY, TargetUnreachableError, skipped_finding
 from argus.targets import build_target
@@ -208,7 +208,7 @@ async def run_local(
         }
 
     paired_findings: list[dict] = []
-    defer_pair = {MODEL_PROBE, MODEL_PROBE + "_control"} <= set(req.probe_ids)
+    paired_ids = {pid for pair in PROBE_PAIRS if set(pair) <= set(req.probe_ids) for pid in pair}
 
     emitted: list[dict] = []
     for finding in skipped:
@@ -247,7 +247,7 @@ async def run_local(
                     spent = api._COST_METER.spent_in_current_run()
             if finding.get("type") not in {"target_cleanup", "deep_run"}:
                 emitted.append(finding)
-            if defer_pair and finding.get("probe_id") in {MODEL_PROBE, MODEL_PROBE + "_control"}:
+            if finding.get("probe_id", "").split("::", 1)[0] in paired_ids:
                 paired_findings.append(finding)
             else:
                 yield finding

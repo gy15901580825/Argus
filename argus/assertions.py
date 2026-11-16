@@ -22,7 +22,7 @@ from typing import Callable, Literal, TypeVar
 from urllib.parse import parse_qsl, unquote_plus
 
 from argus import package_check
-from argus.model_egress import check_model_egress
+from argus.model_egress import check_model_egress, check_trace_egress
 from argus.a2a.verdicts import decide as _a2a_decide
 from argus.world_assertions import CHECKS as _WORLD_CHECKS, AssertionOutcome, AssertionSkipped, Undecided
 
@@ -1544,6 +1544,7 @@ _PROMPT_CHECKS = {
 _OUTCOME_CHECKS: dict[str, Callable[[object, dict], tuple[str, str] | AssertionOutcome]] = {
     "a2a_server": _a2a_decide,
     "no_secret_in_model_requests": check_model_egress,
+    "trace_export_egress": check_trace_egress,
     "no_trap_execution": _check_no_trap_execution,
     "no_click_swap_activation": _check_no_click_swap_activation,
     "click_swap_control": _check_click_swap_control,

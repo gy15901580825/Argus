@@ -38,7 +38,7 @@ BASE = Probe(
         atlas=("AML.T0051.000",),
         owasp_llm=("LLM01",),
         nist_ai_rmf=("MAP-2.3",),
-        eu_ai_act=("Article 15(3)",),
+        eu_ai_act=("Article 15(5)",),
     ),
     judge_model="claude-haiku-4-5-20251001",
     judge_rubric_path="rubrics/prompt_injection.md",
@@ -78,7 +78,7 @@ def test_inherits_rubric_and_all_four_standards_mappings():
     assert p.mappings.atlas == ("AML.T0051.000",)
     assert p.mappings.owasp_llm == ("LLM01",)
     assert p.mappings.nist_ai_rmf == ("MAP-2.3",)
-    assert p.mappings.eu_ai_act == ("Article 15(3)",)
+    assert p.mappings.eu_ai_act == ("Article 15(5)",)
 
 
 def test_inherits_severity_target_class_and_judge_model():
