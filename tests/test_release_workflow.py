@@ -32,6 +32,9 @@ ROOT = Path(__file__).parents[1]
 )
 def test_release_gate(tmp_path, version, target, tag, allowed):
     (tmp_path / "pyproject.toml").write_text(f'[project]\nversion = "{version}"\n')
+    driver = tmp_path / "drivers/google"
+    driver.mkdir(parents=True)
+    (driver / "pyproject.toml").write_text(f'[project]\nversion = "{version}"\n')
     result = subprocess.run(
         [sys.executable, str(ROOT / "scripts/check_release_version.py")],
         cwd=tmp_path,
@@ -55,3 +58,35 @@ def test_shared_build_gates_both_publish_paths():
     assert steps.index(guard) < next(i for i, s in enumerate(steps) if s.get("name") == "Build sdist + wheel")
     assert "build" in jobs["publish-pypi"]["needs"]
     assert "build" in jobs["publish-image"]["needs"]
+
+
+@pytest.mark.parametrize(
+    "version,driver_version,target,tag,allowed",
+    [
+        ("1.15.2", "1.15.2", "none", "v1.15.2", True),
+        ("1.15.2", "1.15.1", "none", "v1.15.2", False),
+        ("1.15.2", "1.15.2", "pypi", "", True),
+        ("1.15.2", "1.15.1", "pypi", "", False),
+        ("1.15.2.dev0", "1.15.2.dev0", "pypi", "", False),
+        ("1.15.2.dev0", "1.15.2.dev0", "none", "v1.15.2.dev0", False),
+        ("1.15.2.dev0", "1.15.2.dev0", "testpypi", "", True),
+        ("1.15.2.dev0", "1.15.1", "testpypi", "", True),
+    ],
+)
+def test_google_driver_release_version(tmp_path, version, driver_version, target, tag, allowed):
+    (tmp_path / "pyproject.toml").write_text(f'[project]\nversion = "{version}"\n')
+    driver = tmp_path / "drivers/google"
+    driver.mkdir(parents=True)
+    (driver / "pyproject.toml").write_text(f'[project]\nversion = "{driver_version}"\n')
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/check_release_version.py")],
+        cwd=tmp_path,
+        env={**os.environ, "RELEASE_TARGET": target,
+             "GITHUB_REF_TYPE": "tag" if tag else "branch", "GITHUB_REF_NAME": tag},
+        capture_output=True, text=True, timeout=5,
+    )
+    assert (result.returncode == 0) is allowed, result.stdout + result.stderr
+    if not allowed and version != driver_version:
+        assert f"driver version {driver_version} must equal root version {version}" in result.stderr
+    elif not allowed:
+        assert "development or local segment" in result.stderr

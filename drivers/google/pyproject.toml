@@ -1,9 +1,28 @@
 [project]
 name = "argus-drivers-google"
-version = "0.1.0"
+version = "1.15.2.dev0"
 description = "Gmail and Drive drivers for bounded Argus integration scenarios"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.11"
-dependencies = ["argus-probe>=0.9.0", "httpx>=0.27"]
+dependencies = ["argus-probe>=1.15.1", "httpx>=0.27"]
+
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Security",
+    "Topic :: Software Development :: Testing",
+]
+
+[project.urls]
+Homepage = "https://github.com/gy15901580825/Argus"
+Documentation = "https://github.com/gy15901580825/Argus/blob/main/docs/integration-scenarios.md"
+Source = "https://github.com/gy15901580825/Argus"
+Issues = "https://github.com/gy15901580825/Argus/issues"
+Changelog = "https://github.com/gy15901580825/Argus/releases"
 
 [project.entry-points."argus.drivers"]
 gmail = "argus_drivers_google:GmailDriver"

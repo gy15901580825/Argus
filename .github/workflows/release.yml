@@ -1,6 +1,6 @@
 name: Release
 
-# Publishes argus-probe (the repo root pyproject.toml) with PyPI
+# Publishes argus-probe and argus-drivers-google at the same version with PyPI
 # trusted publishing: the publish jobs get an OIDC token, so no API tokens or
 # secrets are stored. Setup and steps are in docs/runbooks/release.md.
 #
@@ -22,7 +22,7 @@ permissions:
 
 jobs:
   build:
-    name: build + check argus-probe
+    name: build + check packages
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -63,9 +63,26 @@ jobs:
       - name: Build sdist + wheel
         run: |
           python -m build . --outdir dist
+          python -m build drivers/google --outdir dist
 
       - name: Check metadata
         run: twine check --strict dist/*
+
+      - name: Smoke test Google driver wheels
+        run: |
+          python -m venv "$RUNNER_TEMP/driver-smoke"
+          "$RUNNER_TEMP/driver-smoke/bin/pip" install dist/argus_probe-*.whl dist/argus_drivers_google-*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/driver-smoke/bin/python" - <<'PY'
+          from importlib.metadata import distribution
+          drivers = {
+              ep.name: ep for ep in distribution("argus-drivers-google").entry_points
+              if ep.group == "argus.drivers"
+          }
+          for name in ("gmail", "gdrive"):
+              assert callable(drivers[name].load()), name
+          print("Google driver entry points load: gmail, gdrive")
+          PY
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -137,7 +154,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/cli-context"
           cp docker/cli.Dockerfile "$RUNNER_TEMP/cli-context/Dockerfile"
-          cp dist/*.whl "$RUNNER_TEMP/cli-context/"
+          cp dist/argus_probe-*.whl "$RUNNER_TEMP/cli-context/"
       - uses: docker/setup-qemu-action@5138f26214adf9d69718655df70f66d2b3c81db3
         with:
           platforms: arm64
@@ -184,7 +201,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/cli-context"
           cp docker/cli.Dockerfile "$RUNNER_TEMP/cli-context/Dockerfile"
-          cp dist/*.whl "$RUNNER_TEMP/cli-context/"
+          cp dist/argus_probe-*.whl "$RUNNER_TEMP/cli-context/"
       - uses: docker/setup-qemu-action@5138f26214adf9d69718655df70f66d2b3c81db3
         with:
           platforms: arm64
