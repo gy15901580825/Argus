@@ -122,7 +122,7 @@ def run_local_and_render(
             trials,
             baseline_run,
             baseline_key(spec),
-            witness_wait=witness_wait,
+            **({"witness_wait": True} if witness_wait else {}),
             **options,
         )
 
