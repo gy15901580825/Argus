@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
+from functools import lru_cache
 from importlib.metadata import entry_points
 from pathlib import Path
 from typing import Iterator
@@ -232,8 +234,15 @@ class Probe:
         return not self.assertions or self.judge_when_assertions_pass or self.judge_when_assertions_warn
 
 
+@lru_cache(maxsize=512)
+def _parse_probe_yaml(source: str):
+    return yaml.safe_load(source)
+
+
 def load_probe(path: Path) -> Probe:
-    raw = yaml.safe_load(Path(path).read_text())
+    # Key by content so edits are visible even when size and mtime are unchanged.
+    # Validation stays fresh, and mutable fields never escape the parsing cache.
+    raw = deepcopy(_parse_probe_yaml(Path(path).read_text()))
     try:
         if raw["severity"] not in VALID_SEVERITIES:
             raise ValueError(f"invalid severity {raw['severity']!r} in {path}")
