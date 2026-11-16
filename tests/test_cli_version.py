@@ -36,9 +36,9 @@ def _commit(monkeypatch, *, direct_url=None, root=None, git=None):
         build_info.source_commit.cache_clear()
 
 
-def test_package_carries_the_planned_release_version():
+def test_package_carries_a_dev_version_distinct_from_the_release():
     version = tomllib.loads(PYPROJECT.read_text())["project"]["version"]
-    assert version == "1.15.1"
+    assert version == "1.15.2.dev0"
 
 
 def test_version_without_a_commit_is_the_plain_line(monkeypatch):
