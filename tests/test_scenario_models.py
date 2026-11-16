@@ -65,3 +65,9 @@ def test_catalog_scenarios_resolve_both_tiers():
     for s in catalog():
         assert s.attack_class, s.id
         assert {a["tier"] for a in remediation.actions_for_classes(s.attack_class)} == {"mitigation", "fix"}
+
+
+@pytest.mark.parametrize("value", [-1, 3601, float("nan"), float("inf")])
+def test_seed_delivery_wait_rejects_invalid_duration(value):
+    with pytest.raises(ValidationError):
+        IntegrationScenario(id="sample", seed_delivery_wait_s=value)

@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import hashlib
+import math
 import time
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
@@ -14,7 +15,7 @@ from argus import remediation
 from argus.runner import Finding
 from argus.scenarios.credentials import CredentialUnavailable
 from argus.scenarios.events import scenario_events
-from argus.scenarios.models import Evidence, IntegrationScenario, ObjectRecord, Provenance, ScenarioResult, now, object_marker
+from argus.scenarios.models import Evidence, IntegrationScenario, ObjectRecord, ObjectSpec, Provenance, ScenarioResult, now, object_marker
 from argus.scenarios.runtime import Budget, BudgetExceeded, NotReady, ObjectRegistry, RunContext, validate_target_credentials, read_template
 
 
@@ -30,7 +31,7 @@ class ScenarioRunner:
         self.ctx = RunContext(run_id=str(UUID(run_id)), organization_id=str(UUID(organization_id)),
                               scenario_id=scenario.id, connections=connections, target_identity=target_identity,
                               allowed_ops=frozenset(scenario.allowed_ops), budget=Budget(scenario.budget, clock),
-                              registry=ObjectRegistry(directory, str(UUID(run_id))))
+                              registry=ObjectRegistry(directory, str(UUID(run_id))), sleep=sleep)
         target_spec = getattr(target, "spec", None)
         if target_spec is not None:
             data = asdict(target_spec) if is_dataclass(target_spec) else target_spec.model_dump() if hasattr(target_spec, "model_dump") else vars(target_spec)
@@ -121,7 +122,11 @@ class ScenarioRunner:
                 self.gaps.append("control/test material crossed group boundaries")
                 continue
             matched = [obj for obj in objects if marker == obj.marker or object_id == obj.external_id]
-            if matched and any((marker is not None and marker != obj.marker) or (object_id is not None and object_id != obj.external_id) or (event.get("version") is not None and event["version"] != obj.version) for obj in matched):
+            # Sender and recipient can share a marker, but have different provider IDs.
+            if matched and not any((marker is None or marker == obj.marker)
+                                   and (object_id is None or object_id == obj.external_id)
+                                   and (event.get("version") is None or event["version"] == obj.version)
+                                   for obj in matched):
                 self.gaps.append("target run record object identity or version does not match")
                 continue
             if matched:
@@ -149,6 +154,45 @@ class ScenarioRunner:
             raise NotReady("driver returned an object belonging to another run or group")
         self.ctx.registry.save(obj)
         self.ctx.objects[key] = obj
+        await self.object_events()
+        if spec.op == "send_seed":
+            await self.await_seed_delivery(key, obj, spec)
+
+    async def await_seed_delivery(self, key: str, obj: ObjectRecord, spec: ObjectSpec):
+        observers = {(scope.driver, scope.connection): self.drivers[scope.driver] for scope in self.scenario.observe
+                     if hasattr(self.drivers[scope.driver], "await_delivery")}
+        if not observers:
+            return
+        if len(observers) != 1:
+            raise NotReady(f"seed {key} has ambiguous delivery observers")
+        (name, role), driver = next(iter(observers.items()))
+        observer = self.ctx.connection(role)
+        wait_s = self.scenario.seed_delivery_wait_s
+        if wait_s is None:
+            try:
+                wait_s = float(getattr(driver, "config", {}).get("seed_delivery_wait_s", 120))
+            except (TypeError, ValueError) as exc:
+                raise NotReady("invalid seed_delivery_wait_s observer option") from exc
+        if not math.isfinite(wait_s) or not 0 <= wait_s <= 3600:
+            raise NotReady("invalid seed_delivery_wait_s observer option")
+        deadline = self.clock() + wait_s
+        reason = f"seed {key} delivery wait did not complete within {wait_s:g} s"
+        if wait_s <= 0:
+            raise NotReady(reason)
+        try:
+            async with asyncio.timeout(wait_s):
+                recipient = await driver.await_delivery(self.ctx, obj, spec, observer, deadline)
+        except TimeoutError as exc:
+            raise NotReady(reason) from exc
+        if self.clock() >= deadline:
+            raise NotReady(reason)
+        if (recipient.run_id != obj.run_id or recipient.group != obj.group
+                or recipient.control_name != obj.control_name or recipient.marker != obj.marker
+                or recipient.logical_key != key or recipient.provider != name
+                or recipient.connection_id != observer.connection_id):
+            raise NotReady(f"seed {key} delivery observer returned an object belonging to another run, group or mailbox")
+        self.ctx.registry.save(recipient)
+        self.ctx.objects[key] = recipient
         await self.object_events()
 
     async def connections_ready(self):

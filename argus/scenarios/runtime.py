@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -7,7 +8,7 @@ import time
 from dataclasses import dataclass, field
 from importlib.metadata import entry_points
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Awaitable, Callable, Protocol
 from urllib.parse import parse_qsl, urlsplit
 
 from argus.events import EVENT_STRUCTURE_FIELDS, normalize_redacted_event
@@ -105,6 +106,7 @@ class RunContext:
     control_name: str | None = None
     objects: dict[str, ObjectRecord] = field(default_factory=dict)
     cleanup_mode: bool = False
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
     secrets: set[str] = field(default_factory=set, repr=False)
 
     def connection(self, role: str) -> ConnRef:
@@ -180,6 +182,13 @@ class Driver(Protocol):
     async def collect(self, ctx: RunContext, scope: ObserveSpec, since: Any) -> list[Evidence]: ...
     async def cleanup(self, ctx: RunContext, obj: ObjectRecord) -> CleanupResult: ...
     async def recover(self, ctx: RunContext, scenario) -> list[ObjectRecord]: ...
+
+
+class DeliveryObserver(Protocol):
+    """Optional mailbox capability, independent of the sending driver."""
+
+    async def await_delivery(self, ctx: RunContext, obj: ObjectRecord, spec: ObjectSpec,
+                             observer: ConnRef, deadline: float) -> ObjectRecord: ...
 
 
 def build_drivers(names: set[str], provider: CredentialProvider, config: dict | None = None) -> dict[str, Driver]:

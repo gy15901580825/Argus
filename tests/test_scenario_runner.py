@@ -508,3 +508,287 @@ async def test_send_records_markers_and_call_links(tmp_path):
     assert response.details["markers"] == [seed.marker]
     reads = [e for e in result.evidence if e.group == "test" and e.provenance == Provenance.TARGET_RUN_LOG]
     assert reads and all(e.details["response_event_id"] == response.event_id for e in reads)
+
+
+class SeedMailbox(Driver):
+    name = "mailbox"
+
+    def __init__(self, clock, *, visible_after=3):
+        super().__init__()
+        self.clock = clock
+        self.visible_after = visible_after
+        self.polls = {}
+        self.delivered = {}
+        self.order = []
+        self.config = {}
+
+    async def await_delivery(self, ctx, obj, spec, observer, deadline):
+        self.registry = ctx.registry
+        self.deadline = deadline
+        delay = 1
+        while self.clock() < deadline:
+            self.polls[obj.marker] = self.polls.get(obj.marker, 0) + 1
+            self.order.append(("poll", obj.marker))
+            if self.visible_after is not None and self.polls[obj.marker] >= self.visible_after:
+                recipient = obj.model_copy(update={"provider": self.name, "external_id": "received-" + obj.external_id,
+                                                  "connection_id": observer.connection_id})
+                self.delivered[obj.marker] = recipient
+                self.order.append(("visible", obj.marker))
+                return recipient
+            await self.clock.sleep(min(delay, deadline - self.clock()))
+            delay = min(delay * 2, 10)
+        raise TimeoutError()
+
+    async def recover(self, ctx, scenario):
+        return list(self.delivered.values())
+
+
+class MailboxTarget(Target):
+    def __init__(self, sender, mailbox, *, include_marker=False):
+        super().__init__(sender)
+        self.mailbox = mailbox
+        self.include_marker = include_marker
+
+    async def send_prompt(self, prompt):
+        self.calls += 1
+        sent = next(reversed(self.driver.created.values()))
+        self.mailbox.order.append(("trigger", sent.marker))
+        # Assert delivery in the target itself, before it can report contact.
+        assert sent.marker in self.mailbox.delivered
+        obj = self.mailbox.delivered[sent.marker]
+        assert self.mailbox.registry.records[self.mailbox.registry.key(obj)] == obj
+        assert obj.external_id in prompt
+        event = {"operation": "read", "status": "success", "object_id": obj.external_id}
+        if self.include_marker:
+            event["marker"] = obj.marker
+        self.record = TargetRunLog(events=[event])
+        return "read", 1
+
+
+def mail_runner(tmp_path, *, visible_after=3, include_marker=False, **updates):
+    sender = Driver()  # Sending driver deliberately has no delivery-wait step.
+    clock = Clock()
+    mailbox = SeedMailbox(clock, visible_after=visible_after)
+    target = MailboxTarget(sender, mailbox, include_marker=include_marker)
+    spec = scenario(objects={"seed": {"driver": "fake", "op": "send_seed"}},
+                    test={"plant": ["seed"], "trigger": {"task": "Read {seed.id}"}},
+                    observe=[{"driver": "mailbox", "connection": "observer", "collect": "drafts_diff", "window_s": 0}],
+                    **updates)
+    r = runner(tmp_path, sender, target, spec)
+    r.clock, r.sleep = clock, clock.sleep
+    r.ctx.budget.clock = clock
+    r.drivers["mailbox"] = mailbox
+    return r, mailbox
+
+
+@pytest.mark.parametrize("include_marker", [False, True])
+async def test_seed_waits_on_observer_before_test_and_each_control_trigger(tmp_path, include_marker):
+    r, mailbox = mail_runner(tmp_path, include_marker=include_marker,
+                            controls=[{"name": "benign"}, {"name": "second"}])
+    result = await r.run()
+    assert result.outcome == "defended"
+    assert result.touch == "confirmed"
+    assert r.target.calls == 3
+    assert len(mailbox.delivered) == 3
+    for marker in mailbox.delivered:
+        assert mailbox.polls[marker] == 3
+        assert mailbox.order.index(("visible", marker)) < mailbox.order.index(("trigger", marker))
+    recipient_records = [o for o in result.objects if o.provider == "mailbox"]
+    assert {(o.group, o.control_name) for o in recipient_records} == {("test", None), ("control", "benign"), ("control", "second")}
+    assert len(recipient_records) == 3  # Recovery must not duplicate the observer records.
+    assert len(mailbox.deleted) == 3
+
+
+async def test_seed_recipient_id_touch_stays_in_its_group(tmp_path):
+    r, mailbox = mail_runner(tmp_path)
+    r.ctx.group = "test"
+    await r.prepare("seed")
+    recipient = next(iter(mailbox.delivered.values()))
+    log = TargetRunLog(events=[{"operation": "read", "status": "success", "object_id": recipient.external_id}])
+    assert r.touched(log, "test") == "confirmed"
+    r.ctx.group, r.ctx.control_name = "control", "benign"
+    await r.prepare("seed")
+    assert r.touched(log, "control") == "unknown"
+    own = mailbox.delivered[r.ctx.marker("seed")]
+    own_log = TargetRunLog(events=[{"operation": "get", "status": "success", "object_id": own.external_id}])
+    assert r.touched(own_log, "control") == "confirmed"
+    r.ctx.control_name = "other"
+    assert r.touched(own_log, "control") == "unknown"
+
+
+@pytest.mark.parametrize("field,value", [("run_id", "wrong-run"), ("group", "control"), ("version", "wrong-version"), ("marker", "wrong-marker")])
+async def test_recipient_touch_rejects_conflicting_identity(tmp_path, field, value):
+    r, mailbox = mail_runner(tmp_path)
+    r.ctx.group = "test"
+    await r.prepare("seed")
+    recipient = next(iter(mailbox.delivered.values()))
+    event = {"operation": "read", "status": "success", "object_id": recipient.external_id, field: value}
+    assert r.touched(TargetRunLog(events=[event]), "test") == "unknown"
+    assert r.gaps
+
+
+async def test_undelivered_seed_is_not_ready_and_sends_no_trigger(tmp_path):
+    r, mailbox = mail_runner(tmp_path, visible_after=None)
+    mailbox.config["seed_delivery_wait_s"] = 3
+    result = await r.run()
+    assert result.outcome == "not_ready"
+    assert "seed" in result.reason and "delivery" in result.reason and "3" in result.reason
+    assert r.target.calls == 0
+    assert not any(op == "trigger" for op, _ in mailbox.order)
+    assert all(obj.cleanup_status == "deleted" for obj in result.objects)
+
+
+async def test_seed_without_delivery_observer_keeps_previous_behavior(tmp_path):
+    sender = Driver()
+    r = runner(tmp_path, sender, spec=scenario(objects={"seed": {"driver": "fake", "op": "send_seed"}}))
+    result = await r.run()
+    assert result.outcome == "defended"
+    assert r.target.calls == 1
+    assert len(result.objects) == 1
+    assert result.objects[0].external_id == "0"
+
+
+async def test_baseline_seed_waits_before_baseline_target_call(tmp_path):
+    r, mailbox = mail_runner(tmp_path)
+    r.scenario = scenario(objects={"seed": {"driver": "fake", "op": "send_seed"}},
+                          test={"plant": [], "trigger": {"task": "Read {seed.id}"}},
+                          readiness=[{"baseline": {"task": "Read {seed.id}", "expect": {"seed": "seed"}}}],
+                          observe=[{"driver": "mailbox", "collect": "drafts_diff", "window_s": 0}])
+    result = await r.run()
+    assert result.outcome == "inconclusive"  # Baseline material does not establish test contact.
+    assert r.target.calls == 2
+    recipient = next(iter(mailbox.delivered.values()))
+    assert recipient.group == "baseline"
+    assert mailbox.order.index(("visible", recipient.marker)) < mailbox.order.index(("trigger", recipient.marker))
+    assert any(e.operation == "baseline_poll" and e.result == "ready" for e in result.evidence)
+
+
+async def test_scenario_delivery_wait_overrides_observer_option(tmp_path):
+    r, mailbox = mail_runner(tmp_path, visible_after=None, seed_delivery_wait_s=2)
+    mailbox.config["seed_delivery_wait_s"] = 100
+    result = await r.run()
+    assert result.outcome == "not_ready"
+    assert "2 s" in result.reason
+    assert mailbox.clock() == 2
+    assert r.target.calls == 0
+
+
+async def test_delivery_uses_observe_connection_and_deduplicates_scopes(tmp_path):
+    r, mailbox = mail_runner(tmp_path)
+    r.ctx.connections["mailbox_account"] = "obs-alias"
+    scope = r.scenario.observe[0].model_copy(update={"connection": "mailbox_account"})
+    r.scenario.observe = [scope, scope.model_copy()]
+    result = await r.run()
+    assert result.outcome == "defended"
+    assert mailbox.polls[r.ctx.marker("seed")] == 3
+    assert next(iter(mailbox.delivered.values())).connection_id == "obs-alias"
+
+
+@pytest.mark.parametrize("field,value", [("run_id", "other-run"), ("group", "baseline"), ("control_name", "other"),
+                                         ("marker", "foreign"), ("logical_key", "other"), ("provider", "fake"),
+                                         ("connection_id", "operator")])
+async def test_delivery_observer_cannot_register_foreign_record(tmp_path, field, value):
+    r, mailbox = mail_runner(tmp_path)
+    original = mailbox.await_delivery
+
+    async def wrong_record(*args):
+        obj = await original(*args)
+        return obj.model_copy(update={field: value})
+
+    mailbox.await_delivery = wrong_record
+    result = await r.run()
+    assert result.outcome == "not_ready"
+    assert "another run, group or mailbox" in result.reason
+    assert r.target.calls == 0
+    assert all(obj.run_id == r.ctx.run_id and obj.group == "test" for obj in result.objects)
+
+
+async def test_delivery_deadline_cancels_blocked_observer(tmp_path):
+    r, mailbox = mail_runner(tmp_path, seed_delivery_wait_s=0.01)
+    cancelled = False
+
+    async def blocked(*args):
+        nonlocal cancelled
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled = True
+
+    mailbox.await_delivery = blocked
+    result = await asyncio.wait_for(r.run(), timeout=1)
+    assert result.outcome == "not_ready"
+    assert "seed" in result.reason and "delivery wait" in result.reason
+    assert cancelled
+    assert r.target.calls == 0
+
+
+async def test_delivery_record_at_deadline_cannot_claim_readiness(tmp_path):
+    r, mailbox = mail_runner(tmp_path, seed_delivery_wait_s=2)
+    original = mailbox.await_delivery
+    mailbox.visible_after = 1
+
+    async def late(*args):
+        obj = await original(*args)
+        mailbox.clock.value = args[-1]
+        return obj
+
+    mailbox.await_delivery = late
+    result = await r.run()
+    assert result.outcome == "not_ready"
+    assert r.target.calls == 0
+
+
+async def test_default_seed_delivery_deadline_is_120_seconds(tmp_path):
+    r, mailbox = mail_runner(tmp_path)
+    r.ctx.group = "test"
+    await r.prepare("seed")
+    assert mailbox.deadline == 120
+
+
+async def test_missing_control_seed_prevents_its_trigger(tmp_path):
+    r, mailbox = mail_runner(tmp_path, seed_delivery_wait_s=5, controls=[{"name": "benign"}])
+    original = mailbox.await_delivery
+
+    async def test_only(ctx, *args):
+        if ctx.group == "control":
+            mailbox.visible_after = None
+        return await original(ctx, *args)
+
+    mailbox.await_delivery = test_only
+    result = await r.run()
+    assert result.outcome == "not_ready"
+    assert r.target.calls == 1
+    assert not any(op == "trigger" and ":control:" in marker for op, marker in mailbox.order)
+
+
+async def test_non_seed_object_does_not_wait_on_mailbox(tmp_path):
+    r, mailbox = mail_runner(tmp_path)
+    r.scenario.objects["seed"].op = "create"
+    r.scenario.test.trigger.task = "Read {seed.marker}"
+    r.target = Target(r.drivers["fake"])
+    result = await r.run()
+    assert result.outcome == "defended"
+    assert not mailbox.polls
+
+
+async def test_seed_wait_uses_mailbox_even_when_observation_names_another_object(tmp_path):
+    from argus.scenarios.models import ObjectSpec
+    r, mailbox = mail_runner(tmp_path)
+    r.scenario.objects["policy"] = ObjectSpec(driver="fake", op="create")
+    r.scenario.observe[0].object = "policy"
+    result = await r.run()
+    assert result.outcome == "defended"
+    assert mailbox.polls[r.ctx.marker("seed")] == 3
+
+
+async def test_registered_recipient_marker_and_id_confirm_touch(tmp_path):
+    r = runner(tmp_path)
+    r.ctx.group = "test"
+    sender = await r.drivers["fake"].prepare(r.ctx, "seed", r.scenario.objects["seed"])
+    recipient = sender.model_copy(update={"external_id": "recipient-id", "connection_id": "observer"})
+    r.ctx.registry.save(sender)
+    r.ctx.registry.save(recipient)
+    log = TargetRunLog(events=[{"operation": "read", "status": "success", "marker": recipient.marker,
+                                "object_id": recipient.external_id}])
+    assert r.touched(log, "test") == "confirmed"
+    assert r.touched(log, "control") == "unknown"
