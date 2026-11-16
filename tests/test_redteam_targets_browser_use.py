@@ -228,6 +228,7 @@ async def test_begin_probe_accepts_every_shipped_browser_compatible_probe():
     from pathlib import Path
     import argus as redteam_pkg
     from argus.probe import load_probe
+    from argus.targets._base import ProbeNotApplicable
 
     probes_dir = Path(redteam_pkg.__file__).parent / "probes"
     paths = sorted((probes_dir / "browser").glob("*.yaml"))
@@ -241,7 +242,11 @@ async def test_begin_probe_accepts_every_shipped_browser_compatible_probe():
     for path in paths:
         probe = load_probe(path)
         assert "browser-using" in probe.target_class or "browser_using_agent" in probe.target_class, path
-        await target.begin_probe(probe)  # must not raise
+        if probe.requires_witness:
+            with pytest.raises(ProbeNotApplicable, match="witness channels require run --local"):
+                await target.begin_probe(probe)
+        else:
+            await target.begin_probe(probe)  # must not raise
 
 
 @pytest.mark.asyncio

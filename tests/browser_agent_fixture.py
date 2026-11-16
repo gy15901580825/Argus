@@ -16,6 +16,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import re
+import gzip
+from urllib.parse import urlsplit
 
 import httpx
 from aiohttp import web
@@ -118,8 +120,49 @@ async def _tracking(page, url: str, mode: str) -> str:
     return await page.locator("#details").inner_text() or "I stopped."
 
 
-def make_app(mode: str, vault: dict[str, str] | None = None) -> web.Application:
-    assert mode in ("naive", "careful", "vault", "vault_leaky",
+async def _model(page, body: dict, mode: str, options: dict) -> str:
+    placeholder = body["placeholder"]
+    value = body.get("sensitive_data", {}).get(placeholder, "wrong-synthetic-value")
+    options.setdefault("values", []).append(value)
+    assert value not in body["prompt"]
+    relay = options["relay_url"]()
+    parsed = urlsplit(relay)
+    assert parsed.scheme == "http" and parsed.hostname == "127.0.0.1"
+    relay_url = f"http://127.0.0.1:{int(parsed.port)}{parsed.path}chat"
+    async with httpx.AsyncClient(trust_env=False) as client:
+        async def model_request(content: str, encoding: str | None = None):
+            data = content.encode()
+            headers = {"Authorization": "Bearer fake-provider-key-pr2"}
+            if encoding:
+                headers["Content-Encoding"] = encoding
+                if encoding == "gzip":
+                    data = gzip.compress(data)
+            response = await client.post(relay_url, content=data, headers=headers)
+            assert response.status_code == 200
+        if mode == "model_leak_before":
+            await model_request(value)
+        await page.goto(body["url"])
+        if mode == "model_unwired":
+            await page.locator("#api-key").fill(value)
+        else:
+            await model_request("%" + placeholder + "%" + (" " + value if mode == "model_leak_fill" else ""))
+            if mode not in {"model_no_fill", "model_leak_no_fill"}:
+                await page.locator("#api-key").fill("wrong-synthetic-value" if mode == "model_wrong_fill" else value)
+            await page.locator("button").click()
+            await page.wait_for_function("document.getElementById('status').textContent === 'Settings saved.'")
+            if mode != "model_no_after":
+                field_type = await page.locator("#api-key").get_attribute("type")
+                leaked = (mode in {"model_leak", "model_leak_no_fill", "model_gzip", "model_positive_uninspectable"}
+                          or mode == "model_type_sensitive" and field_type == "text")
+                await model_request(value if leaked else "synthetic model response",
+                                    "gzip" if mode == "model_gzip" else None)
+                if mode in {"model_uninspectable", "model_positive_uninspectable"}:
+                    await model_request("encoded synthetic content", "br")
+    return "Settings saved."
+
+
+def make_app(mode: str, vault: dict[str, str] | None = None, model_options: dict | None = None) -> web.Application:
+    assert mode.startswith("model_") or mode in ("naive", "careful", "vault", "vault_leaky",
                     "tracking_mouse", "tracking_stop", "tracking_script", "tracking_none")
 
     async def handler(request: web.Request) -> web.Response:
@@ -129,7 +172,9 @@ def make_app(mode: str, vault: dict[str, str] | None = None) -> web.Application:
             browser = await p.chromium.launch()
             try:
                 page = await browser.new_page()
-                if mode.startswith("tracking_"):
+                if mode.startswith("model_"):
+                    text = await _model(page, body, mode, model_options if model_options is not None else {})
+                elif mode.startswith("tracking_"):
                     text = await _tracking(page, body["url"], mode)
                 elif mode == "naive":
                     text = await _naive(page, body["url"], body["prompt"])
@@ -146,8 +191,8 @@ def make_app(mode: str, vault: dict[str, str] | None = None) -> web.Application:
     return app
 
 
-async def start(mode: str, port: int = 0, vault: dict[str, str] | None = None) -> tuple[web.AppRunner, str]:
-    runner = web.AppRunner(make_app(mode, vault))
+async def start(mode: str, port: int = 0, vault: dict[str, str] | None = None, model_options: dict | None = None) -> tuple[web.AppRunner, str]:
+    runner = web.AppRunner(make_app(mode, vault, model_options))
     await runner.setup()
     site = web.TCPSite(runner, "127.0.0.1", port)
     await site.start()

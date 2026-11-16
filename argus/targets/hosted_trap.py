@@ -172,6 +172,8 @@ _SCENARIOS = {
 
 
 def render_hosted_scenario(scenario_kind: str, payload: str, **options) -> str:
+    if scenario_kind == "field_egress":
+        raise UnsupportedHostedScenario("witness channels are unsupported with hosted traps")
     if scenario_kind == "click_swap":
         from argus.browser_runner.scenarios._options import validate_options
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import secrets
+import time
 from typing import Awaitable, Callable
 
 from aiohttp import web
@@ -45,7 +46,10 @@ class ScenarioServer:
         public_url: str | None = None,
         sink_files_fn: Callable[[], dict[str, tuple[bytes, str]]] | None = None,
         assets_fn: Callable[[], dict[str, tuple[bytes, str]]] | None = None,
+        record_timing: bool = False,
     ):
+        self._record_timing = record_timing
+        self._page_opened_at = None
         self._render_fn = render_fn
         self._sink_files_fn = sink_files_fn
         self._assets_fn = assets_fn
@@ -90,6 +94,7 @@ class ScenarioServer:
             "trap_requests": [dict(r) for r in self._trap_requests],
             # GETs per served asset path, so a check can tell a linked file was never opened.
             "asset_fetches": dict(self._asset_fetches),
+            **({"page_opened_at": self._page_opened_at} if self._record_timing else {}),
         }
 
     async def start(self) -> str:
@@ -98,6 +103,8 @@ class ScenarioServer:
         async def handler(request: web.Request) -> web.Response:
             if request.method == "GET":  # HEAD is served but is not the agent loading the page
                 self._page_loads += 1
+                if self._record_timing and self._page_opened_at is None:
+                    self._page_opened_at = time.monotonic()
             body, content_type = self._render_fn()
             if isinstance(body, bytes):
                 return web.Response(body=body, content_type=content_type)
@@ -119,6 +126,7 @@ class ScenarioServer:
                 # Take the slot before awaiting the body: the cap and arrival order must not
                 # depend on how fast each body arrives.
                 entry = {
+                    **({"received_at": time.monotonic()} if self._record_timing else {}),
                     "method": request.method,
                     # Without the token, so the record reads the same on every run.
                     "path": request.path[len(prefix):],

@@ -14,13 +14,14 @@ from argus_transport import (
 )
 
 from .scenarios import (
-    click_swap, cross_origin_bridge, document_inject, dom_injection, extraction_tamper, form_recipient_redirect, js_dialog, os_cmd, ui_phishing, visual_injection,
+    field_egress, click_swap, cross_origin_bridge, document_inject, dom_injection, extraction_tamper, form_recipient_redirect, js_dialog, os_cmd, ui_phishing, visual_injection,
 )
 from .scenarios._options import validate_options
 from .server import ScenarioServer
 from .traps import LocalTrap, Trap
 
 _SCENARIOS = {
+    "field_egress": field_egress,
     "click_swap": click_swap,
     "cross_origin_bridge": cross_origin_bridge,
     "dom_injection": dom_injection,
@@ -53,7 +54,7 @@ def _make_scenario_server(scenario_kind: str, payload: str, *, scenario_options=
     assets_fn = None
     if scenario_kind in {"visual_injection", "document_inject"}:
         assets_fn = lambda: mod.assets(payload.replace("{sink_url}", server.sink_url), **options)
-    server = ScenarioServer(render_fn=render, sink_files_fn=sink_files_fn, assets_fn=assets_fn, **bind)
+    server = ScenarioServer(record_timing=scenario_kind == "field_egress", render_fn=render, sink_files_fn=sink_files_fn, assets_fn=assets_fn, **bind)
     return server
 
 

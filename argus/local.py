@@ -19,6 +19,7 @@ from argus_transport.cleanup import run_error_detail
 from argus.cost_meter import CostExceededError, unpriced_hint
 from argus.coverage import build_coverage, build_summary
 from argus.probe import load_probe_library
+from argus.model_egress import MODEL_PROBE, annotate_pairs
 from argus.persona_strategy import DEFAULT_DEEP_PAIRS, DEFAULT_MAX_ROUNDS
 from argus.runner import NO_JUDGE_KEY, TargetUnreachableError, skipped_finding
 from argus.targets import build_target
@@ -206,6 +207,9 @@ async def run_local(
             ),
         }
 
+    paired_findings: list[dict] = []
+    defer_pair = {MODEL_PROBE, MODEL_PROBE + "_control"} <= set(req.probe_ids)
+
     emitted: list[dict] = []
     for finding in skipped:
         emitted.append(finding)
@@ -243,14 +247,26 @@ async def run_local(
                     spent = api._COST_METER.spent_in_current_run()
             if finding.get("type") not in {"target_cleanup", "deep_run"}:
                 emitted.append(finding)
+            if defer_pair and finding.get("probe_id") in {MODEL_PROBE, MODEL_PROBE + "_control"}:
+                paired_findings.append(finding)
+            else:
+                yield finding
+        annotate_pairs(paired_findings)
+        for finding in paired_findings:
             yield finding
     except CostExceededError as e:
+        annotate_pairs(paired_findings)
+        for finding in paired_findings:
+            yield finding
         # Raised by cost_meter.record() once the run is underway. Other mid-run
         # exceptions propagate unchanged for the CLI to report.
         error = LocalRunError(run_error_detail(e), code="cost")
         error.target_cleanup = getattr(e, "target_cleanup", None)
         raise error from e
     except TargetUnreachableError as e:
+        annotate_pairs(paired_findings)
+        for finding in paired_findings:
+            yield finding
         error = LocalRunError(run_error_detail(e), code="unreachable")
         error.target_cleanup = getattr(e, "target_cleanup", None)
         raise error from e
