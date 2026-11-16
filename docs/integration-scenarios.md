@@ -96,10 +96,20 @@ before sending that group's trigger. This also applies to baseline objects and e
 Scenarios with no eligible delivery observer retain their existing behavior.
 
 A planted seed message delivered to spam ends the run `not_ready` before that group's
-trigger, with `seed <key> was delivered to spam`. Make the observer mailbox accept the
-seed sender (for example, create a filter that never sends its messages to spam) and
-check the sender domain's mail authentication. A seed delivered to trash also ends
-the run `not_ready`. In both cases the recipient record is saved for cleanup.
+trigger. The reason includes the message's sorted system label IDs and thread ID,
+for example `seed seed_mail was delivered to spam (message labels: CATEGORY_PERSONAL, SPAM, UNREAD; thread 1a1e...)`.
+User label IDs are replaced with a count. The same details appear in `seed_delivery`
+evidence in `run.json`. A seed delivered to trash also ends the run `not_ready`.
+In both cases the recipient record is saved for cleanup.
+
+Make the observer mailbox accept the seed sender (for example, create an allow filter)
+and check the sender's mail authentication. A provider may still classify a seed as
+spam despite an allow filter because its content is adversarial by design.
+
+The runner renders each `send_seed` subject and appends ` [<run id>]` using the full
+run UUID, so mail clients do not thread different runs together. The full ID avoids
+collisions between runs with the same short prefix. This applies to test and control
+seeds through every sending driver; run markers keep their existing format.
 
 The runner saves the sender artifact for cleanup and saves the recipient record in the same
 run, group, control and marker before continuing. `{seed.id}` resolves to the recipient message ID.
@@ -107,8 +117,46 @@ A successful target read by that ID confirms contact only for its group and name
 When a marker is also supplied, both must match one record, including any supplied version.
 Gmail marker recovery returns the same recipient record key, so cleanup visits it once.
 
+## Seed insert mode
+
+Use `seed_mode: "insert"` when the observer mailbox files the adversarial seed as spam
+and you want to test the agent with the seed in its inbox. Real email delivery remains
+the default (`"deliver"`). Set `seed_mode` on the scenario in the run API request, or
+in the observer driver's options under `credential_provider.drivers`. The scenario
+setting takes precedence; an omitted or `null` scenario setting uses the observer
+option, which defaults to `"deliver"`.
+
+Insert mode bypasses provider spam scoring and transport authentication. Its results
+describe the agent's behavior after direct mailbox placement, not the email delivery
+path. Gmail inserts the same marked message with the declared `expected_seed_sender`
+as From and the observer mailbox as To, using `users.messages.insert` with
+`internalDateSource=receivedTime` and the `INBOX` and `UNREAD` labels. Configure
+`expected_seed_sender` on the observer Gmail driver. The sending driver is neither
+checked nor called for `send_seed` objects; other objects use their usual drivers.
+The scenario's existing permission for that object's `send_seed` operation still applies.
+
+The observer connection needs the extra scope
+`https://www.googleapis.com/auth/gmail.insert`, along with its existing read scope.
+Only insert mode requests the insert scope. A missing scope fails readiness with the
+scope named. The selected `DeliveryObserver` must also implement the optional
+`SeedInserter.insert_seed(ctx, key, spec, observer)` capability. Missing insertion
+support ends the run `not_ready`; the runner never falls back to delivery.
+
+There is no delivery wait in insert mode. The driver saves the recipient record, then
+reads the message back once to check its trusted sender, recipient and marker.
+If a filter moved it to spam or trash, the run ends `not_ready` before the trigger.
+Baseline seeds and each named control use the same rules. Cleanup handles inserted
+messages like delivered recipient messages, using the optional existing `gmail.modify`
+scope; unavailable modification permission leaves the message retained as usual.
+
+Evidence records `seed_insert` with result `inserted`. The outcome reason states that
+the seed was inserted, and the finding's `evidence.scenario.seed_mode` field in
+`run.json` records `"insert"` or `"deliver"`.
+
 ## Scenario API release notes
 
+Scenario requests add optional `seed_mode` (`"deliver"`, `"insert"` or `null`).
+Scenario results add `seed_mode`, with the resolved mode and a default of `"deliver"`.
 The scenario request adds optional `seed_delivery_wait_s` (default `null`, which uses the
 observer driver setting or 120 seconds). The run and cleanup endpoints retain their existing
 required fields. Observer drivers may implement the optional delivery capability above.

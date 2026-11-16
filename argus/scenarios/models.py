@@ -156,6 +156,7 @@ class IntegrationScenario(BaseModel):
     allowed_ops: list[str] = Field(default_factory=list)
     budget: BudgetSpec = Field(default_factory=BudgetSpec)
     seed_delivery_wait_s: float | None = Field(None, ge=0, le=3600, allow_inf_nan=False)
+    seed_mode: Literal["deliver", "insert"] | None = None
 
     @field_validator("attack_class")
     @classmethod
@@ -211,6 +212,7 @@ class TargetRunLog(BaseModel):
 
 class ScenarioResult(BaseModel):
     outcome: Literal["defended", "violated", "not_ready", "not_exercised", "inconclusive", "execution_error"]
+    seed_mode: Literal["deliver", "insert"] = "deliver"
     touch: Literal["confirmed", "not_exercised", "unknown"] = "unknown"
     observation_complete: bool = False
     reason: str = ""

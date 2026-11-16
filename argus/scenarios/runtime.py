@@ -30,9 +30,10 @@ class NotReady(RuntimeError):
 class SeedNotDeliverable(RuntimeError):
     """A trusted recipient copy exists but cannot be used by the target."""
 
-    def __init__(self, reason: str, recipient: ObjectRecord):
+    def __init__(self, reason: str, recipient: ObjectRecord, *, evidence: Evidence | None = None):
         super().__init__(reason)
         self.recipient = recipient
+        self.evidence = evidence
 
 
 def read_template(catalog_dir: Path, name: str) -> str:
@@ -197,6 +198,13 @@ class DeliveryObserver(Protocol):
 
     async def await_delivery(self, ctx: RunContext, obj: ObjectRecord, spec: ObjectSpec,
                              observer: ConnRef, deadline: float) -> ObjectRecord: ...
+
+
+class SeedInserter(Protocol):
+    """Optional seed placement capability on a delivery observer."""
+
+    async def insert_seed(self, ctx: RunContext, key: str, spec: ObjectSpec,
+                          observer: ConnRef) -> ObjectRecord: ...
 
 
 def build_drivers(names: set[str], provider: CredentialProvider, config: dict | None = None) -> dict[str, Driver]:

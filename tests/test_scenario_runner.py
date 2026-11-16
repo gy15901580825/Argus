@@ -797,3 +797,30 @@ async def test_registered_recipient_marker_and_id_confirm_touch(tmp_path):
                                 "object_id": recipient.external_id}])
     assert r.touched(log, "test") == "confirmed"
     assert r.touched(log, "control") == "unknown"
+
+
+@pytest.mark.parametrize("group,control_name", [("test", None), ("control", "benign")])
+@pytest.mark.parametrize("subject", ["Test document update", "Test document update {run_id}"])
+async def test_seed_subjects_are_unique_per_run_without_changing_markers(tmp_path, group, control_name, subject):
+    class SubjectDriver(Driver):
+        async def prepare(self, ctx, key, spec):
+            self.subject = spec.subject
+            return await super().prepare(ctx, key, spec)
+
+    spec = scenario(objects={"seed": {"driver": "fake", "op": "send_seed",
+                                     "subject": subject,
+                                     "content": "Material {marker}"}})
+    subjects = []
+    # Runs with the same short prefix still need separate subjects.
+    for run_id in ["12345678-0000-4000-8000-000000000001", "12345678-0000-4000-8000-000000000002"]:
+        driver = SubjectDriver()
+        r = runner(tmp_path, driver, spec=spec, run_id=run_id)
+        r.ctx.group, r.ctx.control_name = group, control_name
+        await r.prepare("seed")
+        assert driver.subject == subject.replace("{run_id}", run_id) + f" [{run_id}]"
+        marker = f"argus:{run_id}:{group}:" + (f"{control_name}:" if control_name else "") + "seed"
+        assert r.ctx.objects["seed"].marker == marker
+        assert driver.contents[marker] == f"Material {marker}"
+        assert spec.objects["seed"].subject == subject
+        subjects.append(driver.subject)
+    assert subjects[0] != subjects[1]

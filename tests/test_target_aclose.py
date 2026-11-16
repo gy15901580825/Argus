@@ -137,12 +137,18 @@ async def test_closed_once_and_undos_run_when_the_run_is_cancelled():
         async def consume(gen):
             async for _ in gen:
                 pass
-        with local_transport_mode():
+        # Catalog loading is setup, outside the deadline for entering the request.
+        library = api.load_probe_library(api.PROBES_DIR)
+        with local_transport_mode(), patch("argus.api.load_probe_library", return_value=library):
             task = asyncio.create_task(_drive(SendingRunner, consume, target=target))
-            await asyncio.wait_for(entered.wait(), 1)
-            task.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await task
+            try:
+                await asyncio.wait_for(entered.wait(), 1)
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            finally:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
         assert target.closed == 1
         assert deletes(app) == ['/v1/messages?remoteId=local-ref&sourceId=source-one', '/v1/sources/source-one']
         assert target.cleanup_report()['complete']

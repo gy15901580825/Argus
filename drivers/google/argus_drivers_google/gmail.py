@@ -6,9 +6,10 @@ import re
 from email.message import EmailMessage
 from email.utils import getaddresses
 
+from argus.scenarios.credentials import CredentialUnavailable
 from argus.scenarios.models import CleanupResult, ConnCheck, Evidence, ObjectRecord, Provenance, object_marker
 from argus.scenarios.runtime import NotReady, SeedNotDeliverable
-from argus_drivers_google.common import GMAIL_MODIFY, GMAIL_READ, GMAIL_SEND, GoogleDriver, owner_hash
+from argus_drivers_google.common import GMAIL_INSERT, GMAIL_MODIFY, GMAIL_READ, GMAIL_SEND, GoogleDriver, owner_hash
 
 
 BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
@@ -28,11 +29,43 @@ def has_marker(message: dict, marker: str) -> bool:
     return headers(message).get("x-argus-marker") == marker or bool(re.search(re.escape(marker) + r"(?![A-Za-z0-9_:-])", body_text(message.get("payload", {}))))
 
 
+def seed_message(sender, recipient, spec, marker):
+    mail = EmailMessage()
+    mail["From"] = sender
+    mail["To"] = recipient
+    mail["Subject"] = spec.subject + " " + marker
+    mail["Message-ID"] = "<" + hashlib.sha256(marker.encode()).hexdigest() + "@argus.invalid>"
+    mail["X-Argus-Marker"] = marker
+    mail.set_content(spec.content + "\n\n" + marker)
+    return base64.urlsafe_b64encode(mail.as_bytes()).decode()
+
+
+def check_seed_labels(message, recipient, mode="deliver"):
+    for label in ("SPAM", "TRASH"):
+        if label in message.get("labelIds", []):
+            label_ids = sorted(l for l in message.get("labelIds", []) if re.fullmatch(r"[A-Z][A-Z_]*", l))
+            user_label_count = len(message.get("labelIds", [])) - len(label_ids)
+            thread_id = message.get("threadId")
+            detail = "message labels: " + ", ".join(label_ids)
+            if user_label_count:
+                detail += f"; user labels: {user_label_count}"
+            detail += f"; thread {thread_id or 'unknown'}"
+            evidence = Evidence(run_id=recipient.run_id, group=recipient.group, control_name=recipient.control_name,
+                                source_system=recipient.provider, provenance=Provenance.THIRD_PARTY_API,
+                                acquired_via="gmail_api", object_id=recipient.external_id,
+                                operation="seed_insert" if mode == "insert" else "seed_delivery", result=label.lower(),
+                                details={"label_ids": label_ids, "user_label_count": user_label_count,
+                                         "thread_id": thread_id})
+            action = "inserted into" if mode == "insert" else "delivered to"
+            raise SeedNotDeliverable(f"seed {recipient.logical_key} was {action} {label.lower()} ({detail})",
+                                     recipient, evidence=evidence)
+
+
 class GmailDriver(GoogleDriver):
     name = "gmail"
 
     def scopes_for(self, operations):
-        return [{GMAIL_SEND} if op == "send_seed" else {GMAIL_READ} for op in operations]
+        return [{GMAIL_INSERT} if op == "insert_seed" else {GMAIL_SEND} if op == "send_seed" else {GMAIL_READ} for op in operations]
 
     async def account(self, ctx, ref):
         if ref.connection_id not in self.accounts:
@@ -64,6 +97,14 @@ class GmailDriver(GoogleDriver):
         return mailbox.lower() in recipients and bool(senders.intersection(expected))
 
     async def check(self, ctx, ref, need):
+        if "insert_seed" in need:
+            if not self.config.get("expected_seed_sender"):
+                return ConnCheck(active=False, detail="Gmail insertion requires the declared expected_seed_sender address")
+            try:
+                await self.token(ctx, ref, {GMAIL_INSERT})
+            except CredentialUnavailable:
+                return ConnCheck(active=False, missing_scopes=[GMAIL_INSERT],
+                                 detail=f"{ref.role} connection needs {GMAIL_INSERT} for seed_mode insert")
         if "send_seed" in need and not self.config.get("expected_seed_sender"):
             return ConnCheck(active=False, detail="Gmail sending requires the declared operator sender address")
         check = await super().check(ctx, ref, need)
@@ -98,17 +139,33 @@ class GmailDriver(GoogleDriver):
                               control_name=ctx.control_name,
                               marker=marker, owner=owner_hash(sender), connection_id=ref.connection_id)
         ctx.registry.save(record)
-        mail = EmailMessage()
-        mail["From"] = sender
-        mail["To"] = ctx.target_identity if spec.to == "target_agent" else spec.to
-        mail["Subject"] = spec.subject + " " + marker
-        mail["Message-ID"] = "<" + hashlib.sha256(marker.encode()).hexdigest() + "@argus.invalid>"
-        mail["X-Argus-Marker"] = marker
-        mail.set_content(spec.content + "\n\n" + marker)
-        sent = await self.request(ctx, ref, {GMAIL_SEND}, "POST", BASE + "/messages/send", json={"raw": base64.urlsafe_b64encode(mail.as_bytes()).decode()})
+        raw = seed_message(sender, ctx.target_identity if spec.to == "target_agent" else spec.to, spec, marker)
+        sent = await self.request(ctx, ref, {GMAIL_SEND}, "POST", BASE + "/messages/send", json={"raw": raw})
         record.external_id = sent["id"]
         ctx.registry.records.pop(ctx.registry.key(record.model_copy(update={"external_id": "pending-send"})), None)
         return record
+
+    async def insert_seed(self, ctx, key, spec, observer):
+        ctx.authorize(f"{spec.driver}.send_seed")
+        ctx.authorize("gmail.read")
+        sender = self.config.get("expected_seed_sender")
+        if not sender:
+            raise NotReady("Gmail insertion requires the declared expected_seed_sender address")
+        mailbox = await self.account(ctx, observer)
+        marker = ctx.marker(key)
+        inserted = await self.request(ctx, observer, {GMAIL_INSERT}, "POST", BASE + "/messages/insert",
+                                      params={"internalDateSource": "receivedTime"},
+                                      json={"raw": seed_message(sender, mailbox, spec, marker), "labelIds": ["INBOX", "UNREAD"]})
+        recipient = ObjectRecord(run_id=ctx.run_id, group=ctx.group, control_name=ctx.control_name,
+                                 logical_key=key, provider=self.name, external_id=inserted["id"],
+                                 marker=marker, owner=owner_hash(mailbox), connection_id=observer.connection_id)
+        ctx.registry.save(recipient)
+        message = await self.request(ctx, observer, {GMAIL_READ}, "GET", BASE + "/messages/" + recipient.external_id,
+                                     params={"format": "full"})
+        if not self.trusted_seed(ctx, message, marker, mailbox):
+            raise SeedNotDeliverable("seed marker matched a message with an unexpected sender or recipient", recipient)
+        check_seed_labels(message, recipient, "insert")
+        return recipient
 
     async def await_delivery(self, ctx, obj, spec, observer, deadline):
         mailbox = await self.account(ctx, observer)
@@ -119,9 +176,7 @@ class GmailDriver(GoogleDriver):
                     recipient = ObjectRecord(run_id=obj.run_id, group=obj.group, control_name=obj.control_name,
                                              logical_key=obj.logical_key, provider=self.name, external_id=message["id"],
                                              marker=obj.marker, owner=owner_hash(mailbox), connection_id=observer.connection_id)
-                    for label in ("SPAM", "TRASH"):
-                        if label in message.get("labelIds", []):
-                            raise SeedNotDeliverable(f"seed {obj.logical_key} was delivered to {label.lower()}", recipient)
+                    check_seed_labels(message, recipient)
                     if ctx.budget.clock() >= deadline:
                         raise TimeoutError()
                     return recipient
@@ -170,7 +225,13 @@ class GmailDriver(GoogleDriver):
         return records
 
     async def recover(self, ctx, scenario):
-        ref = ctx.connection("observer")
+        role = "observer"
+        if (scenario.seed_mode or self.config.get("seed_mode", "deliver")) == "insert":
+            roles = {scope.connection for scope in scenario.observe if scope.driver == self.name}
+            if len(roles) != 1:
+                raise NotReady("seed insertion cleanup needs an unambiguous observer mailbox")
+            role = next(iter(roles))
+        ref = ctx.connection(role)
         email = await self.account(ctx, ref)
         if any(spec.op == "send_seed" for spec in scenario.objects.values()) and not self.config.get("expected_seed_sender") and not any(o.provider in {"acs_email", "hosted_acs"} for o in ctx.registry.records.values()):
             raise NotReady("trusted seed sender is not configured; received-email cleanup cannot be verified")

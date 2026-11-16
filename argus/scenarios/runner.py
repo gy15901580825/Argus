@@ -44,6 +44,7 @@ class ScenarioRunner:
         self.assertions: list[dict] = []
         self._emitted_objects: dict[str, str] = {}
         self.cleanup_gaps: list[str] = []
+        self.seed_mode = scenario.seed_mode or "deliver"
 
     async def event(self, kind: str, **data):
         if self.emit:
@@ -147,7 +148,13 @@ class ScenarioRunner:
             root = Path(os.getenv("ARGUS_SCENARIO_CATALOG_DIR", str(Path(__file__).parent / "catalog")))
             spec = spec.model_copy(update={"content": read_template(root, spec.template)})
         content = self.render(spec.content).replace("{marker}", self.ctx.marker(key)).replace("{" + key + ".marker}", self.ctx.marker(key))
-        spec = spec.model_copy(update={"content": content})
+        updates = {"content": content}
+        if spec.op == "send_seed":
+            updates["subject"] = self.render(spec.subject) + f" [{self.ctx.run_id}]"
+        spec = spec.model_copy(update=updates)
+        if spec.op == "send_seed" and self.resolve_seed_mode() == "insert":
+            await self.insert_seed(key, spec)
+            return
         driver = self.drivers[spec.driver]
         obj = await driver.prepare(self.ctx, key, spec)
         if obj.run_id != self.ctx.run_id or obj.group != self.ctx.group or obj.control_name != self.ctx.control_name or obj.marker != self.ctx.marker(key):
@@ -158,14 +165,60 @@ class ScenarioRunner:
         if spec.op == "send_seed":
             await self.await_seed_delivery(key, obj, spec)
 
-    async def await_seed_delivery(self, key: str, obj: ObjectRecord, spec: ObjectSpec):
+    def delivery_observer(self, key: str = "seed"):
         observers = {(scope.driver, scope.connection): self.drivers[scope.driver] for scope in self.scenario.observe
                      if hasattr(self.drivers[scope.driver], "await_delivery")}
         if not observers:
-            return
+            return None
         if len(observers) != 1:
             raise NotReady(f"seed {key} has ambiguous delivery observers")
-        (name, role), driver = next(iter(observers.items()))
+        return next(iter(observers.items()))
+
+    def resolve_seed_mode(self):
+        selected = self.delivery_observer()
+        option = getattr(selected[1], "config", {}).get("seed_mode", "deliver") if selected else "deliver"
+        mode = self.scenario.seed_mode if self.scenario.seed_mode is not None else option
+        if mode not in ("deliver", "insert"):
+            raise NotReady("invalid seed_mode observer option")
+        self.seed_mode = mode
+        if self.seed_mode == "insert" and (not selected or not hasattr(selected[1], "insert_seed")):
+            raise NotReady("seed_mode insert needs a mailbox observer that supports insertion")
+        return self.seed_mode
+
+    async def insert_seed(self, key: str, spec: ObjectSpec):
+        (name, role), driver = self.delivery_observer(key)
+        observer = self.ctx.connection(role)
+        self.ctx.authorize(f"{spec.driver}.send_seed")
+        failure = None
+        try:
+            recipient = await driver.insert_seed(self.ctx, key, spec, observer)
+        except SeedNotDeliverable as exc:
+            recipient, failure = exc.recipient, exc
+        self.validate_seed_recipient(key, recipient, name, observer)
+        self.ctx.registry.save(recipient)
+        self.ctx.objects[key] = recipient
+        await self.object_events()
+        self.evidence.append(Evidence(run_id=self.ctx.run_id, group=self.ctx.group, control_name=self.ctx.control_name,
+                                      source_system=name, provenance=Provenance.THIRD_PARTY_API,
+                                      acquired_via=f"{name}_api", object_id=recipient.external_id,
+                                      operation="seed_insert", result="inserted", details={"marker": recipient.marker, "seed_mode": "insert"}))
+        if failure is not None:
+            if failure.evidence is not None:
+                self.evidence.append(failure.evidence)
+            raise NotReady(str(failure)) from failure
+
+    def validate_seed_recipient(self, key, recipient, name, observer):
+        if (recipient.run_id != self.ctx.run_id or recipient.group != self.ctx.group
+                or recipient.control_name != self.ctx.control_name or recipient.marker != self.ctx.marker(key)
+                or recipient.logical_key != key or recipient.provider != name
+                or recipient.connection_id != observer.connection_id):
+            raise NotReady(f"seed {key} delivery observer returned an object belonging to another run, group or mailbox")
+
+    async def await_seed_delivery(self, key: str, obj: ObjectRecord, spec: ObjectSpec):
+        selected = self.delivery_observer(key)
+        if selected is None:
+            return
+        (name, role), driver = selected
         observer = self.ctx.connection(role)
         wait_s = self.scenario.seed_delivery_wait_s
         if wait_s is None:
@@ -190,20 +243,24 @@ class ScenarioRunner:
             raise NotReady(reason) from exc
         if delivery_failure is None and self.clock() >= deadline:
             raise NotReady(reason)
-        if (recipient.run_id != obj.run_id or recipient.group != obj.group
-                or recipient.control_name != obj.control_name or recipient.marker != obj.marker
-                or recipient.logical_key != key or recipient.provider != name
-                or recipient.connection_id != observer.connection_id):
-            raise NotReady(f"seed {key} delivery observer returned an object belonging to another run, group or mailbox")
+        self.validate_seed_recipient(key, recipient, name, observer)
         self.ctx.registry.save(recipient)
         self.ctx.objects[key] = recipient
         await self.object_events()
         if delivery_failure is not None:
+            if delivery_failure.evidence is not None:
+                self.evidence.append(delivery_failure.evidence)
             raise NotReady(str(delivery_failure)) from delivery_failure
 
     async def connections_ready(self):
         requirements: dict[tuple[str, str], set[str]] = {}
+        if any(spec.op == "send_seed" for spec in self.scenario.objects.values()):
+            self.resolve_seed_mode()
         for spec in self.scenario.objects.values():
+            if spec.op == "send_seed" and self.seed_mode == "insert":
+                (name, role), _ = self.delivery_observer()
+                requirements.setdefault((name, role), set()).add("insert_seed")
+                continue
             requirements.setdefault((spec.driver, spec.from_ or spec.connection), set()).add(spec.op)
         for observe in self.scenario.observe:
             requirements.setdefault((observe.driver, observe.connection), set()).add(observe.collect)
@@ -406,7 +463,10 @@ class ScenarioRunner:
             raise asyncio.CancelledError
         if outcome == "defended" and self.gaps:
             outcome, reason = "inconclusive", "scenario evidence has unresolved gaps"
+        if self.seed_mode == "insert" and outcome in {"defended", "violated", "inconclusive", "not_exercised"}:
+            reason += "; seed was inserted into the observer mailbox"
         return ScenarioResult(outcome=outcome, touch=self.touch, observation_complete=self.observation_complete,
+                              seed_mode=self.seed_mode,
                               reason=reason, phase=last_phase, evidence=self.evidence,
                               objects=list(self.ctx.registry.records.values()), budget=self.ctx.budget.summary(),
                               assertions=self.assertions, gaps=self.gaps, cleanup_gaps=self.cleanup_gaps,
