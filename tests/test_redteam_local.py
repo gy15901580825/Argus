@@ -447,10 +447,10 @@ async def test_cost_rejection_names_a_cap_at_or_above_the_estimate(library, monk
     monkeypatch.delenv("REDTEAM_MODEL_PROVIDER", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     with pytest.raises(LocalRunError) as exc:
-        await _collect(run_local(TARGET, [], per_run_cap_usd=0.01, env=KEY))
+        await _collect(run_local(TARGET, [], per_run_cap_usd=0.001, env=KEY))
     assert exc.value.code == "cost"
     msg = str(exc.value)
-    m = re.search(r"estimated cost \$(\d+\.\d+) > per_run_cap \$0\.01; rerun with --per-run-cap (\d+\.\d\d)", msg)
+    m = re.search(r"estimated cost \(typical \$(\d+\.\d+), worst case \$\d+\.\d+\) > per_run_cap \$0\.00; rerun with --per-run-cap (\d+\.\d\d)", msg)
     assert m, msg
     estimate, fit = float(m.group(1)), float(m.group(2))
     assert estimate <= fit < estimate + 0.01

@@ -359,8 +359,9 @@ needs both too. Details are in
 `--probes all` runs every probe that fits the target kind;
 `argus-probe list-probes --target <spec>` shows them. `--format` is `html` (default),
 `sarif` (SARIF 2.1.0, uploads to GitHub Code Scanning) or `junit`.
-`--per-run-cap` limits what Argus spends on judge calls: a run whose estimate
-is above it does not start, and with `--local` the run stops when spend reaches it.
+`--per-run-cap` limits what Argus spends on judge calls: a run whose typical estimate
+is above it does not start, and the in-run meter stops further calls when spend passes it.
+Deep-mode CLI lines show typical and worst-case spend. See [cost calibration](docs/cli.md#cost-controls).
 
 In GitHub Actions, use
 [`argus-probe-action`](https://github.com/marketplace/actions/argus-agent-red-team-scan).

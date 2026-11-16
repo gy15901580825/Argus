@@ -442,7 +442,8 @@ def test_server_preflight_402_accounts_for_override(library, monkeypatch):
     install(replace(p, judge_when_assertions_pass=True), target)
     monkeypatch.setattr(llm, 'credential_error', lambda *_: None)
     monkeypatch.setattr(cost_meter, '_price_for', lambda *_: {'input': 1.0, 'output': 1.0})
-    monkeypatch.setattr(api, '_COST_METER', CostMeter(daily_cap_usd=100, per_run_cap_usd=0.01))
+    # A cap between one and four typical judge calls at the declared $1/$1 rates.
+    monkeypatch.setattr(api, '_COST_METER', CostMeter(daily_cap_usd=100, per_run_cap_usd=0.001))
     class Judge:
         async def judge(self, **kwargs):
             return Verdict('pass', 'info', 1.0, 'offline safe reply', 'test')

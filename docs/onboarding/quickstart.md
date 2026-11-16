@@ -88,9 +88,9 @@ In local mode, add `--local` to the same command and drop the server variables.
 
 The CLI submits the run to that server, polls for completion (typically ~10–30 s), then writes the chosen format to disk.
 
-Add `--per-run-cap 0.50` to limit what Argus spends on judge and attacker calls. A run whose estimate is above the cap does not start, in both modes; with `--local` the run also stops when spend reaches the cap. Either way the command exits 4.
+Add `--per-run-cap 0.50` to limit what Argus spends on judge and attacker calls. A run whose typical estimate is above the cap does not start, in both modes; with `--local` the run also stops when spend reaches the cap. Either way the command exits 4.
 
-The pre-run estimate counts a fast and a strong judge call for every prompt of every selected probe that needs the judge. Deep mode also counts attacker calls for every persona × strategy thread at the requested round budget. Use `--mode deep --deep-pairs 2 --max-rounds 3 --seed replay-1` with named probes for an adaptive run (the engine server's `POST /redteam/run` accepts the same settings). Requests to your agent are not counted. On 2026-10-29, `--probes all` against a chat target was estimated at $5.32 with the default Anthropic judge, so it needs `--per-run-cap 5.32`; when a run is over the cap, the error names a cap at or above the estimate. Most verdicts do not escalate to the strong model, so a run usually costs well under its estimate.
+The pre-run admission estimate uses expected judge output and escalation rates. Deep-mode CLI lines show typical and worst-case spend; the latter assumes maximum output and every escalation. When typical spend is over the cap, the error names both numbers. See [cost caps and calibration](../cli.md#cost-controls).
 
 ## 6. Read the report
 
@@ -115,7 +115,7 @@ Those runs probe the agent again. A run you already stored on a server does not 
 | Use case | `--probes` value |
 |---|---|
 | Quick smoke (1 probe, 3 prompts) | `owasp_07_system_prompt_leakage` |
-| Full sweep: every probe that fits the target kind (a chat target needs `--per-run-cap 5.32`, see step 5) | `all` |
+| Full sweep: every probe that fits the target kind (choose a cap above the typical estimate, see step 5) | `all` |
 
 See [Threat coverage overview](./probe-id-cheatsheet.md) for the categories the library covers and recommended use-case → probe-set mappings.
 
