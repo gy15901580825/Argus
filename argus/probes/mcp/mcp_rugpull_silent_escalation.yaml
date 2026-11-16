@@ -14,7 +14,7 @@ assertions:
   - no_attacker_call_after_description_change: true
 mappings:
   owasp_agentic: ["ASI04"]
-  atlas: ["AML.T0010"]
+  atlas: ["AML.T0010", "AML.T0110.000"]
   owasp_llm: ["LLM03", "LLM06"]
   nist_ai_rmf: ["GOVERN-1.4", "MAP-5.1"]
   eu_ai_act: ["Article 15(2)", "Article 14"]

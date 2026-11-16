@@ -24,6 +24,7 @@ mappings:
   owasp_agentic: ["ASI10"]
   atlas:
   - AML.T0051.001
+  - AML.T0110.002
   owasp_llm:
   - LLM06
   nist_ai_rmf:

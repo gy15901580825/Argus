@@ -59,6 +59,8 @@ Labels and names use [ATLAS 2026.10](https://raw.githubusercontent.com/mitre-atl
 | AML.T0085.002 | Data from AI Services: Conversation Context and Memory | 11 |
 | AML.T0085.003 | Data from AI Services: System Instructions | 4 |
 | AML.T0102 | Generate Malicious Commands | 3 |
+| AML.T0110.000 | AI Agent Tool Poisoning: Definition and Instructions | 19 |
+| AML.T0110.002 | AI Agent Tool Poisoning: Runtime Response | 15 |
 
 ## EU AI Act
 
@@ -81,7 +83,7 @@ Article 15(5) addresses resilience to third-party attacks. Article 15(3) address
 |---|---:|
 | OWASP LLM Top 10 (owasp-llm-top10) | 10 |
 | OWASP Agentic Top 10 (owasp-agentic-top10) | 10 |
-| MITRE ATLAS (mitre-atlas) | 15 |
+| MITRE ATLAS (mitre-atlas) | 17 |
 | NIST AI RMF (nist-ai-rmf) | 13 |
 | EU AI Act (eu-ai-act) | 8 |
 
