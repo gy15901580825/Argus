@@ -341,7 +341,7 @@ def test_workflow_leaves_the_version_to_the_action_from_an_uninstalled_tree(tmp_
     assert "argus-version" not in step["with"]
 
 
-@pytest.mark.parametrize("installed_version", ["1.15.1", "1.15.2.dev0"])
+@pytest.mark.parametrize("installed_version", ["1.15.2", "1.15.3.dev0"])
 def test_workflow_pins_releases_and_leaves_main_builds_to_the_action(tmp_path, monkeypatch, installed_version):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("argus.cli.cmd_init._installed_version", lambda: installed_version)
@@ -349,8 +349,8 @@ def test_workflow_pins_releases_and_leaves_main_builds_to_the_action(tmp_path, m
     assert result.exit_code == 0, result.output
     workflow = yaml.safe_load((tmp_path / ".github/workflows/argus-probe.yml").read_text())
     step = next(s for s in workflow["jobs"]["redteam"]["steps"] if "with" in s)
-    if installed_version == "1.15.1":
-        assert step["with"]["argus-version"] == "1.15.1"
+    if installed_version == "1.15.2":
+        assert step["with"]["argus-version"] == "1.15.2"
     else:
         assert "argus-version" not in step["with"]
 
