@@ -583,3 +583,97 @@ async def test_grpc_ignores_environment_proxy(monkeypatch):
     finally:
         fake_proxy.close()
         await fake_proxy.wait_closed()
+
+
+async def injected_exchange(mode, client, url):
+    from argus_transport import ExecutionPolicy, TransportContext, TransportEngine, TransportSpec
+    from argus_transport.runtime_v2 import V2Run
+    from argus_transport.spec_v2 import TransportSpecV2
+    from argus_transport.engine import LegacyPreparedRequest, LegacyResponseSelector
+    from test_transport_engine import spec_dict
+    if mode == 'legacy':
+        return await TransportEngine.run_legacy(
+            LegacyPreparedRequest('POST', url, {}, b'{}', 5),
+            LegacyResponseSelector(text_path='$.result'), client=client)
+    data = spec_dict(url)
+    if mode == 'v1':
+        spec = TransportSpec.from_dict(data)
+        return await TransportEngine(spec, policy=ExecutionPolicy.local(spec), client=client).run(
+            TransportContext(prompt='hello'))
+    data['version'] = 2
+    spec = TransportSpecV2.from_dict(data)
+    run = V2Run(spec, policy=ExecutionPolicy.local(spec), client=client)
+    return await run.attempt(TransportContext(prompt='hello'))
+
+
+@pytest.mark.parametrize('mode', ['legacy', 'v1', 'v2'])
+@pytest.mark.parametrize('client_source', ['direct', 'factory'])
+@pytest.mark.parametrize('enabled', [False, True])
+async def test_injected_clients_cannot_bypass_policy(monkeypatch, mode, client_source, enabled):
+    import httpx
+    from argus_transport.address_policy import target_client
+    monkeypatch.setenv('ARGUS_TARGET_ADDRESS_POLICY', 'public_only' if enabled else '')
+    calls = []
+    async def handle(request):
+        calls.append(request.path)
+        return web.json_response({'status': 'COMPLETED', 'result': 'answer'})
+    async with server(handle) as url:
+        client = (httpx.AsyncClient(trust_env=False) if client_source == 'direct'
+                  else target_client(trust_env=False))
+        async with client:
+            if enabled:
+                with pytest.raises(Exception, match='target address not allowed by the address policy'):
+                    await injected_exchange(mode, client, url)
+                assert calls == []
+            else:
+                assert (await injected_exchange(mode, client, url)).response_text == 'answer'
+                assert calls
+
+
+@pytest.mark.parametrize('option', ['proxy', 'mounts'])
+async def test_factory_rejects_proxy_routing(monkeypatch, option):
+    import httpx
+    from argus_transport.address_policy import target_client
+    monkeypatch.setenv('ARGUS_TARGET_ADDRESS_POLICY', 'public_only')
+    calls = []
+    async def handle(request):
+        calls.append(request.path)
+        return web.json_response({'result': 'answer'})
+    async with server(handle) as local:
+        proxy_transport = httpx.AsyncHTTPTransport(proxy=local)
+        try:
+            routing = {'proxy': local} if option == 'proxy' else {'mounts': {'http://': proxy_transport}}
+            with pytest.raises(ValueError, match='public_only'):
+                async with target_client(**routing) as client:
+                    await client.get('http://8.8.8.8/target')
+            assert calls == []
+        finally:
+            await proxy_transport.aclose()
+
+
+@pytest.mark.parametrize('mode', ['legacy', 'v1', 'v2'])
+async def test_supplied_proxy_client_is_refused(monkeypatch, mode):
+    import httpx
+    monkeypatch.setenv('ARGUS_TARGET_ADDRESS_POLICY', 'public_only')
+    calls = []
+    async def handle(request):
+        calls.append(request.path)
+        return web.json_response({'status': 'COMPLETED', 'result': 'answer'})
+    async with server(handle) as local:
+        async with httpx.AsyncClient(proxy=local, trust_env=False) as client:
+            with pytest.raises(Exception, match='target address not allowed by the address policy'):
+                await injected_exchange(mode, client, local.replace('127.0.0.1', '8.8.8.8'))
+    assert calls == []
+
+
+@pytest.mark.parametrize('mode', ['legacy', 'v1', 'v2'])
+async def test_supplied_guarded_client_allows_public_target(monkeypatch, fake_dial, mode):
+    from argus_transport.address_policy import target_client
+    monkeypatch.setenv('ARGUS_TARGET_ADDRESS_POLICY', 'public_only')
+    async def handle(request):
+        return web.json_response({'status': 'COMPLETED', 'result': 'answer'})
+    async with server(handle) as local:
+        async with target_client() as client:
+            result = await injected_exchange(mode, client, local.replace('127.0.0.1', '8.8.8.8'))
+            assert result.response_text == 'answer'
+    assert fake_dial == ['8.8.8.8']

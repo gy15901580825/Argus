@@ -89,8 +89,8 @@ def target_client(module=httpx, *, on_address_refused=None, **kwargs):
     HTTPX integration point; both supported HTTP client implementations use it.
     """
     if public_only():
-        if kwargs.get('transport') is not None:
-            raise ValueError('custom target transports are unavailable under public_only')
+        if any(kwargs.get(option) is not None for option in ('transport', 'proxy', 'mounts')):
+            raise ValueError('custom target routing is unavailable under public_only')
         if module is httpx:
             import httpcore as core
             from httpcore._backends.auto import AutoBackend
@@ -101,3 +101,16 @@ def target_client(module=httpx, *, on_address_refused=None, **kwargs):
         transport._pool._network_backend = _PublicNetworkBackend(AutoBackend(), core, on_address_refused)
         kwargs.update(transport=transport, trust_env=False)
     return module.AsyncClient(**kwargs)
+
+
+def require_guarded_client(client) -> None:
+    """Refuse supplied clients whose routing could bypass the shared backend."""
+    if not public_only():
+        return
+    pool = getattr(getattr(client, '_transport', None), '_pool', None)
+    backend = getattr(pool, '_network_backend', None)
+    mounts = getattr(client, '_mounts', {})
+    if not isinstance(backend, _PublicNetworkBackend) or any(
+        transport is not None for transport in mounts.values()
+    ):
+        raise TargetAddressPolicyError()

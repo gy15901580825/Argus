@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Mapping
 from urllib.parse import unquote, quote, urlencode, urljoin, urlsplit, urlunsplit
 
 import httpx
-from argus_transport.address_policy import target_client, TargetAddressPolicyError
+from argus_transport.address_policy import target_client, require_guarded_client, TargetAddressPolicyError
 
 from .engine import _MISSING, _OMIT, evaluate_response, matches_predicate, outcome_match, select
 from .models import (
@@ -466,6 +466,7 @@ class TransportEngineV2:
     @asynccontextmanager
     async def _client(self):
         if self.client is not None:
+            require_guarded_client(self.client)
             yield self.client
         else:
             async with target_client(httpx, follow_redirects=False, trust_env=False) as client:

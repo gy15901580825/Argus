@@ -9,7 +9,7 @@ from typing import Any
 from urllib.parse import quote, urlsplit
 
 import httpx
-from argus_transport.address_policy import target_client
+from argus_transport.address_policy import target_client, require_guarded_client
 from jsonpath_ng import parse
 
 from .models import (
@@ -290,6 +290,7 @@ class TransportEngine:
                             redactor,
                             diagnostics,
                         )
+                require_guarded_client(self.client)
                 return await self._operate(
                     self.client, request_headers, content, start, redactor, diagnostics
                 )
@@ -549,6 +550,7 @@ class TransportEngine:
                 return await TransportEngine.run_legacy(
                     request, mapping, client=owned, secrets=secrets
                 )
+        require_guarded_client(client)
         start = time.monotonic()
         response = await client.request(
             method=request.method,
