@@ -32,9 +32,9 @@ Tell `argus-probe run` which set via `--probes <list>`, or pass `all` on its own
 | Use case | Typical runtime | Typical cost |
 |---|---|---|
 | **Quick smoke** (1 probe, 3 prompts) | ~15 s | < $0.01 |
-| **Full sweep** (`--probes all`) | ~3 min | a chat target needs `--per-run-cap 5.32` with the default Anthropic judge: the pre-run estimate budgets a fast and a strong judge call for each of its 403 judged prompts (2026-10-29 library) |
+| **Full sweep** (`--probes all`) | ~3 min | Depends on the judge, judged prompt count and response length; the typical estimate gates admission and the worst case remains available for planning. |
 
-Cost figures are approximate; they scale with your agent's response length. A run whose estimate is above `--per-run-cap` does not start, and with `--local` the run stops when Argus's judge spend reaches the cap.
+Cost figures are approximate. A run whose typical estimate is above `--per-run-cap` does not start; the in-run meter stops further calls when Argus's spend passes the cap. See [cost caps and calibration](../cli.md#cost-controls).
 
 To list every probe in the installed library, run `argus-probe list-probes`. `argus-probe list-probes --target argus-target.json` shows only the probes that fit your target.
 

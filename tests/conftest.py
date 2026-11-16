@@ -81,7 +81,7 @@ def _isolate_env(monkeypatch, request, _test_home):
             monkeypatch.setenv(k, v)
     # Judge provider auto-detect reads these; a developer's shell must not change results.
     # The live rubric and scan-skill tiers need the real ANTHROPIC_API_KEY.
-    judge_vars = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "REDTEAM_MODEL_PROVIDER",
+    judge_vars = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "REDTEAM_MODEL_PROVIDER", "ARGUS_ESTIMATE_OUTPUT_TOKENS",
                   "REDTEAM_FAST_MODEL", "REDTEAM_STRONG_MODEL", "REDTEAM_LLM_API_BASE", "REDTEAM_EXPLAIN_MODEL",
                   "REDTEAM_LLM_FALLBACK", "REDTEAM_LLM_FALLBACK_PROVIDER", "REDTEAM_LLM_FALLBACK_MODEL"]
     scrub = list(judge_vars)

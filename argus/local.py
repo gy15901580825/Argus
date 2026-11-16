@@ -16,7 +16,7 @@ from fastapi import HTTPException
 
 from argus import api, decider, llm
 from argus_transport.cleanup import run_error_detail
-from argus.cost_meter import CostExceededError, unpriced_hint
+from argus.cost_meter import CostExceededError, RunEstimate, estimate_run_cost, unpriced_hint
 from argus.coverage import build_coverage, build_summary
 from argus.probe import load_probe_library
 from argus.model_egress import PROBE_PAIRS, annotate_pairs
@@ -46,7 +46,7 @@ class _Plan(NamedTuple):
     skipped: list[dict]
     warnings: list[str]
     judged: list[str]
-    estimated_usd: float
+    estimate: RunEstimate
 
 
 def check_run(
@@ -144,21 +144,25 @@ def _prepare(target, probe_ids, *, mode, per_run_cap_usd, env, skip_judged, tria
     req = req.model_copy(update={"probe_ids": requested})
 
     try:
-        estimated_usd = api._COST_METER.check_or_abort_pre_run(
+        exchanges = api._judged_exchanges(
+            req, requested if mode == "deep" else [pid for pid in requested if pid in fits], config=cfg)
+        api._COST_METER.check_or_abort_pre_run(
             probe_ids=requested,
             target_kind=api._resolve_target_kind(target),
             # A probe the runner will skip for this target sends nothing and calls no judge.
-            total_exchanges=api._judged_exchanges(
-                req, requested if mode == "deep" else [pid for pid in requested if pid in fits], config=cfg),
+            total_exchanges=exchanges,
             deep=mode == "deep",
             per_run_cap_override=per_run_cap_usd,
         )
+        estimate = estimate_run_cost(exchanges, deep=mode == "deep")
     except CostExceededError as e:
         raise LocalRunError(_cost_message(e), code="cost") from e
     except HTTPException as e:
         raise LocalRunError(str(e.detail), code="input") from e
+    except ValueError as e:
+        raise LocalRunError(str(e), code="config") from e
 
-    return _Plan(req, cfg, anthropic_api_key, skipped, warnings, judged, estimated_usd)
+    return _Plan(req, cfg, anthropic_api_key, skipped, warnings, judged, estimate)
 
 
 async def run_local(
@@ -176,7 +180,8 @@ async def run_local(
 ) -> AsyncIterator[dict]:
     """Yield events and finding dicts, then one {"type": "coverage", "coverage": dict, "summary": dict} event.
 
-    Deep runs begin with {"type": "estimate", "estimated_usd": float}.
+    Deep runs begin with an estimate event containing typical_usd, worst_case_usd
+    and the legacy estimated_usd (equal to worst_case_usd).
     Before any finding: {"type": "judge", "judge": llm.describe(cfg), "record": llm.judge_record(cfg),
     "disclosure": llm.disclosure(cfg)} when a probe will be judged, then {"type": "warning", "message": str} events.
 
@@ -186,12 +191,12 @@ async def run_local(
     skip_judged: without a judge key, report the probes that need the judge as
     skipped and run the rest, instead of refusing the run.
     """
-    req, cfg, anthropic_api_key, skipped, warnings, judged, estimated_usd = _prepare(
+    req, cfg, anthropic_api_key, skipped, warnings, judged, estimate = _prepare(
         target, probe_ids, mode=mode, deep_pairs=deep_pairs, max_rounds=max_rounds, seed=seed,
         per_run_cap_usd=per_run_cap_usd, env=env, skip_judged=skip_judged, trials=trials)
 
     if mode == "deep":
-        yield {"type": "estimate", "estimated_usd": estimated_usd}
+        yield estimate.event()
     if judged:
         yield {"type": "judge", "judge": llm.describe(cfg), "record": llm.judge_record(cfg),
                "disclosure": llm.disclosure(cfg, decider=decider.from_env() is not None)}

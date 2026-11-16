@@ -732,7 +732,7 @@ This is the workflow for a chat target. For `mcp_agent`, `payment_agent`, `a2a_a
 
 Add `ANTHROPIC_API_KEY` and any key your target spec references as repository secrets. Pull requests from forks and Dependabot do not receive repository secrets, so the keys are empty and the job fails on them.
 
-`fail-on: critical` fails the job when a critical finding lands; use `high` to tighten it, or set it to `""` to report without blocking. The SARIF uploads before the gate runs, so findings appear in the repo's **Security** tab either way. Other inputs: `per-run-cap` (USD, default `0.50`), `format`, `output`, `upload-sarif`, `argus-version`.
+`fail-on: critical` fails the job when a critical finding lands; use `high` to tighten it, or set it to `""` to report without blocking. The SARIF uploads before the gate runs, so findings appear in the repo's **Security** tab either way. Other inputs: `per-run-cap` (USD, default `0.50`; typical spend gates admission, then metered spend stops the run), `format`, `output`, `upload-sarif`, `argus-version`.
 
 ### Server mode: gate only on new failures
 

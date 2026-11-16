@@ -154,6 +154,16 @@ _AVG_RESPONSE_CHARS = 2000      # typical model reply
 _CHARS_PER_TOKEN = 4
 _SAFETY_MARGIN = 1.2
 
+# The judge asks for four JSON keys and 1-2 reasoning sentences; mocked judge
+# usage in test_redteam_judge/test_judge_benchmark is 20-50 output tokens.
+# 128 billed tokens leaves room for hidden reasoning, rather than pricing only
+# visible JSON. Calibrate from recorded spend/usage for reasoning-heavy models.
+_EXPECTED_OUTPUT_TOKENS = 128
+# Outcome frequencies are unknown before judging. These are planning defaults,
+# not measured rates: high/critical reviews 10%, Jev fail/warn explanations 25%.
+_EXPECTED_ESCALATION_RATE = 0.10
+_EXPECTED_EXPLANATION_RATE = 0.25
+
 _DEFAULT_ITERATIVE_ROUNDS = 1
 
 
@@ -169,11 +179,43 @@ def estimate_call_usd(model: str, input_chars: int, output_tokens: int) -> float
     return (input_tokens / 1_000_000) * prices["input"] + (output_tokens / 1_000_000) * prices["output"]
 
 
-def estimate_run_usd(exchanges: int, *, deep: bool = False) -> float:
-    """Estimate judge and attacker spend without applying admission caps."""
+@dataclass(frozen=True)
+class RunEstimate:
+    typical: float
+    worst_case: float
+
+    def event(self) -> dict:
+        # Keep the existing field's conservative value for older consumers.
+        return {"type": "estimate", "estimated_usd": self.worst_case,
+                "typical_usd": self.typical, "worst_case_usd": self.worst_case}
+
+
+def _expected_output_tokens() -> int:
+    from argus import llm
+
+    raw = os.environ.get("ARGUS_ESTIMATE_OUTPUT_TOKENS", str(_EXPECTED_OUTPUT_TOKENS))
+    try:
+        tokens = int(raw)
+        if not 1 <= tokens <= llm.TEXT_MAX_TOKENS:
+            raise ValueError
+    except ValueError:
+        raise ValueError("ARGUS_ESTIMATE_OUTPUT_TOKENS must be an integer between "
+                         f"1 and {llm.TEXT_MAX_TOKENS} (billed output, including reasoning)") from None
+    return tokens
+
+
+def estimate_run_cost(exchanges: int, *, deep: bool = False) -> RunEstimate:
+    """Typical admission estimate and the legacy worst case; neither is an invoice.
+
+    Both retain the input assumption and deep attacker's maximum output budget.
+    Jev retains its own judge token assumption; only its text explanations use
+    the expected text output length and explanation rate.
+    """
     est_input_tokens = (_AVG_PROMPT_CHARS / _CHARS_PER_TOKEN) * _SAFETY_MARGIN
 
     from argus import llm
+
+    expected_tokens = _expected_output_tokens()
 
     def _call_usd(prices: dict, output_tokens: int = llm.TEXT_MAX_TOKENS) -> float:
         return (est_input_tokens / 1_000_000) * prices["input"] + (
@@ -190,6 +232,7 @@ def estimate_run_usd(exchanges: int, *, deep: bool = False) -> float:
         strong = _price_for(cfg.strong_model) if escalates else None
         if cfg.provider == llm.PROVIDER_JEV:
             judge_tokens = int((_AVG_RESPONSE_CHARS / _CHARS_PER_TOKEN) * _SAFETY_MARGIN)
+            expected_tokens = judge_tokens
         text_cfg = llm.explain_config(cfg)
         explain = _price_for(text_cfg.fast_model) if text_cfg is not None else None
     except ValueError:
@@ -197,15 +240,26 @@ def estimate_run_usd(exchanges: int, *, deep: bool = False) -> float:
         strong = _PRICES_PER_M_TOKENS["claude-sonnet-4-6"]
         escalates = True
     per_exchange = _call_usd(fast, judge_tokens) + (_call_usd(strong) if escalates else 0.0)
+    typical = _call_usd(fast, expected_tokens)
+    if escalates:
+        typical += _EXPECTED_ESCALATION_RATE * _call_usd(strong, expected_tokens)
     if explain is not None:
         per_exchange += _call_usd(explain)
+        typical += _EXPECTED_EXPLANATION_RATE * _call_usd(explain, _expected_output_tokens())
     if deep:
         from argus.persona_strategy import ATTACKER_MAX_TOKENS
 
         attacker = explain or fast
-        per_exchange += (est_input_tokens * attacker["input"]
+        attacker_cost = (est_input_tokens * attacker["input"]
                          + ATTACKER_MAX_TOKENS * attacker["output"]) / 1_000_000
-    return per_exchange * exchanges
+        per_exchange += attacker_cost
+        typical += attacker_cost
+    return RunEstimate(typical * exchanges, per_exchange * exchanges)
+
+
+def estimate_run_usd(exchanges: int, *, deep: bool = False) -> float:
+    """Typical judge/attacker spend used for admission, without applying caps."""
+    return estimate_run_cost(exchanges, deep=deep).typical
 
 
 # Half a cent: below this a remaining budget is float residue, not money.
@@ -427,12 +481,14 @@ class CostMeter:
         self._maybe_reset_day()
         exchanges = total_exchanges if total_exchanges is not None else len(probe_ids) * iterative_rounds
         with track_unpriced() as unpriced:
-            estimated = estimate_run_usd(exchanges, deep=deep)
+            estimate = estimate_run_cost(exchanges, deep=deep)
+        estimated = estimate.typical
+        amounts = f"typical ${estimated:.4f}, worst case ${estimate.worst_case:.4f}"
 
         cap = self.per_run_cap(deep, per_run_cap_override)
         if estimated > cap:
             raise CostExceededError(
-                f"estimated cost ${estimated:.4f} > per_run_cap ${cap:.2f}",
+                f"estimated cost ({amounts}) > per_run_cap ${cap:.2f}",
                 estimated_usd=estimated,
                 unpriced=tuple(unpriced),
             )
@@ -446,7 +502,7 @@ class CostMeter:
                 label = "deep daily"
         if estimated > remaining:
             raise CostExceededError(
-                f"estimated cost ${estimated:.4f} would exceed remaining {label} budget "
+                f"estimated cost ({amounts}) would exceed remaining {label} budget "
                 f"(${remaining:.4f})",
                 unpriced=tuple(unpriced),
             )
