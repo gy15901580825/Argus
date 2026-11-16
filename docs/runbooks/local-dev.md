@@ -36,8 +36,8 @@ fails. Unknown values stop startup; unset or empty leaves the policy off.
 This covers HTTP target adapters, transport submit/poll/setup/provision/cleanup
 and follow-up URLs, server checks, HTTP MCP sessions, browser-agent HTTP delivery,
 hosted trap control calls, native target SDK connections, and gRPC targets.
-When enabled, target HTTP clients connect directly and ignore environment
-proxies so a proxy cannot resolve an unchecked destination. Custom injected
+When enabled, target HTTP clients and gRPC channels connect directly and ignore
+environment proxies so a proxy cannot resolve an unchecked destination. Custom injected
 HTTP transports are unavailable with this policy. The server reads configuration
 from environment variables and has no separate settings object, so this variable
 is also its server option.

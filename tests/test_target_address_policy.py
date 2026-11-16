@@ -550,3 +550,36 @@ async def test_native_retry_cannot_hide_a_policy_refusal(monkeypatch, fake_dial,
         target = AnthropicNativeTarget(AnthropicNativeSpec(model='test', api_key='fake'))
         with pytest.raises(Exception, match='target address not allowed by the address policy'):
             await target.send_prompt('hello')
+
+
+async def test_grpc_ignores_environment_proxy(monkeypatch):
+    import grpc
+    import anyio
+    import socket
+    from test_redteam_targets_grpc import test_grpc_adapter_against_in_memory_echo_servicer
+    monkeypatch.setenv('ARGUS_TARGET_ADDRESS_POLICY', 'public_only')
+    proxy_requests = []
+    async def proxy(reader, writer):
+        proxy_requests.append(await reader.read(4096))
+        writer.close()
+        await writer.wait_closed()
+    fake_proxy = await asyncio.start_server(proxy, '127.0.0.1', 0)
+    proxy_port = fake_proxy.sockets[0].getsockname()[1]
+    monkeypatch.setenv('grpc_proxy', f'http://127.0.0.1:{proxy_port}')
+    monkeypatch.setenv('no_proxy', '')
+    monkeypatch.setenv('no_grpc_proxy', '')
+    async def resolve(host, port, **kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('8.8.8.8', port))]
+    monkeypatch.setattr(anyio, 'getaddrinfo', resolve)
+    original_channel = grpc.aio.insecure_channel
+    def local_channel(endpoint, **kwargs):
+        # Keep the checked public endpoint's wire traffic on the local echo server.
+        port = endpoint.rsplit(':', 1)[1]
+        return original_channel(f'127.0.0.1:{port}', **kwargs)
+    monkeypatch.setattr(grpc.aio, 'insecure_channel', local_channel)
+    try:
+        await test_grpc_adapter_against_in_memory_echo_servicer()
+        assert proxy_requests == []
+    finally:
+        fake_proxy.close()
+        await fake_proxy.wait_closed()

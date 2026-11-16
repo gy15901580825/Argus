@@ -54,7 +54,8 @@ async def _make_channel(endpoint: str, tls: bool):
         host = parsed.hostname
         ip = await checked_address(host, parsed.port)
         endpoint = f'[{ip}]:{parsed.port}' if ':' in ip else f'{ip}:{parsed.port}'
-        options = (('grpc.ssl_target_name_override', host), ('grpc.default_authority', host))
+        options = (('grpc.ssl_target_name_override', host), ('grpc.default_authority', host),
+                   ('grpc.enable_http_proxy', 0))
     if tls:
         credentials = grpc.ssl_channel_credentials()
         async with grpc.aio.secure_channel(endpoint, credentials, **({"options": options} if options else {})) as channel:
