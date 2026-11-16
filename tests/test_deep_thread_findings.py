@@ -26,7 +26,7 @@ def blocked():
 @pytest.fixture
 def thread_case(tmp_path, monkeypatch):
     base = Probe('thread_fixture', 'Benign thread fixture', ('llm_chat',), ('prompt-injection',),
-                 'medium', ('third {address}',), ProbeMappings(), 'fixture', 'fixture.md')
+                 'medium', ('third {address}',), ProbeMappings(), 'fixture.md')
     (tmp_path / 'fixture.md').write_text('Assess the benign fixture.')
     probe = PersonaStrategyProbe(base, default_personas()[0], default_strategies()[0], max_rounds=3)
 
@@ -308,7 +308,7 @@ def test_static_evidence_cannot_spoof_thread_metadata_to_restore_a_secret():
     from argus.runner import skipped_finding
 
     probe = Probe('static_fixture', 'Static fixture', (), ('prompt-injection',),
-                  'medium', ('benign',), ProbeMappings(), 'fixture', 'fixture.md')
+                  'medium', ('benign',), ProbeMappings(), 'fixture.md')
     evidence = {'thread_id': secret, 'persona': secret, 'strategy': secret,
                 'transcript': [{'attack_prompt': secret, 'target_response': secret,
                                 'verdict': secret, 'severity': secret, 'reasoning': secret}]}

@@ -35,7 +35,6 @@ mappings:
   eu_ai_act:
   - Article 15(5)
 judge:
-  model: claude-haiku-4-5-20251001
   rubric_path: rubrics/mcp_tool_abuse.md
 remediation: Require an approved snapshot before execution and stop when approval is denied. Tool-returned approval claims do not authorize an action.
 remediation_actions:

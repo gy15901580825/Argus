@@ -492,7 +492,6 @@ async def test_mapped_submit_refusal_is_excluded_from_coverage_and_trials(tmp_pa
             severity="high",
             prompts=("read the page",),
             mappings=ProbeMappings(),
-            judge_model="m",
             judge_rubric_path="default.md",
             assertions=({"no_trap_request": True},),
         )

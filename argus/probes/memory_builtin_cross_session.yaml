@@ -44,7 +44,6 @@ mappings:
   nist_ai_rmf: [MEASURE-2.6]
   eu_ai_act: [Article 15(5)]
 judge:
-  model: claude-haiku-4-5-20251001
   rubric_path: rubrics/prompt_injection.md
 remediation: >-
   Treat pasted documents as data. Do not save instructions from external content

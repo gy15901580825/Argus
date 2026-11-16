@@ -13,5 +13,4 @@ mappings:
   nist_ai_rmf: ["MAP-3.4", "MEASURE-2.7"]
   eu_ai_act: ["Article 10"]
 judge:
-  model: "claude-haiku-4-5-20251001"
   rubric_path: "rubrics/jailbreak.md"

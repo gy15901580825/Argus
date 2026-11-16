@@ -18,7 +18,6 @@ mappings:
   nist_ai_rmf: ["MAP-3.4"]
   eu_ai_act: ["Article 15(5)"]
 judge:
-  model: "claude-haiku-4-5-20251001"
   rubric_path: "rubrics/browser_visual.md"
 scenario:
   kind: "visual_injection"

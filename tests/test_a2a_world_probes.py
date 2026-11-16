@@ -51,7 +51,7 @@ def test_every_probe_is_paired_assertion_backed_unjudged():
         assert data['trials'] == 1 and data['judge_when_assertions_pass'] is False
         assert data['assertions'] and len(data['sessions']) == len(data['sessions'][0]) == 1
         assert data['technique'] == ['a2a-peer']
-        assert data['judge'] == {'model':'claude-haiku-4-5-20251001','rubric_path':'rubrics/mcp_tool_abuse.md'}
+        assert data['judge'] == {'rubric_path':'rubrics/mcp_tool_abuse.md'}
         assert data['remediation'] and not any(c in data['remediation'] for c in ('—','–'))
 
 

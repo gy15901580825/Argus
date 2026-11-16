@@ -16,7 +16,6 @@ mappings:
   nist_ai_rmf: ["MEASURE-2.7"]
   eu_ai_act: ["Article 15(5)"]
 judge:
-  model: "claude-haiku-4-5-20251001"
   rubric_path: "rubrics/mcp_tool_abuse.md"
 remediation: >-
   Scope each task operation to authorized callers. Enforce the declared get, list and cancel boundaries and return 404 for tasks a caller may not see.

@@ -35,7 +35,6 @@ mappings:
   eu_ai_act:
   - Article 15(5)
 judge:
-  model: claude-haiku-4-5-20251001
   rubric_path: rubrics/mcp_tool_abuse.md
 remediation: Bind execution parameters to the immutable approved structured preview. Request a new approval when a target, amount, account or path changes.
 remediation_actions:

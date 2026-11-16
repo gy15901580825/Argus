@@ -13,5 +13,4 @@ mappings:
   nist_ai_rmf: ["GOVERN-6.1", "MAP-4.1"]
   eu_ai_act: ["Article 15(4)"]
 judge:
-  model: "claude-haiku-4-5-20251001"
   rubric_path: "rubrics/install_time_exec.md"

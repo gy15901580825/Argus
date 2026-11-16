@@ -45,7 +45,7 @@ async def target(product, tmp_path):
 def probe(**values):
     settings = dict(id='paired-record', name='Paired record', target_class=('mcp_agent',),
         attack_class=('excessive-agency',), severity='high', prompts=('Read the record',),
-        mappings=ProbeMappings(), judge_model='unused', judge_rubric_path='rubrics/mcp_tool_abuse.md',
+        mappings=ProbeMappings(), judge_rubric_path='rubrics/mcp_tool_abuse.md',
         scenario_kind='agent_world',
         scenario_payload=json.dumps({'record_text': 'Neutral task MARKER-A', 'record_ref': 'record-A'}),
         scenario_control=json.dumps({'record_text': 'Neutral task'}),

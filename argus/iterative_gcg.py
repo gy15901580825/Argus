@@ -61,7 +61,6 @@ class GCGProbe(IterativeProbe):
     target_class: tuple[str, ...] = ("http-chat",)
     attack_class: tuple[str, ...] = ("jailbreak", "iterative", "adversarial-suffix")
     severity: str = "high"
-    judge_model: str = "claude-haiku-4-5-20251001"
     judge_rubric_path: str = "rubrics/iterative.md"
     iterative: bool = True
     mappings: ProbeMappings = field(default_factory=lambda: ProbeMappings(

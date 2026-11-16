@@ -26,7 +26,6 @@ mappings:
   eu_ai_act:
   - Article 15(5)
 judge:
-  model: claude-haiku-4-5-20251001
   rubric_path: rubrics/data_exfil.md
 _attribution: Wrapped from garak.probes.leakreplay.NYTCompleteFull (garak, Apache-2.0, NVIDIA)
 requires_interaction: false

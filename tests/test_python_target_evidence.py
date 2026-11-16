@@ -36,7 +36,7 @@ def probe(name, value):
     return Probe(id='python_evidence_fixture', name='Evidence fixture',
                  target_class=('llm_chat',), attack_class=('indirect-injection',),
                  severity='high', prompts=('Review the record.',), mappings=ProbeMappings(),
-                 judge_model='', judge_rubric_path='', assertions=({name: value},))
+                 judge_rubric_path='', assertions=({name: value},))
 
 
 async def run(target, p, tmp_path):

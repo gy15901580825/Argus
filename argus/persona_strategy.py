@@ -110,7 +110,6 @@ class PersonaStrategyProbe(IterativeProbe):
     attack_class: tuple[str, ...] = ()
     technique: tuple[str, ...] = ()
     severity: str = "medium"
-    judge_model: str = _ATTACKER_MODEL
     judge_rubric_path: str = "rubrics/default.md"
     rubrics_dir: Path | None = None
     mappings: ProbeMappings = field(default_factory=ProbeMappings)
@@ -150,7 +149,6 @@ class PersonaStrategyProbe(IterativeProbe):
         # unvetted value into the axis the coverage report is keyed on.
         self.technique = tuple(self.base.technique) + ("deep", "multi-turn")
         self.severity = self.base.severity
-        self.judge_model = self.base.judge_model
         self.judge_rubric_path = self.base.judge_rubric_path
         self.rubrics_dir = getattr(self.base, "rubrics_dir", None)
         self.mappings = self.base.mappings

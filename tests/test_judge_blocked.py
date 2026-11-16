@@ -233,7 +233,7 @@ def test_local_run_reports_the_block_and_stops_incomplete(tmp_path, monkeypatch)
 async def test_server_stream_handles_the_named_block_by_mode(monkeypatch, tmp_path, mode, first_caller):
     probes = [
         Probe(id=f"probe_{i}", name=f"Probe {i}", target_class=(), attack_class=("prompt-injection",),
-              severity="info", prompts=(f"{PROMPT_MARK} {i}",), mappings=ProbeMappings(), judge_model=DEPLOYMENT,
+              severity="info", prompts=(f"{PROMPT_MARK} {i}",), mappings=ProbeMappings(),
               judge_rubric_path="test.md")
         for i in (1, 2)
     ]

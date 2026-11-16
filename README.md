@@ -536,7 +536,7 @@ judge:
 
 The judge model is not set per probe. It comes from the judge flags or the
 `REDTEAM_MODEL_PROVIDER`, `REDTEAM_FAST_MODEL` and `REDTEAM_STRONG_MODEL`
-environment variables; a `judge.model` key in a probe is read but ignored.
+environment variables; `judge.model` is ignored and deprecated, and the loader warns once per process when it is present.
 
 The loader ignores keys it does not recognise, so a typo in `judge.rubric_path`
 degrades silently to `rubrics/default.md` rather than erroring. Run the test

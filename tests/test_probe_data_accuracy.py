@@ -424,7 +424,7 @@ async def test_the_judge_sees_the_prompt_as_sent(tmp_path):
 
     probe = Probe(id="p", name="p", target_class=("http-chat",), attack_class=("jailbreak",),
                   severity="low", prompts=("see {mcp_url}",), mappings=ProbeMappings(),
-                  judge_model="m", judge_rubric_path="rubrics/default.md")
+                  judge_rubric_path="rubrics/default.md")
     judge = _RecordingJudge()
     [f async for f in Runner(Target(), judge, RUBRICS_DIR).run_probe(probe)]
     assert judge.seen == ["see http://tb/mcp"]
@@ -495,7 +495,6 @@ async def test_the_iterative_judge_sees_the_prompt_as_sent(tmp_path):
         target_class = ("http-chat",)
         attack_class = ("jailbreak",)
         severity = "low"
-        judge_model = "m"
         judge_rubric_path = "rubrics/default.md"
         iterative = True
         max_rounds = 1

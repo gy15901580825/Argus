@@ -69,7 +69,7 @@ def _probe(tmp_path, **kw):
     base = dict(
         id="br_x", name="br x", target_class=("browser-using",), attack_class=("indirect-injection",),
         severity="high", prompts=("open the page",), mappings=ProbeMappings(),
-        judge_model="m", judge_rubric_path="rubrics/default.md",
+        judge_rubric_path="rubrics/default.md",
         assertions=({"no_trap_request": True},), judge_when_assertions_pass=True,
     )
     base.update(kw)

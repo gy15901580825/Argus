@@ -19,6 +19,5 @@ mappings:
   nist_ai_rmf: ["MEASURE-2.6"]
   eu_ai_act: ["Article 15(5)"]
 judge:
-  model: "claude-haiku-4-5-20251001"
   rubric_path: "rubrics/jailbreak.md"
 _attribution: "Inspired by Microsoft 2024 'Crescendo' multi-turn attack research"

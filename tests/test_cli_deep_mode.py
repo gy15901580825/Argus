@@ -42,7 +42,7 @@ class Target:
 @pytest.fixture
 def engine(monkeypatch):
     probe = Probe('deep_fixture', 'Benign adaptation fixture', ('llm_chat',), ('prompt-injection',),
-                  'medium', ('benign task',), ProbeMappings(), 'fixture', 'rubrics/default.md')
+                  'medium', ('benign task',), ProbeMappings(), 'rubrics/default.md')
     target = Target()
     cfg = llm.LLMConfig('test', 'fixture', 'fixture', False, None)
     judge = SimpleNamespace(judge=AsyncMock(return_value=Verdict('pass', 'info', 1.0, 'benign', 'fixture', None)))

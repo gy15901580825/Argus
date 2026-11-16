@@ -36,7 +36,6 @@ def probe():
         severity="high",
         prompts=("read the scenario",),
         mappings=ProbeMappings(),
-        judge_model="m",
         judge_rubric_path="default.md",
         assertions=({"no_tool_call": "send_external"},),
     )

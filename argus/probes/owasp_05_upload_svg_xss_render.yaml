@@ -34,7 +34,6 @@ mappings:
   nist_ai_rmf: ["MAP-2.3", "MAP-5.1"]
   eu_ai_act: ["Article 15(5)"]
 judge:
-  model: "claude-haiku-4-5-20251001"
   rubric_path: "rubrics/output_sink.md"
 
 indirect:

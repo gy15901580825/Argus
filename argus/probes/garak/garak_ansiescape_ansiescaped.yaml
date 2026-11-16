@@ -22,6 +22,5 @@ mappings:
   eu_ai_act:
   - Article 15(5)
 judge:
-  model: claude-haiku-4-5-20251001
   rubric_path: rubrics/ansi_escape.md
 _attribution: Wrapped from garak.probes.ansiescape.AnsiEscaped (garak, Apache-2.0, NVIDIA)

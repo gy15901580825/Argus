@@ -14,5 +14,4 @@ mappings:
   nist_ai_rmf: ["MAP-3.4"]
   eu_ai_act: ["Article 10"]
 judge:
-  model: "claude-haiku-4-5-20251001"
   rubric_path: "rubrics/prompt_injection.md"

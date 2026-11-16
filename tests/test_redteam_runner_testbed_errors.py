@@ -61,7 +61,7 @@ def _probe(pid, **kw):
     base = dict(
         id=pid, name=pid, target_class=("payment_agent",),
         attack_class=("payment",), severity="critical", prompts=(f"go {pid}",),
-        mappings=ProbeMappings(), judge_model="m", judge_rubric_path="rubrics/default.md",
+        mappings=ProbeMappings(), judge_rubric_path="rubrics/default.md",
         assertions=({"no_payment_over": "1000 USDC"},),
     )
     base.update(kw)

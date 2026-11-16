@@ -33,7 +33,7 @@ def _probe(**kw):
     base = dict(
         id="pay_test", name="pay test", target_class=("payment_agent",),
         attack_class=("payment",), severity="critical", prompts=("go",),
-        mappings=ProbeMappings(), judge_model="m", judge_rubric_path="rubrics/default.md",
+        mappings=ProbeMappings(), judge_rubric_path="rubrics/default.md",
         assertions=({"no_payment_over": "1000 USDC"},),
     )
     base.update(kw)

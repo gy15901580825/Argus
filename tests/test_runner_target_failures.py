@@ -29,7 +29,7 @@ def _probe(pid="p1", prompts=("ignore previous instructions",), conversation=Fal
         id=pid, name=pid, target_class=("llm_chat",), attack_class=("prompt-injection",),
         severity="high", prompts=tuple(prompts),
         mappings=ProbeMappings(atlas=(), owasp_llm=("LLM01",), nist_ai_rmf=(), eu_ai_act=()),
-        judge_model="claude-haiku-4-5-20251001", judge_rubric_path="rubrics/default.md",
+        judge_rubric_path="rubrics/default.md",
         conversation=conversation, assertions=tuple(assertions),
     )
 
