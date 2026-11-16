@@ -66,6 +66,8 @@ class ResponseMetadata(TypedDict, total=False):
 _CONTEXT_KEYS = {
     "prompt",
     "scenario_url",
+    "secret_canary",
+    "secret_placeholder",
     "history",
     "conversation_id",
     "session_id",
@@ -886,6 +888,8 @@ class TransportContext(FrozenModel):
     conversation_id: str = ""
     session_id: str | None = None
     run_id: str | None = None
+    secret_canary: str | None = field(default=None, repr=False)
+    secret_placeholder: str = "argus_secret"
 
 
 @dataclass(frozen=True)

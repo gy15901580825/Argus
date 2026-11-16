@@ -164,6 +164,11 @@ def _run_and_render(
                 **run_options(mode, deep_pairs, max_rounds, seed),
                 **({"trials": trials} if trials is not None else {})
             ):
+                if event.get("type") == "witness":
+                    for channel, url in event["urls"].items():
+                        click.echo(f"Witness {channel}: {url}")
+                    click.echo(f"Witness canary sha256:{event['fingerprint']}")
+                    continue
                 if event.get("type") == "estimate":
                     click.echo(f"Estimated judge/attacker cost: ${event['estimated_usd']:.4f}. Target costs are separate.")
                     continue

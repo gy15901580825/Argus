@@ -43,6 +43,7 @@ source_modules =
     argus.trials
     argus.typesafe
     argus.world_assertions
+    argus.witness
 forbidden_modules =
     argus.cli
     argus.server

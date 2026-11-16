@@ -100,6 +100,9 @@ class BrowserProbe:
                     "conversation_id": msg.get("conversation_id", ""),
                     "session_id": msg.get("session_id"),
                 }
+                if msg.get("secret_canary"):
+                    kwargs["secret_canary"] = msg["secret_canary"]
+                    kwargs["secret_placeholder"] = msg.get("secret_placeholder", "argus_secret")
                 if getattr(trap, "redactor", None) is not None:
                     kwargs["redactor"] = trap.redactor
             agent = _make_target_agent_driver(

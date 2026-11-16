@@ -27,6 +27,7 @@ from argus_transport import (
     TransportOutcome,
     execution_policy,
 )
+from argus.witness import WitnessSpec, binds_canary, current_witness
 from argus_transport.security import redacted_transport_logs
 from dataclasses import dataclass, field, fields
 from typing import ClassVar
@@ -164,7 +165,18 @@ class BrowserUseSpec:
     # Synthetic credentials the operator loaded into the agent's vault; values never reach reports.
     stored_credentials: tuple[StoredCredential, ...] | list = field(default=(), repr=False)
 
+    witness: WitnessSpec | dict | None = None
+
+    @property
+    def binds_secret_canary(self) -> bool:
+        return self.transport is not None and binds_canary(self.transport.to_dict()["request"])
+
     def __post_init__(self) -> None:
+        if self.witness is not None:
+            witness = WitnessSpec.from_dict(self.witness) if isinstance(self.witness, dict) else self.witness
+            if not isinstance(witness, WitnessSpec):
+                raise ValueError("witness must be a witness specification")
+            object.__setattr__(self, "witness", witness)
         # Coerce dict OR list-of-2-element-lists → tuple-of-tuples
         # (model_dump() emits list-of-lists for tuple fields).
         ctx = self.extra_context
@@ -468,6 +480,9 @@ class BrowserUseTarget(Target):
 
     def __init__(self, spec: BrowserUseSpec) -> None:
         self.spec = spec
+        self._witness = current_witness()
+        self._witness_start = time.monotonic()
+        self._witness_channels = ()
         # Set by begin_probe; None means a non-probe caller, which keeps the
         # old prompt-as-payload behaviour.
         self._scenario_kind: str | None = None
@@ -491,7 +506,32 @@ class BrowserUseTarget(Target):
             spec.transport is not None and spec.transport.session.mode != "none"
         )
 
+    @property
+    def _sensitive_credentials(self):
+        extra = ((StoredCredential("run", "canary", self._witness.canary),)
+                 if self._witness is not None else ())
+        return self.spec.stored_credentials + extra
+
+    def register_witness_values(self, values):
+        if self._witness is None:
+            raise ProbeNotApplicable("witness channels require run --local")
+        self._witness.register_values(values)
+
     async def begin_probe(self, probe) -> None:
+        channels = getattr(probe, "requires_witness", ())
+        self._witness_channels = tuple(channels) if isinstance(channels, (tuple, list)) else ()
+        self._witness_start = time.monotonic()
+        if self._witness_channels:
+            if not _LOCAL_RUN.get() or self._witness is None:
+                raise ProbeNotApplicable("witness channels require run --local; server mode is unsupported")
+            if self.spec.trap_mode == "hosted":
+                raise ProbeNotApplicable("witness channels are unsupported with hosted traps")
+            if any(getattr(self._witness.spec, channel) is None for channel in self._witness_channels):
+                raise ProbeNotApplicable("the target spec does not configure the required witness channel")
+            if getattr(probe, "requires_secret_canary", False) is True and not self.spec.binds_secret_canary:
+                raise ProbeNotApplicable("the target spec does not pass the declared secret to the agent")
+            await self._witness.start(self._witness_channels)
+            self.register_witness_values(getattr(probe, "witness_values", ()))
         self._evidence = {}
         self._conversation_id = None
         self._session_id = None
@@ -546,7 +586,7 @@ class BrowserUseTarget(Target):
     async def send_prompt(
         self, prompt: str, history: tuple[Turn, ...] = ()
     ) -> tuple[str, float]:
-        creds = self.spec.stored_credentials
+        creds = self._sensitive_credentials
         log_scope = (redacted_transport_logs(_StoredCredentialLogRedactor(creds))
                      if creds else contextlib.nullcontext())
         with log_scope:
@@ -566,7 +606,7 @@ class BrowserUseTarget(Target):
                 # Validation and bridge causes can quote raw agent output in a traceback.
                 raise exc from None
         # The reply can echo a stored value; it must not reach reports in plaintext.
-        return _scrub_stored(text, self.spec.stored_credentials), latency
+        return _scrub_stored(text, self._sensitive_credentials), latency
 
     async def _send_prompt(
         self, prompt: str, history: tuple[Turn, ...] = ()
@@ -602,6 +642,9 @@ class BrowserUseTarget(Target):
                 conversation_id=self._conversation_id,
                 session_id=self._session_id,
             )
+            if self._witness is not None and _LOCAL_RUN.get():
+                msg.update(secret_canary=self._witness.canary,
+                           secret_placeholder=self._witness.spec.secret_placeholder)
             deadline = self.spec.transport.timeout.total_deadline_s
             cleanup = self.spec.transport.timeout.cleanup_grace_s
         else:
@@ -721,7 +764,7 @@ class BrowserUseTarget(Target):
                 )
                 try:
                     self._last_run_log = TargetRunLog.model_validate(
-                        _scrub_stored_data(log_fields, self.spec.stored_credentials)
+                        _scrub_stored_data(log_fields, self._sensitive_credentials)
                     )
                 except ValueError as exc:
                     raise TargetTransportError(
@@ -749,7 +792,7 @@ class BrowserUseTarget(Target):
                 if i in sequence else _masked_request(r, self._canaries)
                 for i, r in enumerate(requests)
             ]
-            creds = self.spec.stored_credentials
+            creds = self._sensitive_credentials
             if self._stored_site is not None:
                 ev["stored_credentials"] = self._stored_record(requests)
             if creds:
@@ -757,7 +800,10 @@ class BrowserUseTarget(Target):
                 ev["trap_requests"] = [
                     _scrub_stored_request(r, creds, i in pieces) for i, r in enumerate(ev["trap_requests"])
                 ]
-        return ev
+        if self._witness is not None and self._witness_channels:
+            ev["witness"] = self._witness.evidence(self._witness_start, time.monotonic())
+            ev["witness"]["canary_bound"] = self.spec.binds_secret_canary
+        return _scrub_stored_data(ev, self._sensitive_credentials)
 
     def _stored_record(self, requests: list[dict]) -> dict:
         """Which of this probe's declared values reached the sink, matched as no_canary_in_trap_requests
