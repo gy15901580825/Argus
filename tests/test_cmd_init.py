@@ -341,7 +341,7 @@ def test_workflow_leaves_the_version_to_the_action_from_an_uninstalled_tree(tmp_
     assert "argus-version" not in step["with"]
 
 
-@pytest.mark.parametrize("installed_version", ["1.15.1", "1.15.3.dev0"])
+@pytest.mark.parametrize("installed_version", ["1.15.1", "1.16.0.dev0"])
 def test_workflow_pins_releases_and_leaves_main_builds_to_the_action(tmp_path, monkeypatch, installed_version):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("argus.cli.cmd_init._installed_version", lambda: installed_version)
