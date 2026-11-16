@@ -1,5 +1,5 @@
 {
-  "_source": "Pinned at argus seed-delivery-wait. Regenerate: python tests/test_scenario_api_contract.py --regenerate <tag>",
+  "_source": "Pinned at argus seed-insert-mode. Regenerate: python tests/test_scenario_api_contract.py --regenerate <tag>",
   "schemas": {
     "ScenarioCleanupRequest": {
       "$defs": {
@@ -188,6 +188,21 @@
                   "maximum": 3600,
                   "minimum": 0,
                   "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "seed_mode": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "deliver",
+                    "insert"
+                  ],
+                  "type": "string"
                 },
                 {
                   "type": "null"
@@ -767,6 +782,21 @@
                   "maximum": 3600,
                   "minimum": 0,
                   "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "seed_mode": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "deliver",
+                    "insert"
+                  ],
+                  "type": "string"
                 },
                 {
                   "type": "null"

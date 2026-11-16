@@ -12,6 +12,7 @@ from argus.scenarios.models import ConnCheck, now
 
 GMAIL_READ = "https://www.googleapis.com/auth/gmail.readonly"
 GMAIL_SEND = "https://www.googleapis.com/auth/gmail.send"
+GMAIL_INSERT = "https://www.googleapis.com/auth/gmail.insert"
 GMAIL_MODIFY = "https://www.googleapis.com/auth/gmail.modify"
 DRIVE_FILE = "https://www.googleapis.com/auth/drive.file"
 
