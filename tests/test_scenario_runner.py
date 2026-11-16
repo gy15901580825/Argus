@@ -684,16 +684,21 @@ async def test_delivery_uses_observe_connection_and_deduplicates_scopes(tmp_path
     assert next(iter(mailbox.delivered.values())).connection_id == "obs-alias"
 
 
+@pytest.mark.parametrize("not_deliverable", [False, True])
 @pytest.mark.parametrize("field,value", [("run_id", "other-run"), ("group", "baseline"), ("control_name", "other"),
                                          ("marker", "foreign"), ("logical_key", "other"), ("provider", "fake"),
                                          ("connection_id", "operator")])
-async def test_delivery_observer_cannot_register_foreign_record(tmp_path, field, value):
+async def test_delivery_observer_cannot_register_foreign_record(tmp_path, field, value, not_deliverable):
     r, mailbox = mail_runner(tmp_path)
     original = mailbox.await_delivery
 
     async def wrong_record(*args):
         obj = await original(*args)
-        return obj.model_copy(update={field: value})
+        recipient = obj.model_copy(update={field: value})
+        if not_deliverable:
+            from argus.scenarios.runtime import SeedNotDeliverable
+            raise SeedNotDeliverable("seed seed was delivered to spam", recipient)
+        return recipient
 
     mailbox.await_delivery = wrong_record
     result = await r.run()

@@ -1,17 +1,28 @@
 # Releasing to PyPI
 
-`.github/workflows/release.yml` builds `argus-probe` from the repo root `pyproject.toml` and publishes it with PyPI trusted publishing. GitHub Actions gets a short-lived OIDC token, so the repo stores no PyPI API token.
+`.github/workflows/release.yml` builds `argus-probe` from the repo root and `argus-drivers-google` from `drivers/google`, then publishes both at the same version with PyPI trusted publishing. GitHub Actions gets a short-lived OIDC token, so the repo stores no PyPI API token.
 
 ## One-time setup
 
-1. Add a pending publisher for the project on each index. On pypi.org and test.pypi.org, open Account settings, then Publishing, then "Add a new pending publisher" (GitHub tab). Create two entries:
+1. Add a pending publisher for the project on each index. On pypi.org and test.pypi.org, open Account settings, then Publishing, then "Add a new pending publisher" (GitHub tab). Register each project on each index (four entries):
 
    | Index | PyPI project name | Owner | Repository | Workflow | Environment |
    |---|---|---|---|---|---|
    | pypi.org | `argus-probe` | `gy15901580825` | `Argus` | `release.yml` | `pypi` |
    | test.pypi.org | `argus-probe` | `gy15901580825` | `Argus` | `release.yml` | `testpypi` |
+   | pypi.org | `argus-drivers-google` | `gy15901580825` | `Argus` | `release.yml` | `pypi` |
+   | test.pypi.org | `argus-drivers-google` | `gy15901580825` | `Argus` | `release.yml` | `testpypi` |
 
 2. In the GitHub repo, open Settings, then Environments, and create `pypi` and `testpypi`. You can add required reviewers to `pypi` so a tag push waits for approval before it uploads.
+
+Before the first tag that includes `argus-drivers-google`, register its trusted
+publisher for this repository, workflow `release.yml`, and environment `pypi`;
+register `testpypi` on TestPyPI before rehearsals. Trusted publishers are per
+project. Both publish jobs upload `argus-probe` first from `dist/argus-probe/`,
+then upload `argus-drivers-google` from `dist/argus-drivers-google/` in a separate
+step. If the driver publisher is missing or its upload fails, the job fails
+after argus-probe has already uploaded. Register the missing publisher and rerun
+the job; both steps use `skip-existing` to preserve successful uploads.
 
 A pending publisher does not reserve the project name. Someone else can still register the name until the first upload succeeds, so do the first release soon after setup.
 
@@ -34,7 +45,7 @@ Never upload to either index by hand with `twine`. A manual upload creates the p
 
 ## Release
 
-1. Bump `version` in `pyproject.toml` at the repo root from the `.dev0` version to the release version. It is the only place the version is set: `argus-probe --version` and run.json read it from the installed package metadata.
+1. In the release PR, bump `version` in both the root `pyproject.toml` and `drivers/google/pyproject.toml` from the `.dev0` version to the same release version. `argus-probe --version` and run.json read the root package version from installed metadata. The first published Google driver version is the next argus-probe release.
 2. Merge to `main`, then tag that commit with `v` plus the argus-probe version and push the tag:
 
 ```bash
@@ -42,10 +53,13 @@ git tag v0.10.0
 git push origin v0.10.0
 ```
 
-The build job fails if the tag does not match the version in `pyproject.toml`.
+The build job fails if the tag does not match the root version or the Google
+driver version differs from the root version on a tag or `target: pypi` run.
+It builds both sdists and wheels, checks their metadata, and loads the `gmail`
+and `gdrive` entry points from the wheels in a fresh venv before any upload.
 PyPI and GHCR publishing refuse versions with a development (`.dev`) or local (`+`) segment; TestPyPI and `target: none` rehearsals still accept development versions.
 
-3. After the release is on PyPI, open a PR that bumps `main` to the next patch with a `.dev0` suffix (after `1.14.0`, set `1.14.1.dev0`). This does not choose the next release number; the next release PR still sets the real version. It keeps a run from `main` distinguishable from the release in `argus-probe --version` and in run.json's `argus_version`.
+3. After the release is on PyPI, open a PR that bumps both package versions on `main` to the next patch with a `.dev0` suffix (after `1.14.0`, set `1.14.1.dev0`). This does not choose the next release number; the next release PR still sets the real version. It keeps a run from `main` distinguishable from the release in `argus-probe --version` and in run.json's `argus_version`.
 
 The tags `v0.1.0`, `v0.2.0` and `v0.3.0` belong to GitHub Releases from before argus-probe was on PyPI, so those versions cannot be used. The next version after 0.1.4 is 0.4.0.
 

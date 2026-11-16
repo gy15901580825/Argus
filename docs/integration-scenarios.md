@@ -6,9 +6,16 @@ They do not replace the target's connectors or use the instrumented testbed targ
 
 The core implements the protocols and runner. Provider packages supply credentials.
 Google and local ACS drivers are separately installable packages in `drivers/google` and `drivers/acs`.
-argus-probe 0.9.0 ships the scenario runner and server API. The driver packages are not on PyPI; install them from this checkout.
+The Google drivers require argus-probe 1.15.1 or later for the seed delivery wait.
+The Google driver package shares the argus-probe release version; the local ACS package is installed from source.
 
 ## Installation
+
+Install the Google drivers at the same version as argus-probe:
+
+```bash
+pip install argus-drivers-google==<version>
+```
 
 For development from this checkout:
 
@@ -76,6 +83,8 @@ capability. The wait runs on the mailbox driver, even when the sending driver ha
 The `observer` argument is the entry's resolved connection and `deadline` is an absolute
 monotonic time from `ctx.budget.clock()`. A driver polls until it returns a trusted recipient
 `ObjectRecord` or raises `TimeoutError`; use `ctx.sleep` for backoff and keep reads within the call budget.
+For a trusted but unusable copy, raise `SeedNotDeliverable(reason, recipient)` from
+`argus.scenarios.runtime`; the runner saves the recipient and ends `not_ready`.
 Multiple distinct eligible mailbox connections or drivers are ambiguous and finish `not_ready`.
 
 The default delivery wait is 120 seconds. Set `seed_delivery_wait_s` in the scenario
@@ -85,6 +94,12 @@ Gmail polls after delays of 1, 2, 4, 8 and then at most 10 seconds, bounded by t
 If delivery does not complete, the run finishes `not_ready` with the seed key and wait duration
 before sending that group's trigger. This also applies to baseline objects and every named control.
 Scenarios with no eligible delivery observer retain their existing behavior.
+
+A planted seed message delivered to spam ends the run `not_ready` before that group's
+trigger, with `seed <key> was delivered to spam`. Make the observer mailbox accept the
+seed sender (for example, create a filter that never sends its messages to spam) and
+check the sender domain's mail authentication. A seed delivered to trash also ends
+the run `not_ready`. In both cases the recipient record is saved for cleanup.
 
 The runner saves the sender artifact for cleanup and saves the recipient record in the same
 run, group, control and marker before continuing. `{seed.id}` resolves to the recipient message ID.
