@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from typing import Any, Callable, ClassVar
 
 import grpc
+from urllib.parse import urlsplit
+from argus_transport.address_policy import checked_address, public_only, TargetAddressPolicyError
 from google.protobuf import descriptor_pb2, descriptor_pool, message_factory
 from grpc_reflection.v1alpha import reflection_pb2, reflection_pb2_grpc
 
@@ -44,12 +46,21 @@ class GRPCSpec:
 
 @contextlib.asynccontextmanager
 async def _make_channel(endpoint: str, tls: bool):
+    options = ()
+    if public_only():
+        parsed = urlsplit('//'+endpoint)
+        if not parsed.hostname or parsed.port is None or parsed.path or parsed.query:
+            raise TargetAddressPolicyError()
+        host = parsed.hostname
+        ip = await checked_address(host, parsed.port)
+        endpoint = f'[{ip}]:{parsed.port}' if ':' in ip else f'{ip}:{parsed.port}'
+        options = (('grpc.ssl_target_name_override', host), ('grpc.default_authority', host))
     if tls:
         credentials = grpc.ssl_channel_credentials()
-        async with grpc.aio.secure_channel(endpoint, credentials) as channel:
+        async with grpc.aio.secure_channel(endpoint, credentials, **({"options": options} if options else {})) as channel:
             yield channel
     else:
-        async with grpc.aio.insecure_channel(endpoint) as channel:
+        async with grpc.aio.insecure_channel(endpoint, **({"options": options} if options else {})) as channel:
             yield channel
 
 

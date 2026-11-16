@@ -20,6 +20,7 @@ from typing import Any, ClassVar, Optional
 from urllib.parse import urljoin
 
 import httpx
+from argus_transport.address_policy import target_client
 from jsonpath_ng import parse as jsonpath_parse
 
 from argus.targets._base import Target, Turn
@@ -100,7 +101,7 @@ class HTTPUploadTarget(Target):
         upload_headers = self._render_group("upload_headers")
 
         start = time.monotonic()
-        async with httpx.AsyncClient(timeout=self.spec.timeout_s) as client:
+        async with target_client(httpx, timeout=self.spec.timeout_s) as client:
             up = await client.request(
                 method=self.spec.upload_method,
                 url=self.spec.upload_url,

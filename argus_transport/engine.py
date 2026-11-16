@@ -9,6 +9,7 @@ from typing import Any
 from urllib.parse import quote, urlsplit
 
 import httpx
+from argus_transport.address_policy import target_client
 from jsonpath_ng import parse
 
 from .models import (
@@ -278,7 +279,7 @@ class TransportEngine:
         try:
             async with asyncio.timeout(self.spec.timeout.total_deadline_s):
                 if self.client is None:
-                    async with httpx.AsyncClient(
+                    async with target_client(httpx,
                         follow_redirects=False, trust_env=False
                     ) as client:
                         return await self._operate(
@@ -544,7 +545,7 @@ class TransportEngine:
     @staticmethod
     async def run_legacy(request, mapping, *, client=None, secrets=()):
         if client is None:
-            async with httpx.AsyncClient(timeout=request.timeout_s) as owned:
+            async with target_client(httpx, timeout=request.timeout_s) as owned:
                 return await TransportEngine.run_legacy(
                     request, mapping, client=owned, secrets=secrets
                 )

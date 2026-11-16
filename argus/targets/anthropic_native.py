@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import ClassVar
 
 from anthropic import AsyncAnthropic
+from argus_transport.address_policy import public_only, target_client, TargetAddressPolicyError
 
 from argus.targets._base import Target, TargetBlockedError, Turn
 
@@ -46,7 +47,29 @@ class AnthropicNativeTarget(Target):
         self, prompt: str, history: tuple[Turn, ...] = ()
     ) -> tuple[str, float]:
         # One retry, so the longest wait for a reply is 2 x timeout_s, as the docs say.
+        if public_only():
+            from anthropic import _base_client
+            sdk_http = getattr(_base_client, "httpx2", None) or _base_client.httpx
+            refused = False
+            def record_refusal():
+                nonlocal refused
+                refused = True
+            async with target_client(sdk_http, timeout=self.spec.timeout_s, follow_redirects=True,
+                                     on_address_refused=record_refusal) as http_client:
+                client = AsyncAnthropic(api_key=self.spec.api_key, timeout=self.spec.timeout_s, max_retries=1, http_client=http_client)
+                try:
+                    result = await self._send(client, prompt, history)
+                except Exception:
+                    if refused:
+                        raise TargetAddressPolicyError() from None
+                    raise
+                if refused:
+                    raise TargetAddressPolicyError()
+                return result
         client = AsyncAnthropic(api_key=self.spec.api_key, timeout=self.spec.timeout_s, max_retries=1)
+        return await self._send(client, prompt, history)
+
+    async def _send(self, client, prompt, history):
         messages = [{"role": t.role, "content": t.content} for t in history]
         messages.append({"role": "user", "content": prompt})
         start = time.monotonic()

@@ -6,6 +6,7 @@ import os
 import sys
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
+from argus_transport.address_policy import public_only
 
 # Load .env from this directory, then the parent; existing values are never overridden.
 load_dotenv()
@@ -22,6 +23,7 @@ logger = logging.getLogger("OrchestratorAPI")
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
+    public_only()
     logger.info("argus server config %s", json.dumps(health_body()))
     yield
 
@@ -201,6 +203,7 @@ async def websocket_endpoint(websocket: WebSocket):
         await connection_manager.disconnect(agent_id, connection=websocket)
 
 def main() -> None:
+    public_only()
     import uvicorn
     host = os.getenv("ARGUS_SERVER_HOST") or "127.0.0.1"
     token = os.getenv("ARGUS_SERVER_TOKEN", "")

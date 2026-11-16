@@ -6,6 +6,7 @@ import secrets
 from dataclasses import dataclass, asdict
 from typing import Literal, TYPE_CHECKING
 import httpx
+from argus_transport.address_policy import target_client
 from argus.a2a.protocol import A2A_VERSION, CARD_PATH, LEGACY_CARD_PATH, MUTATING_OPS, Interface, Op, build_request, decode_response
 
 if TYPE_CHECKING:
@@ -44,7 +45,7 @@ class A2AClient:
 
     async def _request(self, method, url, **kwargs):
         try:
-            async with httpx.AsyncClient(timeout=self.spec.timeout_s, transport=self._transport) as client:
+            async with target_client(httpx, timeout=self.spec.timeout_s, transport=self._transport) as client:
                 response = await client.request(method, url, **kwargs)
         except httpx.HTTPError:
             return None

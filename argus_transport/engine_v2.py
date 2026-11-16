@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Mapping
 from urllib.parse import unquote, quote, urlencode, urljoin, urlsplit, urlunsplit
 
 import httpx
+from argus_transport.address_policy import target_client, TargetAddressPolicyError
 
 from .engine import _MISSING, _OMIT, evaluate_response, matches_predicate, outcome_match, select
 from .models import (
@@ -467,7 +468,7 @@ class TransportEngineV2:
         if self.client is not None:
             yield self.client
         else:
-            async with httpx.AsyncClient(follow_redirects=False, trust_env=False) as client:
+            async with target_client(httpx, follow_redirects=False, trust_env=False) as client:
                 yield client
 
     def _headers(self, request):
@@ -805,6 +806,8 @@ class TransportEngineV2:
                     interrupted = exc
                 if primary is None:
                     raise
+            except TargetAddressPolicyError:
+                raise
             except Exception:
                 if abort is None or (primary is None and result is None):
                     raise

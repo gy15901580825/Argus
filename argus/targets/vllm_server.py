@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import ClassVar
 
 import httpx
+from argus_transport.address_policy import target_client
 
 from argus.targets._base import Target, Turn
 
@@ -65,7 +66,7 @@ class VLLMServerTarget(Target):
     async def _check(self) -> dict:
         ev: dict = {"interaction_count": 0, "server_version": None}
         url = self.spec.url.rstrip("/") + "/version"
-        async with httpx.AsyncClient(timeout=self.spec.timeout_s, transport=self._transport) as c:
+        async with target_client(httpx, timeout=self.spec.timeout_s, transport=self._transport) as c:
             try:
                 r = await c.get(url, headers=dict(self.spec.headers))
             except httpx.HTTPError as e:

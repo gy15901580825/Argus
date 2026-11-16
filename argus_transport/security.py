@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.parse import quote, quote_plus, urlsplit
 
 from .models import SecretRef, origin
+from .address_policy import public_only, require_global
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,8 @@ class ExecutionPolicy:
             type=socket.SOCK_STREAM,
         )
         ips = list(dict.fromkeys(item[4][0] for item in addresses))
+        if public_only():
+            require_global(ips)
         if not ips:
             raise ValueError("Endpoint resolution failed")
         if origin(url) not in self.allowed_origins and any(

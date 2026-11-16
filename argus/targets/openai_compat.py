@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import ClassVar, Optional
 
 import httpx
+from argus_transport.address_policy import target_client
 
 from argus.targets._base import Target, TargetBlockedError, Turn
 
@@ -62,7 +63,7 @@ class OpenAICompatTarget(Target):
         if self.spec.max_tokens is not None:
             body["max_tokens"] = self.spec.max_tokens
         start = time.monotonic()
-        async with httpx.AsyncClient(timeout=self.spec.timeout_s) as client:
+        async with target_client(httpx, timeout=self.spec.timeout_s) as client:
             resp = await client.post(self.spec.endpoint_url, headers=headers, json=body)
             resp.raise_for_status()
             data = resp.json()

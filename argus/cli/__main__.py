@@ -38,6 +38,11 @@ def _print_version(ctx, _param, value):
               help="Show the version and exit.")
 def main():
     """Argus red-team CLI."""
+    from argus_transport.address_policy import public_only
+    try:
+        public_only()
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from None
 
 
 main.add_command(init_command, "init")

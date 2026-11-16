@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, AsyncIterator
 from uuid import UUID, uuid4
 
 import httpx
+from argus_transport.address_policy import TargetAddressPolicyError
 
 from argus import llm
 from argus.input_budget import InputLimits, fit_history
@@ -176,6 +177,7 @@ def _is_transport_failure(exc: Exception) -> bool:
             httpx.HTTPError,
             TargetDeliveryError,
             TargetTransportError,
+            TargetAddressPolicyError,
             TimeoutError,
             ConnectionError,
             json.JSONDecodeError,
@@ -292,6 +294,8 @@ def _send_failure(exc: Exception) -> tuple[str, str] | None:
 
     if isinstance(exc, TargetBlockedError):
         return VERDICT_BLOCKED_BY_TARGET, f"{exc}; counted as blocked"
+    if isinstance(exc, TargetAddressPolicyError):
+        return VERDICT_ERROR, str(exc)
     if isinstance(exc, TargetTransportError):
         return VERDICT_ERROR, f"target transport failed: {_short(exc)}"
     grpc_reason = _grpc_reason(exc)

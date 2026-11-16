@@ -1,0 +1,103 @@
+"""Opt-in address policy for built-in target connections."""
+from __future__ import annotations
+
+import ipaddress
+import os
+import socket
+
+import anyio
+import httpx
+
+
+class TargetAddressPolicyError(RuntimeError):
+    """A target connection was refused before opening a socket."""
+
+    def __init__(self):
+        super().__init__('target address not allowed by the address policy')
+
+
+def public_only() -> bool:
+    value = os.getenv('ARGUS_TARGET_ADDRESS_POLICY', '')
+    if value not in ('', 'public_only'):
+        raise ValueError('ARGUS_TARGET_ADDRESS_POLICY must be empty or public_only')
+    return value == 'public_only'
+
+
+def is_global_address(address: str) -> bool:
+    ip = ipaddress.ip_address(address)
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return ip.is_global
+
+
+async def resolve_addresses(host: str, port: int) -> list[str]:
+    addresses = await anyio.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    return list(dict.fromkeys(item[4][0] for item in addresses))
+
+
+def require_global(addresses: list[str]) -> None:
+    if not addresses or any(not is_global_address(ip) for ip in addresses):
+        raise TargetAddressPolicyError()
+
+
+async def checked_address(host: str, port: int) -> str:
+    try:
+        addresses = await resolve_addresses(host, port)
+    except OSError:
+        raise ConnectionError('target address resolution failed') from None
+    require_global(addresses)
+    return addresses[0]
+
+
+class _PublicNetworkBackend:
+    def __init__(self, backend, core, on_refusal=None):
+        self._backend = backend
+        self._core = core
+        self._on_refusal = on_refusal
+
+    async def connect_tcp(self, host, port, timeout=None, local_address=None, socket_options=None):
+        # The timeout includes DNS. Delegate only a numeric address, preserving
+        # the HTTP origin and TLS hostname in the connection above this backend.
+        try:
+            with anyio.fail_after(timeout):
+                ip = await checked_address(host, port)
+                return await self._backend.connect_tcp(
+                    ip, port, timeout=timeout, local_address=local_address,
+                    socket_options=socket_options,
+                )
+        except TargetAddressPolicyError:
+            if self._on_refusal is not None:
+                self._on_refusal()
+            raise
+        except TimeoutError:
+            raise self._core.ConnectTimeout('target connection timed out') from None
+        except OSError:
+            raise self._core.ConnectError('target connection failed') from None
+
+    async def connect_unix_socket(self, *args, **kwargs):
+        raise TargetAddressPolicyError()
+
+    async def sleep(self, seconds):
+        await self._backend.sleep(seconds)
+
+
+def target_client(module=httpx, *, on_address_refused=None, **kwargs):
+    """Create the ordinary client when off, or a directly guarded client when on.
+
+    Proxies are disabled under public_only: a proxy resolving a target itself
+    would bypass the local address check. The transport's pool backend is the
+    HTTPX integration point; both supported HTTP client implementations use it.
+    """
+    if public_only():
+        if kwargs.get('transport') is not None:
+            raise ValueError('custom target transports are unavailable under public_only')
+        if module is httpx:
+            import httpcore as core
+            from httpcore._backends.auto import AutoBackend
+        else:
+            import httpcore2 as core
+            from httpcore2._backends.auto import AutoBackend
+        transport = module.AsyncHTTPTransport(trust_env=False)
+        transport._pool._network_backend = _PublicNetworkBackend(AutoBackend(), core, on_address_refused)
+        kwargs.update(transport=transport, trust_env=False)
+    return module.AsyncClient(**kwargs)

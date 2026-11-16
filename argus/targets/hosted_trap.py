@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 import httpx
+from argus_transport.address_policy import target_client
 
 from ._base import TargetDeliveryError
 from argus.browser_runner.scenarios import dom_injection, extraction_tamper, os_cmd, ui_phishing, visual_injection
@@ -36,7 +37,7 @@ class HostedClient:
     def __init__(self, spec):
         self.spec = spec
         self.redactor = Redactor()
-        self._http = httpx.AsyncClient(timeout=10.0, trust_env=False)
+        self._http = target_client(httpx, timeout=10.0, trust_env=False)
 
     def _owner_token(self) -> str:
         token = os.environ.get(self.spec.owner_token_env)
