@@ -217,10 +217,15 @@ def _inspect_body(body, content_encoding):
     return body, None
 
 
+def synthetic_canary() -> str:
+    """Generate a fresh synthetic value for a run or target validation."""
+    return "ARGUS-CANARY-NOTAKEY-" + base64.b32encode(secrets.token_bytes(7)).decode()[:10]
+
+
 class WitnessRun:
     def __init__(self, spec: WitnessSpec):
         self.spec = spec
-        self.canary = "ARGUS-CANARY-NOTAKEY-" + base64.b32encode(secrets.token_bytes(7)).decode()[:10]
+        self.canary = synthetic_canary()
         self.fingerprint = hashlib.sha256(self.canary.encode()).hexdigest()[:8]
         self.marker = f"<canary sha256:{self.fingerprint}>"
         self.token = os.environ.get("ARGUS_WITNESS_TOKEN")

@@ -911,6 +911,8 @@ browser target with the channels you need:
 }
 ```
 
+`validate-target` uses a fresh synthetic canary for this binding and masks it in CLI output, including with `--execute`.
+
 Only selected probes that declare a witness requirement start listeners. At run start Argus prints the
 model relay base URL and the OTLP base endpoint, each under `/r/<run token>/`.
 Ports and tokens are random per run by default. For an agent started by hand,

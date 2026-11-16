@@ -32,7 +32,7 @@ def prepare_trace_control(probe):
 
 
 def without_secret_bindings(transport: dict) -> dict:
-    """Remove canary expression bindings from a control's request copy."""
+    """Copy a request without canary bindings when no secret is supplied."""
     def expression(value):
         if not isinstance(value, dict) or "literal" in value:
             return value

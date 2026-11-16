@@ -802,7 +802,9 @@ never a provider credential, and must not be placed in the prompt. Bind
 `{"context": "secret_placeholder"}` when the request needs its placeholder
 name; it defaults to `argus_secret` and is configurable through
 `witness.secret_placeholder`. It contains no surrounding percent signs.
-Outside a local browser run the canary is absent. `BrowserUseSpec.binds_secret_canary`
+Outside a local browser run the canary is absent and its request bindings are omitted;
+`validate-target` supplies a fresh synthetic canary and masks it in CLI output.
+`BrowserUseSpec.binds_secret_canary`
 exposes whether the request declares this binding.
 
 See [Secret-egress witness](onboarding/target-spec-cookbook.md#secret-egress-witness)
