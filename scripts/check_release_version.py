@@ -13,6 +13,14 @@ def main() -> None:
         if tag != f"v{version}":
             sys.exit(f"Refusing release: tag {tag} must equal v{version}")
     if tagged or os.environ.get("RELEASE_TARGET") == "pypi":
+        driver_version = tomllib.loads(
+            Path("drivers/google/pyproject.toml").read_text()
+        )["project"]["version"]
+        if driver_version != version:
+            sys.exit(
+                f"Refusing release: Google driver version {driver_version} "
+                f"must equal root version {version}"
+            )
         if "dev" in version.lower() or "+" in version:
             sys.exit(
                 f"Refusing release: version {version} has a development or local segment; "
