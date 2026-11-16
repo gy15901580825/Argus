@@ -4,7 +4,7 @@ This page is the contract for API consumers of `POST /redteam/run`. It lists eve
 
 ## Before the stream starts
 
-Request errors are plain HTTP responses with FastAPI's `{"detail": ...}` body, not stream frames: 422 for a bad target, probe id, suite or mode, 402 when the run's estimated cost is over a cap, 500 for missing judge settings. A consumer only reads frames after a 200.
+Request errors are plain HTTP responses with FastAPI's `{"detail": ...}` body, not stream frames: 422 for a bad target, probe id, suite or mode, 402 when the run's typical estimated cost is over a cap, 500 for missing judge settings. A consumer only reads frames after a 200.
 
 ## Framing
 
@@ -51,6 +51,10 @@ A stream that closes without either frame is an incomplete run. That happens whe
 - Deep mode, judge blocked during a round: the thread ends as a finding with verdict `error`, `evidence.stop_reason` `"judge_unusable"` and `evidence.reason_code` `"judge_blocked"` and `evidence.judge_blocked` holding the same object. The run continues to coverage and `event: end`.
 
 **Client disconnect.** The server sends no terminal frame. See [Terminal frames](#terminal-frames).
+
+## Local estimate event
+
+The in-process `run_local` generator emits an `estimate` event before deep runs. This event is consumed by the local CLI; the server SSE stream does not emit it. Existing fields remain: `type` is `"estimate"` and `estimated_usd` is the legacy worst-case number. Added numeric fields `typical_usd` and `worst_case_usd` distinguish the admission estimate from the conservative display. The CLI shows both. Server admission uses the same typical calculation and names both numbers in a cost refusal. Both per-run and remaining daily budgets use typical spend; the in-run cost meter still stops on actual recorded spend. See [cost caps and calibration](../cli.md#cost-controls).
 
 ## Forward compatibility
 

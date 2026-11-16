@@ -520,6 +520,8 @@ async def preflight(req: RunRequest):
         )
     except CostExceededError as e:
         raise HTTPException(status_code=402, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     return {}
 
 
@@ -577,6 +579,8 @@ async def run(req: RunRequest):
         )
     except CostExceededError as e:
         raise HTTPException(status_code=402, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
     async def _sse() -> AsyncIterator[bytes]:
         emitted: list[dict] = []

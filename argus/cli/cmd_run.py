@@ -168,10 +168,14 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
     body["baseline_key"] = baseline_key(spec)
 
     if mode == "deep":
-        from argus.cost_meter import estimate_run_usd
+        from argus.cost_meter import estimate_run_cost
 
-        estimated = estimate_run_usd(len(tokens) * deep_pairs * max_rounds, deep=True)
-        click.echo(f"Estimated client-side judge/attacker cost: ${estimated:.4f}. "
+        try:
+            estimated = estimate_run_cost(len(tokens) * deep_pairs * max_rounds, deep=True)
+        except ValueError as exc:
+            raise click.UsageError(str(exc)) from exc
+        click.echo(f"Estimated client-side judge/attacker cost: typical ${estimated.typical:.4f}, "
+                   f"worst case ${estimated.worst_case:.4f}. "
                    "The server chooses its judge and pricing; target costs are separate.")
     click.echo(f"Submitting run to {api_url}/api/v1/redteam/runs ...")
     try:

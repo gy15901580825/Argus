@@ -8,7 +8,7 @@ from argus import llm
 from argus.cli.__main__ import main
 
 UNPRICED = "azure/my-judge-deployment"
-FIRST_LINE = re.compile(r"Run rejected for cost: estimated cost \$(\d+\.\d+) > per_run_cap \$0\.00; "
+FIRST_LINE = re.compile(r"Run rejected for cost: estimated cost \(typical \$(\d+\.\d+), worst case \$\d+\.\d+\) > per_run_cap \$0\.00; "
                         r"rerun with --per-run-cap \d+\.\d\d or select fewer probes")
 
 

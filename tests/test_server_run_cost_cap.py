@@ -262,3 +262,21 @@ async def test_cap_hit_error_event_reports_spend_past_the_cap(server_run):
     assert [name for name, _ in stream] == [None, None, None, "error"]
     assert set(stream[-1][1]) == {"detail", "type", "cost"}
     assert isinstance(stream[-1][1]["detail"], str) and stream[-1][1]["detail"]
+
+
+async def test_typical_admission_still_stops_at_real_spend(server_run, monkeypatch):
+    run, started, closed = server_run
+    monkeypatch.setitem(cost_meter._PRICES_PER_M_TOKENS, "test-model", {"input": 1.0, "output": 5.0})
+    meter = CostMeter(daily_cap_usd=100, per_run_cap_usd=0.05)
+    text, events = await run(meter)
+    estimate = cost_meter.estimate_run_cost(3)
+    assert estimate.typical < 0.05 < estimate.worst_case
+    assert started == [("run", "attack_1"), ("run", "attack_2")]
+    assert findings(events) == [
+        ("probe_1", "pass"), ("probe_2", "aborted_cost"), ("probe_3", "aborted_cost"),
+    ]
+    assert events[-1]["type"] == "CostExceededError"
+    assert "per_run cap $0.05 exceeded" in events[-1]["detail"]
+    assert events[-1]["cost"] == {"spent_usd": 0.06, "per_run_cap_usd": 0.05}
+    assert "event: error" in text
+    assert closed == ["run"]

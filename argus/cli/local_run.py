@@ -214,7 +214,8 @@ def _run_and_render(
                             click.echo("Witness addresses change on every run unless fixed ports and ARGUS_WITNESS_TOKEN are configured; --witness-wait pauses for wiring.")
                         continue
                     if event.get("type") == "estimate":
-                        click.echo(f"Estimated judge/attacker cost: ${event['estimated_usd']:.4f}. Target costs are separate.")
+                        click.echo(f"Estimated judge/attacker cost: typical ${event['typical_usd']:.4f}, "
+                                   f"worst case ${event['worst_case_usd']:.4f}. Target costs are separate.")
                         continue
                     if event.get("type") == "deep_run":
                         deep = event["deep"]
