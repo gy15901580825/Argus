@@ -48,9 +48,10 @@ def test_probe_rejects_unknown_severity(tmp_path):
 def test_load_all_probes_finds_at_least_one_real_file():
     probes = list(load_all_probes(PROBES_DIR))
     assert len(probes) >= 1, "expected at least one shipped probe YAML"
-    # Every probe must have all triple-mapping fields populated
+    # ATLAS may be empty when the pinned release has no matching technique.
+    from argus.atlas import invalid_atlas_ids
+    assert invalid_atlas_ids(probes) == []
     for probe in probes:
-        assert probe.mappings.atlas, f"{probe.id} missing ATLAS"
         assert probe.mappings.owasp_llm, f"{probe.id} missing OWASP"
         assert probe.mappings.nist_ai_rmf, f"{probe.id} missing NIST"
 

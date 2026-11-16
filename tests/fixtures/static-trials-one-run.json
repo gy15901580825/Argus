@@ -223,7 +223,8 @@
             "run_status": "tested",
             "verdicts": {
               "pass": 1
-            }
+            },
+            "name": "LLM Prompt Injection: Direct"
           }
         ]
       },
