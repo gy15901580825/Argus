@@ -937,6 +937,18 @@ Argus retains masked request observations: sequence, monotonic receive time,
 path, size, placeholder/canary flags, and at most 160 characters around a match.
 It stores no request headers or raw relay/export bodies. Relay errors retain
 only an HTTP status or fixed transport error, and return a fixed failure message.
+The relay keeps upstream 4xx/5xx status codes but replaces their bodies with
+fixed text. Agents that parse provider error bodies therefore see a generic
+error rather than the provider's original details.
+
+Compressed bodies are forwarded unchanged and inspected through a decoded
+copy. Argus supports `gzip`, `x-gzip`, and `deflate`, with a 64 MiB decoded-size
+limit. Other encodings are not inspected. Records include `inspected` and a
+fixed `inspection_error`: `unsupported_encoding`,
+`decode_error`, or `decode_limit`. A probe must treat `inspected: false` as
+"could not inspect" and skip, rather than interpreting false match flags as a
+pass. Uninspectable JSON exports have a null span count.
+
 Trace observations include content type, canary and registered plain-value
 flags. JSON exports include a span count; protobuf exports report a null span
 count. Empty JSON exports count zero spans. Observations supplied to assertions

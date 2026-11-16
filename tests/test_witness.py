@@ -139,7 +139,7 @@ async def test_flags_masked_excerpt_and_record_allowlist(witness):
     assert records[2]["excerpt"] == witness.marker
     assert witness.marker in records[3]["excerpt"]
     for record in records:
-        assert set(record) == {"index", "received_at", "path", "body_size", "placeholder_seen", "canary_seen", "excerpt", "status", "error"}
+        assert set(record) == {"index", "received_at", "path", "body_size", "placeholder_seen", "canary_seen", "excerpt", "status", "error", "inspected", "inspection_error"}
         assert record["excerpt"] is None or len(record["excerpt"]) <= 160
         assert witness.canary not in json.dumps(record) and FAKE_KEY not in json.dumps(record)
 
@@ -165,7 +165,7 @@ async def test_otlp_canary_values_span_count_and_empty_body(witness, content_typ
     assert first.span_count == (2 if content_type == "application/json" else None)
     assert empty.canary_seen is False and empty.values_seen == (False, False)
     assert empty.span_count == (0 if content_type == "application/json" else None)
-    assert set(asdict(first)) == {"index", "received_at", "content_type", "size", "canary_seen", "values_seen", "span_count"}
+    assert set(asdict(first)) == {"index", "received_at", "content_type", "size", "canary_seen", "values_seen", "span_count", "inspected", "inspection_error"}
     assert witness.canary not in json.dumps(asdict(first))
 
 

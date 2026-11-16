@@ -14,6 +14,7 @@ import logging
 import re
 import secrets
 import time
+import zlib
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from urllib.parse import urlsplit
@@ -23,6 +24,7 @@ from yarl import URL
 from argus_transport.security import Redactor
 
 _HTTP_LOGGER = logging.Logger("argus.witness.http", level=logging.CRITICAL + 1)
+_DECODE_LIMIT = 64 * 1024 * 1024
 
 CHANNELS = frozenset({"model_relay", "otlp"})
 _HOP_HEADERS = frozenset({
@@ -117,6 +119,8 @@ class RelayRecord:
     excerpt: str | None
     status: int | None = None
     error: str | None = None
+    inspected: bool = True
+    inspection_error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -128,6 +132,8 @@ class ExportRecord:
     canary_seen: bool
     values_seen: tuple[bool, ...]
     span_count: int | None
+    inspected: bool = True
+    inspection_error: str | None = None
 
 
 _CURRENT = contextvars.ContextVar("witness_run", default=None)
@@ -159,6 +165,46 @@ def _span_count(body):
                    for scope in resource.get("scopeSpans", resource.get("instrumentationLibrarySpans", [])))
     except (ValueError, TypeError, AttributeError):
         return 0
+
+
+def _inflate(body, wbits, multiple=False):
+    decoded = bytearray()
+    while True:
+        decoder = zlib.decompressobj(wbits)
+        decoded.extend(decoder.decompress(body, _DECODE_LIMIT - len(decoded)))
+        if not decoder.eof:
+            return None, "decode_limit" if len(decoded) == _DECODE_LIMIT else "decode_error"
+        body = decoder.unused_data
+        if not body:
+            return bytes(decoded), None
+        if not multiple:
+            return None, "decode_error"
+        if len(decoded) == _DECODE_LIMIT:
+            return None, "decode_limit"
+
+
+def _inspect_body(body, content_encoding):
+    encodings = [part.strip().lower() for part in content_encoding.split(",")] if content_encoding else []
+    if any(encoding not in {"identity", "gzip", "x-gzip", "deflate"} for encoding in encodings):
+        return None, "unsupported_encoding"
+    for encoding in reversed(encodings):
+        try:
+            if encoding in {"gzip", "x-gzip"}:
+                body, error = _inflate(body, zlib.MAX_WBITS + 16, multiple=True)
+            elif encoding == "deflate":
+                try:
+                    body, error = _inflate(body, zlib.MAX_WBITS)
+                except zlib.error:
+                    body, error = _inflate(body, -zlib.MAX_WBITS)
+            else:
+                continue
+        except zlib.error:
+            return None, "decode_error"
+        if error:
+            return None, error
+    if len(body) > _DECODE_LIMIT:
+        return None, "decode_limit"
+    return body, None
 
 
 class WitnessRun:
@@ -231,6 +277,7 @@ class WitnessRun:
             return web.Response(status=404)
         received = time.monotonic()
         body = await request.read()
+        inspected_body, inspection_error = _inspect_body(body, ",".join(request.headers.getall("Content-Encoding", [])))
         # Header-derived masks live only for this request and are never recorded.
         redactor = Redactor(v for k, v in request.headers.items()
                             if any(part in k.lower() for part in ("key", "token", "secret", "credential", "authorization", "cookie", "auth")))
@@ -240,8 +287,10 @@ class WitnessRun:
         path = request.raw_path[len(f"/r/{self.token}/"):].split("?", 1)[0]
         record = RelayRecord(len(self.relay_records) + 1, received,
                              redactor.clean(path.replace(self.canary, self.marker)), len(body),
-                             ("%" + self.spec.secret_placeholder + "%").encode() in body,
-                             self.canary.encode() in body, self._excerpt(body, redactor))
+                             inspected_body is not None and ("%" + self.spec.secret_placeholder + "%").encode() in inspected_body,
+                             inspected_body is not None and self.canary.encode() in inspected_body,
+                             self._excerpt(inspected_body, redactor) if inspected_body is not None else None,
+                             inspected=inspected_body is not None, inspection_error=inspection_error)
         position = len(self.relay_records)
         self.relay_records.append(record)
         upstream = self.spec.model_relay["upstream"].rstrip("/") + "/" + request.raw_path[len(f"/r/{self.token}/"):]
@@ -273,10 +322,12 @@ class WitnessRun:
         content_type = request.content_type
         if content_type not in {"application/json", "application/x-protobuf", "application/protobuf"}:
             return web.Response(status=415, text="unsupported trace content type")
+        inspected_body, inspection_error = _inspect_body(body, ",".join(request.headers.getall("Content-Encoding", [])))
         self.export_records.append(ExportRecord(len(self.export_records) + 1, received,
-            content_type, len(body), self.canary.encode() in body,
-            tuple(value.encode() in body for value in self._values),
-            _span_count(body) if content_type == "application/json" else None))
+            content_type, len(body), inspected_body is not None and self.canary.encode() in inspected_body,
+            tuple(inspected_body is not None and value.encode() in inspected_body for value in self._values),
+            _span_count(inspected_body) if content_type == "application/json" and inspected_body is not None else None,
+            inspected=inspected_body is not None, inspection_error=inspection_error))
         return web.Response(body=b"{}" if content_type == "application/json" else b"", content_type=content_type)
 
     def evidence(self, start, end):
