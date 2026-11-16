@@ -16,7 +16,7 @@ from argus.runner import Finding
 from argus.scenarios.credentials import CredentialUnavailable
 from argus.scenarios.events import scenario_events
 from argus.scenarios.models import Evidence, IntegrationScenario, ObjectRecord, ObjectSpec, Provenance, ScenarioResult, now, object_marker
-from argus.scenarios.runtime import Budget, BudgetExceeded, NotReady, ObjectRegistry, RunContext, validate_target_credentials, read_template
+from argus.scenarios.runtime import Budget, BudgetExceeded, NotReady, ObjectRegistry, RunContext, SeedNotDeliverable, validate_target_credentials, read_template
 
 
 CLEANUP_RESERVE_S = 60
@@ -179,12 +179,16 @@ class ScenarioRunner:
         reason = f"seed {key} delivery wait did not complete within {wait_s:g} s"
         if wait_s <= 0:
             raise NotReady(reason)
+        delivery_failure = None
         try:
             async with asyncio.timeout(wait_s):
                 recipient = await driver.await_delivery(self.ctx, obj, spec, observer, deadline)
+        except SeedNotDeliverable as exc:
+            recipient = exc.recipient
+            delivery_failure = exc
         except TimeoutError as exc:
             raise NotReady(reason) from exc
-        if self.clock() >= deadline:
+        if delivery_failure is None and self.clock() >= deadline:
             raise NotReady(reason)
         if (recipient.run_id != obj.run_id or recipient.group != obj.group
                 or recipient.control_name != obj.control_name or recipient.marker != obj.marker
@@ -194,6 +198,8 @@ class ScenarioRunner:
         self.ctx.registry.save(recipient)
         self.ctx.objects[key] = recipient
         await self.object_events()
+        if delivery_failure is not None:
+            raise NotReady(str(delivery_failure)) from delivery_failure
 
     async def connections_ready(self):
         requirements: dict[tuple[str, str], set[str]] = {}
