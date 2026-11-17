@@ -37,29 +37,29 @@ def _commit(monkeypatch, *, direct_url=None, root=None, git=None):
         build_info.source_commit.cache_clear()
 
 
-def test_package_carries_the_release_version():
+def test_package_carries_the_next_development_version():
     version = tomllib.loads(PYPROJECT.read_text())["project"]["version"]
-    assert version == "1.17.1"
+    assert version == "1.17.2.dev0"
     driver = PYPROJECT.parent / "drivers/google/pyproject.toml"
     assert tomllib.loads(driver.read_text())["project"]["version"] == version
-    assert Version(version) > Version("1.17.0")
-    assert not Version(version).is_prerelease
+    assert Version(version) > Version("1.17.1")
+    assert Version(version).is_devrelease
 
 
 def test_version_without_a_commit_is_the_plain_line(monkeypatch):
     # docker/cli-smoke.sh matches this line exactly for the wheel image.
     monkeypatch.setattr("argus.cli.__main__.source_commit", lambda: None)
-    monkeypatch.setattr("argus.cli.__main__.version", lambda name: "1.17.1")
+    monkeypatch.setattr("argus.cli.__main__.version", lambda name: "1.17.2.dev0")
     result = CliRunner().invoke(main, ["--version"], prog_name="argus-probe")
     assert result.exit_code == 0, result.output
-    assert result.output == "argus-probe, version 1.17.1\n"
+    assert result.output == "argus-probe, version 1.17.2.dev0\n"
 
 
 def test_version_names_the_commit_when_known(monkeypatch):
     monkeypatch.setattr("argus.cli.__main__.source_commit", lambda: SHA)
-    monkeypatch.setattr("argus.cli.__main__.version", lambda name: "1.17.1")
+    monkeypatch.setattr("argus.cli.__main__.version", lambda name: "1.17.2.dev0")
     result = CliRunner().invoke(main, ["--version"], prog_name="argus-probe")
-    assert result.output == f"argus-probe, version 1.17.1 (commit {SHA})\n"
+    assert result.output == f"argus-probe, version 1.17.2.dev0 (commit {SHA})\n"
 
 
 def test_run_json_records_the_commit_only_when_known(monkeypatch):
