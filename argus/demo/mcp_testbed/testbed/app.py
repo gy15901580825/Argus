@@ -62,9 +62,12 @@ class _ElicitLifetime:
         ):
             received = self.future.result()
             if isinstance(received, dict):
-                response = {**response, "content": received.get("content")}
+                response = ({**received, "transport_status": "disconnected"}
+                            if self.pending.request["method"] == "sampling/createMessage"
+                            else {**response, "content": received.get("content")})
         pending = self.pending
-        self.session.world.record_elicitation(
+        record = self.session.world.record_sampling if pending.request["method"] == "sampling/createMessage" else self.session.world.record_elicitation
+        record(
             pending.tool, pending.request["params"], response,
             seq=pending.seq, conversation=pending.conversation,
         )
@@ -107,11 +110,14 @@ async def _elicit_stream(
     try:
         if session._frozen_evidence is not None:
             return
-        session.world.elicitation_sent(
+        sampling = pending.request["method"] == "sampling/createMessage"
+        sent = session.world.sampling_sent if sampling else session.world.elicitation_sent
+        sent(
             seq=pending.seq, conversation=pending.conversation
         )
         yield f"event: message\ndata: {json.dumps(pending.request)}\n\n"
-        response = await session.wait_elicitation(
+        wait = session.wait_sampling if sampling else session.wait_elicitation
+        response = await wait(
             pending.request["id"], ELICIT_TIMEOUT_S
         )
         if session._frozen_evidence is not None:
@@ -137,7 +143,7 @@ def _origin(request: Request) -> dict:
 def _respond(session: Session, body: dict, origin: dict | None = None) -> dict | Response:
     if (
         session.world is not None
-        and session.world.spec.elicit is not None
+        and (session.world.spec.elicit is not None or session.world.spec.sample is not None)
         and session._frozen_evidence is not None
     ):
         raise HTTPException(409, "world is sealed")
@@ -147,7 +153,8 @@ def _respond(session: Session, body: dict, origin: dict | None = None) -> dict |
             str(session.conversation), {"requests": 0, "tool_calls": 0}
         )
         counts["requests"] += 1
-        session.resolve_elicitation(body)
+        if not session.resolve_sampling(body):
+            session.resolve_elicitation(body)
         return Response(status_code=202)
     result = handle_request(session, body, origin=origin)
     if isinstance(result, ElicitPending):

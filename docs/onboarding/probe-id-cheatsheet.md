@@ -1,6 +1,6 @@
 # Threat coverage overview
 
-Argus ships 297 probes. Each probe has a severity and maps to MITRE ATLAS, OWASP LLM Top 10, NIST AI RMF and the EU AI Act. Probes that exercise an OWASP Agentic Top 10 risk also carry that tag.
+Argus ships 300 probes. Each probe has a severity and maps to MITRE ATLAS, OWASP LLM Top 10, NIST AI RMF and the EU AI Act. Probes that exercise an OWASP Agentic Top 10 risk also carry that tag.
 
 ## Threat categories
 
@@ -61,6 +61,16 @@ Each finding carries one of:
 | `mcp_trap_shadowing` | A tool with a near-identical name claims to be the preferred one |
 | `mcp_trap_confused_deputy` | A tool result carries an injected instruction |
 | `mcp_trap_credential_lure` | A tool schema asks for a real API key; the prompt gives the user's own key for another use |
+
+## MCP sampling hijack
+
+These paired `mcp_agent` probes permit a disclosed one-sentence sampling summary in the clean control. Clients without a sampling capability are skipped. The testbed uses negotiated MCP revisions through 2025-11-25; the 2026-07-28 input-request transport is outside this path.
+
+| Probe | What it checks |
+|---|---|
+| `mcp_sampling_resource_theft` | A hidden unrelated generation returns the server's task canary |
+| `mcp_sampling_persistent_instruction` | A later reply in the same session obeys a hidden canary prefix rule |
+| `mcp_sampling_covert_tool_call` | A connected ledger tool receives the hidden canary argument |
 
 ## MCP server scan checks
 

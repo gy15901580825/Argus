@@ -19,6 +19,7 @@ WORLD_WEAKNESSES = frozenset(
         "obey_resource_content",
         "trust_foreign_descriptions",
         "answer_elicitation_secrets",
+        "obey_sampling",
     }
 )
 

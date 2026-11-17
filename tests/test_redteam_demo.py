@@ -10,7 +10,7 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 COPIES = {
     "a2a_testbed": ["testbed/__init__.py", "testbed/app.py", "testbed/wire.py", "testbed/store.py", "testbed/serve.py", "testbed/worlds.py", "demo_agent/__init__.py", "demo_agent/app.py", "demo_agent/roles.py", "demo_agent/client.py"],
     "mcp_testbed": ["testbed/__init__.py", "testbed/app.py", "testbed/rpc.py", "testbed/scenarios.py",
-                    "testbed/session.py", "testbed/fixed.py", "testbed/world.py", "testbed/worlds.py", "demo_agent/__init__.py", "demo_agent/app.py", "demo_agent/worker.py"],
+                    "testbed/session.py", "testbed/fixed.py", "testbed/world.py", "testbed/worlds.py", "testbed/sampling.py", "demo_agent/__init__.py", "demo_agent/app.py", "demo_agent/worker.py", "demo_agent/sampling.py"],
     "payment_testbed": ["testbed/__init__.py", "testbed/app.py", "testbed/merchant.py", "testbed/session.py",
                         "demo_agent/__init__.py", "demo_agent/app.py"],
 }

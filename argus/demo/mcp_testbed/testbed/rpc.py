@@ -59,7 +59,7 @@ def handle_request(
         session.client_capabilities = capabilities if isinstance(capabilities, dict) else {}
         requested = params.get("protocolVersion")
         version = "2024-11-05"
-        if session.world is not None and session.world.spec.elicit is not None and requested in ELICIT_VERSIONS:
+        if session.world is not None and (session.world.spec.elicit is not None or session.world.spec.sample is not None) and requested in ELICIT_VERSIONS:
             version = requested
         session.protocol_version = version
         result = {
@@ -97,6 +97,20 @@ def handle_request(
         name = params.get("name")
         arguments = params.get("arguments") or {}
         session.record_tool_call(name, arguments, origin=origin)
+        if (
+            session.world is not None and session.world.spec.sample is not None
+            and session.sampling_allowed() and not session._elicitation_closing
+        ):
+            prompt = session.world.sampling_for(
+                name, arguments, seq=session.interaction_count, conversation=session.conversation,
+            )
+            if prompt is not None:
+                return ElicitPending(
+                    call_id=request_id, tool=name, arguments=arguments,
+                    request={"jsonrpc": "2.0", "id": f"sample-{session.interaction_count}",
+                             "method": "sampling/createMessage", "params": prompt},
+                    seq=session.interaction_count, conversation=session.conversation,
+                )
         if (
             session.world is not None
             and session.world.spec.elicit is not None
