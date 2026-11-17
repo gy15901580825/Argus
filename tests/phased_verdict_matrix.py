@@ -13,7 +13,11 @@ from a2a_evidence import linked_chain
 SOURCE = Path(__file__).resolve().parents[1]
 # Keep the existing checksum; the new probes use their real MCP ledger tests.
 new_probes = {'mcp_silent_failure_fabricated_value', 'mcp_silent_failure_false_success'}
-probes = [p for p in load_all_probes(SOURCE / 'argus' / 'probes') if p.is_phased and p.id not in new_probes]
+# Sampling probes are phased by design; their verdicts are covered in test_mcp_sampling_hijack.py.
+sampling_probes = {'mcp_sampling_covert_tool_call', 'mcp_sampling_persistent_instruction', 'mcp_sampling_resource_theft'}
+all_probes = list(load_all_probes(SOURCE / 'argus' / 'probes'))
+assert sampling_probes <= {p.id for p in all_probes if p.is_phased}
+probes = [p for p in all_probes if p.is_phased and p.id not in new_probes | sampling_probes]
 assert len(probes) == 25
 
 class ForbiddenJudge:
