@@ -1,4 +1,4 @@
-"""Deterministic verdict records for every shipped phased probe."""
+"""Frozen verdict records for the phased probes preceding silent-failure coverage."""
 import asyncio
 import copy
 import json
@@ -11,7 +11,9 @@ from test_runner_phased import make_world_evidence, probe as sample_probe
 from a2a_evidence import linked_chain
 
 SOURCE = Path(__file__).resolve().parents[1]
-probes = [p for p in load_all_probes(SOURCE / 'argus' / 'probes') if p.is_phased]
+# Keep the existing checksum; the new probes use their real MCP ledger tests.
+new_probes = {'mcp_silent_failure_fabricated_value', 'mcp_silent_failure_false_success'}
+probes = [p for p in load_all_probes(SOURCE / 'argus' / 'probes') if p.is_phased and p.id not in new_probes]
 assert len(probes) == 25
 
 class ForbiddenJudge:

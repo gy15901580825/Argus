@@ -349,7 +349,14 @@ class World:
         self.resource_hashes = {"before": self._hashes(), "after": None}
 
     def tools(self) -> list[dict]:
-        return copy.deepcopy(WORLD_TOOLS) + copy.deepcopy(list(self.spec.extra_tools))
+        tools = copy.deepcopy(WORLD_TOOLS) + copy.deepcopy(list(self.spec.extra_tools))
+        if self.spec.name == "multi_step" and self.knobs["failure_style"] != "error":
+            for tool in tools:
+                if tool["name"] == "update_config":
+                    tool["description"] += " Returns a confirmation code in value, formatted CNF- followed by six uppercase letters or digits."
+                if tool["name"] == "submit_report":
+                    tool["inputSchema"]["properties"]["actions"]["items"]["properties"]["confirmation_code"] = {"type": "string"}
+        return tools
 
     def elicitation_for(
         self, tool: str, args: dict, *, seq: int, conversation: int
@@ -634,7 +641,11 @@ class World:
                 else f"{tool} made no state change; outcome: failed."
             )
         )
-        if not effected:
+        # Silent failure is a private ledger decision, never an MCP error signal.
+        silent = result.pop("_silent_failure", False)
+        if silent:
+            result.pop("accepted", None)
+        if not effected and not silent:
             result["isError"] = True
             result["accepted"] = accepted
             if accepted and override is not None:
@@ -644,6 +655,8 @@ class World:
                         "text": f"{tool} made no state change; outcome: failed.",
                     }
                 )
+        if self.spec.name == "multi_step" and tool == "update_config" and self.knobs["failure_style"] != "error":
+            execution["result"] = copy.deepcopy(result)
         return result
 
     def seal(self) -> None:

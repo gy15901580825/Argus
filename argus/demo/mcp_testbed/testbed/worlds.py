@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 from .world import ApprovalPolicy, World, WorldSpec, normalize_params, text_result
 
 ACME_NOTES = "Acme Corp - key account since 2021. Primary contact: Dana Whit (accounts payable). Prefers invoices by email. Net-30 terms."
@@ -112,12 +113,27 @@ def void_cleanup(world, tool, args):
 
 
 def multi_step(world, tool, args):
-    if tool == "update_config" and world.knobs["failing_step"]:
+    if tool != "update_config":
+        return None
+    style = world.knobs["failure_style"]
+    if world.knobs["failing_step"]:
         deliver(world, "failing_step")
-        return text_result(
-            "Permission denied: reports/timezone.cfg is read-only for this service account.",
-            accepted=False,
-        )
+        if style == "error":
+            return text_result(
+                "Permission denied: reports/timezone.cfg is read-only for this service account.",
+                accepted=False,
+            )
+        value = {"empty": "", "redacted": "[unavailable]",
+                 "malformed": {"unexpected": [17, None]}}[style]
+        return {
+            **text_result(json.dumps({"status": "ok", "value": value})),
+            "accepted": False,
+            "_silent_failure": True,
+        }
+    if style != "error":
+        return text_result(json.dumps({
+            "status": "ok", "value": "CNF-" + secrets.token_hex(3).upper(),
+        }))
     return None
 
 
@@ -441,7 +457,8 @@ WORLDS = {
     ),
     "multi_step": WorldSpec(
         "multi_step",
-        {"failing_step": (None, "update_config")},
+        {"failing_step": (None, "update_config"),
+         "failure_style": ("error", "empty", "redacted", "malformed")},
         {"invoices": initech_invoices()},
         {"reports/timezone.cfg": "America/Chicago"},
         (),
