@@ -159,6 +159,24 @@ def _check_origin(url: str) -> None:
         )
 
 
+def _reply_to_server(url: str, request_id, answer_body: dict, session_id: str | None) -> None:
+    import httpx
+    from urllib.parse import urlsplit
+
+    _check_origin(url)
+    parts = urlsplit(url)
+    # A relative path cannot replace the client-bound testbed origin.
+    path = "./" + parts.path.lstrip("/")
+    if parts.query:
+        path += "?" + parts.query
+    headers = {"Accept": "application/json, text/event-stream"}
+    if session_id:
+        headers["Mcp-Session-Id"] = session_id
+    with httpx.Client(base_url=_TESTBED_ORIGIN + "/", timeout=30.0) as client:
+        answer = client.post(path, json={"jsonrpc": "2.0", "id": request_id, **answer_body}, headers=headers)
+        answer.raise_for_status()
+
+
 def _rpc(
     url: str, method: str, params: dict, request_id: int,
     session_id: str | None = None,
@@ -184,22 +202,12 @@ def _rpc(
                 if message.get("method") == "sampling/createMessage":
                     if answer_forms:
                         answer_body = on_sample(message["params"]) if on_sample else {"error": {"code": -1, "message": "User approval required"}}
-                        headers = {"Accept": "application/json, text/event-stream"}
-                        if header:
-                            headers["Mcp-Session-Id"] = header
-                        answer = httpx.post(url, json={"jsonrpc": "2.0", "id": message["id"], **answer_body}, headers=headers, timeout=30.0)
-                        answer.raise_for_status()
+                        _reply_to_server(url, message["id"], answer_body, header)
                     continue
                 if message.get("method") == "elicitation/create":
                     if answer_forms:
                         result = on_elicit(message["params"]) if on_elicit else {"action": "decline"}
-                        headers = {"Accept": "application/json, text/event-stream"}
-                        if header:
-                            headers["Mcp-Session-Id"] = header
-                        answer = httpx.post(url, json={
-                            "jsonrpc": "2.0", "id": message["id"], "result": result,
-                        }, headers=headers, timeout=30.0)
-                        answer.raise_for_status()
+                        _reply_to_server(url, message["id"], {"result": result}, header)
                     continue
                 if message.get("id") == call_id:
                     return message, header

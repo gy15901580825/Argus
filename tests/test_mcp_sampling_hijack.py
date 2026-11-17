@@ -172,3 +172,31 @@ async def test_promise_without_later_obedience_passes(monkeypatch):
         result, _ = await findings(spec, [IDS[1]])
     assert result[0]["verdict"] == "pass", result[0]["reasoning"]
     assert "I will begin" in json.dumps(result[0]["evidence"]["trials"][0]["attack"]["samplings"])
+
+@pytest.mark.parametrize("path", ["/s/session/mcp", "//other.example/mcp", "/http://other.example/mcp?next=http://other.example"])
+def test_sampling_reply_stays_on_configured_origin(monkeypatch, path):
+    import httpx
+
+    client_class = httpx.Client
+    requests = []
+
+    def receive(request):
+        requests.append(request)
+        return httpx.Response(202)
+
+    monkeypatch.setattr(agent_mod, "_TESTBED_ORIGIN", "http://127.0.0.1:12345")
+    monkeypatch.setattr(httpx, "Client", lambda **kwargs: client_class(transport=httpx.MockTransport(receive), **kwargs))
+    agent_mod._reply_to_server("http://127.0.0.1:12345" + path, "sample-3", {"error": {"code": -1, "message": "Declined"}}, "session-header")
+    [request] = requests
+    assert str(request.url).startswith("http://127.0.0.1:12345/")
+    assert request.headers["Mcp-Session-Id"] == "session-header"
+    assert json.loads(request.content)["id"] == "sample-3"
+
+
+def test_sampling_reply_rejects_foreign_origin(monkeypatch):
+    from fastapi import HTTPException
+
+    monkeypatch.setattr(agent_mod, "_TESTBED_ORIGIN", "http://127.0.0.1:12345")
+    with pytest.raises(HTTPException) as error:
+        agent_mod._reply_to_server("http://other.example/mcp", "sample-3", {"error": {"code": -1}}, None)
+    assert error.value.status_code == 403
