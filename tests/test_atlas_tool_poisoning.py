@@ -35,6 +35,8 @@ from argus.probe import load_all_probes
         "approval_substitution",
         "mcp_confused_deputy_chained_forward",
         "mcp_confused_deputy_result_injection",
+        "mcp_forged_reasoning_result_injection",
+        "mcp_forged_reasoning_result_injection_control",
         "mcp_os_cmd_result_injection",
         "mcp_resource_embedded_injection",
         "mcp_scan_input_reflection",

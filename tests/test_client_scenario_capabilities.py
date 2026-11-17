@@ -195,7 +195,7 @@ def test_advertised_scenarios_are_the_validation_table():
     assert set(supported_scenarios()) == BROWSER_KINDS
 
 
-def test_a_1_12_client_serves_every_browser_probe_except_the_ten_placements_and_newer_kinds():
+def test_a_1_12_client_serves_every_browser_probe_except_placement_probes_and_newer_kinds():
     mgr = ConnectionManager()
     mgr.active_connections["old"] = object()
     bridge = mgr.get_redteam_bridge()
@@ -205,10 +205,10 @@ def test_a_1_12_client_serves_every_browser_probe_except_the_ten_placements_and_
     newer = [p.id for p in BROWSER_PROBES if p.scenario_kind and p.scenario_kind not in CLIENT_1_12_SCENARIOS]
     notices = [p.id for p in BROWSER_PROBES if "account_notice" in p.scenario_options]
     assert unsupported == sorted(placements + newer + notices + ["browser_click_swap_toctou_control"])
-    assert len(placements) == 10
+    assert len(placements) == 14
     assert "browser_extraction_tamper" in newer
     assert sorted(notices) == [STORED_CONTROL_CARD, STORED_CONTROL]
-    assert len(unsupported) == 10 + len(newer) + 3
+    assert len(unsupported) == len(placements) + len(newer) + 3
 
 
 STORED_CONTROL = "browser_ui_phishing_stored_password_control"
