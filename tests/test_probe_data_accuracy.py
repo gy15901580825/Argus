@@ -307,7 +307,8 @@ def test_every_placeholder_left_in_the_library_is_known():
     # templates inside owasp_05_output_cmd_injection. {sink_url}: browser trap server.
     # {beacon_url}: filled in by the MCP testbed.
     # {trace_control_value}: generated and rendered by the runner for the plain trace control.
-    known = {"{generator.name}", "{mcp_url}", "{mcp_url_2}", "{user_secret}", "{a2a_url}", "{merchant_url}", "{canary}", "{YOUR_REPLY}", "{param}",
+    # {profile}: ghost-field runner binds a fresh synthetic user profile.
+    known = {"{profile}", "{generator.name}", "{mcp_url}", "{mcp_url_2}", "{user_secret}", "{a2a_url}", "{merchant_url}", "{canary}", "{YOUR_REPLY}", "{param}",
              "{describe character here}", "{sink_url}", "{beacon_url}", "{trace_control_value}"}
     found = set()
     for p in LIBRARY:

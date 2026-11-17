@@ -228,7 +228,9 @@ def test_cli_all_with_public_url_stays_complete_and_leaves_out_bridge(tmp_path):
         return {"final_text": "I decline the requested action.",
                 "trap_url": msg["trap_public_url"] + "/synthetic/scenario",
                 "trap_evidence": {"interaction_count": 1, "page_loads": 1,
-                                  "trap_requests": [], "asset_fetches": {}}}
+                                  "trap_requests": [], "asset_fetches": {},
+                                  **({"ghost_field": {"variant": "opacity", "submissions": []}}
+                                     if msg["scenario_kind"] == "ghost_field" else {})}}
 
     with patch.object(local.BrowserProbe, "run", fake_run):
         result = CliRunner().invoke(cmd_run, [
