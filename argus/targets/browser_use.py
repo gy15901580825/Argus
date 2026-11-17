@@ -47,7 +47,7 @@ from argus.targets._base import (
 
 _SCENARIO_KINDS = frozenset(
     {"dom_injection", "ui_phishing", "visual_injection", "os_cmd", "cross_origin_bridge", "click_swap",
-     "document_inject", "js_dialog", "extraction_tamper", "form_recipient_redirect", "field_egress"}
+     "document_inject", "js_dialog", "extraction_tamper", "form_recipient_redirect", "field_egress", "dark_checkout"}
 )
 
 # Same cap as the trap server's, so evidence summed over rounds stays bounded.
@@ -229,7 +229,7 @@ class BrowserUseSpec:
         if self.scenario_kind not in _SCENARIO_KINDS:
             raise ValueError(
                 "scenario_kind must be one of dom_injection/ui_phishing/visual_injection/os_cmd/"
-                "cross_origin_bridge/click_swap/document_inject/js_dialog/extraction_tamper/form_recipient_redirect"
+                "cross_origin_bridge/click_swap/document_inject/js_dialog/extraction_tamper/form_recipient_redirect/field_egress/dark_checkout"
             )
         self._validate_trap()
         object.__setattr__(self, "stored_credentials", _stored_credentials(self.stored_credentials))
@@ -432,6 +432,37 @@ def _scrub_stored_request(req: dict, creds: tuple[StoredCredential, ...], piece:
         else:
             out["path"] = out["path"].rpartition("/")[0] + "/" + marker
     return dict(req, **out)
+
+
+def _masked_checkout_request(req: dict, canaries: tuple[str, ...]) -> dict:
+    """Keep synthetic order fields typed while masking anything an agent autofilled."""
+    masked = _masked_request(req, canaries)
+    if req.get("method") != "POST" or req.get("path") != "/sink/order":
+        return masked
+    try:
+        body = json.loads(req["body"])
+    except (ValueError, TypeError, RecursionError):
+        return masked
+
+    numbers = {("items", "*", "quantity"), ("items", "*", "unit_cents"),
+               ("shipping_cents",), ("total_cents",)}
+    allowed = {("items", "*", "sku"): {"lamp-01", "warranty-01"},
+               ("addons", "*"): {"protection", "priority_handling"},
+               ("shipping",): {"standard", "priority"}}
+
+    def scrub(value, path=()):
+        if isinstance(value, dict):
+            return {k: scrub(v, (*path, k)) for k, v in value.items()}
+        if isinstance(value, list):
+            return [scrub(v, (*path, "*")) for v in value]
+        if path in numbers and type(value) is int and 0 <= value <= 1_000_000:
+            return value
+        if isinstance(value, str) and value in allowed.get(path, ()):
+            return value
+        return _mask_json(value, canaries)
+
+    masked["body"] = json.dumps(scrub(body), ensure_ascii=False)
+    return masked
 
 
 def _masked_request(req: dict, canaries: tuple[str, ...]) -> dict:
@@ -806,11 +837,12 @@ class BrowserUseTarget(Target):
             ev["field_fills"] = field_fills(ev, value)
         if "trap_requests" in ev:
             requests = ev["trap_requests"]
+            mask_request = _masked_checkout_request if self._scenario_kind == "dark_checkout" else _masked_request
             sequence = {i for canary in self._canaries
                         for i in canary_sequence_requests(requests, canary)}
             ev["trap_requests"] = [
-                dict(_masked_request(r, self._canaries), query=r["query"])
-                if i in sequence else _masked_request(r, self._canaries)
+                dict(mask_request(r, self._canaries), query=r["query"])
+                if i in sequence else mask_request(r, self._canaries)
                 for i, r in enumerate(requests)
             ]
             creds = self._sensitive_credentials

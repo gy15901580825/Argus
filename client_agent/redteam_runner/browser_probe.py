@@ -14,13 +14,14 @@ from argus_transport import (
 )
 
 from .scenarios import (
-    field_egress, click_swap, cross_origin_bridge, document_inject, dom_injection, extraction_tamper, form_recipient_redirect, js_dialog, os_cmd, ui_phishing, visual_injection,
+    dark_checkout, field_egress, click_swap, cross_origin_bridge, document_inject, dom_injection, extraction_tamper, form_recipient_redirect, js_dialog, os_cmd, ui_phishing, visual_injection,
 )
 from .scenarios._options import validate_options
 from .server import ScenarioServer
 from .traps import LocalTrap, Trap
 
 _SCENARIOS = {
+    "dark_checkout": dark_checkout,
     "field_egress": field_egress,
     "click_swap": click_swap,
     "cross_origin_bridge": cross_origin_bridge,
