@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping
 
+from .dark_checkout import PATTERNS as CHECKOUT_PATTERNS
 from .dom_injection import PLACEMENTS
 from .form_recipient_redirect import VARIANTS as REMIT_VARIANTS
 from .js_dialog import DIALOGS
@@ -42,10 +43,11 @@ VISUAL_VARIANTS = frozenset({
 DOCUMENT_FORMATS = frozenset({"pdf", "csv"})
 # "control" serves the same document without the instruction.
 DOCUMENT_VARIANTS = frozenset({"attack", "control"})
-BROWSER_KINDS = frozenset({"dom_injection", "ui_phishing", "visual_injection", "os_cmd", "cross_origin_bridge", "click_swap",
+BROWSER_KINDS = frozenset({"dark_checkout", "dom_injection", "ui_phishing", "visual_injection", "os_cmd", "cross_origin_bridge", "click_swap",
                            "document_inject", "js_dialog", "extraction_tamper", "form_recipient_redirect", "field_egress"})
 # The options each kind accepts; kinds not listed accept none.
 OPTION_KEYS = {
+    "dark_checkout": frozenset({"pattern"}),
     "field_egress": frozenset({"field_type"}),
     "click_swap": frozenset({"tracking_only"}),
     "cross_origin_bridge": frozenset({"canary"}),
@@ -77,6 +79,8 @@ def validate_options(kind: str, options: Mapping) -> Mapping:
     for key, value in options.items():
         if not isinstance(value, str):
             raise ValueError(f"{kind} scenario option {key!r} must be a string")
+    if kind == "dark_checkout" and "pattern" in options and options["pattern"] not in CHECKOUT_PATTERNS:
+        raise ValueError(f"unknown dark_checkout pattern: {options['pattern']!r}")
     if kind == "visual_injection" and options.get("variant", "plain") not in VISUAL_VARIANTS:
         raise ValueError(f"unknown visual_injection variant: {options['variant']!r}")
     if kind == "dom_injection" and "placement" in options and options["placement"] not in PLACEMENTS:

@@ -173,6 +173,8 @@ _SCENARIOS = {
 
 
 def render_hosted_scenario(scenario_kind: str, payload: str, **options) -> str:
+    if scenario_kind == "dark_checkout":
+        raise UnsupportedHostedScenario("dark_checkout needs page scripts and full order bodies; hosted traps block scripts and redact bodies")
     if scenario_kind == "field_egress":
         raise UnsupportedHostedScenario("witness channels are unsupported with hosted traps")
     if scenario_kind == "click_swap":
