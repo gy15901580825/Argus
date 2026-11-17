@@ -6,6 +6,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from dataclasses import replace
 
 import pytest
@@ -508,10 +509,12 @@ async def test_second_cancellation_records_interrupted_abort():
 @pytest.mark.parametrize('signum,exit_code', [(signal.SIGINT, 130), (signal.SIGTERM, 143)])
 def test_abort_first_signal(tmp_path, signum, exit_code):
     ready = threading.Event()
+    timestamps = {}
     app = RecordingApp()
     async def submitted(request):
         return web.json_response({'run_id': 'job-1', 'status': 'PENDING'}, status=202)
     async def polled(request):
+        timestamps.setdefault('ready', time.monotonic())
         ready.set()
         await asyncio.sleep(30)
         return web.json_response({'status': 'PENDING'})
@@ -528,6 +531,9 @@ def test_abort_first_signal(tmp_path, signum, exit_code):
         'assertions:\n  - no_call_to_tool: unused\nrequires_interaction: false\n')
     (tmp_path / 'abort_signal_pack.py').write_text(
         'from pathlib import Path\ndef probes_dir():\n    return Path(__file__).parent / "probe_pack"\n')
+    (tmp_path / 'sitecustomize.py').write_text(
+        'import faulthandler\nimport signal\n'
+        'faulthandler.register(signal.SIGUSR1, all_threads=True)\n')
     metadata = tmp_path / 'abort_signal_pack-1.0.dist-info'
     metadata.mkdir()
     (metadata / 'METADATA').write_text('Metadata-Version: 2.1\nName: abort-signal-pack\nVersion: 1.0\n')
@@ -537,15 +543,34 @@ def test_abort_first_signal(tmp_path, signum, exit_code):
         target = tmp_path / 'target.json'
         target.write_text(json.dumps({'kind': 'custom_http', 'transport': data}))
         output = tmp_path / 'run.json'
-        env = {**os.environ, 'PYTHONPATH': os.pathsep.join(filter(None, (str(tmp_path), os.environ.get('PYTHONPATH'))))}
+        env = {**os.environ, 'PYTHONFAULTHANDLER': '1',
+               'PYTHONPATH': os.pathsep.join(filter(None, (str(tmp_path), os.environ.get('PYTHONPATH'))))}
         process = subprocess.Popen([sys.executable, '-m', 'argus.cli', 'run', '--local', '--target',
                                     str(target), '--probes', 'abort_signal_probe', '--format', 'json',
                                     '--out', str(output)], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    text=True)
         try:
             assert ready.wait(15), 'Native CLI did not reach polling'
+            timestamps['signal_sent'] = time.monotonic()
             process.send_signal(signum)
-            stdout, stderr = process.communicate(timeout=15)
+            try:
+                stdout, stderr = process.communicate(timeout=15)
+            except subprocess.TimeoutExpired:
+                timestamps['timeout'] = time.monotonic()
+                # Capture every child thread before teardown discards the evidence.
+                try:
+                    process.send_signal(signal.SIGUSR1)
+                except ProcessLookupError:
+                    pass
+                try:
+                    stdout, stderr = process.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    stdout, stderr = process.communicate(timeout=5)
+                pytest.fail(f'Native CLI did not exit after signal {signum}; '
+                            f'parent timestamps (monotonic seconds): {timestamps}; '
+                            f'child returncode: {process.returncode}\n'
+                            f'child stderr tail:\n{stderr[-12000:]}')
             assert process.returncode == exit_code, stdout + stderr
             assert output.exists() is False
             assert_abort_requests(app, origin, 1)
