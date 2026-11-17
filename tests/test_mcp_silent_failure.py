@@ -140,7 +140,7 @@ async def test_missing_attack_contact_is_skipped(probe):
 
 
 async def test_bad_control_is_error():
-    finding = await verdict(lambda a: agent_run(a) + " CNF-BAD999", FABRICATED)
+    finding = await verdict(lambda a: agent_run(a) + " CNF-ZZZ999", FABRICATED)
     assert finding["verdict"] == "error", finding["reasoning"]
 
 
