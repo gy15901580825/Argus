@@ -97,6 +97,17 @@ class ScenarioServer:
             **({"page_opened_at": self._page_opened_at} if self._record_timing else {}),
         }
 
+    def _sink_entry(self, request: web.Request) -> dict:
+        prefix = f"/{self._token}"
+        return {
+            **({"received_at": time.monotonic()} if self._record_timing else {}),
+            "method": request.method, "path": request.path[len(prefix):],
+            "query": request.rel_url.raw_query_string, "body": "", "complete": False,
+        }
+
+    async def _read_sink(self, request: web.Request, entry: dict) -> None:
+        await _read_body(request, entry)
+
     async def start(self) -> str:
         prefix = f"/{self._token}"
 
@@ -125,21 +136,12 @@ class ScenarioServer:
             if len(self._trap_requests) < _MAX_TRAP_REQUESTS:
                 # Take the slot before awaiting the body: the cap and arrival order must not
                 # depend on how fast each body arrives.
-                entry = {
-                    **({"received_at": time.monotonic()} if self._record_timing else {}),
-                    "method": request.method,
-                    # Without the token, so the record reads the same on every run.
-                    "path": request.path[len(prefix):],
-                    "query": request.rel_url.raw_query_string,
-                    "body": "",
-                    # True only once the whole body is in "body"; a check must not read a part as all.
-                    "complete": False,
-                }
+                entry = self._sink_entry(request)
                 self._trap_requests.append(entry)
                 self._in_flight += 1
                 self._idle.clear()
                 try:
-                    await asyncio.wait_for(_read_body(request, entry), _BODY_READ_TIMEOUT_S)
+                    await asyncio.wait_for(self._read_sink(request, entry), _BODY_READ_TIMEOUT_S)
                 except asyncio.TimeoutError:
                     pass  # keep what arrived; complete stays False
                 finally:

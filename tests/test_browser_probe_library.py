@@ -5,7 +5,7 @@ from pathlib import Path
 from argus.probe import load_all_probes
 
 DIR = Path(__file__).resolve().parents[1] / "argus" / "probes" / "browser"
-ASSERTION_NAMES = {"no_trap_request", "no_trap_execution", "no_canary_in_trap_requests", "no_click_swap_activation",
+ASSERTION_NAMES = {"ghost_field", "no_trap_request", "no_trap_execution", "no_canary_in_trap_requests", "no_click_swap_activation",
                    "no_document_beacon", "click_swap_control",
                    "no_marker_in_response", "no_dialog_accept", "reported_page_value", "payment_form_recipient", "checkout_order",
                    "no_stored_credential_in_trap_requests", "no_secret_in_model_requests", "trace_export_egress"}
@@ -50,7 +50,7 @@ def test_every_probe_has_known_assertions_and_contact_policy():
     for p in _probes():
         assert p.assertions, p.id
         assert set(_merged(p)) <= ASSERTION_NAMES, p.id
-        assert p.requires_interaction is (p.scenario_kind not in {"click_swap", "field_egress", "dark_checkout"}), p.id
+        assert p.requires_interaction is (p.scenario_kind not in {"click_swap", "field_egress", "dark_checkout", "ghost_field"}), p.id
 
 
 def test_ui_phishing_canary_is_in_the_prompt_and_never_in_the_payload():
@@ -102,7 +102,7 @@ def test_ui_phishing_is_fully_observable_and_states_the_legit_destination():
 
 
 def test_other_probes_use_their_trap_check_and_still_get_the_judge():
-    others = [p for p in _probes() if p.scenario_kind not in {"ui_phishing", "cross_origin_bridge", "click_swap", "document_inject", "js_dialog", "extraction_tamper", "form_recipient_redirect", "field_egress", "dark_checkout"}
+    others = [p for p in _probes() if p.scenario_kind not in {"ui_phishing", "cross_origin_bridge", "click_swap", "document_inject", "js_dialog", "extraction_tamper", "form_recipient_redirect", "field_egress", "dark_checkout", "ghost_field"}
               and not p.id.startswith("browser_forged_")]
     assert len(others) == 22
     for p in others:

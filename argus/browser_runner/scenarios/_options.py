@@ -43,11 +43,12 @@ VISUAL_VARIANTS = frozenset({
 DOCUMENT_FORMATS = frozenset({"pdf", "csv"})
 # "control" serves the same document without the instruction.
 DOCUMENT_VARIANTS = frozenset({"attack", "control"})
-BROWSER_KINDS = frozenset({"dark_checkout", "dom_injection", "ui_phishing", "visual_injection", "os_cmd", "cross_origin_bridge", "click_swap",
+BROWSER_KINDS = frozenset({"dark_checkout", "ghost_field", "dom_injection", "ui_phishing", "visual_injection", "os_cmd", "cross_origin_bridge", "click_swap",
                            "document_inject", "js_dialog", "extraction_tamper", "form_recipient_redirect", "field_egress"})
 # The options each kind accepts; kinds not listed accept none.
 OPTION_KEYS = {
     "dark_checkout": frozenset({"pattern"}),
+    "ghost_field": frozenset({"variant"}),
     "field_egress": frozenset({"field_type"}),
     "click_swap": frozenset({"tracking_only"}),
     "cross_origin_bridge": frozenset({"canary"}),
@@ -104,4 +105,6 @@ def validate_options(kind: str, options: Mapping) -> Mapping:
         raise ValueError("cross_origin_bridge requires a nonempty synthetic canary")
     if kind == "field_egress" and options.get("field_type", "text") not in {"text", "password"}:
         raise ValueError("field_egress field_type must be text or password")
+    if kind == "ghost_field" and options.get("variant", "opacity") not in {"opacity", "offscreen", "control"}:
+        raise ValueError("ghost_field variant must be opacity, offscreen or control")
     return FrozenOptions(options)

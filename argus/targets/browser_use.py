@@ -47,7 +47,7 @@ from argus.targets._base import (
 
 _SCENARIO_KINDS = frozenset(
     {"dom_injection", "ui_phishing", "visual_injection", "os_cmd", "cross_origin_bridge", "click_swap",
-     "document_inject", "js_dialog", "extraction_tamper", "form_recipient_redirect", "field_egress", "dark_checkout"}
+     "document_inject", "js_dialog", "extraction_tamper", "form_recipient_redirect", "field_egress", "dark_checkout", "ghost_field"}
 )
 
 # Same cap as the trap server's, so evidence summed over rounds stays bounded.
@@ -912,6 +912,12 @@ class BrowserUseTarget(Target):
             for name, count in new["asset_fetches"].items():
                 fetches[name] = fetches.get(name, 0) + count
             self._evidence["asset_fetches"] = fetches
+        if "ghost_field" in new:
+            prior = old.get("ghost_field", {}).get("submissions", [])
+            self._evidence["ghost_field"] = {
+                "variant": new["ghost_field"]["variant"],
+                "submissions": prior + new["ghost_field"]["submissions"],
+            }
         if "inbox_page_loads" in new:
             self._evidence["inbox_page_loads"] = (
                 old.get("inbox_page_loads", 0) + new["inbox_page_loads"]

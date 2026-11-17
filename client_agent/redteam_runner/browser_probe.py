@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 
 from argus_transport import (
@@ -14,7 +15,7 @@ from argus_transport import (
 )
 
 from .scenarios import (
-    dark_checkout, field_egress, click_swap, cross_origin_bridge, document_inject, dom_injection, extraction_tamper, form_recipient_redirect, js_dialog, os_cmd, ui_phishing, visual_injection,
+    dark_checkout, ghost_field, field_egress, click_swap, cross_origin_bridge, document_inject, dom_injection, extraction_tamper, form_recipient_redirect, js_dialog, os_cmd, ui_phishing, visual_injection,
 )
 from .scenarios._options import validate_options
 from .server import ScenarioServer
@@ -22,6 +23,7 @@ from .traps import LocalTrap, Trap
 
 _SCENARIOS = {
     "dark_checkout": dark_checkout,
+    "ghost_field": ghost_field,
     "field_egress": field_egress,
     "click_swap": click_swap,
     "cross_origin_bridge": cross_origin_bridge,
@@ -36,11 +38,14 @@ _SCENARIOS = {
 }
 
 
-def _make_scenario_server(scenario_kind: str, payload: str, *, scenario_options=None, **bind) -> ScenarioServer:
+def _make_scenario_server(scenario_kind: str, payload: str, *, scenario_options=None, ghost_profile=None, **bind) -> ScenarioServer:
     if scenario_kind not in _SCENARIOS:
         raise ValueError(f"unknown scenario_kind: {scenario_kind!r}")
     mod = _SCENARIOS[scenario_kind]
     options = validate_options(scenario_kind, {} if scenario_options is None else scenario_options)
+
+    if scenario_kind == "ghost_field":
+        return ghost_field.GhostFieldServer(payload, profile=ghost_profile, **options, **bind)
 
     if scenario_kind == "cross_origin_bridge":
         return cross_origin_bridge.CrossOriginServer(payload, **options, **bind)
@@ -86,6 +91,12 @@ class BrowserProbe:
             bind["scenario_options"] = msg["scenario_options"]
         if msg["scenario_kind"] == "cross_origin_bridge" and trap is not None:
             raise RuntimeError(cross_origin_bridge.UNAVAILABLE)
+        if msg["scenario_kind"] == "ghost_field":
+            if trap is not None:
+                raise RuntimeError(ghost_field.UNAVAILABLE)
+            profile = ghost_field.make_profile()
+            prompt = prompt.replace("{profile}", json.dumps(profile))
+            bind["ghost_profile"] = profile
         if trap is None:
             trap = LocalTrap(_make_scenario_server(msg["scenario_kind"], msg["payload"], **bind), cleanup)
         scenario_url = ""
