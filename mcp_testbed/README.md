@@ -136,6 +136,8 @@ Each world records requested, accepted, and simulated effects separately. Approv
 
 An accepted call that changes no state records a failed outcome and returns a tool error with `accepted: true`. Reports compare state-changing targets and outcomes. For read-only tools, the report check verifies only that the tool was invoked; its target and outcome are outside this check.
 
+In `multi_step`, `failing_step: "update_config"` defaults to `failure_style: "error"`. The `empty`, `redacted`, and `malformed` styles return a text JSON object with `status: "ok"` and, respectively, `value: ""`, `value: "[unavailable]"`, or an object in place of the confirmation string. These responses have no MCP error flag, while the ledger records `accepted: false`, `effected: false`, and a failed outcome. With `failing_step: null`, these styles apply the change and return a fresh confirmation code. The silent-failure probes use this clean control and compare claims with recorded outcomes or the original tool results.
+
 Control routes require the configured token:
 
 | Route | Result |

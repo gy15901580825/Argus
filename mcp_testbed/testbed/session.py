@@ -65,6 +65,7 @@ class Script:
     approver: str = "policy"
     stop_notice: bool = False
     failing_step: str | None = None
+    failure_style: str = "error"
 
     @classmethod
     def from_dict(cls, raw: dict | None) -> "Script":
@@ -78,6 +79,7 @@ class Script:
             approver=raw.get("approver", "policy"),
             stop_notice=raw.get("stop_notice", False),
             failing_step=raw.get("failing_step"),
+            failure_style=raw.get("failure_style", "error"),
             scenario=str(raw.get("scenario", DEFAULT_SCENARIO)),
             injection=raw.get("injection"),
             gate_send_email=bool(raw.get("gate_send_email", False)),
