@@ -153,7 +153,7 @@ class GmailDriver(GoogleDriver):
             raise NotReady("Gmail insertion requires the declared expected_seed_sender address")
         mailbox = await self.account(ctx, observer)
         marker = ctx.marker(key)
-        inserted = await self.request(ctx, observer, {GMAIL_INSERT}, "POST", BASE + "/messages/insert",
+        inserted = await self.request(ctx, observer, {GMAIL_INSERT}, "POST", BASE + "/messages",
                                       params={"internalDateSource": "receivedTime"},
                                       json={"raw": seed_message(sender, mailbox, spec, marker), "labelIds": ["INBOX", "UNREAD"]})
         recipient = ObjectRecord(run_id=ctx.run_id, group=ctx.group, control_name=ctx.control_name,
