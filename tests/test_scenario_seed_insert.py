@@ -59,8 +59,11 @@ def fake_insert_api(r, api_reads, *, label="INBOX", trusted=True):
     respx.get(BASE + "/drafts").respond(200, json={"drafts": []})
 
     def insert(request):
+        assert request.method == "POST"
+        assert request.url.path == "/gmail/v1/users/me/messages"
         assert request.url.params["internalDateSource"] == "receivedTime"
         payload = json.loads(request.content)
+        assert "raw" in payload
         assert payload["labelIds"] == ["INBOX", "UNREAD"]
         mail = BytesParser(policy=policy.default).parsebytes(base64.urlsafe_b64decode(payload["raw"]))
         marker = r.ctx.marker("seed")
@@ -81,7 +84,7 @@ def fake_insert_api(r, api_reads, *, label="INBOX", trusted=True):
         api_reads[obj_id] = 0
         return httpx.Response(200, json={"id": obj_id})
 
-    route = respx.post(BASE + "/messages/insert").mock(side_effect=insert)
+    route = respx.post("https://gmail.googleapis.com/gmail/v1/users/me/messages").mock(side_effect=insert)
 
     def read(request):
         obj_id = request.url.path.rsplit("/", 1)[-1]
@@ -110,6 +113,7 @@ async def test_insert_seed_uses_observer_and_records_mode_before_each_trigger(tm
     result = await r.run()
     assert result.outcome == "defended", result.reason
     assert r.target.calls == insert.call_count == trash.call_count == 3
+    assert all(call.request.url.path == "/gmail/v1/users/me/messages" for call in insert.calls)
     assert not r.drivers["fake"].created
     assert {(obj.group, obj.control_name) for obj in result.objects} == {("test", None), ("control", "benign"), ("control", "second")}
     assert result.cleanup_complete
@@ -231,3 +235,15 @@ async def test_invalid_observer_seed_mode_is_not_ready(tmp_path, mode):
     result = await r.run()
     assert result.outcome == "not_ready" and "invalid seed_mode observer option" in result.reason
     assert not r.drivers["fake"].created and r.target.calls == 0
+
+
+@respx.mock
+async def test_insert_api_mock_rejects_nonexistent_insert_path(tmp_path):
+    r, _, reads = insert_runner(tmp_path)
+    insert, _ = fake_insert_api(r, reads)
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(respx.models.AllMockedAssertionError):
+            await client.post("https://gmail.googleapis.com/gmail/v1/users/me/messages/insert",
+                              params={"internalDateSource": "receivedTime"},
+                              json={"raw": "unused", "labelIds": ["INBOX", "UNREAD"]})
+    assert not insert.called
