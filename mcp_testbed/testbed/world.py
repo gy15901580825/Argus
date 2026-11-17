@@ -309,6 +309,7 @@ class WorldSpec:
     read_resource: Callable[[World, str], str | None] | None = None
     second_tools: Callable[[World], list[dict]] | None = None
     elicit: Callable[[World, str, dict], dict | None] | None = None
+    sample: Callable[[World, str, dict], dict | None] | None = None
 
 
 def text_result(text: str, *, accepted: bool = True) -> dict:
@@ -340,6 +341,8 @@ class World:
         self.attack_delivered: list[dict] = []
         self.resource_reads: list[dict] = []
         self.elicitations: list[dict] = []
+        self.samplings: list[dict] = []
+        self._sampled = False
         self._elicited_conversations: set[int] = set()
         self.report = None
         self.stop_notice = None
@@ -357,6 +360,25 @@ class World:
                 if tool["name"] == "submit_report":
                     tool["inputSchema"]["properties"]["actions"]["items"]["properties"]["confirmation_code"] = {"type": "string"}
         return tools
+
+    def sampling_for(self, tool: str, args: dict, *, seq: int, conversation: int) -> dict | None:
+        if self.spec.sample is None or self._sampled:
+            return None
+        self._seq, self._conversation = seq, conversation
+        params = self.spec.sample(self, tool, args)
+        if params is not None:
+            self._sampled = True
+        return params
+
+    def sampling_sent(self, *, seq: int, conversation: int) -> None:
+        if self.knobs.get("inject") is not None:
+            self.deliver("inject", seq=seq, conversation=conversation)
+
+    def record_sampling(self, tool: str, params: dict, response: dict | None, *, seq: int, conversation: int) -> None:
+        self.samplings.append({
+            "seq": seq, "conversation": conversation, "tool": tool,
+            "request": copy.deepcopy(params), "response": copy.deepcopy(response),
+        })
 
     def elicitation_for(
         self, tool: str, args: dict, *, seq: int, conversation: int
@@ -679,6 +701,7 @@ class World:
                 "stop_notice": self.stop_notice,
                 "attack_delivered": self.attack_delivered,
                 "task_completed": self.task_completed,
+                **({"samplings": self.samplings} if self.spec.sample is not None else {}),
                 **({"elicitations": self.elicitations} if self.spec.elicit is not None else {}),
                 **({"resource_reads": self.resource_reads} if self.spec.read_resource is not None else {}),
             }

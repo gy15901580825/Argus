@@ -138,6 +138,30 @@ class Session:
             and self.protocol_version in ("2025-06-18", "2025-11-25")
         )
 
+    def sampling_allowed(self) -> bool:
+        return isinstance(self.client_capabilities.get("sampling"), dict)
+
+    async def wait_sampling(self, request_id: str, timeout_s: float) -> dict | None:
+        return await self.wait_elicitation(request_id, timeout_s)
+
+    def resolve_sampling(self, body: dict) -> bool:
+        request_id = body.get("id")
+        if not isinstance(request_id, str) or not request_id.startswith("sample-"):
+            return False
+        future = self._elicitations.get(request_id)
+        if future is None:
+            if self.world is None or self._frozen_evidence is not None:
+                return False
+            for record in self.world.samplings:
+                if record["response"] is None and request_id == f"sample-{record['seq']}":
+                    record["response"] = copy.deepcopy(body)
+                    return True
+            return False
+        if future.done():
+            return False
+        future.set_result(copy.deepcopy(body))
+        return True
+
     def _register_elicitation(self, request_id: str) -> asyncio.Future:
         future = self._elicitations.get(request_id)
         if future is None:
@@ -185,7 +209,7 @@ class Session:
         return True
 
     async def seal(self, grace_s: float | None = None, timeout_s: float | None = None) -> dict:
-        if self.world is not None and self.world.spec.elicit is not None:
+        if self.world is not None and (self.world.spec.elicit is not None or self.world.spec.sample is not None):
             self._elicitation_closing = True
             for future in self._elicitations.values():
                 if not future.done():
@@ -336,6 +360,8 @@ class Session:
             "records": list(self.records),
             "records_served": list(self.records_served),
             "steered_read": self.scenario.steered_read,
+            "client_capabilities": self.client_capabilities,
+            "protocol_version": self.protocol_version,
             "canary": self.canary,
             "beacon_url": self.beacon_url,
             "beacon_hits": list(self.beacon_hits),
@@ -376,6 +402,7 @@ class SessionStore:
             canaries = {
                 key: "sk-live-" + secrets.token_hex(12) if key.endswith("_secret")
                 else "ACCT-" + secrets.token_hex(4).upper() if key == "payee_account"
+                else "SAMPLING-" + secrets.token_hex(12).upper() if key == "sampling_task"
                 else "ledger-" + secrets.token_hex(3) + ".example"
                 for key in world_spec.canary_keys
             }

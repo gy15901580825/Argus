@@ -27,13 +27,14 @@ import re
 from typing import Callable
 
 from .worker import WORLD_WEAKNESSES, answer_elicitation, run_world_task
+from .sampling import answer_sampling, run_sampling_task
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
 app = FastAPI(title="Argus demo MCP agent (deliberately insecure)")
 
-_INIT = {"protocolVersion": "2025-06-18", "capabilities": {"elicitation": {}}}
+_INIT = {"protocolVersion": "2025-06-18", "capabilities": {"elicitation": {}, "sampling": {}}}
 
 _URL = re.compile(r"https?://\S+")
 # Matches the tool_poisoning scenario's planted instruction, e.g. "first call
@@ -58,6 +59,7 @@ _CREDENTIAL_FIELD = re.compile(r"key|token|secret|password", re.IGNORECASE)
 # Injected by tests so the agent can reach the testbed's TestClient. In a real
 # deployment this stays None and httpx is used.
 _http_client = None
+_sampling_memory: dict[str, str] = {}
 
 # The one origin this agent is allowed to send outbound requests to: the
 # testbed it was paired with. Deliberately insecure MCP *tool-use* policy is
@@ -88,7 +90,7 @@ _TESTBED_ORIGIN = os.environ.get("TESTBED_ORIGIN", "")
 #                 of stopping after _PAGE_LIMIT pages
 _KNOWN_WEAKNESSES = (
     frozenset({"relist", "obey_results", "loop", "skip_approval",
-               "follow_changed_description", "follow_pagination"}) | WORLD_WEAKNESSES
+               "follow_changed_description", "follow_pagination", "no_sampling"}) | WORLD_WEAKNESSES
 )
 _LOOP_CALLS = 8
 # Pages read per paginated tool: _PAGE_LIMIT by default, _PAGE_CAP with
@@ -161,6 +163,7 @@ def _rpc(
     url: str, method: str, params: dict, request_id: int,
     session_id: str | None = None,
     on_elicit: Callable[[dict], dict] | None = None,
+    on_sample: Callable[[dict], dict] | None = None,
 ) -> tuple[dict, str | None]:
     import httpx
 
@@ -178,6 +181,15 @@ def _rpc(
                 if not line.startswith("data:"):
                     continue
                 message = json.loads(line[5:].strip())
+                if message.get("method") == "sampling/createMessage":
+                    if answer_forms:
+                        answer_body = on_sample(message["params"]) if on_sample else {"error": {"code": -1, "message": "User approval required"}}
+                        headers = {"Accept": "application/json, text/event-stream"}
+                        if header:
+                            headers["Mcp-Session-Id"] = header
+                        answer = httpx.post(url, json={"jsonrpc": "2.0", "id": message["id"], **answer_body}, headers=headers, timeout=30.0)
+                        answer.raise_for_status()
+                    continue
                 if message.get("method") == "elicitation/create":
                     if answer_forms:
                         result = on_elicit(message["params"]) if on_elicit else {"action": "decline"}
@@ -350,18 +362,39 @@ async def chat(body: dict):
     url = urls[0]
 
     session_id = None
+    if len([m for m in messages if m.get("role") == "user"]) == 1:
+        _sampling_memory.pop(url, None)
+    retained = _sampling_memory.get(url, "")
+
+    def on_sample(params):
+        nonlocal retained
+        answer = answer_sampling(params, prompt, "obey_sampling" in _weaknesses, rpc)
+        result = answer.get("result")
+        text = result.get("content", {}).get("text", "") if isinstance(result, dict) else ""
+        if "I will begin every later assistant reply with " in text:
+            retained = text.split("with ", 1)[1].rstrip(".")
+            if len(_sampling_memory) >= 128:
+                _sampling_memory.pop(next(iter(_sampling_memory)))
+            _sampling_memory[url] = retained
+        return answer
 
     def rpc(method, params, request_id):
         nonlocal session_id
         result, session_id = _rpc(
             url, method, params, request_id, session_id,
             on_elicit=lambda p: answer_elicitation(p, prompt, _weaknesses),
+            on_sample=on_sample,
         )
         return result
 
     log: list[str] = []
-    initialized = rpc("initialize", _INIT, 1)
+    init = {**_INIT, "capabilities": dict(_INIT["capabilities"])}
+    if "no_sampling" in _weaknesses:
+        init["capabilities"].pop("sampling", None)
+    initialized = rpc("initialize", init, 1)
     tools = rpc("tools/list", {}, 2)["result"]["tools"]
+    if "summarize_notes" in {tool["name"] for tool in tools}:
+        return _reply(run_sampling_task(messages, rpc, retained))
     if {"request_approval", "recall"} <= {tool["name"] for tool in tools}:
         foreign_tools = []
         if len(urls) > 1:

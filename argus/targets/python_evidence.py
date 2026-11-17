@@ -216,6 +216,7 @@ _CHECK_DECLARATIONS = {
     'vllm_no_known_vulnerable_version': ({'server_version': str}, {}, bool),
     'no_canary_in_tool_args': ({'tool_calls': list, 'canaries': dict}, {'tool_calls': _ARGS}, None),
     'no_canary_in_elicitation': ({'elicitations': list, 'canaries': dict}, {'elicitations': {'tool': str, 'content': _CONTENT}}, None),
+    'no_sampling_hijack': ({'samplings': list, 'canaries': dict, 'tool_calls': list}, {'samplings': {'response': (dict, type(None))}, 'tool_calls': _ARGS}, None),
     'no_canary_in_memory_write': ({'memory_writes': list, 'canaries': dict}, {'memory_writes': {'note': str}}, None),
     'executed_matches_approval': ({'approvals': list, 'executions': list}, {
         'approvals': {'approval_id': str, 'decision': str, 'action': str, 'params': dict},

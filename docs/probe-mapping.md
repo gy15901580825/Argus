@@ -10,7 +10,7 @@ Counts below are **every mapping a probe declares**, not one "primary" category 
 
 | OWASP | Category | Probes in library | Library status |
 |---|---|---:|---|
-| LLM01 | Prompt Injection | 117 | covered |
+| LLM01 | Prompt Injection | 120 | covered |
 | LLM02 | Sensitive Information Disclosure | 75 | covered |
 | LLM03 | Supply Chain | 17 | covered |
 | LLM04 | Data and Model Poisoning | 6 | covered |
@@ -19,7 +19,7 @@ Counts below are **every mapping a probe declares**, not one "primary" category 
 | LLM07 | System Prompt Leakage | 5 | covered |
 | LLM08 | Vector and Embedding Weaknesses | 1 | thin |
 | LLM09 | Misinformation | 20 | covered |
-| LLM10 | Unbounded Consumption | 4 | covered |
+| LLM10 | Unbounded Consumption | 5 | covered |
 
 ## OWASP Agentic Top 10
 
@@ -27,12 +27,12 @@ Counts below are **every mapping a probe declares**, not one "primary" category 
 
 | OWASP Agentic | Category | Probes in library | Library status |
 |---|---|---:|---|
-| ASI01 | Agent Goal Hijack | 61 | covered |
-| ASI02 | Tool Misuse | 65 | covered |
+| ASI01 | Agent Goal Hijack | 63 | covered |
+| ASI02 | Tool Misuse | 67 | covered |
 | ASI03 | Identity & Privilege Abuse | 29 | covered |
 | ASI04 | Agentic Supply Chain Vulnerabilities | 18 | covered |
 | ASI05 | Unexpected Code Execution | 7 | covered |
-| ASI06 | Memory & Context Poisoning | 4 | covered |
+| ASI06 | Memory & Context Poisoning | 5 | covered |
 | ASI07 | Insecure Inter-Agent Communication | 11 | covered |
 | ASI08 | Cascading Failures | 4 | covered |
 | ASI09 | Human-Agent Trust Exploitation | 5 | covered |
@@ -293,6 +293,9 @@ Article 15(5) addresses resilience to third-party attacks. Article 15(3) address
 | `mcp_rugpull_after_relist` | mcp-abuse,supply-chain | rug-pull | high | mcp_agent | ASI04 |
 | `mcp_rugpull_overcollect` | mcp-abuse,supply-chain,data-exfil | rug-pull,over-collection | high | mcp_agent | ASI04 |
 | `mcp_rugpull_silent_escalation` | mcp-abuse,supply-chain | rug-pull,silent-escalation | high | mcp_agent | ASI04 |
+| `mcp_sampling_covert_tool_call` | mcp-abuse,prompt-injection | sampling-hijack | critical | mcp_agent | ASI01, ASI02 |
+| `mcp_sampling_persistent_instruction` | mcp-abuse,prompt-injection | sampling-hijack | high | mcp_agent | ASI01, ASI06 |
+| `mcp_sampling_resource_theft` | mcp-abuse,prompt-injection | sampling-hijack | high | mcp_agent | ASI02 |
 | `mcp_scan_command_execution` | mcp-abuse,tool-abuse | command-injection | critical | mcp_scan | ASI05 |
 | `mcp_scan_cross_session_leak` | mcp-abuse,data-exfil | cross-session-leak | medium | mcp_scan | [] |
 | `mcp_scan_description_instructions` | mcp-abuse,indirect-injection | tool-description-injection | high | mcp_scan | [] |
