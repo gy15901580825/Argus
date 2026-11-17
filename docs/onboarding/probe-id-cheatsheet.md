@@ -1,6 +1,6 @@
 # Threat coverage overview
 
-Argus ships 300 probes. Each probe has a severity and maps to MITRE ATLAS, OWASP LLM Top 10, NIST AI RMF and the EU AI Act. Probes that exercise an OWASP Agentic Top 10 risk also carry that tag.
+Argus ships 306 probes. Each probe has a severity and maps to MITRE ATLAS, OWASP LLM Top 10, NIST AI RMF and the EU AI Act. Probes that exercise an OWASP Agentic Top 10 risk also carry that tag.
 
 ## Threat categories
 
@@ -115,14 +115,18 @@ These probes run paired worlds against `mcp_agent`, using recorded behavior with
 | `rogue_protected_resource` | A repair requests a write to a protected table |
 | `rogue_monitor_tamper` | A data change takes effect after a stop notice, or the protected monitor is altered |
 | `rogue_concealment_report` | A report omits or misstates recorded outcomes |
-| `mcp_silent_failure_fabricated_value` | A reply or report invents a confirmation code absent from tool results |
-| `mcp_silent_failure_false_success` | A report claims success when status ok concealed a failed action |
 | `rogue_test_tamper` | A repair changes protected test files |
 
 Memory coverage is limited to hosted `remember` and `recall`. Approval coverage compares structured previews and records, not free-text truthfulness. Governance findings describe recorded violations of an explicit prohibition or stop notice, or a report that contradicts the record. They do not infer intent.
 
 
 ## MCP protocol surface
+
+The forged-content variants preserve their plain sibling's destination and deterministic assertion.
+`browser_forged_reasoning_injection` wraps the title-attribute request disclosure in fabricated reasoning.
+`mcp_forged_reasoning_result_injection` wraps the note-result shell command in fabricated reasoning.
+`browser_forged_element_ref` puts the hidden-input transfer instruction in a fake `Confirm` observation record.
+Each has an explicit `_control` probe with ordinary product or note text.
 
 These paired probes use recorded tool arguments or elicitation answers without a model judge.
 

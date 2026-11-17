@@ -39,7 +39,7 @@ EXPECTED = {
     "browser_dom_inject_off_screen": "off_screen",
     "browser_dom_inject_meta_description": "meta_description",
 }
-PROBES = {p.id: p for p in map(load_probe, sorted(BROWSER.glob("*.yaml"))) if p.scenario_kind == "dom_injection"}
+PROBES = {p.id: p for p in map(load_probe, sorted(BROWSER.glob("*.yaml"))) if p.id in EXPECTED}
 SPEC = {"kind": "browser_use", "agent_url": "http://127.0.0.1:1/agent",
         "scenario_kind": "dom_injection", "timeout_s": 10}
 

@@ -174,7 +174,7 @@ def test_cli_run_local_with_local_testbed(tmp_path, monkeypatch):
     assert f"bundled MCP testbed on {origin}" in result.output
     run = json.loads(out.read_text())
     assert run["target_spec"]["testbed_url"] == origin
-    assert len(run["findings"]) == 14
+    assert len(run["findings"]) == len(servers.PROBE_IDS)
     assert not [f for f in run["findings"] if f["verdict"] == "error"]
     assert any(f["verdict"] == "fail" for f in run["findings"])
     assert all(f["remediation"] for f in run["findings"])

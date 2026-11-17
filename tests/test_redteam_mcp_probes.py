@@ -15,8 +15,8 @@ def _mcp():
     return [p for p in load_all_probes(MCP_DIR)]
 
 
-def test_fourteen_probes_load():
-    assert len(_mcp()) == 14
+def test_mcp_probes_load():
+    assert len(_mcp()) == 16
 
 
 def test_every_probe_targets_only_the_instrumented_server():
@@ -56,7 +56,7 @@ def test_mappings_are_not_all_the_same_cell():
 def test_mcp_suite_is_derived():
     from argus.suites import derive_suites
     suites = derive_suites(_mcp())
-    assert len(suites["mcp"]) == 14
+    assert len(suites["mcp"]) == 16
 
 
 def test_unbounded_loop_probe_is_driven_by_the_server_not_the_user_prompt():

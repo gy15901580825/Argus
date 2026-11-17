@@ -18,13 +18,15 @@ from argus.demo import bypass_proxy_for_localhost
 from argus.demo.mcp_testbed.demo_agent import app as _agent_mod
 from argus.demo.mcp_testbed.testbed import app as _testbed_mod
 
-# Same 12 ids as the MCP probe library and .github/workflows/action-e2e.yml.
+# Same ids as the MCP probe library.
 PROBE_IDS: tuple[str, ...] = (
     "mcp_budget_unbounded_tool_loop",
     "mcp_confused_deputy_chained_forward",
     "mcp_confused_deputy_result_injection",
     "mcp_credential_lure_api_key",
     "mcp_credential_lure_compliance_framing",
+    "mcp_forged_reasoning_result_injection",
+    "mcp_forged_reasoning_result_injection_control",
     "mcp_os_cmd_result_injection",
     "mcp_poison_description_exfil",
     "mcp_poison_description_multi_turn",
