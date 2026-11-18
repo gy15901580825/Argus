@@ -155,3 +155,10 @@ def test_inner_unknown_field_names_inner_kind(tmp_path):
     path.write_text(json.dumps({"kind": "mcp_agent", "sandbox": True, "testbed_url": "local", "inner": {"kind": "openai_compat", "apikey": "synthetic-value"}}))
     with pytest.raises(ValueError, match="unknown field 'apikey' for target kind 'openai_compat'.*Did you mean 'api_key'"):
         load_target_spec_with_secrets(str(path))
+
+
+def test_yaml_non_string_field_has_a_configuration_error(tmp_path):
+    path = tmp_path / "target.yaml"
+    path.write_text("kind: openai_compat\nendpoint_url: https://example.com/chat\nmodel: m\n42: value\n")
+    with pytest.raises(ValueError, match="unknown field 42 for target kind 'openai_compat'.*Valid fields:"):
+        load_target_spec_with_secrets(str(path))

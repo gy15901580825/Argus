@@ -153,8 +153,8 @@ def _check_fields(spec: dict[str, Any]) -> None:
     unknown = spec.keys() - valid
     if unknown:
         messages = []
-        for name in sorted(unknown):
-            matches = get_close_matches(name, sorted(valid), n=1)
+        for name in sorted(unknown, key=str):
+            matches = get_close_matches(str(name), sorted(valid), n=1)
             suggestion = f" Did you mean {matches[0]!r}?" if matches else ""
             messages.append(f"unknown field {name!r} for target kind {kind!r}.{suggestion}")
         raise ValueError(f"{' '.join(messages)} Valid fields: {', '.join(sorted(valid))}")
