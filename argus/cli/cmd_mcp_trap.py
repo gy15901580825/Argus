@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import click
 
 from argus.cli import mcp_sdk, reports, run_json
+from argus.cli.report_format import resolve_report_format
 from argus.cli.cmd_run import _apply_fail_on, _check_out_dir, _write_report
 from argus.cli.severity import SEVERITY_ORDER
 from argus.cli.target_loader import TargetLoadError, load_target_spec_with_secrets
@@ -91,7 +92,8 @@ async def _session(sock, address, chat, probes, rounds, say, mask, wait_s):
               help=f"'all' or a comma list of: {', '.join(SCENARIO_NAMES)}.")
 @click.option("--out", "out_file", type=click.Path(dir_okay=False), default=None,
               help="Report path. Default: argus-mcp-trap-report.<html|sarif|xml|json> by --format.")
-@click.option("--format", "report_format", type=click.Choice(list(_EXTENSIONS)), default="html", show_default=True)
+@click.option("--format", "report_format", type=click.Choice(list(_EXTENSIONS)), default="html", show_default=True,
+              help="Report format, inferred from --out when omitted.")
 @click.option("--fail-on", "fail_on", type=click.Choice(SEVERITY_ORDER), default=None,
               help="Exit 3 when any finding has verdict=fail and severity at or above this level.")
 @click.option("--print-config", is_flag=True, default=False,
@@ -110,6 +112,7 @@ def cmd_mcp_trap(target: str, rounds: int, scenarios: list[str], out_file: str |
                  fail_on: str | None, print_config: bool, trap_host: str, trap_port: int,
                  trap_public_url: str, wait_s: int) -> None:
     """Point your agent at a hostile MCP server on this machine and report what it did."""
+    report_format = resolve_report_format(report_format, out_file)
     try:
         address = wiring.TrapAddress(trap_host, trap_port, trap_public_url)
     except wiring.TrapAddressError as e:

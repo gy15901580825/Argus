@@ -165,10 +165,14 @@ async def test_no_listeners_never_waits_on_open_stdin(tmp_path, hosted_agent, up
         witness=mode != "missing_witness", hosted=mode == "hosted",
     ) as (process, report):
         output = await finish(process)
-        assert process.returncode == (1 if mode == "non_witness_probe" else 0), output
+        assert process.returncode == {"non_witness_probe": 1, "missing_witness": 0, "hosted": 2}[mode], output
         assert "press Enter" not in output
         assert "Witness model_relay:" not in output
-        assert report.exists()
+        assert report.exists() == (mode != "hosted")
+        if mode == "hosted":
+            assert "witness channels are unsupported with hosted traps" in output
+            assert "Running" not in output
+            assert hosted_agent["requests"] == []
 
 
 async def test_without_flag_prints_hint_and_does_not_wait(tmp_path, hosted_agent, upstream):

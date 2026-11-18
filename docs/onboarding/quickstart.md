@@ -1,6 +1,6 @@
 # Argus quickstart
 
-Point Argus at your AI agent's endpoint and get a SARIF report. Local mode (step 3a) needs only a judge API key (`argus-probe quickstart` needs none). Server mode (steps 3 to 5) needs a server implementing the `/api/v1/redteam` API; this repo does not ship one (see step 3).
+Point Argus at your AI agent's endpoint and get a SARIF report. Local mode (step 3a) can run deterministic checks without a judge key (`argus-probe quickstart` needs none). Server mode (step 3) needs a server implementing the `/api/v1/redteam` API; this repo does not ship one (see step 3).
 
 ## 1. Install the CLI
 
@@ -38,7 +38,15 @@ Output: `argus-target.json`, plus `.github/workflows/argus-probe.yml` if you say
 
 ## 3a. Run locally (no server)
 
-Set a judge key and add `--local`. The CLI loads the probe library, sends them to your agent and judges the replies in this process:
+For a first scan without a judge key:
+
+```bash
+argus-probe run --local --target argus-target.json --probes all --skip-judged --out report.html
+```
+
+This runs the deterministic checks that fit your target and reports judged probes as skipped. For chat targets, the keyless checks cover training-data replay and package hallucination; they do not test prompt injection or system-prompt leakage. The closing line counts verdicts and explains the exit rule. Add `--fail-on high` to fail CI on high or critical findings.
+
+To run judged probes, set a judge key and add `--local`. The CLI loads the probe library, sends them to your agent and judges the replies in this process:
 
 ```bash
 export ANTHROPIC_API_KEY="<your key>"
@@ -74,19 +82,17 @@ argus-probe validate-target --target argus-target.json
 
 Sends one "ping" prompt the way `run` does, with `$VAR` references in the spec expanded, and reports whether the target answered with text. It works for the chat kinds: `openai_compat`, `anthropic_native` and `custom_http`. For other kinds it exits 2 and points you to `run --local`, because their probes are the check. If this fails, fix the target spec before continuing.
 
-## 5. Run your first probe (server mode)
+## 5. Run your first probe
 
 ```bash
-argus-probe run \
+argus-probe run --local \
   --target argus-target.json \
   --probes owasp_07_system_prompt_leakage \
   --format html \
   --out report.html
 ```
 
-In local mode, add `--local` to the same command and drop the server variables.
-
-The CLI submits the run to that server, polls for completion (typically ~10–30 s), then writes the chosen format to disk.
+The CLI runs the scan on this machine and writes the report. For server mode, omit `--local` and set the server variables from step 3.
 
 Add `--per-run-cap 0.50` to limit what Argus spends on judge and attacker calls. A run whose typical estimate is above the cap does not start, in both modes; with `--local` the run also stops when spend reaches the cap. Either way the command exits 4.
 
@@ -104,8 +110,8 @@ xdg-open report.html  # Linux
 For SARIF (GitHub Code-scanning compatible) or JUnit (CI-tool compatible) output, swap the format flag:
 
 ```bash
-argus-probe run --target argus-target.json --probes owasp_07_system_prompt_leakage --format sarif --out report.sarif
-argus-probe run --target argus-target.json --probes owasp_07_system_prompt_leakage --format junit --out report.xml
+argus-probe run --local --target argus-target.json --probes owasp_07_system_prompt_leakage --format sarif --out report.sarif
+argus-probe run --local --target argus-target.json --probes owasp_07_system_prompt_leakage --format junit --out report.xml
 ```
 
 Those runs probe the agent again. A run you already stored on a server does not need to be repeated for another format: `argus-probe report --run-id <run-id>` renders it on demand. See [re-render-report.md](./re-render-report.md).
@@ -149,7 +155,7 @@ Every subcommand is listed in [the CLI guide](../cli.md#subcommands), and each c
 |---|---|
 | `--target` | path to target.json (or inline JSON) |
 | `--probes` | comma-separated probe ids OR `all` |
-| `--format` | `html` / `sarif` / `junit` |
+| `--format` | `html` / `sarif` / `junit` / `json`; inferred from `--out` when omitted, otherwise defaults to `html` |
 | `--out` | output report file path |
 | `--per-run-cap` | USD cap; over-budget runs exit with code 4 (default $0.50 static, $5 deep) |
 | `--mode` | `static` (default) or adaptive `deep`; deep requires named probes and trials 1 |

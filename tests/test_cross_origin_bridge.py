@@ -185,7 +185,7 @@ async def test_direct_public_url_mode_refuses_to_run_a_single_origin(runner):
 
 @pytest.mark.parametrize("mode", ["public", "hosted"])
 @pytest.mark.parametrize("fail_on", [[], ["--fail-on", "high"]])
-def test_cli_skips_single_origin_without_contacting_the_target(tmp_path, mode, fail_on):
+def test_cli_rejects_single_origin_selection_without_contacting_the_target(tmp_path, mode, fail_on):
     spec = tmp_path / "target.json"
     settings = {"kind": "browser_use", "agent_url": "http://127.0.0.1:1/agent",
                 "scenario_kind": "ui_phishing"}
@@ -203,14 +203,13 @@ def test_cli_skips_single_origin_without_contacting_the_target(tmp_path, mode, f
             "--local", "--target", str(spec), "--probes", PROBE.id,
             "--format", "json", "--out", str(report), *fail_on,
         ])
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 2, result.output
     send.assert_not_called()
     assert "requires two reachable origins" in result.output
     assert "one origin" in result.output
-    run = json.loads(report.read_text())
-    assert run["status"] == "completed"
-    [finding] = run["findings"]
-    assert finding["verdict"] == "skipped"
+    assert "--probes all" in result.output
+    assert "Running" not in result.output
+    assert not report.exists()
 
 
 def test_cli_all_with_public_url_stays_complete_and_leaves_out_bridge(tmp_path):

@@ -340,8 +340,9 @@ def test_encoded_payload_probe_is_not_applicable_to_browser_targets(tmp_path, mo
             "--local", "--target", str(spec), "--probes", "encoded_payload_base64_link",
             "--format", "json", "--out", str(report), "--fail-on", "high",
         ])
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 2, result.output
     send.assert_not_called()
     assert "browser targets have no channel for third-party material" in result.output
-    [finding] = json.loads(report.read_text())["findings"]
-    assert finding["verdict"] == "skipped"
+    assert "--probes all" in result.output
+    assert "Running" not in result.output
+    assert not report.exists()

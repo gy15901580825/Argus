@@ -48,6 +48,12 @@ Accepted thresholds, in order, are `info`, `low`, `medium`, `high`, `critical`.
 Without `--fail-on`, failing findings alone do not fail the CLI. The Action
 defaults to `fail-on: critical`, so these recipes set their threshold explicitly.
 
+The current source CLI ends each completed run with counts per verdict and the
+exit rule in force. With no `--fail-on`, the line explains that findings alone
+leave exit 0 and names the flag to gate CI. Counts include individual trials.
+The pinned 1.18.0 recipes predate this summary and the missing-baseline handling
+described below; those changes require a CLI build containing the first-use fixes.
+
 | CLI exit | Meaning | Report |
 | --- | --- | --- |
 | 0 | Completed; no failure met the selected gate. Without a gate, failures can still exist. | Written. |
@@ -63,6 +69,27 @@ one `--format`; SARIF and JUnit together require two scans, each with its own
 cost cap. JUnit represents failures and errors regardless of `--fail-on`, so a
 CI test publisher can impose a stricter policy than the CLI. The Azure and
 Jenkins examples leave the severity gate to the CLI.
+
+## Compare local runs in CI
+
+Save a main-branch run.json as a CI artifact, then download it as `baseline.json`
+in the pull-request job. Compare locally without a server:
+
+```bash
+argus-probe run --local --target argus-target.json --probes all --skip-judged --per-run-cap 0.50 \
+  --format json --out main-run.json
+
+argus-probe run --local --target argus-target.json --probes all --skip-judged --per-run-cap 0.50 \
+  --baseline baseline.json --fail-on high --format json --out pr-run.json
+```
+
+With `--baseline`, exit 3 gates only new high or critical failures; existing
+failures do not trip that gate. Cost-cap exit 4 and incomplete-run exit 1 still
+take priority. The current source CLI treats a missing baseline file as empty
+and prints a note, so every current failure counts as new on the first run.
+The pinned 1.18.0 CLI requires the baseline file to exist. Existing unreadable
+or invalid baselines still stop the scan. Keep the target and scan mode stable;
+see [the local comparison rules](cli.md#compare-local-runs-in-ci).
 
 ## GitHub Actions
 

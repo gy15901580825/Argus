@@ -18,6 +18,10 @@ def load_baseline(file: str, spec: dict, mode: str, secret_values: Iterable[str]
     """Validate the baseline before starting a target or making a paid call."""
     try:
         record = json.loads(Path(file).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        safe_file = run_json.mask_text(file, run_json.run_secrets(spec, secret_values))
+        click.echo(f"Note: --baseline {safe_file} does not exist; using an empty baseline. All current failures count as new.", err=True)
+        return {"id": "empty-baseline", "finished_at": "", "findings": []}
     except (OSError, UnicodeError, ValueError) as exc:
         raise click.UsageError(f"--baseline {file}: cannot read run.json ({exc})") from None
 

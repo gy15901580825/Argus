@@ -628,3 +628,13 @@ def test_conclusive_run_stays_successful_in_sarif(monkeypatch, tmp_path):
     assert result.exit_code == 0, result.output
     inv = json.loads((tmp_path / OUT_FILE["sarif"]).read_text())["runs"][0]["invocations"][0]
     assert inv["executionSuccessful"] is True and inv["exitCode"] == 0
+
+
+@pytest.mark.parametrize("suffix,marker", [("sarif", '"version": "2.1.0"'),
+    ("xml", "<testsuite"), ("json", '"schema_version": "argus.run/1"')])
+def test_out_extension_selects_format(monkeypatch, tmp_path, suffix, marker):
+    _wired(monkeypatch)
+    out = tmp_path / f"trap.{suffix}"
+    result = _invoke("--target", SPEC_ARG, "--scenarios", "tool_poisoning", "--out", str(out))
+    assert result.exit_code == 0, result.output
+    assert marker in out.read_text()

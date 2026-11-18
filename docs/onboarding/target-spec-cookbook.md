@@ -734,35 +734,36 @@ Add `ANTHROPIC_API_KEY` and any key your target spec references as repository se
 
 `fail-on: critical` fails the job when a critical finding lands; use `high` to tighten it, or set it to `""` to report without blocking. The SARIF uploads before the gate runs, so findings appear in the repo's **Security** tab either way. Other inputs: `per-run-cap` (USD, default `0.50`; typical spend gates admission, then metered spend stops the run), `format`, `output`, `upload-sarif`, `argus-version`.
 
-### Server mode: gate only on new failures
+### Local mode: gate only on new failures
 
-The action always runs in local mode, which keeps no run history. To fail a pull request only on failures that are new relative to the base branch, run the CLI against a server implementing the `/api/v1/redteam` API with `--compare-to`:
+Save a run.json from the main-branch scan as a CI artifact. Download it into
+`baseline.json` in the pull-request job, then compare locally:
 
-```yaml
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - run: pip install argus-probe
-      # PRs gate only on failures new relative to the base branch; pushes to main record the baseline.
-      - run: >
-          argus-probe run --target argus-target.json
-          --probes owasp_01_prompt_injection_basic,syscard_crescendo
-          --format sarif --out argus.sarif --fail-on critical
-          ${{ github.event_name == 'pull_request' && format('--compare-to {0}', github.base_ref) || '' }}
-        env:
-          ARGUS_API_URL: ${{ vars.ARGUS_API_URL }}
-          ARGUS_API_TOKEN: ${{ secrets.ARGUS_API_TOKEN }}
-      - if: always()
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: argus.sarif
+```bash
+# Main-branch job: upload main-run.json as an artifact after this scan.
+argus-probe run --local --target argus-target.json --probes all --out main-run.json
+
+# Pull-request job: download that artifact as baseline.json first.
+argus-probe run --local --target argus-target.json --probes all \
+  --baseline baseline.json --fail-on high --out pr-run.json
 ```
 
-Set `ARGUS_API_URL` as a repository variable and `ARGUS_API_TOKEN` as a secret. `argus-probe` has no default endpoint, and a job that omits the URL fails with `Missing option '--api-url'`.
+These commands run the scan and judge locally; set a judge key for probes
+that need one, or add `--skip-judged` to run only deterministic checks.
+The CLI infers JSON from the output extension. A missing baseline prints a
+note and means an empty baseline, so every failure on the first run counts
+as new. Existing invalid baselines still stop the command.
 
-Keep both the `pull_request` and `push` triggers and pass `--compare-to` only on pull requests. A scheduled or push run on `main` would compare `main` with itself, and without a completed run on `main` every failure counts as new.
+`--fail-on high` exits 3 only for new high or critical failures. Existing
+failures leave the gate green. Cost-cap exit 4 and incomplete-run exit 1
+still take priority. A severity increase on an already failing probe is
+not new. Keep the target endpoint, model, transport and scan mode stable
+between runs. See [Compare local runs in CI](../cli.md#compare-local-runs-in-ci)
+for the comparison rules. The action runs locally too; when wiring baseline
+artifacts by hand, use these CLI commands in your job.
 
-Two limits: a severity increase on a probe that was already failing does not count as new. Branch detection reads GitHub Actions variables or git, so on other CI systems with a detached HEAD no branch is recorded and every failure counts as new.
+`--compare-to <branch>` is a separate server-mode option for a server that
+stores run history. Local baseline comparisons do not need that server.
 
 ---
 

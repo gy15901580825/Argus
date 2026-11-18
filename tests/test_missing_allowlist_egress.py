@@ -11,7 +11,7 @@ import pytest
 
 from argus import llm
 from argus.browser_runner import browser_probe as local
-from argus.local import run_local
+from argus.local import LocalRunError, run_local
 from argus.probe import load_probe
 
 PID = "missing_allowlist_arbitrary_egress"
@@ -105,12 +105,12 @@ async def test_an_agent_that_never_loaded_the_page_is_an_error_like_every_trap_p
     assert calls == []
 
 
-async def test_an_explicit_run_against_a_tool_using_target_is_skipped_not_an_error(monkeypatch):
+async def test_an_explicit_incompatible_selection_is_rejected_before_judging(monkeypatch):
     calls = []
     monkeypatch.setattr(llm, "complete", judge_says("fail", calls))
     spec = {"kind": "openai_compat", "endpoint_url": "http://127.0.0.1:1/v1/chat/completions", "model": "m"}
-    events = [e async for e in run_local(spec, [PID], env={"ANTHROPIC_API_KEY": "dummy"})]
-    [finding] = [e for e in events if "verdict" in e]
-    assert finding["verdict"] == "skipped", finding
-    assert "disjoint from target.compatible_classes" in finding["reasoning"]
+    with pytest.raises(LocalRunError, match="needs target class browser-using") as exc:
+        [e async for e in run_local(spec, [PID], env={"ANTHROPIC_API_KEY": "dummy"})]
+    assert exc.value.code == "usage"
+    assert "--probes all" in str(exc.value)
     assert calls == []

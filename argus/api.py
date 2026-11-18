@@ -104,23 +104,23 @@ def _resolve_target_kind(target: Any) -> str:
     return "openai_compat"
 
 
-def _trap_mode_unsupported(probe: Any, target_obj: Any) -> bool:
-    """True when the probe's unsupported_trap_modes cover this browser target's trap mode.
+def _trap_mode_skip_reason(probe: Any, target_obj: Any) -> str | None:
+    """The probe's reason when unsupported_trap_modes cover this browser target's trap mode.
 
     Mirrors the trap-mode skip in Runner.run_probe.
     """
     unsupported = getattr(probe, "unsupported_trap_modes", {})
     if not unsupported:
-        return False
+        return None
     from argus.targets.browser_use import BrowserUseTarget
 
     if not isinstance(target_obj, BrowserUseTarget):
-        return False
+        return None
     spec = target_obj.spec
     reason = unsupported.get(spec.trap_mode)
     if reason is None and spec.trap_public_url:
         reason = unsupported.get("public_url")
-    return reason is not None
+    return reason
 
 
 def compatible_probe_ids(target_obj: Any, *, include_opt_in: bool = True) -> list[str]:
@@ -143,7 +143,7 @@ def compatible_probe_ids(target_obj: Any, *, include_opt_in: bool = True) -> lis
             history
             or not getattr(p, "needs_history", getattr(p, "conversation", False))
         )
-        and not _trap_mode_unsupported(p, target_obj)
+        and _trap_mode_skip_reason(p, target_obj) is None
     ]
 
 
@@ -173,7 +173,12 @@ def unknown_probe_ids(probe_ids: list[str]) -> str | None:
     unknown = [pid for pid in dict.fromkeys(probe_ids) if pid not in known]
     if not unknown:
         return None
-    return f"unknown probe id(s): {', '.join(unknown)}; run `argus-probe list-probes` to see the valid ids"
+    from difflib import get_close_matches
+
+    hints = [f"{pid}: did you mean {matches[0]}?" for pid in unknown
+             if (matches := get_close_matches(pid, sorted(known), n=1))]
+    return (f"unknown probe id(s): {', '.join(unknown)}; " + " ".join(hints)
+            + " run `argus-probe list-probes` to see the valid ids")
 
 
 def _resolve_suite(suite: str) -> list[str]:

@@ -201,7 +201,11 @@ def _run_and_render(
                 **run_options(mode, deep_pairs, max_rounds, seed),
                 **({"trials": trials} if trials is not None else {})
             )) as events:
+                announced = False
                 async for event in events:
+                    if not announced:
+                        click.echo(f"Running {('all probes that fit this target' if not probe_ids else f'{len(probe_ids)} probe(s)')} locally ...")
+                        announced = True
                     if event.get("type") == "witness":
                         for channel, url in event["urls"].items():
                             click.echo(f"Witness {channel}: {url}")
