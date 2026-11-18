@@ -5,6 +5,8 @@ from __future__ import annotations
 import math
 import os
 import secrets
+import shlex
+from collections import Counter
 import sys
 from pathlib import Path
 
@@ -17,6 +19,7 @@ from argus.cli.baseline_key import baseline_key
 from argus.cli.judge_options import judge_options
 from argus.cli.local_baseline import comparison_summary, load_baseline, new_failure_findings
 from argus.cli.local_run import StopSignalReceived, cleanup_lines, run_local_and_render, run_options
+from argus.cli.report_format import resolve_report_format
 from argus.cli.mcp_sdk import STOP_MESSAGES
 from argus.cli.severity import (
     SEVERITY_ORDER, blocked_warning, findings_at_or_above, hit_cost_cap, incomplete_lines, judge_skip_line, skip_reason_lines,
@@ -52,8 +55,8 @@ def _seed_length(_ctx, _param, value):
 @click.option("--probes", "probe_ids", required=True,
               help="Comma-separated probe ids OR 'all' (every non-opt-in probe that fits the target kind; "
                    "`list-probes --target` shows them).")
-@click.option("--format", "report_format", type=click.Choice(["html", "sarif", "junit", "json"]), default="html",
-              help="Report format. json writes run.json and needs --local.")
+@click.option("--format", "report_format", type=click.Choice(["html", "sarif", "junit", "json"]), default="html", show_default=True,
+              help="Report format, inferred from --out when omitted. json writes run.json and needs --local.")
 @click.option("--out", "out_file", type=click.Path(), required=True, help="Output report file path.")
 @click.option("--token", envvar="ARGUS_API_TOKEN", default=None, help="API token for --api-url (or env ARGUS_API_TOKEN). Not used with --local.")
 @click.option("--api-url", envvar="ARGUS_API_URL", default=None, help="Base URL of a server implementing the /api/v1/redteam API (or env ARGUS_API_URL). Not used with --local.")
@@ -81,10 +84,11 @@ def _seed_length(_ctx, _param, value):
 @click.option("--compare-to", "compare_to", default=None,
               help="Base branch: report and gate only on failures that are new relative to the latest run on it. Needs run history on a server implementing the /api/v1/redteam API.")
 @click.option("--baseline", "baseline_file", type=click.Path(), default=None,
-              help="With --local: compare with an earlier run.json and gate only on new failures.")
+              help="With --local: compare with an earlier run.json and gate only on new failures. A missing file is an empty baseline.")
 @judge_options
 def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, token: str | None, api_url: str | None, max_wait: float, per_run_cap: float | None, fail_on: str | None, local: bool, compare_to: str | None, skip_judged: bool = False, trials: int | None = None, mode: str = "static", deep_pairs: int = 3, max_rounds: int = 20, seed: str | None = None, baseline_file: str | None = None, witness_wait: bool = False):
     """Submit a red-team run and write the report to disk."""
+    report_format = resolve_report_format(report_format, out_file)
     if baseline_file is not None and not local:
         raise click.UsageError("--baseline needs --local")
     try:
@@ -138,6 +142,20 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
         _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, secret_values, skip_judged, trials,
                      **options, **({"witness_wait": True} if witness_wait else {}), **({"baseline_run": baseline, "baseline_file": baseline_file} if baseline is not None else {}))
         return
+    if api_url is None:
+        reason = "Missing option '--api-url'."
+        if _uses_python(spec):
+            reason = "a python target runs a local function; it needs --local."
+        elif skip_judged:
+            reason = "--skip-judged needs --local; in server mode the server holds the judge key."
+        elif spec.get("testbed_url") == "local":
+            reason = 'testbed_url "local" starts the bundled testbed in this process; it needs --local.'
+        args = ["argus-probe", "run", "--local", "--target", target,
+                "--probes", probe_ids, "--format", report_format, "--out", out_file]
+        if skip_judged:
+            args.append("--skip-judged")
+        command = run_json.mask_text(shlex.join(args), run_json.run_secrets(spec, secret_values))
+        raise click.UsageError(f"{reason} --local runs the scan on this machine. Try: {command}")
     if _uses_python(spec):
         raise click.UsageError("a python target runs a local function; it needs --local")
     if skip_judged:
@@ -150,8 +168,6 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
     if report_format == "json":
         # The server's report endpoint has no json format yet.
         raise click.UsageError("--format json needs --local")
-    if api_url is None:
-        raise click.UsageError("Missing option '--api-url'")
     if token is None:
         raise click.UsageError("Missing option '--token'")
 
@@ -212,6 +228,7 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
     click.echo(f"Wrote report to {out_file}")
     if run["status"] != "completed":
         click.echo(f"Error: run {run_id} ended with status {run['status']}", file=sys.stderr)
+        _print_run_summary(run.get("findings", []), 1, fail_on, bool(compare_to))
         sys.exit(1)
     incomplete = incomplete_lines(run.get("findings", []))
     _echo_masked(incomplete, spec, secret_values)
@@ -236,13 +253,10 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
         hits = _count_fail_on([{"verdict": "fail", **i} for i in d["new"]], fail_on)
     else:
         hits = _count_fail_on(run.get("findings", []), fail_on)
-    if hit_cost_cap(run.get("findings", [])):
-        sys.exit(EXIT_COST_CAP)
-    # An errored probe tested nothing, so a pass elsewhere must not read as green; 1 wins over 3.
-    if incomplete:
-        sys.exit(1)
-    if hits:
-        sys.exit(3)
+    code = EXIT_COST_CAP if hit_cost_cap(run.get("findings", [])) else 1 if incomplete else 3 if hits else 0
+    _print_run_summary(run.get("findings", []), code, fail_on, bool(compare_to))
+    if code:
+        sys.exit(code)
 
 
 def _uses_python(spec: dict) -> bool:
@@ -331,7 +345,6 @@ def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, se
                  baseline_run=None, baseline_file=None, witness_wait=False) -> None:
     from argus_transport.runtime_v2 import TargetRunStopped
 
-    click.echo(f"Running {('all probes that fit this target' if not tokens else f'{len(tokens)} probe(s)')} locally ...")
     try:
         options = run_options(mode, deep_pairs, max_rounds, seed)
         result = run_local_and_render(spec, tokens, per_run_cap, report_format, secret_values, fail_on,
@@ -385,5 +398,19 @@ def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, se
     gate_findings = new_failure_findings(result.baseline) if result.baseline is not None else result.findings
     _count_fail_on(gate_findings, fail_on)  # prints the hits even when another code wins
     # run_exit_code: the cost cap (4) beats incomplete (1), which beats --fail-on (3).
+    _print_run_summary(result.findings, result.exit_code, fail_on, result.baseline is not None)
     if result.exit_code:
         sys.exit(result.exit_code)
+
+
+def _print_run_summary(findings: list[dict], code: int, fail_on: str | None, baseline: bool = False) -> None:
+    counts = Counter(f.get("verdict", "unknown") for f in findings)
+    verdicts = dict.fromkeys(("fail", "pass", "warn", "error", "skipped", *sorted(counts)))
+    totals = ", ".join(f"{counts[v]} {v}" for v in verdicts if counts[v]) or "0 findings"
+    rule = (f"--fail-on {fail_on} gates {'new ' if baseline else ''}failures at or above {fail_on}."
+            if fail_on else "use --fail-on info to fail CI on findings.")
+    if code == 1:
+        rule = "The run is incomplete. " + rule
+    elif code == EXIT_COST_CAP:
+        rule = "The cost cap stopped the run. " + rule
+    click.echo(f"{totals}. Exit {code}: {rule}")

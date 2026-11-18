@@ -612,3 +612,19 @@ def test_local_help_names_skip_judged():
     result = CliRunner().invoke(cmd_run, ["--help"])
     assert "Needs a judge API key" not in result.output
     assert "--skip-judged" in result.output
+
+
+def test_summary_counts_each_verdict_including_skips(tmp_path, monkeypatch):
+    async def mixed_run(*args, **kwargs):
+        for i, verdict in enumerate(("fail", "pass", "pass", "skipped", "warn", "blocked_by_target")):
+            yield {**FAIL_FINDING, "id": f"finding-{i}", "verdict": verdict, "probe_id": f"probe-{i}"}
+        yield {"type": "coverage", "coverage": FAKE_COVERAGE}
+
+    _install_fake_engine(monkeypatch, mixed_run)
+    result = CliRunner().invoke(cmd_run, ["--local", "--target", _target(tmp_path), "--probes", "all",
+                                         "--out", str(tmp_path / "out.html")])
+    assert result.exit_code == 0, result.output
+    last = result.output.strip().splitlines()[-1]
+    for count in ("1 fail", "2 pass", "1 skipped", "1 warn", "1 blocked_by_target"):
+        assert count in last
+    assert "Exit 0" in last and "--fail-on info" in last

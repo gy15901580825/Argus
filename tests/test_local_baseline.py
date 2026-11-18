@@ -149,14 +149,12 @@ def test_trials_any_failure_counts_once(tmp_path, target, previous, category, co
 
 
 @pytest.mark.parametrize("invalid", [
-    "missing", "bad_json", "wrong_schema", "target", "mode", "remote",
+    "bad_json", "wrong_schema", "target", "mode", "remote",
     "directory", "shape", "findings", "no_target", "bad_key",
 ])
 def test_invalid_baseline_sends_no_probes(tmp_path, target, invalid):
     base = baseline(tmp_path, target)
-    if invalid == "missing":
-        base.unlink()
-    elif invalid == "bad_json":
+    if invalid == "bad_json":
         base.write_text("{")
     elif invalid == "directory":
         base = tmp_path

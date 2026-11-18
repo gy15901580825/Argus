@@ -268,9 +268,9 @@ async def test_run_local_rejects_unknown_probe_ids_before_anything_runs(monkeypa
         with pytest.raises(LocalRunError) as exc:
             await _collect(run_local(TARGET, ["owasp_01_prompt_injection_basic", "owasp_01_typo", "zz_nope"]))
     assert exc.value.code == "usage"
-    assert str(exc.value) == (
-        "unknown probe id(s): owasp_01_typo, zz_nope; run `argus-probe list-probes` to see the valid ids"
-    )
+    assert "unknown probe id(s): owasp_01_typo, zz_nope" in str(exc.value)
+    assert "did you mean" in str(exc.value)
+    assert "argus-probe list-probes" in str(exc.value)
 
 
 async def test_run_local_turns_an_unreachable_target_into_a_stop(monkeypatch):
@@ -366,8 +366,8 @@ async def test_no_key_refuses_when_any_selected_probe_needs_the_judge(library):
     assert exc.value.code == "config"
     assert str(exc.value).startswith(
         "2 of 3 selected probes need an LLM judge: ANTHROPIC_API_KEY is not set. "
-        "Set a key, or pass --skip-judged to run only the 1 probe decided by deterministic checks. "
-        "Judge keys: ANTHROPIC_API_KEY or OPENAI_API_KEY")
+        "--skip-judged would run 1 selected probe without a judge key.")
+    assert "export ANTHROPIC_API_KEY=" in str(exc.value)
 
 
 async def test_skip_judged_reports_judged_probes_as_skipped_and_runs_the_rest(library):
@@ -394,7 +394,8 @@ async def test_skip_judged_still_refuses_when_nothing_would_run(library):
     assert exc.value.code == "config"
     assert str(exc.value).startswith(
         "2 of 2 selected probes need an LLM judge: ANTHROPIC_API_KEY is not set. "
-        "Set a key; --skip-judged would leave nothing to run.")
+        "--skip-judged would run 0 selected probes without a judge key.")
+    assert "--probes all --skip-judged" in str(exc.value)
 
 
 async def test_skip_judged_with_a_key_is_a_noop_with_a_warning(library):
@@ -463,7 +464,7 @@ async def test_all_with_no_compatible_probe_is_refused(library, monkeypatch):
     monkeypatch.setattr("argus.local.build_target", lambda spec, **_: _Odd())
     with pytest.raises(LocalRunError) as exc:
         await _collect(run_local(TARGET, [], env=KEY))
-    assert exc.value.code == "input"
+    assert exc.value.code == "usage"
     assert "no probe in the library fits target kind openai_compat" in str(exc.value)
 
 

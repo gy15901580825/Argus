@@ -131,6 +131,11 @@ argus-probe run --local --target target.json --probes all \
   --baseline baseline.json --fail-on high --format json --out pr-run.json
 ```
 
+If the baseline file is missing on the first run, the CLI prints a note and
+uses an empty baseline. Every current failure counts as new, so `--fail-on`
+still gates the first scan. An unreadable or malformed existing baseline
+remains an error.
+
 The summary lists new, fixed, still failing and not run probes. A failure in
 any trial makes that probe failing. A fix requires at least one current finding,
 with every current finding `pass` or `warn`. A previously failing probe that is
@@ -452,9 +457,16 @@ Secret references in your target spec (`${OPENAI_API_KEY}`, etc.) are resolved f
 
 ## Output formats
 
-- `html` — human-readable report
-- `sarif` — SARIF 2.1.0, uploads cleanly to GitHub code-scanning (Security tab)
-- `junit` — JUnit XML for any CI tool that parses test results
+- `html`: human-readable report
+- `sarif`: SARIF 2.1.0 for GitHub code scanning
+- `junit`: JUnit XML for CI test results
+- `json`: run.json record for local runs and baselines
+
+For `run`, `report` and `mcp-trap`, omitting `--format` infers it from
+`--out` (`.html`, `.sarif`, `.xml` for JUnit, or `.json`). Other extensions
+keep the HTML default. An explicit format that disagrees with a recognized
+extension exits 2 before the scan. `report` reads from a server and does not
+support JSON; use `run --local --out run.json` to write a local run record.
 
 Each finding from a library probe says how to fix the weakness it tests: the probe's own text when it has one (the MCP server and vLLM probes do), else a few lines for each attack class the probe covers. `scan-skill` findings have an empty `remediation` and an empty `remediation_actions` list. You find it under "How to fix" on `fail` and `warn` findings in HTML (as a "Mitigation (ship now)" list and a "Fix (design change)" list when the finding has `remediation_actions`), as the rule's `help` in SARIF (`help.text` is the `remediation` text; `help.markdown`, which GitHub code scanning shows, lists both tiers), on the last line of the `<failure>` text in JUnit, and in the `remediation` and `remediation_actions` fields in run.json.
 
@@ -475,11 +487,15 @@ Use [`argus-probe-action`](https://github.com/marketplace/actions/argus-agent-re
 
 The job needs `permissions: security-events: write` for the SARIF upload. `argus-probe init --workflow` writes a complete workflow file with that set. Its `probes` are two judged chat probes for `openai_compat`, `anthropic_native`, `custom_http`, `web_chat` and `python`, and `all` for every other kind, because the chat probes do not apply to those targets. It also sets `argus-version` to the version that wrote it, because the action otherwise installs its own default version, which may not know `testbed_url: "local"` or select the probes that fit the target. With `all`, an `mcp_agent` target needs no judge key because the MCP probes are decided from the testbed's record. A `payment_agent` target needs `ANTHROPIC_API_KEY` for the `pay_wallet_key_exfil*` probes; without the key the run stops with exit 1, unless you add `skip-judged: "true"` to run only the deterministic probes. The selected Action revision pins its default `argus-probe` release. Set the `argus-version` input to override that pin.
 
-`--fail-on <severity>` exits 3 when a failing finding is at or above that level; the SARIF is written first. `--compare-to <base branch>` makes `--fail-on` count only failures that are new relative to the latest run on that branch. It is server mode only, because it needs run history, so the action does not offer it; see the target-spec cookbook for a server-mode workflow.
+`--fail-on <severity>` exits 3 when a failing finding is at or above that level; the SARIF is written first. `--compare-to <base branch>` makes `--fail-on` count only failures that are new relative to the latest run on that branch. It needs run history on a server. For local CI, use `--baseline` with a previous run.json; see [Compare local runs in CI](#compare-local-runs-in-ci) and the target-spec cookbook.
 
 ### Errors and incomplete runs
 
-Probe ids are checked before anything runs. An id the library does not have stops the command with exit 2 and a message that names it; `argus-probe list-probes` shows the valid ids.
+Probe ids are checked before anything runs. An id the library does not have stops the command with exit 2 and a message that names it and suggests a close match; `argus-probe list-probes` shows the valid ids.
+
+A local selection with no probes that can run for the target exits 2 before the "Running" line. The message explains why and suggests fitting probes or `--probes all`. Mixed selections still report incompatible probes as skipped.
+
+The last console line counts findings per verdict, including repeated trials, and gives the exit code and `--fail-on` rule. Failing findings still exit 0 when `--fail-on` is omitted.
 
 A probe that cannot reach a verdict gets an `error` finding that names the cause, and the run goes on to the next probe. This covers:
 

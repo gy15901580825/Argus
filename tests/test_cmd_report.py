@@ -43,3 +43,20 @@ def test_report_write_error_exits_1_without_traceback(tmp_path):
     assert f"Error: cannot write {out_dir}:" in result.stderr
     assert result.exception is None or isinstance(result.exception, SystemExit)
     assert "Wrote" not in result.output
+
+
+def test_report_infers_sarif_before_fetching(tmp_path):
+    out = tmp_path / "out.sarif"
+    with patch("argus.cli.api_client.get_report", return_value='{"version":"2.1.0"}') as get_report:
+        result = CliRunner().invoke(main, ["report", "--run-id", "abc-123", "--out", str(out),
+                                          "--token", "test", "--api-url", "http://127.0.0.1:1"])
+    assert result.exit_code == 0, result.output
+    assert get_report.call_args.args[-1] == "sarif"
+    assert '"version":"2.1.0"' in out.read_text()
+
+
+def test_report_json_explains_local_record(tmp_path):
+    result = CliRunner().invoke(main, ["report", "--run-id", "abc", "--out", str(tmp_path / "run.json"),
+                                      "--token", "test", "--api-url", "http://127.0.0.1:1"])
+    assert result.exit_code == 2
+    assert "does not support" in result.output and "run --local --format json" in result.output

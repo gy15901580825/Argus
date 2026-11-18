@@ -173,7 +173,12 @@ def unknown_probe_ids(probe_ids: list[str]) -> str | None:
     unknown = [pid for pid in dict.fromkeys(probe_ids) if pid not in known]
     if not unknown:
         return None
-    return f"unknown probe id(s): {', '.join(unknown)}; run `argus-probe list-probes` to see the valid ids"
+    from difflib import get_close_matches
+
+    hints = [f"{pid}: did you mean {matches[0]}?" for pid in unknown
+             if (matches := get_close_matches(pid, sorted(known), n=1))]
+    return (f"unknown probe id(s): {', '.join(unknown)}; " + " ".join(hints)
+            + " run `argus-probe list-probes` to see the valid ids")
 
 
 def _resolve_suite(suite: str) -> list[str]:

@@ -106,7 +106,13 @@ def _prepare(target, probe_ids, *, mode, per_run_cap_usd, env, skip_judged, tria
         requested = api._resolve_request_probe_ids(req, target_obj)
         api._check_trials_mode(req)
     except HTTPException as e:
-        raise LocalRunError(str(e.detail), code="usage" if mode == "deep" else "input") from e
+        detail = str(e.detail)
+        if not probe_ids and mode == "static":
+            choices = api.compatible_probe_ids(target_obj)
+            hint = f"Try --probes {choices[0]}. " if choices else ""
+            detail += (f". No default probes are compatible with this target. {hint}"
+                       "Check the target kind and history settings; list fitting ids with argus-probe list-probes --target <target>.")
+        raise LocalRunError(detail, code="usage" if mode == "deep" or not probe_ids else "input") from e
     if (unknown := api.unknown_probe_ids(requested)):
         raise LocalRunError(unknown, code="usage")
 
@@ -115,6 +121,23 @@ def _prepare(target, probe_ids, *, mode, per_run_cap_usd, env, skip_judged, tria
     by_id = {p.id: p for p in load_probe_library(api.PROBES_DIR)}
     fits = set(api.compatible_probe_ids(target_obj))
     runs = requested if mode == "deep" else [pid for pid in requested if pid in fits]
+    if not runs:
+        from difflib import get_close_matches
+
+        reasons = []
+        for pid in requested:
+            probe = by_id[pid]
+            if probe.target_class and target_obj.compatible_classes and not set(probe.target_class) & target_obj.compatible_classes:
+                reason = f"needs target class {', '.join(probe.target_class)}; target kind {target.get('kind')} does not provide it"
+            elif probe.needs_history and not target_obj.supports_history:
+                reason = "needs conversation history; this target has history disabled"
+            else:
+                reason = "does not support this target's trap mode"
+            reasons.append(f"{pid}: {reason}")
+        suggestions = get_close_matches(requested[0], sorted(fits), n=1, cutoff=0.3)
+        hint = f"Try --probes {suggestions[0]}, or " if suggestions else "Try "
+        raise LocalRunError("No selected probes can run for this target. " + "; ".join(reasons)
+                            + f". {hint}--probes all; list fitting ids with argus-probe list-probes --target <target>.", code="usage")
     judged = runs if mode == "deep" else [pid for pid in runs if by_id[pid].needs_judge]
     skipped: list[dict] = []
     warnings: list[str] = []
@@ -124,13 +147,13 @@ def _prepare(target, probe_ids, *, mode, per_run_cap_usd, env, skip_judged, tria
         # Without --skip-judged a missing key refuses the run: skipping silently would let
         # a CI gate pass on a fraction of the probes. Deep mode needs the attacker LLM too.
         if mode == "deep" or not skip_judged or n == m:
-            if mode != "deep" and n < m:
-                hint = (f"Set a key, or pass --skip-judged to run only the {m - n} "
-                        f"probe{'' if m - n == 1 else 's'} decided by deterministic checks.")
-            elif skip_judged and mode != "deep":
-                hint = "Set a key; --skip-judged would leave nothing to run."
-            else:
-                hint = "Set a key."
+            remaining = m - n if mode != "deep" else 0
+            hint = f"--skip-judged would run {remaining} selected probe{'' if remaining == 1 else 's'} without a judge key."
+            if remaining == 0:
+                hint += " It would leave nothing to run; try --probes all --skip-judged for deterministic checks in --mode static."
+            key_names = (cfg.missing_credential() or "ANTHROPIC_API_KEY").split(", ")
+            exports = " and ".join(f"export {name}='<your-key>'" for name in key_names if name.isidentifier())
+            hint += f" Set a key with {exports}."
             raise LocalRunError(f"{n} of {m} selected probes need an LLM judge: {missing}. "
                                 f"{hint} {_KEY_HELP}", code="config")
         reason = f"{NO_JUDGE_KEY}: {missing}; skipped by --skip-judged"

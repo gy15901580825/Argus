@@ -63,7 +63,7 @@ def engine(monkeypatch):
 
 def arguments(tmp_path, *, local_run=True, extra=()):
     args = ['run', '--target', json.dumps(SPEC), '--probes', 'deep_fixture', '--format',
-            'json' if local_run else 'html', '--out', str(tmp_path / 'run.json')]
+            'json' if local_run else 'html', '--out', str(tmp_path / ('run.json' if local_run else 'run.html'))]
     args += ['--local'] if local_run else ['--api-url', 'http://127.0.0.1:1', '--token', 'fixture-token']
     return args + list(extra)
 
