@@ -132,7 +132,7 @@ def _prepare(target, probe_ids, *, mode, per_run_cap_usd, env, skip_judged, tria
             elif probe.needs_history and not target_obj.supports_history:
                 reason = "needs conversation history; this target has history disabled"
             else:
-                reason = "does not support this target's trap mode"
+                reason = api._trap_mode_skip_reason(probe, target_obj) or "does not support this target's trap mode"
             reasons.append(f"{pid}: {reason}")
         suggestions = get_close_matches(requested[0], sorted(fits), n=1, cutoff=0.3)
         hint = f"Try --probes {suggestions[0]}, or " if suggestions else "Try "
