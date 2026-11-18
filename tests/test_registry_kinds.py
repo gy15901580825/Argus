@@ -40,6 +40,7 @@ def fresh(path, code, *args, input=None):
         if not k.endswith(("_API_KEY", "_API_TOKEN"))
     }
     env["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
+    env["GIT_CEILING_DIRECTORIES"] = str(path.parent)
     bootstrap = f"import sys; sys.path[:0] = {[str(ROOT), str(path)]!r}; "
     return subprocess.run(
         [sys.executable, "-c", bootstrap + code, *args],
@@ -54,8 +55,12 @@ def fresh(path, code, *args, input=None):
 
 
 def cli(path, *args, input=None):
+    code = "from argus.cli.__main__ import main; main()"
+    if args and args[0] == "init" and input is not None:
+        # These tests supply terminal answers through subprocess stdin.
+        code = "from argus.cli import cmd_init; cmd_init._stdin_is_tty = lambda: True; " + code
     return fresh(
-        path, "from argus.cli.__main__ import main; main()", *args, input=input
+        path, code, *args, input=input
     )
 
 
@@ -313,6 +318,7 @@ GenericTarget.kind_info = KindInfo(kind="different_kind")
 def test_init_choices_are_resolved_after_command_import(tmp_path):
     r = fresh(
         tmp_path,
+        "from argus.cli import cmd_init; cmd_init._stdin_is_tty = lambda: True; "
         "from argus.cli.cmd_init import init_command; "
         f"import sys; sys.path.insert(0, {str(ROOT / 'tests')!r}); "
         "from test_registry_kinds import install_plugin; from pathlib import Path; "

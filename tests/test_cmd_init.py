@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import shlex
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -10,6 +12,14 @@ from click.testing import CliRunner
 
 from argus.cli.cmd_init import init_command
 from argus.cli.target_loader import load_target_spec
+
+
+@pytest.fixture(autouse=True)
+def interactive_stdin(monkeypatch, tmp_path):
+    # Existing prompt tests supply answers as though stdin were a terminal.
+    monkeypatch.setattr("argus.cli.cmd_init._stdin_is_tty", lambda: True)
+    # Test scratch directories live inside a checkout; do not discover that parent repo.
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent))
 
 
 def test_init_openai_compat_writes_target_json(tmp_path, monkeypatch):
@@ -242,10 +252,9 @@ def test_init_with_workflow_writes_workflow_file(tmp_path, monkeypatch):
     }
     assert wf["jobs"]["redteam"]["permissions"]["security-events"] == "write"
     assert "git+https" not in content
-    # PyYAML parses the key `on` as boolean True.
-    triggers = wf[True]
-    assert triggers["pull_request"] == {"branches": ["main"]}
-    assert triggers["push"] == {"branches": ["main"]}
+    triggers = wf.get("on", wf.get(True))
+    assert triggers["pull_request"] == {}
+    assert "push" not in triggers
     assert "schedule" in triggers
     assert "workflow_dispatch" in triggers
     assert "ANTHROPIC_API_KEY as a repository secret" in result.output
@@ -406,11 +415,12 @@ def test_init_python_kind_writes_a_local_run(tmp_path, monkeypatch):
     }
     workflow = (tmp_path / ".github/workflows/argus-probe.yml").read_text()
     assert "uses: gy15901580825/argus-probe-action@v2" in workflow
-    assert "target: argus-target.json" in workflow
+    scan = yaml.safe_load(workflow)["jobs"]["redteam"]["steps"][1]
+    assert scan["with"]["target"] == "argus-target.json"
     assert "probes: owasp_01_prompt_injection_basic,syscard_crescendo" in workflow
     assert "--api-url" not in workflow
     assert (
-        "Next: argus-probe run --local --target argus-target.json "
+        "With a judge key: argus-probe run --local --target argus-target.json "
         "--probes owasp_01_prompt_injection_basic,syscard_crescendo "
         "--out argus-report.html"
     ) in result.output
@@ -449,6 +459,7 @@ def test_bare_init_without_a_terminal_exits_2_and_lists_the_kinds(tmp_path, monk
     registered = kinds()
 
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("argus.cli.cmd_init._stdin_is_tty", lambda: False)
     result = CliRunner().invoke(init_command, ["--no-workflow"], input="\n\nm\n\n")
     assert result.exit_code == 2, result.output
     for kind in registered:
@@ -473,3 +484,162 @@ def test_every_known_kind_has_a_description():
     from argus.targets import _BUILTIN_KINDS
 
     assert all(info.description for info in _BUILTIN_KINDS.values())
+
+
+def _init_repo(path):
+    subprocess.run(["git", "init", "--quiet", str(path)], check=True)
+    subprocess.run(
+        ["git", "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/develop"],
+        cwd=path, check=True,
+    )
+
+
+@pytest.mark.parametrize("absolute,subdirectory", [(False, False), (True, False), (False, True)])
+def test_workflow_preserves_repository_relative_target_path(tmp_path, monkeypatch, absolute, subdirectory):
+    _init_repo(tmp_path)
+    working_dir = tmp_path / "tools" if subdirectory else tmp_path
+    working_dir.mkdir(exist_ok=True)
+    monkeypatch.chdir(working_dir)
+    target = tmp_path / ".argus/target.json"
+    target.parent.mkdir()
+    output = str(target) if absolute else "../.argus/target.json" if subdirectory else ".argus/target.json"
+    result = CliRunner().invoke(init_command, ["--kind", "anthropic_native", "--workflow", "--output", output], input="\n\n")
+    assert result.exit_code == 0, result.output
+    workflow = yaml.safe_load((tmp_path / ".github/workflows/argus-probe.yml").read_text())
+    scan = next(s for s in workflow["jobs"]["redteam"]["steps"] if "argus-probe-action" in s.get("uses", ""))
+    assert scan["with"]["target"] == ".argus/target.json"
+    triggers = workflow.get("on", workflow.get(True))
+    assert triggers["pull_request"] == {"branches": ["develop"]}
+    assert triggers["push"] == {"branches": ["develop"]}
+
+
+def test_workflow_has_secret_guard_timeout_and_always_upload(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(init_command, ["--kind", "anthropic_native", "--workflow"], input="\n\n")
+    assert result.exit_code == 0, result.output
+    workflow = yaml.safe_load((tmp_path / ".github/workflows/argus-probe.yml").read_text())
+    job = workflow["jobs"]["redteam"]
+    assert job["if"] == "${{ github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}"
+    assert 0 < job["timeout-minutes"] <= 30
+    scan = next(s for s in job["steps"] if "argus-probe-action" in s.get("uses", ""))
+    upload = next(s for s in job["steps"] if "actions/upload-artifact" in s.get("uses", ""))
+    assert job["steps"].index(upload) > job["steps"].index(scan)
+    assert upload["if"] == "always()"
+    assert upload["with"]["path"] == scan["with"]["output"] == "argus.sarif"
+    assert "default branch" in result.output
+    assert "without a branch filter" in result.output
+
+
+def test_next_command_runs_keyless_probes_before_keyed_command(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(init_command, ["--kind", "python", "--no-workflow"], input="agent.py:answer\n")
+    assert result.exit_code == 0, result.output
+    next_line = next(line for line in result.output.splitlines() if line.startswith("Next:"))
+    args = shlex.split(next_line.removeprefix("Next: "))
+    assert "--skip-judged" in args
+    assert args[args.index("--probes") + 1] == "all"
+    assert result.output.index("Next:") < result.output.index("With a judge key:")
+
+
+def test_noninteractive_init_lists_missing_model_option(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("argus.cli.cmd_init._stdin_is_tty", lambda: False)
+    result = CliRunner().invoke(init_command, ["--kind", "openai_compat"])
+    assert result.exit_code == 2, result.output
+    assert "--model" in result.output
+    assert "Aborted!" not in result.output
+    assert not (tmp_path / "argus-target.json").exists()
+
+
+def test_noninteractive_init_uses_flags_and_defaults(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("argus.cli.cmd_init._stdin_is_tty", lambda: False)
+    result = CliRunner().invoke(init_command, ["--kind", "openai_compat", "--model", "my-model", "--output", ".argus/target.json"])
+    assert result.exit_code == 0, result.output
+    assert load_target_spec(str(tmp_path / ".argus/target.json")) == {
+        "kind": "openai_compat", "model": "my-model",
+        "endpoint_url": "https://api.openai.com/v1/chat/completions", "api_key": "${OPENAI_API_KEY}",
+    }
+    assert not (tmp_path / ".github").exists()
+
+
+def test_noninteractive_init_with_all_defaults_never_prompts(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("argus.cli.cmd_init._stdin_is_tty", lambda: False)
+    result = CliRunner().invoke(init_command, ["--kind", "anthropic_native"])
+    assert result.exit_code == 0, result.output
+    assert load_target_spec(str(tmp_path / "argus-target.json"))["model"] == "claude-haiku-4-5-20251001"
+
+
+def test_noninteractive_init_refuses_overwrite_with_guidance(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("argus.cli.cmd_init._stdin_is_tty", lambda: False)
+    target = tmp_path / "argus-target.json"
+    target.write_text("existing")
+    result = CliRunner().invoke(init_command, ["--kind", "anthropic_native"])
+    assert result.exit_code == 2, result.output
+    assert "--output" in result.output
+    assert "Aborted!" not in result.output
+    assert target.read_text() == "existing"
+
+
+def test_noninteractive_other_kinds_list_and_accept_missing_fields(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("argus.cli.cmd_init._stdin_is_tty", lambda: False)
+    result = CliRunner().invoke(init_command, ["--kind", "web_chat"])
+    assert result.exit_code == 2, result.output
+    assert "--set url=VALUE" in result.output
+    assert "--set response_selector=VALUE" in result.output
+    result = CliRunner().invoke(init_command, ["--kind", "web_chat", "--set", "url=https://chat.example", "--set", "response_selector=.reply"])
+    assert result.exit_code == 0, result.output
+    spec = load_target_spec(str(tmp_path / "argus-target.json"))
+    assert spec["url"] == "https://chat.example"
+    assert spec["response_selector"] == ".reply"
+
+
+def test_noninteractive_endpoint_and_key_flags_override_defaults(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("argus.cli.cmd_init._stdin_is_tty", lambda: False)
+    result = CliRunner().invoke(init_command, [
+        "--kind", "openai_compat", "--model", "my-model",
+        "--endpoint-url", "https://agent.example/v1/chat/completions", "--api-key-env", "AGENT_API_KEY",
+    ])
+    assert result.exit_code == 0, result.output
+    spec = load_target_spec(str(tmp_path / "argus-target.json"))
+    assert spec["endpoint_url"] == "https://agent.example/v1/chat/completions"
+    assert spec["api_key"] == "${AGENT_API_KEY}"
+
+
+@pytest.mark.parametrize("args,fix", [
+    (["--set", "typo=value"], "--set"),
+    (["--set", "model"], "FIELD=VALUE"),
+    (["--api-key-env", "invalid-key"], "--api-key-env"),
+])
+def test_invalid_initializer_options_are_actionable(tmp_path, monkeypatch, args, fix):
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(init_command, ["--kind", "anthropic_native", *args], input="\n\n")
+    assert result.exit_code == 2, result.output
+    assert fix in result.output
+    assert not (tmp_path / "argus-target.json").exists()
+
+
+def test_workflow_rejects_output_outside_repository(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    monkeypatch.chdir(repo)
+    result = CliRunner().invoke(init_command, ["--kind", "anthropic_native", "--workflow", "--output", "../target.json"], input="\n\n")
+    assert result.exit_code == 2, result.output
+    assert "--output must be inside the repository" in result.output
+    assert not (tmp_path / "target.json").exists()
+    assert not (repo / ".github").exists()
+
+
+def test_workflow_and_next_command_quote_target_path(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(init_command, ["--kind", "anthropic_native", "--workflow", "--output", "targets/agent #1.json"], input="\n\n")
+    assert result.exit_code == 0, result.output
+    workflow = yaml.safe_load((tmp_path / ".github/workflows/argus-probe.yml").read_text())
+    assert workflow["jobs"]["redteam"]["steps"][1]["with"]["target"] == "targets/agent #1.json"
+    next_line = next(line for line in result.output.splitlines() if line.startswith("Next:"))
+    args = shlex.split(next_line.removeprefix("Next: "))
+    assert args[args.index("--target") + 1] == "targets/agent #1.json"
