@@ -154,6 +154,8 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
                 "--probes", probe_ids, "--format", report_format, "--out", out_file]
         if skip_judged:
             args.append("--skip-judged")
+        if fail_on is not None:
+            args.extend(["--fail-on", fail_on])
         command = run_json.mask_text(shlex.join(args), run_json.run_secrets(spec, secret_values))
         raise click.UsageError(f"{reason} --local runs the scan on this machine. Try: {command}")
     if _uses_python(spec):

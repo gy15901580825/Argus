@@ -168,3 +168,18 @@ def test_hosted_only_selection_explains_witness_restriction_before_running(tmp_p
     assert "witness channels are unsupported with hosted traps" in result.output
     assert "--probes all" in result.output
     assert "Running" not in result.output
+
+
+def test_mcp_print_config_still_rejects_contradictory_report_flags(tmp_path):
+    result = CliRunner().invoke(main, ["mcp-trap", "--target", SPEC, "--print-config", "--format", "html",
+                                      "--out", str(tmp_path / "report.sarif")])
+    assert result.exit_code == 2, result.output
+    assert "--format html" in result.output and "--out" in result.output
+    assert "disagree" in result.output and "--format sarif" in result.output
+
+
+def test_missing_server_corrected_command_keeps_ci_gate(tmp_path):
+    result = invoke(tmp_path, "all", "--fail-on", "high")
+    assert result.exit_code == 2
+    assert "argus-probe run --local" in result.output
+    assert "--fail-on high" in result.output

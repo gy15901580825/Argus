@@ -112,6 +112,7 @@ def cmd_mcp_trap(target: str, rounds: int, scenarios: list[str], out_file: str |
                  fail_on: str | None, print_config: bool, trap_host: str, trap_port: int,
                  trap_public_url: str, wait_s: int) -> None:
     """Point your agent at a hostile MCP server on this machine and report what it did."""
+    report_format = resolve_report_format(report_format, out_file)
     try:
         address = wiring.TrapAddress(trap_host, trap_port, trap_public_url)
     except wiring.TrapAddressError as e:
@@ -130,7 +131,6 @@ def cmd_mcp_trap(target: str, rounds: int, scenarios: list[str], out_file: str |
     if print_config:
         click.echo(wiring.config_entry(address))
         return
-    report_format = resolve_report_format(report_format, out_file)
     _check_out_dir(out_file)
     problem = _sdk_problem()
     if problem:
