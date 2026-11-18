@@ -42,6 +42,7 @@ nav:
       - Probe mappings: probe-mapping.md
       - Agentic mappings: owasp-agentic-mapping.md
   - Guides:
+      - CI recipes: ci.md
       - Target plugins: plugins.md
       - Integration scenarios: integration-scenarios.md
       - Local scenario drafts: draft-local-scenarios.md

@@ -292,7 +292,8 @@ argus-probe run --local --target argus-target.json \
 
 ### Run with Docker
 
-After the maintainer enables image publishing, run a released CLI without Python.
+The public GHCR image runs the released CLI without a Python installation.
+Tags include `1.18.0` and `latest`; pin a release tag such as `1.18.0` in CI.
 Replace `<version>` with a published image version:
 
 ```bash
@@ -568,6 +569,8 @@ from 22.9 % to 2.9 % (−87 %) with ~275 ms p50 latency overhead, and we
 document the one bypass + 12 false positives in detail.
 
 ## Documentation
+
+- [CI recipes](docs/ci.md): GitHub Actions, GitLab CI, Azure Pipelines, Jenkins, and an agent started in the same job.
 
 - [Target plugin guide](docs/plugins.md): register a product adapter and supply evidence.
 - [Governance](GOVERNANCE.md): who maintains Argus and how merges and releases happen.
