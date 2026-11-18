@@ -7,10 +7,9 @@ from pathlib import Path
 
 import click
 import httpx
-import yaml
 
 from argus.cli import run_json
-from argus.cli.target_loader import TargetLoadError, check_target_spec
+from argus.cli.target_loader import TargetLoadError, load_target_spec_with_secrets
 
 
 def _failure(exc: Exception) -> str:
@@ -56,14 +55,6 @@ async def _ping(target) -> str:
                 raise TargetTransportError(f"target cleanup failed: {type(exc).__name__}") from None
 
 
-def _parse(text: str):
-    # JSON first, as `run` reads it; YAML for specs written before `run` required JSON.
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        return yaml.safe_load(text)
-
-
 @click.command()
 @click.option(
     "--target",
@@ -74,7 +65,7 @@ def _parse(text: str):
 @click.option(
     "--offline",
     is_flag=True,
-    help="Check configuration without requests or resolving secrets.",
+    help="Check configuration without requests. Transport secret references are not resolved.",
 )
 @click.option(
     "--sample-response",
@@ -84,7 +75,7 @@ def _parse(text: str):
 @click.option(
     "--execute",
     is_flag=True,
-    help="Send a benign request. This can use target tools and incur costs.",
+    help="Send requests for a transport target. Legacy chat targets already send by default. This can use target tools and incur costs.",
 )
 @click.option(
     "--endpoint-override", help="Send the request to a controlled alternate endpoint."
@@ -107,7 +98,11 @@ def cmd_validate_target(
     with_scenario: bool,
     scenario_url: str | None,
 ):
-    """Send one prompt to a chat target the way `run` does and report whether it answered."""
+    """Check a target configuration and optionally its response.
+
+    Legacy chat targets send one prompt by default. Transport targets send
+    requests only with --execute. --offline sends no requests.
+    """
     from argus.targets import _BuiltinValidation, build_target, kinds
 
     if (with_scenario or scenario_url) and not execute:
@@ -123,13 +118,7 @@ def cmd_validate_target(
     if endpoint_override and not execute:
         raise click.UsageError("--endpoint-override requires --execute")
     try:
-        raw = _parse(Path(target_file).read_text())
-    except (OSError, UnicodeDecodeError, yaml.YAMLError) as e:
-        raise click.ClickException(f"cannot read the target file as JSON or YAML: {e}")
-    if isinstance(raw, dict) and "kind" not in raw:
-        raw = {"kind": "openai_compat", **raw}  # specs written before `kind` existed
-    try:
-        spec, substituted = check_target_spec(raw, base_dir=Path(target_file).resolve().parent)
+        spec, substituted = load_target_spec_with_secrets(target_file)
     except TargetLoadError as e:
         raise click.ClickException(str(e))
     kind = spec["kind"]
@@ -200,11 +189,11 @@ def cmd_validate_target(
             "target replied, but the reply text is empty; check the response shape or path"
         )
     where = (
-        raw.get("endpoint_url")
-        or raw.get("request_url")
-        or raw.get("url")
-        or raw.get("entry")
-        or (f"anthropic {raw['model']}" if kind == "anthropic_native" else kind)
+        spec.get("endpoint_url")
+        or spec.get("request_url")
+        or spec.get("url")
+        or spec.get("entry")
+        or (f"anthropic {spec['model']}" if kind == "anthropic_native" else kind)
     )
     click.echo(
         run_json.mask_text(

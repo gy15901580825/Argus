@@ -149,12 +149,12 @@ def test_load_target_spec_is_unchanged(tmp_path, monkeypatch):
     assert secrets == ["qs-SECRET-123"]
 
 
-def test_loader_reports_each_value_once_and_skips_unset_and_empty(tmp_path, monkeypatch):
+def test_loader_reports_each_value_once_and_skips_escaped_and_empty(tmp_path, monkeypatch):
     monkeypatch.setenv("ARGUS_T_A", "aaa")
     monkeypatch.setenv("ARGUS_T_EMPTY", "")
     monkeypatch.delenv("ARGUS_T_UNSET", raising=False)
     spec, secrets = load_target_spec_with_secrets(_spec_file(tmp_path, {
-        "kind": "openai_compat", "endpoint_url": "https://x/$ARGUS_T_A/${ARGUS_T_A}/$ARGUS_T_UNSET/$ARGUS_T_EMPTY",
+        "kind": "openai_compat", "endpoint_url": "https://x/$ARGUS_T_A/${ARGUS_T_A}/$$ARGUS_T_UNSET/$ARGUS_T_EMPTY",
         "model": "m"}))
     assert spec["endpoint_url"] == "https://x/aaa/aaa/$ARGUS_T_UNSET/"
     assert secrets == ["aaa"]

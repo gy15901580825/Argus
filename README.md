@@ -258,7 +258,15 @@ A2A server checks use `kind: "a2a_server"` and deterministic assertions for inbo
 ## Running against your own agent
 
 Targets are described in a small JSON file. `argus-probe init --kind <kind>`
-writes a starter one. `${VAR}` references are expanded from the environment:
+writes a starter one. Both `run` and `validate-target` also accept YAML files
+with a `.yaml` or `.yml` extension. Every target needs `kind`. JSON files use
+strict JSON syntax, so remove trailing commas.
+
+`${VAR}` and `$VAR` references are expanded from the environment. An unset
+variable stops loading and names the variable and field. Export the variable
+before running either command. Use `$$` for a literal dollar sign, for example
+`$${VAR}` to send the literal text `${VAR}`. A target can read `AGENT_API_KEY`
+like this:
 
 ```json
 {

@@ -48,7 +48,11 @@ def test_offline_invalid_target_names_the_bad_field(tmp_path, site, error_type):
         spec["bad_field"] = True
     result = invoke(tmp_path, spec)
     assert result.exit_code == 1
-    assert f"target spec invalid: {error_type}:" in result.output
+    if site == "v1":
+        assert "unknown field 'bad_field' for target kind 'custom_http'" in result.output
+        assert "Valid fields:" in result.output
+    else:
+        assert f"target spec invalid: {error_type}:" in result.output
     assert "bad_field" in result.output
     assert "Traceback" not in result.output
 

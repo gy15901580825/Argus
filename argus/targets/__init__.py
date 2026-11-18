@@ -5,6 +5,7 @@ from __future__ import annotations
 import functools
 import logging
 from dataclasses import MISSING, _FIELD_INITVAR, fields, is_dataclass
+from difflib import get_close_matches
 from importlib.metadata import entry_points
 from pathlib import Path
 from typing import Any
@@ -107,6 +108,7 @@ def _has_nested_python(spec: dict[str, Any]) -> bool:
 
 
 def build_target(spec: dict[str, Any], *, trusted_code: bool = False) -> Target:
+    _check_fields(spec)
     input_limits = InputLimits.from_spec(spec)
     kind = spec.get("kind")
     # A python target runs the caller's code: only the local run path may build one,
@@ -131,6 +133,34 @@ def build_target(spec: dict[str, Any], *, trusted_code: bool = False) -> Target:
     target = TargetClass(spec_obj)
     target.input_limits = input_limits
     return target
+
+
+def _check_fields(spec: dict[str, Any]) -> None:
+    """Reject unknown constructor fields before building a dataclass target."""
+    kind = spec.get("kind")
+    builder = _BUILDERS.get(kind) or _plugin_builders().get(kind)
+    if builder is None or not is_dataclass(builder[0]):
+        return
+    spec_class = builder[0]
+    valid = {
+        f.name
+        for f in (
+            *fields(spec_class),
+            *(f for f in spec_class.__dataclass_fields__.values() if f._field_type is _FIELD_INITVAR),
+        )
+        if f.init
+    } | {"input_limits"}
+    unknown = spec.keys() - valid
+    if unknown:
+        messages = []
+        for name in sorted(unknown, key=str):
+            matches = get_close_matches(str(name), sorted(valid), n=1)
+            suggestion = f" Did you mean {matches[0]!r}?" if matches else ""
+            messages.append(f"unknown field {name!r} for target kind {kind!r}.{suggestion}")
+        raise ValueError(f"{' '.join(messages)} Valid fields: {', '.join(sorted(valid))}")
+    inner = spec.get("inner")
+    if isinstance(inner, dict):
+        _check_fields(inner)
 
 
 class _BuiltinValidation:

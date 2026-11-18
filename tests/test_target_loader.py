@@ -118,13 +118,9 @@ def test_load_expands_env_vars_in_string_values(tmp_path, monkeypatch):
     assert spec["api_key"] == "secret-value-123"
 
 
-def test_load_unset_env_var_leaves_literal(tmp_path, monkeypatch):
-    """Unset env var: os.path.expandvars leaves the literal $VAR; we don't error.
-    Operator gets a 401 from the server with the literal string visible in the
-    error trail, which is debuggable."""
+def test_load_unset_env_var_names_field_and_variable(tmp_path, monkeypatch):
     monkeypatch.delenv("DEFINITELY_UNSET_VAR_XYZ", raising=False)
     target_path = tmp_path / "target.json"
     target_path.write_text('{"kind": "openai_compat", "endpoint_url": "https://x", "model": "y", "api_key": "${DEFINITELY_UNSET_VAR_XYZ}"}')
-    spec = load_target_spec(str(target_path))
-    # os.path.expandvars on unset var returns the literal $VAR or ${VAR}
-    assert spec["api_key"].startswith("$")  # literal preserved
+    with pytest.raises(TargetLoadError, match="target.api_key.*DEFINITELY_UNSET_VAR_XYZ.*export"):
+        load_target_spec(str(target_path))

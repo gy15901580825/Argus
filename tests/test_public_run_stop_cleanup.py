@@ -20,7 +20,7 @@ from argus_transport.runtime_v2 import TargetRunStopped
 SECRET = 'synthetic-cleanup-secret'
 SPEC = {'kind': 'custom_http', 'request_url': 'http://127.0.0.1/run',
         'request_body_template': '{"prompt": {{ prompt|tojson }}}',
-        'response_jsonpath': '$.text', 'access_token': SECRET}
+        'response_jsonpath': '$.text', 'api_key': SECRET}
 
 
 def stop(reason='quota', detail=''):
