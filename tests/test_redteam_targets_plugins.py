@@ -54,6 +54,15 @@ def test_plugin_kind_resolves(install_plugins):
     assert target.spec == EchoSpec(kind="echo", reply="pong")
 
 
+def test_plugin_unknown_field_suggests_its_own_field(install_plugins):
+    install_plugins(_ep("echo", lambda: (EchoSpec, EchoTarget)))
+    with pytest.raises(ValueError) as exc:
+        build_target({"kind": "echo", "repy": "pong"})
+    assert "unknown field 'repy' for target kind 'echo'" in str(exc.value)
+    assert "Did you mean 'reply'?" in str(exc.value)
+    assert "Valid fields: input_limits, kind, reply" in str(exc.value)
+
+
 def test_plugin_cannot_override_builtin_kind(install_plugins, caplog):
     loaded = []
 

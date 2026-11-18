@@ -13,6 +13,7 @@ class GenericSpec:
     reply: str = "Observed a neutral response."
     derived: str = field(init=False)
     labels: list[str] = field(default_factory=list)
+    nested: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self):
         object.__setattr__(self, "derived", "computed")

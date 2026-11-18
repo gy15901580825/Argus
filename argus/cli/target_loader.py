@@ -125,12 +125,12 @@ def check_target_spec(
         from argus.input_budget import InputLimits
 
         InputLimits.from_spec(spec)
-        _check_fields(spec)
         if not isinstance(info.validate, _BuiltinValidation):
             _check_required(spec, info.required)
             _check_sandbox(spec, info.sandbox_reason)
         if info.validate is not None:
             info.validate(spec)
+        _check_fields(spec)
     except ValueError as exc:
         raise TargetLoadError(str(exc)) from exc
     except (Exception, SystemExit) as exc:
