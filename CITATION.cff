@@ -4,8 +4,8 @@ title: "Argus by Veyon Solutions"
 abstract: "Argus runs 313 red-team probes against an agent through the tools it calls, the content it reads and the requests it gets, then shows which attacks got through."
 authors:
   - name: "Veyon Solutions"
-version: 1.17.1
-date-released: 2026-11-17
+version: 1.18.0
+date-released: 2026-11-18
 license: Apache-2.0
 repository-code: "https://github.com/gy15901580825/Argus"
 keywords:
