@@ -1,6 +1,9 @@
 """Target mistakes must stop both CLI paths before execution."""
 
 import json
+import ntpath
+import os
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -162,3 +165,26 @@ def test_yaml_non_string_field_has_a_configuration_error(tmp_path):
     path.write_text("kind: openai_compat\nendpoint_url: https://example.com/chat\nmodel: m\n42: value\n")
     with pytest.raises(ValueError, match="unknown field 42 for target kind 'openai_compat'.*Valid fields:"):
         load_target_spec_with_secrets(str(path))
+
+
+def test_windows_percent_references_preserve_variable_names(monkeypatch):
+    import argus.cli.target_loader as loader
+
+    monkeypatch.setenv("$ARGUS_NT_KEY", "synthetic-value")
+    monkeypatch.setattr(loader, "os", SimpleNamespace(
+        name="nt", environ=os.environ, path=SimpleNamespace(expandvars=ntpath.expandvars),
+    ))
+    secrets = []
+    assert loader._expand_env("%$ARGUS_NT_KEY%", secrets) == "synthetic-value"
+    assert secrets == ["synthetic-value"]
+
+
+def test_windows_unset_reference_names_field_variable_and_fix(monkeypatch):
+    import argus.cli.target_loader as loader
+
+    monkeypatch.delenv("ARGUS_NT_UNSET", raising=False)
+    monkeypatch.setattr(loader, "os", SimpleNamespace(
+        name="nt", environ=os.environ, path=SimpleNamespace(expandvars=ntpath.expandvars),
+    ))
+    with pytest.raises(ValueError, match="target.api_key.*ARGUS_NT_UNSET.*set ARGUS_NT_UNSET=VALUE"):
+        loader._expand_env({"api_key": "%ARGUS_NT_UNSET%"}, [])

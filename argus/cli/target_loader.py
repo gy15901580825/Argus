@@ -39,11 +39,17 @@ def _expand_env(
             reference = match.group(0)
             if reference == "$$":
                 return "$"
-            name = reference[2:-1] if reference.startswith("${") else reference.strip("$%")
+            if reference.startswith("${"):
+                name = reference[2:-1]
+            elif reference.startswith("%"):
+                name = reference[1:-1]
+            else:
+                name = reference[1:]
             if name not in os.environ:
+                command = f"set {name}=VALUE" if os.name == "nt" else f"export {name}"
                 raise TargetLoadError(
                     f"{field} references environment variable {name!r}, which is not set; "
-                    f"export {name} before loading the target, or use $$ for a literal dollar sign"
+                    f"{command} before loading the target, or use $$ for a literal dollar sign"
                 )
             expanded = os.environ[name]
             if expanded:

@@ -265,7 +265,8 @@ strict JSON syntax, so remove trailing commas.
 `${VAR}` and `$VAR` references are expanded from the environment. An unset
 variable stops loading and names the variable and field. Export the variable
 before running either command. Use `$$` for a literal dollar sign, for example
-`$${VAR}` to send the literal text `${VAR}`:
+`$${VAR}` to send the literal text `${VAR}`. A target can read `AGENT_API_KEY`
+like this:
 
 ```json
 {
