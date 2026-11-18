@@ -17,7 +17,7 @@ SOURCE = ROOT / 'argus/probes/browser/browser_url_sequence_exfil.yaml'
 
 
 @pytest.mark.parametrize('fail_on', [[], ['--fail-on', 'high']])
-def test_copied_probe_hosted_skip_before_target_contact(tmp_path, fail_on):
+def test_copied_probe_hosted_selection_is_rejected_before_target_contact(tmp_path, fail_on):
     raw = yaml.safe_load(SOURCE.read_text())
     raw['id'] = 'custom_sequence_probe'
     library = tmp_path / 'probes'
@@ -36,14 +36,14 @@ def test_copied_probe_hosted_skip_before_target_contact(tmp_path, fail_on):
             '--local', '--target', str(spec), '--probes', raw['id'],
             '--format', 'json', '--out', str(report), *fail_on,
         ])
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 2, result.output
     send.assert_not_called()
-    run = json.loads(report.read_text())
-    assert run['status'] == 'completed'
-    [finding] = run['findings']
-    assert finding['verdict'] == 'skipped'
     assert 'sequence detection is unavailable on hosted traps' in result.output
-    assert 'redacted' in finding['reasoning']
+    assert 'redacted' in result.output
+    assert '--probes all' in result.output
+    assert 'Running' not in result.output
+    assert not report.exists()
+
 
 
 @pytest.mark.parametrize('value,match', [
