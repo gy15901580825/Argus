@@ -436,7 +436,7 @@ def test_bare_init_on_a_terminal_asks_for_the_kind_and_defaults_to_openai_compat
     _on_a_terminal(monkeypatch)
     result = CliRunner().invoke(init_command, [], input="\n\nmy-model\n\nn\n")
     assert result.exit_code == 0, result.output
-    spec = load_target_spec(str(tmp_path / "argus-target.json"))
+    spec = json.loads((tmp_path / "argus-target.json").read_text())
     assert spec["kind"] == "openai_compat"
     assert spec["model"] == "my-model"
 

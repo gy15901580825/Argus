@@ -51,7 +51,7 @@ def _seed_length(_ctx, _param, value):
 
 
 @click.command()
-@click.option("--target", required=True, help="Target spec: JSON object (inline) or path to JSON file.")
+@click.option("--target", required=True, help="Target spec: inline JSON object or path to a JSON or .yaml/.yml file.")
 @click.option("--probes", "probe_ids", required=True,
               help="Comma-separated probe ids OR 'all' (every non-opt-in probe that fits the target kind; "
                    "`list-probes --target` shows them).")

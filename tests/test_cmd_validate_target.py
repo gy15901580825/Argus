@@ -26,9 +26,9 @@ def _invoke(target_file):
 
 
 def test_validate_target_returns_ok_for_valid_endpoint(tmp_path, httpx_mock):
-    # A YAML spec without `kind` predates the field and still means openai_compat.
+    # YAML targets declare the same kind as JSON targets.
     target_file = tmp_path / "t.yaml"
-    target_file.write_text(f"endpoint_url: {URL}\nmodel: gpt-4o-mini\napi_key: sk-test\n")
+    target_file.write_text(f"kind: openai_compat\nendpoint_url: {URL}\nmodel: gpt-4o-mini\napi_key: sk-test\n")
     httpx_mock.add_response(url=URL, method="POST", json=_ok_json())
     result = _invoke(target_file)
     assert result.exit_code == 0, result.output
@@ -42,7 +42,7 @@ def test_validate_target_waits_as_long_as_run_does(tmp_path, httpx_mock):
     # validate-target must not fail an agent that `run` would wait for.
     target_file = tmp_path / "t.yaml"
     for extra, expected in (("", 120.0), ("timeout_s: 45\n", 45.0)):
-        target_file.write_text(f"endpoint_url: {URL}\nmodel: m\n{extra}")
+        target_file.write_text(f"kind: openai_compat\nendpoint_url: {URL}\nmodel: m\n{extra}")
         httpx_mock.add_response(url=URL, method="POST", json=_ok_json())
         assert _invoke(target_file).exit_code == 0
         assert httpx_mock.get_requests()[-1].extensions["timeout"]["read"] == expected
@@ -116,7 +116,7 @@ def test_validate_target_reports_spec_errors_without_a_traceback(tmp_path):
 
 def test_validate_target_reports_http_status(tmp_path, httpx_mock):
     target_file = tmp_path / "t.yaml"
-    target_file.write_text(f"endpoint_url: {URL}\nmodel: m\n")
+    target_file.write_text(f"kind: openai_compat\nendpoint_url: {URL}\nmodel: m\n")
     httpx_mock.add_response(url=URL, method="POST", status_code=401, text="bad key")
     result = _invoke(target_file)
     assert result.exit_code == 1
@@ -125,7 +125,7 @@ def test_validate_target_reports_http_status(tmp_path, httpx_mock):
 
 def test_validate_target_reports_network_error(tmp_path, httpx_mock):
     target_file = tmp_path / "t.yaml"
-    target_file.write_text(f"endpoint_url: {URL}\nmodel: m\n")
+    target_file.write_text(f"kind: openai_compat\nendpoint_url: {URL}\nmodel: m\n")
     httpx_mock.add_exception(httpx.ConnectError("refused"), url=URL)
     result = _invoke(target_file)
     assert result.exit_code == 1
@@ -134,7 +134,7 @@ def test_validate_target_reports_network_error(tmp_path, httpx_mock):
 
 def test_validate_target_names_a_timeout_with_no_message(tmp_path, httpx_mock):
     target_file = tmp_path / "t.yaml"
-    target_file.write_text(f"endpoint_url: {URL}\nmodel: m\n")
+    target_file.write_text(f"kind: openai_compat\nendpoint_url: {URL}\nmodel: m\n")
     httpx_mock.add_exception(httpx.ReadTimeout(""), url=URL)
     result = _invoke(target_file)
     assert result.exit_code == 1
@@ -158,17 +158,17 @@ def test_validate_target_reports_adapter_failures(tmp_path, exc, expected):
         assert text in result.output
 
 
-@pytest.mark.parametrize("content,expected", [
-    ("endpoint_url: [unclosed\n", "cannot read the target file"),
-    ("", "must be a JSON object"),
-    ("- a\n- b\n", "must be a JSON object"),
-    ('{"kind": "nope"}', "unknown target.kind"),
-    ('{"kind": ["openai_compat"]}', "unknown target.kind"),
-    (json.dumps({**CUSTOM_HTTP, "response_jsonpath": "$[["}), "target spec invalid"),
-    (f"endpoint_url: {URL}\nmodel: m\nunsupported_option: 10\n", "target spec invalid"),
+@pytest.mark.parametrize("extension,content,expected", [
+    ("yaml", "endpoint_url: [unclosed\n", "target YAML malformed"),
+    ("json", "", "target JSON malformed"),
+    ("yaml", "- a\n- b\n", "must be a JSON object"),
+    ("json", '{"kind": "nope"}', "unknown target.kind"),
+    ("json", '{"kind": ["openai_compat"]}', "unknown target.kind"),
+    ("json", json.dumps({**CUSTOM_HTTP, "response_jsonpath": "$[["}), "target spec invalid"),
+    ("yaml", f"kind: openai_compat\nendpoint_url: {URL}\nmodel: m\nunsupported_option: 10\n", "unknown field 'unsupported_option'"),
 ])
-def test_validate_target_reports_bad_specs_without_a_traceback(tmp_path, content, expected, httpx_mock):
-    target_file = tmp_path / "t.json"
+def test_validate_target_reports_bad_specs_without_a_traceback(tmp_path, extension, content, expected, httpx_mock):
+    target_file = tmp_path / f"t.{extension}"
     target_file.write_text(content)
     result = _invoke(target_file)
     assert result.exit_code == 1, result.output
@@ -206,7 +206,7 @@ def test_validate_target_masks_secrets_like_run(tmp_path, httpx_mock, monkeypatc
     result = _invoke(target_file)
     assert result.exit_code == 0, result.output
     assert "url-secret-value" not in result.output
-    assert "${ARGUS_TEST_URL_KEY}" in result.output
+    assert "https://agent.example/chat?key=***" in result.output
     httpx_mock.add_response(url=url, method="POST", status_code=401,
                             text="bad key literal-key-value for url-secret-value")
     result = _invoke(target_file)

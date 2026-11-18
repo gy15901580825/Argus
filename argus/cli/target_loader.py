@@ -1,7 +1,7 @@
 """Loader + minimal client-side validator for target specs.
 
 The engine is the source of truth for target specs; the CLI only checks
-that `kind` is registered and that the file is valid JSON with
+that `kind` is registered and that the JSON or YAML file has
 the per-kind required fields. This catches most operator mistakes before
 round-tripping to the server.
 """
@@ -14,41 +14,59 @@ import re
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 
 class TargetLoadError(ValueError):
     pass
 
 
-# Each $VAR / ${VAR} (and %VAR% on Windows) reference, expanded on its own, gives the value
-# os.path.expandvars substitutes for it in context.
-_POSIX_VAR_RE = re.compile(r"\$(?:\w+|\{[^}]*\})", re.ASCII)
-_NT_VAR_RE = re.compile(r"%[^%]+%|\$(?:\w+|\{[^}]*\})", re.ASCII)
+# Match references once so escaped dollars and substituted values are not expanded again.
+_POSIX_VAR_RE = re.compile(r"\$\$|\$(?:\w+|\{[^}]*\})", re.ASCII)
+_NT_VAR_RE = re.compile(r"\$\$|%[^%]+%|\$(?:\w+|\{[^}]*\})", re.ASCII)
 
 
-def _expand_env(value, substituted: list[str], *, skip_transport: bool = True):
+def _expand_env(
+    value, substituted: list[str], *, skip_transport: bool = True, field: str = "target"
+):
     """Expand ${VAR} references in strings; recurse through dicts and lists.
 
     Appends every non-empty value it substitutes to `substituted`."""
     if isinstance(value, str):
         pattern = _NT_VAR_RE if os.name == "nt" else _POSIX_VAR_RE
-        for m in pattern.finditer(value):
-            expanded = os.path.expandvars(m.group(0))
-            if expanded and expanded != m.group(0):
+
+        def expand(match):
+            reference = match.group(0)
+            if reference == "$$":
+                return "$"
+            name = reference[2:-1] if reference.startswith("${") else reference.strip("$%")
+            if name not in os.environ:
+                raise TargetLoadError(
+                    f"{field} references environment variable {name!r}, which is not set; "
+                    f"export {name} before loading the target, or use $$ for a literal dollar sign"
+                )
+            expanded = os.environ[name]
+            if expanded:
                 substituted.append(expanded)
-        return os.path.expandvars(value)
+            return expanded
+
+        return pattern.sub(expand, value)
     if isinstance(value, dict):
         return {
             k: v if skip_transport and k == "transport"
-            else _expand_env(v, substituted, skip_transport=skip_transport)
+            else _expand_env(v, substituted, skip_transport=skip_transport, field=f"{field}.{k}")
             for k, v in value.items()
         }
     if isinstance(value, list):
-        return [_expand_env(v, substituted, skip_transport=skip_transport) for v in value]
+        return [
+            _expand_env(v, substituted, skip_transport=skip_transport, field=f"{field}[{i}]")
+            for i, v in enumerate(value)
+        ]
     return value
 
 
 def load_target_spec(target_arg: str) -> dict[str, Any]:
-    """target_arg is either a path to JSON file or an inline JSON string."""
+    """Load a JSON/YAML file or an inline JSON object. YAML requires .yaml/.yml."""
     return load_target_spec_with_secrets(target_arg)[0]
 
 
@@ -56,6 +74,7 @@ def load_target_spec_with_secrets(target_arg: str) -> tuple[dict[str, Any], list
     """Like load_target_spec, plus every non-empty value substituted for a $VAR reference."""
     text: str
     base_dir = None
+    is_yaml = False
     if target_arg.lstrip().startswith("{"):
         text = target_arg
     else:
@@ -64,13 +83,19 @@ def load_target_spec_with_secrets(target_arg: str) -> tuple[dict[str, Any], list
             raise TargetLoadError(
                 f"target arg is neither a JSON object nor a readable file: {target_arg!r}"
             )
-        text = path.read_text()
+        try:
+            text = path.read_text()
+        except (OSError, UnicodeDecodeError) as exc:
+            raise TargetLoadError(f"cannot read the target file: {exc}") from exc
         base_dir = path.resolve().parent
+        is_yaml = path.suffix.lower() in {".yaml", ".yml"}
 
     try:
-        spec = json.loads(text)
+        spec = yaml.safe_load(text) if is_yaml else json.loads(text)
     except json.JSONDecodeError as e:
         raise TargetLoadError(f"target JSON malformed: {e}") from e
+    except yaml.YAMLError as exc:
+        raise TargetLoadError(f"target YAML malformed: {exc}") from exc
     return check_target_spec(spec, base_dir=base_dir)
 
 
@@ -83,9 +108,9 @@ def check_target_spec(
     if not isinstance(spec, dict):
         raise TargetLoadError("target must be a JSON object")
     if "kind" not in spec:
-        raise TargetLoadError("target.kind is required")
+        raise TargetLoadError("target.kind is required; add the 'kind' field, for example 'openai_compat'")
     from argus.targets import (
-        _BUILTIN_KINDS, _BuiltinValidation, _check_required, _check_sandbox, kinds,
+        _BUILTIN_KINDS, _BuiltinValidation, _check_fields, _check_required, _check_sandbox, kinds,
     )
 
     info = _BUILTIN_KINDS.get(spec["kind"]) if isinstance(spec["kind"], str) else None
@@ -100,6 +125,7 @@ def check_target_spec(
         from argus.input_budget import InputLimits
 
         InputLimits.from_spec(spec)
+        _check_fields(spec)
         if not isinstance(info.validate, _BuiltinValidation):
             _check_required(spec, info.required)
             _check_sandbox(spec, info.sandbox_reason)
