@@ -1,9 +1,8 @@
 """Loader + minimal client-side validator for target specs.
 
-The engine is the source of truth for target specs; the CLI only checks
-that `kind` is registered and that the JSON or YAML file has
-the per-kind required fields. This catches most operator mistakes before
-round-tripping to the server.
+The CLI checks syntax, registered kinds, required fields, and constructor
+field names before passing the spec to the engine. This catches operator
+mistakes before round-tripping to the server.
 """
 
 from __future__ import annotations
@@ -23,13 +22,13 @@ class TargetLoadError(ValueError):
 
 # Match references once so escaped dollars and substituted values are not expanded again.
 _POSIX_VAR_RE = re.compile(r"\$\$|\$(?:\w+|\{[^}]*\})", re.ASCII)
-_NT_VAR_RE = re.compile(r"\$\$|%[^%]+%|\$(?:\w+|\{[^}]*\})", re.ASCII)
+_NT_VAR_RE = re.compile(r"%%|\$\$|%[^%]+%|\$(?:\w+|\{[^}]*\})", re.ASCII)
 
 
 def _expand_env(
     value, substituted: list[str], *, skip_transport: bool = True, field: str = "target"
 ):
-    """Expand ${VAR} references in strings; recurse through dicts and lists.
+    """Expand environment references in strings; recurse through dicts and lists.
 
     Appends every non-empty value it substitutes to `substituted`."""
     if isinstance(value, str):
@@ -39,6 +38,8 @@ def _expand_env(
             reference = match.group(0)
             if reference == "$$":
                 return "$"
+            if reference == "%%":
+                return "%"
             if reference.startswith("${"):
                 name = reference[2:-1]
             elif reference.startswith("%"):
@@ -47,9 +48,10 @@ def _expand_env(
                 name = reference[1:]
             if name not in os.environ:
                 command = f"set {name}=VALUE" if os.name == "nt" else f"export {name}"
+                escape = "%% for a literal percent sign" if reference.startswith("%") else "$$ for a literal dollar sign"
                 raise TargetLoadError(
                     f"{field} references environment variable {name!r}, which is not set; "
-                    f"{command} before loading the target, or use $$ for a literal dollar sign"
+                    f"{command} before loading the target, or use {escape}"
                 )
             expanded = os.environ[name]
             if expanded:

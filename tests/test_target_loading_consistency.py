@@ -171,11 +171,13 @@ def test_windows_percent_references_preserve_variable_names(monkeypatch):
     import argus.cli.target_loader as loader
 
     monkeypatch.setenv("$ARGUS_NT_KEY", "synthetic-value")
+    monkeypatch.setenv("ARGUS_NT_LITERAL", "must-stay-literal")
     monkeypatch.setattr(loader, "os", SimpleNamespace(
         name="nt", environ=os.environ, path=SimpleNamespace(expandvars=ntpath.expandvars),
     ))
     secrets = []
     assert loader._expand_env("%$ARGUS_NT_KEY%", secrets) == "synthetic-value"
+    assert loader._expand_env("%%ARGUS_NT_LITERAL%% $$ARGUS_NT_LITERAL", secrets) == "%ARGUS_NT_LITERAL% $ARGUS_NT_LITERAL"
     assert secrets == ["synthetic-value"]
 
 
@@ -186,5 +188,5 @@ def test_windows_unset_reference_names_field_variable_and_fix(monkeypatch):
     monkeypatch.setattr(loader, "os", SimpleNamespace(
         name="nt", environ=os.environ, path=SimpleNamespace(expandvars=ntpath.expandvars),
     ))
-    with pytest.raises(ValueError, match="target.api_key.*ARGUS_NT_UNSET.*set ARGUS_NT_UNSET=VALUE"):
+    with pytest.raises(ValueError, match="target.api_key.*ARGUS_NT_UNSET.*set ARGUS_NT_UNSET=VALUE.*%% for a literal percent sign"):
         loader._expand_env({"api_key": "%ARGUS_NT_UNSET%"}, [])
