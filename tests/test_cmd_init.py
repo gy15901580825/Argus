@@ -342,7 +342,7 @@ def test_workflow_leaves_the_version_to_the_action_from_an_uninstalled_tree(tmp_
 
 
 @pytest.mark.parametrize("installed_version,expected_pin", [
-    ("1.17.1", "1.17.1"),
+    ("1.18.0", "1.18.0"),
     ("1.17.2.dev0", None),
 ])
 def test_workflow_pins_releases_and_leaves_main_builds_to_the_action(
