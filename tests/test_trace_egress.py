@@ -8,7 +8,7 @@ import pytest
 
 from argus import llm
 from argus.cli import reports, run_json
-from argus.local import run_local
+from argus.local import LocalRunError, run_local
 from argus.probe import load_probe
 from argus.witness import WitnessRun
 from browser_agent_fixture import start
@@ -152,11 +152,12 @@ async def test_configured_placeholder_is_only_in_prompt(harness):
 
 
 @pytest.mark.parametrize("pid", [PID, PID + "_control"])
-async def test_hosted_traps_skip(harness, pid):
-    [finding], options = await run_case(harness, "trace_clean", [pid], trap_mode="hosted")
-    assert finding["verdict"] == "skipped"
-    assert "witness channels are unsupported with hosted traps" in finding["reasoning"]
-    assert not options.get("values")
+async def test_hosted_only_selection_is_rejected_before_witness_start(harness, pid):
+    with pytest.raises(LocalRunError, match="witness channels are unsupported with hosted traps") as exc:
+        await run_case(harness, "trace_clean", [pid], trap_mode="hosted")
+    assert exc.value.code == "usage"
+    assert "urls" not in harness
+
 
 
 @pytest.mark.parametrize("pid", [PID, PID + "_control"])

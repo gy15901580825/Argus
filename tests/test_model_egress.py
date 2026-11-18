@@ -9,7 +9,7 @@ from aiohttp import web
 
 from argus import llm
 from argus.cli import reports, run_json
-from argus.local import run_local
+from argus.local import LocalRunError, run_local
 from argus.probe import load_probe
 from argus.witness import WitnessRun
 from browser_agent_fixture import start
@@ -173,11 +173,12 @@ def test_scenario_and_control_have_only_the_requested_field_type():
 
 
 @pytest.mark.parametrize("pid", [PID, PID + "_control"])
-async def test_hosted_traps_use_witness_applicability_skip(harness, pid):
-    [finding], options = await run_case(harness, "model_clean", [pid], trap_mode="hosted")
-    assert finding["verdict"] == "skipped"
-    assert "witness channels are unsupported with hosted traps" in finding["reasoning"]
-    assert options.get("values") is None
+async def test_hosted_only_selection_is_rejected_before_witness_start(harness, pid):
+    with pytest.raises(LocalRunError, match="witness channels are unsupported with hosted traps") as exc:
+        await run_case(harness, "model_clean", [pid], trap_mode="hosted")
+    assert exc.value.code == "usage"
+    assert "urls" not in harness
+
 
 
 async def test_pairing_includes_skips_and_is_independent_of_order(harness):

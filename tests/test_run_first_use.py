@@ -154,3 +154,17 @@ def test_missing_server_guides_local_json_scan(tmp_path):
     assert result.exit_code == 2
     assert "--local runs the scan on this machine" in result.output
     assert "argus-probe run --local --target" in result.output
+
+
+@pytest.mark.parametrize("probe", ["browser_secret_field_model_egress", "browser_secret_field_model_egress_control",
+                                   "browser_secret_trace_export", "browser_secret_trace_export_control"])
+def test_hosted_only_selection_explains_witness_restriction_before_running(tmp_path, probe):
+    from tests.test_transport_engine import spec_dict
+
+    spec = json.dumps({"kind": "browser_use", "transport": spec_dict(), "scenario_kind": "field_egress",
+                       "trap_mode": "hosted", "hosted": {"service_url": "http://127.0.0.1:1"}})
+    result = invoke(tmp_path, probe, "--local", spec=spec)
+    assert result.exit_code == 2, result.output
+    assert "witness channels are unsupported with hosted traps" in result.output
+    assert "--probes all" in result.output
+    assert "Running" not in result.output
