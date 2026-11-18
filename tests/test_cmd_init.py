@@ -556,7 +556,7 @@ def test_noninteractive_init_uses_flags_and_defaults(tmp_path, monkeypatch):
     monkeypatch.setattr("argus.cli.cmd_init._stdin_is_tty", lambda: False)
     result = CliRunner().invoke(init_command, ["--kind", "openai_compat", "--model", "my-model", "--output", ".argus/target.json"])
     assert result.exit_code == 0, result.output
-    assert load_target_spec(str(tmp_path / ".argus/target.json")) == {
+    assert json.loads((tmp_path / ".argus/target.json").read_text()) == {
         "kind": "openai_compat", "model": "my-model",
         "endpoint_url": "https://api.openai.com/v1/chat/completions", "api_key": "${OPENAI_API_KEY}",
     }
@@ -568,7 +568,7 @@ def test_noninteractive_init_with_all_defaults_never_prompts(tmp_path, monkeypat
     monkeypatch.setattr("argus.cli.cmd_init._stdin_is_tty", lambda: False)
     result = CliRunner().invoke(init_command, ["--kind", "anthropic_native"])
     assert result.exit_code == 0, result.output
-    assert load_target_spec(str(tmp_path / "argus-target.json"))["model"] == "claude-haiku-4-5-20251001"
+    assert json.loads((tmp_path / "argus-target.json").read_text())["model"] == "claude-haiku-4-5-20251001"
 
 
 def test_noninteractive_init_refuses_overwrite_with_guidance(tmp_path, monkeypatch):
@@ -605,7 +605,7 @@ def test_noninteractive_endpoint_and_key_flags_override_defaults(tmp_path, monke
         "--endpoint-url", "https://agent.example/v1/chat/completions", "--api-key-env", "AGENT_API_KEY",
     ])
     assert result.exit_code == 0, result.output
-    spec = load_target_spec(str(tmp_path / "argus-target.json"))
+    spec = json.loads((tmp_path / "argus-target.json").read_text())
     assert spec["endpoint_url"] == "https://agent.example/v1/chat/completions"
     assert spec["api_key"] == "${AGENT_API_KEY}"
 
