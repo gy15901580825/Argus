@@ -188,6 +188,7 @@ async def test_authorization_code_pkce_and_private_evidence(serving, iss_mode):
     assert state['codes_issued'][0]['corr'] == event['code']['corr']
     assert event['actor'] == 'gateway'
     assert state['codes_issued'][0]['h_sent_iss'] == (iss_mode == 'always')
+    assert state['codes_issued'][0]['verifier_s256'] == CHALLENGE
     assert len(event['code']['corr']) == 16
     assert_private(evidence, code, VERIFIER, access_token, host.install['entries']['oauth']['client_secret'])
     assert host.oauth.codes == {}

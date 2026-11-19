@@ -248,7 +248,8 @@ class OAuthRuntime:
         code = secrets.token_urlsafe(32)
         self.codes[_digest(code)] = _Code(self.client['client_id'], redirect, challenge_value, time.monotonic() + TTL_S)
         self._event(context, 'codes_issued', {'by': 'issuer', **context.recorder.oauth_observation(code),
-                                           'h_sent_iss': self.send_iss})
+                                           'h_sent_iss': self.send_iss,
+                                           'verifier_s256': event['challenge'].get('verifier_s256')})
         return self._redirect(params, parsed, [('code', code)])
 
     def _redirect(self, params, parsed, response):
