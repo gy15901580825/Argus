@@ -1,6 +1,8 @@
 """Bounded legacy MCP exchanges through an operator's gateway."""
 from __future__ import annotations
 
+import asyncio
+from contextlib import AsyncExitStack
 import json
 import re
 
@@ -13,11 +15,13 @@ from argus_transport.address_policy import target_client
 
 LIST_PAGES_MAX = 20
 TOOLS_MAX = 1000
+RESUMES_MAX = 3
 
 
 class GatewayClient:
     def __init__(self, gateway: dict, timeout_s: float):
         self.gateway = gateway
+        self.timeout_s = timeout_s
         auth = gateway.get('auth', {})
         self.client = target_client(httpx, timeout=timeout_s, trust_env=False,
                                     headers=auth.get('headers', {}), cookies=auth.get('cookies', {}))
@@ -35,77 +39,154 @@ class GatewayClient:
     async def aclose(self):
         await self.client.aclose()
 
-    async def rpc(self, method, params=None, *, notification=False, headers=None, cookies=None):
+    def _headers(self, headers=None, *, get=False):
+        outgoing = httpx.Headers(headers or {})
+        outgoing.update({'Accept': 'text/event-stream' if get else 'application/json, text/event-stream',
+                         'MCP-Protocol-Version': self.era})
+        if self.session:
+            outgoing['Mcp-Session-Id'] = self.session
+        return outgoing
+
+    async def _read_sse(self, response, channel, received, messages, state, request_id=None):
+        raw = bytearray()
+        async for chunk in response.aiter_bytes():
+            state['budget']['size'] += len(chunk)
+            if state['budget']['size'] > 65536:
+                raise TargetTransportError('gateway response exceeds 64 KiB')
+            raw.extend(chunk)
+            raw = bytearray(raw.replace(b'\r\n', b'\n'))
+            while b'\n\n' in raw:
+                event, _, remaining = raw.partition(b'\n\n')
+                raw = bytearray(remaining)
+                data = []
+                for line in event.splitlines():
+                    name, _, value = line.partition(b':')
+                    value = value.removeprefix(b' ')
+                    if name == b'id' and b'\x00' not in value:
+                        state['cursor'] = value.decode('utf-8', errors='replace')
+                    elif name == b'retry' and value.isdigit():
+                        state['retry_s'] = int(value) / 1000 if len(value) <= 9 else self.timeout_s + 1
+                    elif name == b'data':
+                        data.append(value)
+                if not b'\n'.join(data):
+                    continue
+                try:
+                    incoming = json.loads(b'\n'.join(data))
+                except ValueError:
+                    raise TargetTransportError('gateway returned a malformed SSE message') from None
+                if channel == 'get_sse' and isinstance(incoming, dict) and 'id' in incoming and ('result' in incoming or 'error' in incoming):
+                    raise TargetTransportError('gateway sent a response on a standalone GET stream')
+                received.append(self.capture_message(incoming, channel))
+                messages.append(incoming)
+            if request_id is not None and any(m.get('id') == request_id and ('result' in m or 'error' in m) for m in messages):
+                return
+
+    @staticmethod
+    def _observation(status, reply, received, messages):
+        return {'status': status, 'reply': reply,
+                'channels': sorted({m['channel'] for m in received}),
+                'markers': sorted(set(re.findall(r'ARGUSFLT[0-9A-F]{20}', json.dumps(messages)))),
+                'messages': received}
+
+    async def rpc(self, method, params=None, *, notification=False, headers=None, cookies=None, _budget=None):
         self.request_id += 1
         request_id = self.request_id
         message = {'jsonrpc': '2.0', 'method': method}
         if not notification:
-            message['id'] = self.request_id
+            message['id'] = request_id
         if params is not None:
             message['params'] = params
-        outgoing = httpx.Headers(headers or {})
-        outgoing.update({'Accept': 'application/json, text/event-stream', 'MCP-Protocol-Version': self.era})
-        if self.session:
-            outgoing['Mcp-Session-Id'] = self.session
         received, messages = [], []
-        channel = None
+        state = {'budget': _budget if _budget is not None else {'size': 0}, 'cursor': '', 'retry_s': 0}
+        verb, outgoing, body = 'POST', self._headers(headers), None
+        status = None
         try:
-            async with self.client.stream('POST', self.gateway['url'], json=message,
-                                          headers=outgoing, cookies=cookies) as response:
+            async with asyncio.timeout(self.timeout_s):
+                for attempt in range(RESUMES_MAX + 1):
+                    async with self.client.stream(verb, self.gateway['url'],
+                                                  json=message if verb == 'POST' else None,
+                                                  headers=outgoing, cookies=cookies) as response:
+                        self.exchanges += 1
+                        status = response.status_code
+                        if status in (401, 403):
+                            raise TargetTransportError(f'gateway returned HTTP {status}')
+                        if not response.is_success:
+                            return self._observation(status, 'http_error', received, messages), None
+                        if 'Mcp-Session-Id' in response.headers:
+                            self.session = response.headers['Mcp-Session-Id']
+                        if 'text/event-stream' in response.headers.get('content-type', ''):
+                            channel = 'post_sse' if verb == 'POST' else 'resumed_sse'
+                            try:
+                                await self._read_sse(response, channel, received, messages, state, request_id)
+                            except httpx.TransportError:
+                                if not state['cursor']:
+                                    raise
+                            body = next((m for m in messages if m.get('id') == request_id and ('result' in m or 'error' in m)), None)
+                        else:
+                            if verb == 'GET':
+                                raise TargetTransportError('gateway resumption did not return an SSE stream')
+                            raw = bytearray()
+                            async for chunk in response.aiter_bytes():
+                                state['budget']['size'] += len(chunk)
+                                if state['budget']['size'] > 65536:
+                                    raise TargetTransportError('gateway response exceeds 64 KiB')
+                                raw.extend(chunk)
+                            if notification and not raw:
+                                return {}, None
+                            try:
+                                body = json.loads(raw)
+                            except (ValueError, TypeError):
+                                raise TargetTransportError('gateway returned a malformed MCP response') from None
+                            received.append(self.capture_message(body, 'post_json'))
+                            messages.append(body)
+                        if body is not None:
+                            break
+                    if not state['cursor'] or attempt == RESUMES_MAX:
+                        return self._observation(status, 'timeout', received, messages), None
+                    await asyncio.sleep(state['retry_s'])
+                    verb, outgoing = 'GET', self._headers(headers, get=True)
+                    outgoing['Last-Event-ID'] = state['cursor']
+                if (not isinstance(body, dict) or body.get('jsonrpc') != '2.0'
+                        or body.get('id') != request_id or not ({'result', 'error'} & body.keys())):
+                    raise TargetTransportError('gateway returned a malformed MCP response')
+                return self._observation(status, 'jsonrpc_error' if 'error' in body else 'result', received, messages), body
+        except (httpx.TimeoutException, TimeoutError):
+            return self._observation(None, 'timeout', received, messages), None
+        except httpx.HTTPError:
+            raise TargetTransportError('gateway connection failed') from None
+
+    async def _get_call(self, params, *, headers=None, cookies=None):
+        received, messages = [], []
+        state = {'budget': {'size': 0}, 'cursor': '', 'retry_s': 0}
+        task = None
+        observation, body = self._observation(None, 'timeout', [], []), None
+        try:
+            async with asyncio.timeout(self.timeout_s), AsyncExitStack() as stack:
+                response = await stack.enter_async_context(self.client.stream(
+                    'GET', self.gateway['url'], headers=self._headers(headers, get=True), cookies=cookies))
                 self.exchanges += 1
                 if response.status_code in (401, 403):
                     raise TargetTransportError(f'gateway returned HTTP {response.status_code}')
-                if not response.is_success:
-                    return {'status': response.status_code, 'reply': 'http_error', 'channels': [], 'markers': []}, None
-                if 'Mcp-Session-Id' in response.headers:
-                    self.session = response.headers['Mcp-Session-Id']
-                raw = bytearray()
-                channel = 'post_sse' if 'text/event-stream' in response.headers.get('content-type', '') else 'post_json'
-                size = 0
-                async for chunk in response.aiter_bytes():
-                    size += len(chunk)
-                    raw.extend(chunk)
-                    if size > 65536:
-                        raise TargetTransportError('gateway response exceeds 64 KiB')
-                    if channel == 'post_sse':
-                        raw = bytearray(raw.replace(b'\r\n', b'\n'))
-                        while b'\n\n' in raw:
-                            event, _, remaining = raw.partition(b'\n\n')
-                            raw = bytearray(remaining)
-                            data = b'\n'.join(line[5:].lstrip(b' ') for line in event.splitlines() if line.startswith(b'data:'))
-                            if not data:
-                                continue
-                            try:
-                                incoming = json.loads(data)
-                            except ValueError:
-                                raise TargetTransportError('gateway returned a malformed SSE message') from None
-                            received.append(self.capture_message(incoming, channel))
-                            messages.append(incoming)
-                        if any(m.get('id') == request_id and ('result' in m or 'error' in m) for m in messages):
-                            break
-                text = raw.decode('utf-8', errors='replace')
-                if notification and not text:
-                    return {}, None
-                try:
-                    if channel == 'post_sse':
-                        body = next((m for m in messages if m.get('id') == request_id and ('result' in m or 'error' in m)), None)
-                    else:
-                        body = json.loads(text)
-                        received.append(self.capture_message(body, channel))
-                    if not isinstance(body, dict) or body.get('jsonrpc') != '2.0' or body.get('id') != request_id or not ({'result', 'error'} & body.keys()):
-                        raise ValueError
-                except (ValueError, TypeError):
-                    raise TargetTransportError('gateway returned a malformed MCP response') from None
-                observation = {'status': response.status_code, 'reply': 'jsonrpc_error' if 'error' in body else 'result',
-                               'channels': [channel], 'markers': sorted(set(re.findall(r'ARGUSFLT[0-9A-F]{20}', json.dumps(messages or [body])))),
-                               'messages': received}
-                return observation, body
-        except httpx.TimeoutException:
-            return {'status': None, 'reply': 'timeout', 'channels': [channel] if received else [],
-                    'markers': sorted(set(re.findall(r'ARGUSFLT[0-9A-F]{20}', json.dumps(messages)))),
-                    'messages': received}, None
+                if response.status_code == 405:
+                    return await self.rpc('tools/call', params, headers=headers, cookies=cookies)
+                if not response.is_success or 'text/event-stream' not in response.headers.get('content-type', ''):
+                    raise TargetTransportError('gateway standalone GET stream failed')
+                task = asyncio.create_task(self._read_sse(response, 'get_sse', received, messages, state))
+                observation, body = await self.rpc('tools/call', params, headers=headers, cookies=cookies, _budget=state['budget'])
+                await task
+        except (httpx.TimeoutException, TimeoutError):
+            if body is None:
+                observation['reply'] = 'timeout'
         except httpx.HTTPError:
             raise TargetTransportError('gateway connection failed') from None
+        finally:
+            if task is not None:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+        observation['messages'].extend(received)
+        observation['markers'] = sorted(set(observation['markers']) | set(self._observation(None, '', received, messages)['markers']))
+        observation['channels'] = sorted(set(observation['channels']) | {m['channel'] for m in received})
+        return observation, body
 
     async def initialize(self):
         candidates = ERAS if self.era == 'auto' else (self.era,)
@@ -161,7 +242,10 @@ class GatewayClient:
             if path is not None:
                 params['arguments']['path'] = path
                 params['_meta'] = {'progressToken': nonce}
-            observation, body = await self.rpc('tools/call', params, headers=headers, cookies=cookies)
+            if path == 'get_stream_notification':
+                observation, body = await self._get_call(params, headers=headers, cookies=cookies)
+            else:
+                observation, body = await self.rpc('tools/call', params, headers=headers, cookies=cookies)
             error = body.get('error', {}) if body else {}
             if attempt == 0 and isinstance(error, dict) and 'unknown tool' in str(error.get('message', '')).lower():
                 await self.discover(install_label)

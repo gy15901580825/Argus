@@ -12,7 +12,7 @@ import pytest
 
 from argus.assertions import evaluate_assertions
 from argus.gateway_filter_assertions import capture, classify, gateway_filter_delivery_path as check
-from argus.gateway_fixtures.delivery import CURRENT_PATHS, delivery
+from argus.gateway_fixtures.delivery import CURRENT_PATHS, LEGACY_PATHS, delivery
 from argus.probe import load_probe
 from argus.targets import build_target
 from argus.targets._base import ProbeNotApplicable, TargetTransportError
@@ -57,8 +57,8 @@ class BlockingGateway(ReferenceGateway):
         return super()._json(value)
 
 
-async def run(host, preset, *, gateway_type=ReferenceGateway, protocol='auto', recipe=None):
-    async with gateway_type(entries(host), preset=preset) as gateway:
+async def run(host, preset, *, gateway_type=ReferenceGateway, protocol='auto', recipe=None, **gateway_options):
+    async with gateway_type(entries(host), preset=preset, **gateway_options) as gateway:
         settings = target_spec(host, gateway)
         settings['features']['response_filter'] = {'action': 'redact'}
         settings['gateway']['protocol'] = protocol
@@ -82,13 +82,16 @@ async def test_filter_toggle_flips_same_result_verdict(host, base, protocol):
         evidence, outcome = await run(host, replace(base, response_filter=mode), protocol=protocol)
         assert outcome.verdict == expected
         paths = evidence['summary']['filter_delivery_paths']
-        assert [p['path'] for p in paths] == list(CURRENT_PATHS)
+        assert [p['path'] for p in paths] == list((*CURRENT_PATHS, *LEGACY_PATHS))
         assert all(p['served_by_upstream'] and p['era'] == protocol for p in paths)
         assert paths[0]['classification'] == ('raw' if mode == 'off' else 'redacted')
         assert all(p['classification'] == ('redacted' if mode == 'all_messages' else 'raw') for p in paths[1:])
         assert paths[0]['upstream_channel'] == 'post_json'
-        assert all(p['upstream_channel'] == 'post_sse' for p in paths[1:])
-        assert all(p['client_channels'] == [p['upstream_channel']] for p in paths)
+        assert all(p['upstream_channel'] == 'post_sse' for p in paths[1:4])
+        assert paths[4]['upstream_channel'] == 'resumed_sse'
+        assert paths[5]['upstream_channel'] == 'get_sse'
+        assert all(p['client_channels'] == [p['upstream_channel']] for p in paths[:5])
+        assert paths[5]['client_channels'] == ['get_sse', 'post_json']
         messages = evidence['cases'][2]['client']['calls'][0]['messages']
         assert [m['kind'] for m in messages] == ['notifications/message', 'result']
         progress = evidence['cases'][3]['client']['calls'][0]['messages']
@@ -108,7 +111,7 @@ async def test_filter_toggle_flips_same_result_verdict(host, base, protocol):
 @pytest.mark.parametrize('base', [Preset.safe(), Preset.vulnerable()])
 async def test_side_channel_only_toggle_warns(host, base):
     for mode, expected in [('json_only', 'warn'), ('all_messages', 'pass')]:
-        evidence, outcome = await run(host, replace(base, response_filter=mode), gateway_type=SideChannelGateway)
+        evidence, outcome = await run(host, replace(base, response_filter=mode), gateway_type=SideChannelGateway, recipe=filter_recipe(*CURRENT_PATHS))
         assert outcome.verdict == expected
         paths = evidence['summary']['filter_delivery_paths']
         assert paths[1]['classification'] == 'redacted'
@@ -129,7 +132,9 @@ async def test_control_and_exercise_gates_mutate(host):
     assert check({}, mutated).verdict == 'error'
     mutated = deepcopy(evidence)
     for case in mutated['cases'][1:]:
-        case['fixture']['requests'][0]['body']['jsonrpc']['nonce'] = 'background'
+        for record in case['fixture']['requests']:
+            record.get('body', {}).get('jsonrpc', {})['nonce'] = 'background'
+            record.get('ext', {}).get('delivery', {})['nonce'] = 'background'
     assert check({}, mutated).verdict == 'skipped'
     mutated['cases'][1]['fixture']['requests'] = deepcopy(evidence['cases'][1]['fixture']['requests'])
     assert check({}, mutated).verdict == 'pass'
@@ -186,8 +191,8 @@ async def test_missing_feature_and_entry_skip(host):
             await target.aclose()
 
 
-@pytest.mark.parametrize('path', ['post_sse_resumed', 'get_stream_notification', 'unknown', {}, None])
-def test_legacy_and_unknown_delivery_definitions_refused(path):
+@pytest.mark.parametrize('path', ['mrtr_input_request', 'unknown', {}, None])
+def test_modern_and_unknown_delivery_definitions_refused(path):
     with pytest.raises(ValueError):
         delivery(path)
 
@@ -253,5 +258,212 @@ async def test_notification_before_timeout_is_captured():
         assert body is None and observation['reply'] == 'timeout'
         assert observation['channels'] == ['post_sse']
         assert classify(observation['messages'], 'progress_message') == 'raw'
+    finally:
+        await client.aclose()
+
+
+def filter_recipe(*paths):
+    recipe = json.loads(load_probe(PROBE_PATH).scenario_payload)
+    recipe['cases'] = [case for case in recipe['cases'] if case['id'] in paths]
+    return recipe
+
+
+@pytest.mark.parametrize('protocol', ['2025-11-25', '2025-06-18'])
+@pytest.mark.parametrize('base', [Preset.safe(), Preset.vulnerable()])
+async def test_resumption_filter_and_exercise_mutations(host, protocol, base):
+    recipe = filter_recipe('inline_json', 'post_sse_resumed')
+    for enabled, mode, verdict in [(False, 'all_messages', 'skipped'), (True, 'json_only', 'fail'),
+                                   (True, 'all_messages', 'pass')]:
+        evidence, outcome = await run(host, replace(base, response_filter=mode), protocol=protocol,
+                                      recipe=recipe, resume_support=enabled)
+        assert outcome.verdict == verdict
+        path = evidence['summary']['filter_delivery_paths'][1]
+        assert path['served_by_upstream'] is enabled
+        assert path['classification'] == ('absent' if not enabled else 'raw' if mode == 'json_only' else 'redacted')
+        records = evidence['cases'][1]['fixture']['requests']
+        posts = [record for record in records if record['method'] == 'POST']
+        assert not posts[0]['ext'].get('delivery')
+        gets = [record for record in records if record['method'] == 'GET']
+        assert bool(gets) is enabled
+        if enabled:
+            assert gets[0]['ext']['delivery']['nonce'] == evidence['cases'][1]['client']['calls'][0]['nonce']
+            assert any(header['name'] == 'last-event-id' for header in gets[0]['headers'])
+            mutated = deepcopy(evidence)
+            mutated['cases'][1]['fixture']['requests'][-1]['ext']['delivery']['nonce'] = 'background'
+            assert check({}, mutated).verdict == 'skipped'
+        else:
+            assert 'not exercised' in outcome.reason
+
+
+@pytest.mark.parametrize('protocol', ['2025-11-25', '2025-06-18'])
+@pytest.mark.parametrize('base', [Preset.safe(), Preset.vulnerable()])
+async def test_get_stream_filter_and_support_mutations(host, protocol, base):
+    recipe = filter_recipe('inline_json', 'get_stream_notification')
+    for enabled, mode, verdict in [(False, 'all_messages', 'skipped'), (True, 'json_only', 'warn'),
+                                   (True, 'all_messages', 'pass')]:
+        evidence, outcome = await run(host, replace(base, response_filter=mode), protocol=protocol,
+                                      recipe=recipe, get_support=enabled)
+        assert outcome.verdict == verdict
+        path = evidence['summary']['filter_delivery_paths'][1]
+        assert path['served_by_upstream'] is enabled
+        assert path['classification'] == ('absent' if not enabled else 'raw' if mode == 'json_only' else 'redacted')
+        assert bool('get_sse' in path['client_channels']) is enabled
+        if enabled:
+            records = evidence['cases'][1]['fixture']['requests']
+            get = next(record for record in records if record['method'] == 'GET' and record['ext'].get('delivery'))
+            assert get['body'].get('jsonrpc', {}) == {}
+            assert not any(header['name'] == 'last-event-id' for header in get['headers'])
+            assert get['ext']['delivery']['nonce'] == evidence['cases'][1]['client']['calls'][0]['nonce']
+            call = evidence['cases'][1]['client']['calls'][0]
+            assert [m['kind'] for m in call['messages']] == ['result', 'notifications/message']
+        else:
+            assert 'not exercised' in outcome.reason
+
+
+@pytest.mark.parametrize('path', LEGACY_PATHS)
+async def test_legacy_witness_requires_get_channel_cursor_and_nonce(host, path):
+    evidence, outcome = await run(host, Preset.safe(), recipe=filter_recipe('inline_json', path))
+    assert outcome.verdict == 'pass'
+    records = evidence['cases'][1]['fixture']['requests']
+    index = next(i for i, r in enumerate(records) if r['ext'].get('delivery'))
+    for mutation in ('method', 'channel', 'cursor', 'nonce', 'entry', 'actor'):
+        mutated = deepcopy(evidence)
+        record = mutated['cases'][1]['fixture']['requests'][index]
+        if mutation == 'method':
+            record['method'] = 'POST'
+        elif mutation == 'channel':
+            record['ext']['delivery']['upstream_channel'] = 'post_sse'
+        elif mutation == 'cursor':
+            record['headers'] = [header for header in record['headers'] if header['name'] != 'last-event-id']
+            if path == 'get_stream_notification':
+                record['headers'].append({'name': 'last-event-id', 'value': 'unrelated-event'})
+        elif mutation == 'nonce':
+            record['ext']['delivery']['nonce'] = 'background'
+        else:
+            record[mutation] = 'other'
+        assert check({}, mutated).verdict == 'skipped'
+
+
+async def test_client_resumes_priming_event_with_retry_session_and_auth(monkeypatch):
+    outgoing, delays = [], []
+    marker = 'ARGUSFLT0123456789ABCDEF0123'
+
+    class Chunks(httpx.AsyncByteStream):
+        def __init__(self, encoded):
+            self.encoded = encoded
+
+        async def __aiter__(self):
+            for byte in self.encoded:
+                yield bytes([byte])
+
+    async def sleep(delay):
+        delays.append(delay)
+
+    def handle(request):
+        outgoing.append(request)
+        if request.method == 'POST':
+            return httpx.Response(200, headers={'content-type': 'text/event-stream', 'Mcp-Session-Id': 'generated-session'},
+                                  stream=Chunks(b'id: fixture-event-1\r\nretry: 100\r\ndata:\r\n\r\n'))
+        frame = {'jsonrpc': '2.0', 'id': 1, 'result': {'content': [{'type': 'text',
+                 'text': f'argus-path=post_sse_resumed begin {marker} end'}], 'credential': 'generated-secret'}}
+        return httpx.Response(200, headers={'content-type': 'text/event-stream'},
+                              stream=Chunks(('id: fixture-event-2\r\ndata: ' + json.dumps(frame) + '\r\n\r\n').encode()))
+
+    monkeypatch.setattr('argus.targets._gateway_client.asyncio.sleep', sleep)
+    client = GatewayClient({'url': 'http://127.0.0.1:1/mcp', 'protocol': '2025-11-25'}, 1)
+    await client.client.aclose()
+    client.client = httpx.AsyncClient(transport=httpx.MockTransport(handle), headers={'Authorization': 'Bearer generated-auth'},
+                                    cookies={'session': 'generated-cookie'})
+    try:
+        observation, body = await client.rpc('tools/call', {})
+        assert [request.method for request in outgoing] == ['POST', 'GET']
+        assert delays == [0.1] and body['id'] == 1
+        resumed = outgoing[1]
+        assert resumed.headers['Last-Event-ID'] == 'fixture-event-1'
+        assert resumed.headers['Mcp-Session-Id'] == 'generated-session'
+        assert resumed.headers['MCP-Protocol-Version'] == '2025-11-25'
+        assert resumed.headers['Accept'] == 'text/event-stream'
+        assert resumed.headers['Authorization'] == 'Bearer generated-auth'
+        assert 'generated-cookie' in resumed.headers['Cookie']
+        assert not resumed.content
+        assert observation['channels'] == ['resumed_sse']
+        assert classify(observation['messages'], 'post_sse_resumed') == 'raw'
+        assert all(value not in json.dumps(observation) for value in ['generated-secret', 'generated-auth', 'generated-cookie', 'generated-session'])
+    finally:
+        await client.aclose()
+
+
+async def test_resumption_byte_budget_covers_both_connections():
+    class Stream(httpx.AsyncByteStream):
+        def __init__(self, value):
+            self.value = value
+
+        async def __aiter__(self):
+            yield self.value
+
+    def handle(request):
+        value = b':' + b'x' * 40000 + b'\nid: cursor\ndata:\n\n' if request.method == 'POST' else b':' + b'x' * 30000 + b'\n\n'
+        return httpx.Response(200, headers={'content-type': 'text/event-stream'}, stream=Stream(value))
+
+    client = GatewayClient({'url': 'http://127.0.0.1:1/mcp', 'protocol': '2025-11-25'}, 1)
+    await client.client.aclose()
+    client.client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    try:
+        with pytest.raises(TargetTransportError, match='64 KiB'):
+            await client.rpc('tools/call', {})
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.parametrize('disconnect', ['eof', 'network'])
+async def test_resumption_retries_are_bounded_and_keep_notifications(disconnect):
+    requests = []
+    marker = 'ARGUSFLT0123456789ABCDEF0123'
+
+    class DisconnectStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            frame = {'jsonrpc': '2.0', 'method': 'notifications/message',
+                     'params': {'data': f'argus-path=post_sse_resumed begin {marker} end'}}
+            yield ('id: fixture-cursor\nretry: 0\ndata: ' + json.dumps(frame) + '\n\n').encode()
+            if disconnect == 'network':
+                raise httpx.RemoteProtocolError('synthetic disconnect')
+
+    def handle(request):
+        requests.append(request)
+        return httpx.Response(200, headers={'content-type': 'text/event-stream'}, stream=DisconnectStream())
+
+    client = GatewayClient({'url': 'http://127.0.0.1:1/mcp', 'protocol': '2025-11-25'}, 1)
+    await client.client.aclose()
+    client.client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    try:
+        observation, body = await client.rpc('tools/call', {})
+        assert body is None and observation['reply'] == 'timeout'
+        assert [request.method for request in requests] == ['POST', 'GET', 'GET', 'GET']
+        assert all(request.headers['Last-Event-ID'] == 'fixture-cursor' for request in requests[1:])
+        assert observation['channels'] == ['post_sse', 'resumed_sse']
+        assert observation['markers'] == [marker]
+        assert len(observation['messages']) == 4
+    finally:
+        await client.aclose()
+
+
+async def test_sse_retry_cannot_outlive_case_deadline():
+    requests = []
+
+    class Stream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'id: fixture-cursor\nretry: 10000\ndata:\n\n'
+
+    def handle(request):
+        requests.append(request)
+        return httpx.Response(200, headers={'content-type': 'text/event-stream'}, stream=Stream())
+
+    client = GatewayClient({'url': 'http://127.0.0.1:1/mcp', 'protocol': '2025-11-25'}, 0.01)
+    await client.client.aclose()
+    client.client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    try:
+        observation, body = await client.rpc('tools/call', {})
+        assert body is None and observation['reply'] == 'timeout'
+        assert len(requests) == 1
     finally:
         await client.aclose()

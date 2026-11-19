@@ -50,6 +50,17 @@ def gateway_filter_delivery_path(value, evidence):
         return AssertionOutcome('error', 'gateway filter evidence is malformed')
 
 
+def _delivery_witness(record, path, nonces):
+    if path not in ('post_sse_resumed', 'get_stream_notification'):
+        return record.get('body', {}).get('jsonrpc', {}).get('nonce') in nonces
+    delivery = record.get('ext', {}).get('delivery', {})
+    channel = 'resumed_sse' if path == 'post_sse_resumed' else 'get_sse'
+    cursors = [header.get('value') for header in record.get('headers', []) if header.get('name') == 'last-event-id']
+    return (record.get('method') == 'GET' and delivery.get('nonce') in nonces
+            and delivery.get('upstream_channel') == channel
+            and (bool(cursors and cursors[0]) if path == 'post_sse_resumed' else not cursors))
+
+
 def _decide(evidence):
     cases = evidence['cases']
     if not isinstance(cases, list) or not cases:
@@ -66,7 +77,7 @@ def _decide(evidence):
         nonces = {call['nonce'] for call in calls}
         served = [record['ext']['delivery'] for record in case['fixture']['requests']
                   if record.get('actor') == 'gateway' and record.get('entry') == case['entry']
-                  and record.get('body', {}).get('jsonrpc', {}).get('nonce') in nonces
+                  and _delivery_witness(record, path, nonces)
                   and record.get('ext', {}).get('delivery', {}).get('path') == path
                   and record['ext']['delivery'].get('served_by_upstream') is True]
         classifications = [call['classification'] for call in calls]
@@ -93,7 +104,8 @@ def _decide(evidence):
             return AssertionOutcome('skipped', 'control did not reach the upstream: ' + control['path'])
     exercised = [attack for attack in attacks if attack['served_by_upstream']]
     if not exercised:
-        return AssertionOutcome('skipped', 'not exercised: no non-control delivery path was served')
+        return AssertionOutcome('skipped', 'not exercised: no non-control delivery path was served ('
+                                + ', '.join(attack['path'] for attack in attacks) + ')')
     raw = [attack['path'] for attack in exercised if attack['classification'] == 'raw']
     failures = sorted(set(raw) & SAME_RESULT_PATHS)
     if failures:
