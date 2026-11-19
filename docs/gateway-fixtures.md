@@ -188,5 +188,49 @@ Programmatic callers opt in with `create_install(oauth=True)` or
 from an install containing the issuer origin. Behaviour factories still receive
 only toggle configuration. The host's OAuth handler uses
 `RequestContext.recorder.oauth_observation` to derive safe fields under the
-case's correlation key. Gateway OAuth strategies and consent driving are added
-in later units; this fixture unit adds no probe.
+case's correlation key. This fixture infrastructure adds no probe.
+
+### Gateway-initiated authorization consent
+
+The gateway target selects the OAuth registry before parsing recipes when its
+install contains an `issuer` origin. Declare the upstream's static OAuth setup
+in the target and enable the consent drive step in a case recipe:
+
+```yaml
+features:
+  static_oauth_client:
+    grant: authorization_code  # or client_credentials
+    consent: follow_url        # none | follow_url | manual
+    trigger: challenge         # challenge | manual_restart
+```
+
+```json
+{"tool": "echo", "calls_per_case": 1, "steps": ["consent"]}
+```
+
+`follow_url` is the operator's standing consent for automated navigation in this
+loopback conformance test. The client advertises URL elicitation and handles
+`elicitation/create` with `mode: "url"`, or error `-32042` with the
+`data.elicitations` list defined by [MCP 2025-11-25 elicitation](https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation).
+It accepts the URL elicitation before navigating and retries a tool call once
+after completing an error's required elicitations. A repeated authorization
+requirement reports skipped.
+
+Each initial URL and redirect must use a configured fixture origin or the
+gateway origin, with a literal loopback address. Navigation follows at most ten
+redirects and shares the gateway's cookie jar. Configured gateway authentication
+headers are sent only to the gateway origin. Each hop carries
+`X-Argus-Consent-Agent` with the case nonce, so fixture front-channel requests
+have actor `argus_user_agent`. Token exchanges made by the gateway retain actor
+`gateway`.
+
+`manual` prints the URL and instruction, then waits for Enter after the operator
+completes authorization. It reports skipped immediately without a TTY and after
+`timeout_s` without confirmation. Navigation also has a `timeout_s` deadline and
+cases accept at most ten elicitations. `none` skips a required consent request.
+The step is opt-in; recipes without it do not navigate authorization URLs.
+
+Evidence in `client.consent_hops` contains only the origin name, route class,
+HTTP status and query parameter names. Response bodies, URL paths and query
+values are excluded. This step does not automate a gateway's administration UI
+or its restart procedure.

@@ -81,7 +81,10 @@ def load_registry(*, oauth: bool = False) -> Registry:
     registry = Registry()
     if oauth:
         from .oauth import register
+        from argus.gateway_consent import ConsentDriver, validate_static_oauth
         register(registry)
+        registry.add_feature('static_oauth_client', validate_static_oauth)
+        registry.add_drive_step('consent', ConsentDriver)
     registry.add_behavior('upstream', 'delivery', delivery)
     registry.add_behavior('upstream', 'redirect', redirect)
     registry.add_behavior('upstream', 'idle', redirect_target)

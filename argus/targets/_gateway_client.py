@@ -5,6 +5,7 @@ import asyncio
 from contextlib import AsyncExitStack
 import json
 import re
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -24,12 +25,43 @@ class GatewayClient:
         self.timeout_s = timeout_s
         auth = gateway.get('auth', {})
         self.client = target_client(httpx, timeout=timeout_s, trust_env=False,
-                                    headers=auth.get('headers', {}), cookies=auth.get('cookies', {}))
+                                    headers=auth.get('headers', {}))
+        for name, value in auth.get('cookies', {}).items():
+            self.client.cookies.set(name, value, domain=urlsplit(gateway['url']).hostname, path='/')
         self.era = gateway.get('protocol', 'auto')
         self.session = None
         self.exchanges = 0
         self.request_id = 0
         self.tools = {}
+        self.consent = None
+
+    async def server_request(self, message):
+        if 'method' not in message or 'id' not in message:
+            return
+        result = {'jsonrpc': '2.0', 'id': message['id']}
+        navigate = None
+        if message['method'] == 'elicitation/create':
+            params = message.get('params', {})
+            if isinstance(params, dict) and params.get('mode') == 'url' and self.consent:
+                self.consent.validate(params)
+                if self.consent.mode == 'follow_url':
+                    navigate = params
+                else:
+                    await self.consent.open(params)
+                result['result'] = {'action': 'accept'}
+            else:
+                result['result'] = {'action': 'decline'}
+        else:
+            result['error'] = {'code': -32601, 'message': 'Server request unsupported'}
+        headers = {'MCP-Protocol-Version': self.era}
+        if self.session:
+            headers['Mcp-Session-Id'] = self.session
+        async with self.client.stream('POST', self.gateway['url'], json=result, headers=headers) as response:
+            self.exchanges += 1
+            if not response.is_success:
+                raise TargetTransportError('gateway rejected the server request response')
+        if navigate:
+            await self.consent.open(navigate)
 
     def capture_message(self, message, channel):
         if not isinstance(message, dict) or message.get('jsonrpc') != '2.0':
@@ -78,6 +110,7 @@ class GatewayClient:
                     raise TargetTransportError('gateway sent a response on a standalone GET stream')
                 received.append(self.capture_message(incoming, channel))
                 messages.append(incoming)
+                await self.server_request(incoming)
             if request_id is not None and any(m.get('id') == request_id and ('result' in m or 'error' in m) for m in messages):
                 return
 
@@ -192,7 +225,7 @@ class GatewayClient:
         candidates = ERAS if self.era == 'auto' else (self.era,)
         for era in candidates:
             self.era = era
-            _, body = await self.rpc('initialize', {'protocolVersion': era, 'capabilities': {},
+            _, body = await self.rpc('initialize', {'protocolVersion': era, 'capabilities': {'elicitation': {'url': {}}} if self.consent else {},
                 'clientInfo': {'name': 'argus-probe', 'version': '1'}})
             result = body.get('result') if body else None
             if isinstance(result, dict) and result.get('protocolVersion') in ERAS:
@@ -242,10 +275,23 @@ class GatewayClient:
             if path is not None:
                 params['arguments']['path'] = path
                 params['_meta'] = {'progressToken': nonce}
-            if path == 'get_stream_notification':
-                observation, body = await self._get_call(params, headers=headers, cookies=cookies)
-            else:
-                observation, body = await self.rpc('tools/call', params, headers=headers, cookies=cookies)
+            for consent_attempt in range(2):
+                if path == 'get_stream_notification':
+                    observation, body = await self._get_call(params, headers=headers, cookies=cookies)
+                else:
+                    observation, body = await self.rpc('tools/call', params, headers=headers, cookies=cookies)
+                error = body.get('error', {}) if body else {}
+                if not (isinstance(error, dict) and error.get('code') == -32042 and self.consent):
+                    break
+                elicitations = error.get('data', {}).get('elicitations') if isinstance(error.get('data'), dict) else None
+                if not isinstance(elicitations, list) or not 1 <= len(elicitations) <= 10:
+                    raise TargetTransportError('gateway returned a malformed URL elicitation error')
+                for elicitation in elicitations:
+                    self.consent.validate(elicitation)
+                if consent_attempt == 1:
+                    raise ProbeNotApplicable('gateway still requires authorization after consent')
+                for elicitation in elicitations:
+                    await self.consent.open(elicitation)
             error = body.get('error', {}) if body else {}
             if attempt == 0 and isinstance(error, dict) and 'unknown tool' in str(error.get('message', '')).lower():
                 await self.discover(install_label)
