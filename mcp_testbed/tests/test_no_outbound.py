@@ -42,6 +42,7 @@ def test_gateway_fixture_package_imports_no_outbound_client():
     fixtures = pathlib.Path(__file__).resolve().parents[2] / "argus" / "gateway_fixtures"
     files = list(fixtures.rglob("*.py"))
     assert files, f"{fixtures} is missing; this guard cannot check what it cannot read"
+    assert fixtures.joinpath('foreign_oauth.py').is_file(), 'foreign OAuth handler is missing'
     forbidden = {"httpx", "httpx2", "requests", "socket", "smtplib", "ftplib", "websockets"}
     for path in files:
         for node in ast.walk(ast.parse(path.read_text())):

@@ -41,7 +41,7 @@ def classify(install, origin, path):
         return None
     if origin == 'upstream' and path in prm_paths(install):
         return 'prm', 'oauth'
-    if origin == 'issuer':
+    if origin in ('issuer', 'foreign'):
         if path in discovery_paths(install):
             return 'as_metadata', 'oauth'
         prefix = '/a/' + install['path_token']
@@ -73,6 +73,10 @@ def iss(config):
     return _toggle(config, ('always', 'never'))
 
 
+def as_mode(config):
+    return _toggle(config, ('own', 'mirror_authorize'))
+
+
 def oauth_entry(install):
     client_id = 'argus-canary-client-' + secrets.token_hex(16)
     client_secret = 'argus-canary-secret-' + secrets.token_hex(16)
@@ -88,6 +92,7 @@ def register(registry):
     registry.add_behavior('upstream', 'prm', prm)
     registry.add_behavior('upstream', 'challenge', challenge)
     registry.add_behavior('issuer', 'iss', iss)
+    registry.add_behavior('foreign', 'as_mode', as_mode)
 
 
 def _digest(value):
@@ -130,12 +135,14 @@ class OAuthRuntime:
         self.tokens: dict[bytes, float] = {}
         self.authorization_server = 'issuer'
         self.send_iss = True
+        self.foreign_as_mode = 'own'
 
     def begin_case(self, toggles):
         self.codes.clear()
         upstream = toggles.get('upstream', {})
         self.authorization_server = upstream.get('prm', {}).get('authorization_servers', ['issuer'])[0]
         self.send_iss = toggles.get('issuer', {}).get('iss', 'always') == 'always'
+        self.foreign_as_mode = toggles.get('foreign', {}).get('as_mode', 'own')
         if upstream.get('challenge') == 'invalid_token':
             self.tokens.clear()
 
@@ -143,6 +150,7 @@ class OAuthRuntime:
         self.codes.clear()
         self.authorization_server = 'issuer'
         self.send_iss = True
+        self.foreign_as_mode = 'own'
 
     def close(self):
         self.end_case()
@@ -186,6 +194,9 @@ class OAuthRuntime:
                 challenge_value += ', error="invalid_token"'
             return web.json_response({'error': 'unauthorized'}, status=401,
                                      headers={'WWW-Authenticate': challenge_value})
+        if context.origin == 'foreign':
+            from .foreign_oauth import handle
+            return handle(self, context)
         if context.origin != 'issuer':
             return None
         if context.route == 'as_metadata':

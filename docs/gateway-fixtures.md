@@ -156,6 +156,7 @@ Case toggles use these shapes:
 | `upstream` | `prm` | `{"authorization_servers": ["issuer"]}` or `{"authorization_servers": ["foreign"]}` |
 | `upstream` | `challenge` | `"invalid_token"`, revoking existing issuer tokens at case start |
 | `issuer` | `iss` | `"always"` (default) or `"never"`; RFC 9207 metadata advertisement follows this toggle |
+| `foreign` | `as_mode` | `"own"` (default) or `"mirror_authorize"`; issuer and token endpoint remain at the foreign origin |
 
 Every accepted OAuth request passes through the recorder. `ext.oauth` and bounded
 `state.oauth` events describe discovery, authorization, issued-code correlations
@@ -165,6 +166,22 @@ front-channel challenge. The raw code, verifier, client secret and access token
 are excluded from evidence. Protocol state is separate from exported case state;
 sealing removes outstanding codes, and the metadata/issuer toggles return to idle.
 Case canary watches include `static_client_id` and `static_client_secret`.
+
+The foreign origin also publishes all three authorization-server discovery
+forms. `foreign.as_mode: own` names its own issuer, authorization and token
+URLs. `mirror_authorize` keeps the issuer and token URL at the foreign origin
+and points the authorization URL at the honest issuer's actual authorize route.
+Its `authorization_response_iss_parameter_supported` flag follows the honest
+issuer's `iss` toggle in mirror mode and is false in own mode.
+
+Foreign authorize and token routes return only `{"error":"invalid_grant"}`,
+with no callback redirect or received values. They record requests without
+issuing or redeeming codes or tokens. A foreign token event reports
+`code_issued_by: issuer` when its code correlation matches an issued-code event
+in the same case. `verifier_matches_challenge_from: issuer` additionally requires
+the verifier's S256 transform to match that code's recorded challenge. Unknown
+codes, missing or changed verifiers, and codes from a sealed case cannot establish
+that match. The raw code and verifier never enter evidence.
 
 Programmatic callers opt in with `create_install(oauth=True)` or
 `load_registry(oauth=True)`. `read_install` and `FixtureHost` select this registry
