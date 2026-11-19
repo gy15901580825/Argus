@@ -238,7 +238,7 @@ async def test_webhook_documented_allow_contract(fixture_host):
 async def test_modern_header_refused_for_legacy_fallback(fixture_host, preset):
     host, client, *_ = fixture_host
     _, seq = await start(fixture_host)
-    async with ReferenceGateway(entries(host), preset=preset) as gateway:
+    async with ReferenceGateway(entries(host), preset=preset, protocol='2025-11-25') as gateway:
         response = await client.post(gateway.url, headers={'MCP-Protocol-Version': '2026-07-28'},
                                      json={'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'})
         assert response.status_code == 400 and response.text == 'Unsupported protocol version'

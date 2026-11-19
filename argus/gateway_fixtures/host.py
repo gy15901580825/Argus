@@ -21,7 +21,8 @@ from .install import parse_listen, validate_install
 from .match import WatchMatcher
 from .record import BODY_MAX, RequestRecorder
 from .registry import DefinitionError, Registry, load_registry
-from .upstream import ERAS, idle
+from .upstream import idle
+from .protocol import SUPPORTED_ERAS as ERAS, is_modern, validate
 
 
 class _SafeHandler(web.RequestHandler):
@@ -268,7 +269,12 @@ class FixtureHost:
                                      case.case_id if case else None, case.nonce if case else None,
                                      case.state if case else {}, recorder=recorder)
             response, behavior = None, origin + '.idle'
-            if complete and self.oauth:
+            if complete and route == 'mcp' and origin == 'upstream' and is_modern(message, request.headers):
+                if request.method != 'POST':
+                    response = web.Response(status=405, headers={'Allow': 'POST'})
+                else:
+                    response = validate(message, request.headers)
+            if complete and self.oauth and response is None:
                 response = await self.oauth.handle(context)
                 if response is not None:
                     behavior = origin + '.oauth'

@@ -16,8 +16,12 @@ def capture(message, channel):
     for path, content in WRAPPER.findall(json.dumps(message)):
         if path in DELIVERY_PATHS:
             classifications.append({'path': path, 'classification': 'raw' if MARKER.search(content) else 'redacted'})
+    if isinstance(message.get('result'), dict) and message['result'].get('resultType') == 'input_required':
+        channel = 'mrtr'
     kind = message.get('method', 'error' if 'error' in message else 'result')
-    if kind not in ('result', 'error', 'notifications/message', 'notifications/progress'):
+    if channel == 'mrtr':
+        kind = 'input_required'
+    elif kind not in ('result', 'error', 'notifications/message', 'notifications/progress'):
         kind = 'server_request' if 'id' in message else 'notification'
     return {'channel': channel, 'kind': kind,
             'classifications': classifications}
