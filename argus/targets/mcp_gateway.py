@@ -83,14 +83,11 @@ def _feature(name, value):
         if value['action'] not in ('redact', 'block'):
             raise ValueError('features.response_filter.action must be redact or block')
     elif name == 'webhook':
-        _fields(value, {'stage', 'allow', 'deny'}, {'stage', 'allow', 'deny'}, path='features.webhook')
+        _fields(value, {'stage', 'decision', 'allow', 'deny'}, {'stage', 'allow', 'deny'}, path='features.webhook')
         if value['stage'] != 'pre_call':
             raise ValueError('features.webhook.stage must be pre_call')
-        for decision in ('allow', 'deny'):
-            shape = value[decision]
-            _fields(shape, {'status', 'body'}, {'status', 'body'}, path=f'features.webhook.{decision}')
-            if type(shape['status']) is not int or not 100 <= shape['status'] <= 599:
-                raise ValueError(f'features.webhook.{decision}.status must be an HTTP status')
+        from argus.gateway_fixtures.webhook import validate_contract
+        validate_contract(value)
 
 
 @dataclass(frozen=True)
@@ -255,6 +252,14 @@ class MCPGatewayTarget(Target):
         grant = script['drive'].get('grant')
         if grant and self.spec.features.get('static_oauth_client', {}).get('grant') != grant:
             raise ProbeNotApplicable(f'probe requires static_oauth_client grant: {grant}')
+        from argus.gateway_fixtures.webhook import NoDocumentedDeny, resolve_decision
+        for case in script['cases']:
+            decision = case.get('upstream', {}).get('decision')
+            if decision is not None:
+                try:
+                    resolve_decision(decision, self.spec.features['webhook'])
+                except NoDocumentedDeny as exc:
+                    raise ProbeNotApplicable(str(exc)) from None
         await self._release()
         self._script, self._probe_id, self._evidence = script, probe.id, {}
 
@@ -321,6 +326,10 @@ class MCPGatewayTarget(Target):
             origins[name] = {'scheme': parsed.scheme, 'class': category, 'host_id': host_id}
         evidence = {'interaction_count': 0, 'install_label': install['install_label'], 'era': None,
                     'origins': origins, 'cases': [], 'summary': {}}
+        if self.spec.features.get('webhook', {}).get('decision') == 'status':
+            from argus.gateway_fixtures.webhook import status_sets
+            evidence['webhook_contract'] = {'decision': 'status', **{
+                name: sorted(statuses) for name, statuses in status_sets(self.spec.features['webhook']).items()}}
         if 'static_oauth_client' in self.spec.features:
             evidence['static_oauth_client'] = {
                 'grant': self.spec.features['static_oauth_client']['grant'],

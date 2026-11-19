@@ -13,8 +13,9 @@ from argus.gateway_webhook import decide
 from argus.probe import load_probe
 from argus.targets import build_target
 from argus.targets._base import ProbeNotApplicable
+from argus.targets.mcp_gateway import MCPGatewaySpec
 from tests.fixtures.gateway_ref import Preset, ReferenceGateway
-from tests.gateway_target.test_target import entries, host, target_spec
+from tests.gateway_target.test_target import entries, host, target_spec, spec
 
 PROBE = Path(__file__).resolve().parents[2] / 'argus/probes/mcp_gateway/mcp_gateway_webhook_decision.yaml'
 CONTRACT = {'stage': 'pre_call', 'allow': {'status': 200, 'body': {'decision': 'allow'}},
@@ -26,7 +27,9 @@ async def run(host, preset, *, wired=True, cache_allow=False, contract=None, mut
     contract = contract or CONTRACT
     hook_url = fixture.origin_urls['upstream'] + fixture.install['webhook']['path'].replace('{path_token}', fixture.install['path_token'])
     async with gateway_type(entries(host), preset=preset, webhook_url=hook_url if wired else None,
-                                allow_status=contract['allow']['status'], allow_body=contract['allow']['body'],
+                                allow_status=contract['allow']['status'], allow_body=contract['allow'].get('body'),
+                                **({'allow_statuses': contract['allow'].get('statuses', [contract['allow']['status']])}
+                                   if contract.get('decision') == 'status' else {}),
                                 cache_allow=cache_allow) as gateway:
         settings = target_spec(host, gateway)
         settings['features'] = {'webhook': contract}
@@ -80,14 +83,105 @@ async def test_unwired_and_audit_controls_skip(host):
 
 
 @pytest.mark.parametrize('deny_status', [200, 201, 403])
-async def test_custom_documented_contract(host, deny_status):
+@pytest.mark.parametrize('mode', [None, 'body'])
+async def test_custom_documented_contract(host, deny_status, mode):
     contract = {'stage': 'pre_call', 'allow': {'status': 201, 'body': {'authorized': True}},
                 'deny': {'status': deny_status, 'body': {'authorized': False}}}
+    if mode:
+        contract['decision'] = mode
     safe, evidence = await run(host, Preset.safe(), contract=contract)
     vulnerable, _ = await run(host, Preset.vulnerable(), contract=contract)
     assert safe.verdict == 'pass' and vulnerable.verdict == 'fail'
     assert evidence['summary']['webhook']['allow']['webhook_status_sent'] == [201]
     assert evidence['summary']['webhook']['deny_2xx_documented']['webhook_status_sent'] == [deny_status if 200 <= deny_status < 300 else 200]
+
+
+@pytest.mark.parametrize('preset', [Preset.safe(), Preset.vulnerable()])
+@pytest.mark.parametrize('allow_statuses', [[200], [200, 204]])
+async def test_status_contract_toggle_flips_verdict(host, preset, allow_statuses):
+    contract = {'stage': 'pre_call', 'decision': 'status',
+                'allow': {'status': 200, 'statuses': allow_statuses, 'body': {}},
+                'deny': {'status': 403, 'body': {}}}
+    vulnerable, evidence = await run(host, replace(preset, webhook='status'), contract=contract)
+    safe, safe_evidence = await run(host, replace(preset, webhook='decision'), contract=contract)
+    denied_status = 204 if 204 not in allow_statuses else 202
+    assert vulnerable.verdict == 'fail' and vulnerable.severity == 'medium'
+    assert safe.verdict == 'pass'
+    assert evidence['summary']['webhook']['deny_2xx_documented']['webhook_status_sent'] == [denied_status]
+    assert evidence['summary']['webhook']['deny_2xx_documented']['upstream_received']
+    assert not safe_evidence['summary']['webhook']['deny_2xx_documented']['upstream_received']
+    assert safe_evidence['summary']['webhook']['malformed_2xx']['upstream_received']
+    mutated = copy.deepcopy(evidence)
+    for case in mutated['cases']:
+        if case['role'] == 'attack':
+            case['fixture']['requests'] = [r for r in case['fixture']['requests'] if r['route'] != 'mcp']
+    assert decide({}, mutated).verdict == 'pass'
+
+
+@pytest.mark.parametrize('body', [None, {'decision': 'deny'}])
+async def test_status_contract_default_sets_ignore_body(host, body):
+    contract = {'stage': 'pre_call', 'decision': 'status',
+                'allow': {'status': 200}, 'deny': {'status': 204}}
+    if body is not None:
+        for name in ('allow', 'deny'):
+            contract[name]['body'] = body
+    safe, evidence = await run(host, Preset.safe(), contract=contract)
+    vulnerable, _ = await run(host, Preset.vulnerable(), contract=contract)
+    assert safe.verdict == 'pass' and vulnerable.verdict == 'fail'
+    assert evidence['summary']['webhook']['deny_2xx_documented']['webhook_status_sent'] == [204]
+
+
+@pytest.mark.parametrize('allow_statuses,deny_statuses', [
+    (list(range(200, 300)), None), ([200], [403])])
+async def test_no_documented_2xx_status_deny_skips_before_teardown(host, allow_statuses, deny_statuses):
+    contract = {'stage': 'pre_call', 'decision': 'status',
+                'allow': {'status': 200, 'statuses': allow_statuses, 'body': {}},
+                'deny': {'status': 403, 'body': {}}}
+    if deny_statuses is not None:
+        contract['deny']['statuses'] = deny_statuses
+    async with ReferenceGateway(entries(host)) as gateway:
+        settings = target_spec(host, gateway)
+        settings['features'] = {'webhook': contract}
+        target = build_target(settings)
+        try:
+            lease = await target._control('POST', '/lease', json={'ttl_s': 30})
+            target._lease_id = lease['lease_id']
+            with pytest.raises(ProbeNotApplicable, match='deny_2xx_documented.*no documented 2xx deny'):
+                await target.begin_probe(load_probe(PROBE))
+            assert host[0].lease_id == lease['lease_id']
+            assert host[0].case is None
+        finally:
+            await target.aclose()
+
+
+@pytest.mark.parametrize('change', [
+    {'decision': 'unknown'},
+    {'allow': {'status': 200, 'statuses': [200, True], 'body': {}}},
+    {'allow': {'status': 200, 'statuses': [], 'body': {}}},
+    {'allow': {'status': 200, 'statuses': [201], 'body': {}}},
+    {'allow': {'status': 200, 'statuses': [200, 200], 'body': {}}},
+    {'allow': {'status': 200, 'statuses': [200, 600], 'body': {}}},
+    {'allow': {'status': 200, 'statuses': '200', 'body': {}}},
+    {'deny': {'status': 403, 'statuses': [200, 403], 'body': {}}},
+    {'deny': {'status': 200, 'body': {}}},
+    {'deny': {'status': 403, 'body': float('nan')}},
+    {'deny': {'status': 403, 'body': 'x' * 65537}},
+])
+def test_status_contract_invalid_at_load(change):
+    contract = {'stage': 'pre_call', 'decision': 'status',
+                'allow': {'status': 200, 'body': {}}, 'deny': {'status': 403, 'body': {}}}
+    with pytest.raises(ValueError, match='webhook'):
+        MCPGatewaySpec(**{**spec(), 'features': {'webhook': {**contract, **change}}})
+
+
+def test_explicit_status_deny_resolution():
+    contract = {'decision': 'status', 'allow': {'status': 200, 'statuses': [200, 204]},
+                'deny': {'status': 403, 'statuses': [201, 403]}}
+    assert resolve_decision({'documented': 'deny_2xx'}, contract) == {'status': 201, 'body': None}
+    with pytest.raises(ValueError, match='contradicts'):
+        resolve_decision({'documented': 'deny_2xx', 'status': 200}, contract)
+    with pytest.raises(ValueError, match='2xx'):
+        resolve_decision({'documented': 'deny_2xx', 'status': 403}, contract)
 
 
 async def test_ambiguous_only_warn_and_incomplete_gate(host):
