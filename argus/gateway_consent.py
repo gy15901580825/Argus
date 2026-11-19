@@ -84,6 +84,8 @@ class ConsentDriver:
         try:
             await asyncio.wait_for(self.follow(elicitation['url']), self.timeout_s)
         except (TimeoutError, httpx.TimeoutException):
+            if self.gateway.last_failure is not None:
+                raise TargetTransportError('consent error response body timed out') from None
             raise ProbeNotApplicable('consent navigation timed out') from None
         except httpx.HTTPError:
             raise TargetTransportError('consent navigation failed') from None
@@ -97,10 +99,17 @@ class ConsentDriver:
                 headers.update(self.gateway.gateway.get('auth', {}).get('headers', {}))
                 headers['X-Argus-Consent-Agent'] = self.nonce
             # Construct each request without the client's gateway credential defaults.
+            for name, value in parse_qsl(urlsplit(url).query):
+                if name not in ('response_type', 'code_challenge_method', 'scope'):
+                    self.gateway.redactor.add(value)
             outgoing = httpx.Request('GET', url, headers=headers)
             if origin == 'gateway':
                 self.gateway.client.cookies.set_cookie_header(outgoing)
-            response = await self.gateway.client.send(outgoing, stream=True, follow_redirects=False)
+            try:
+                response = await self.gateway.client.send(outgoing, stream=True, follow_redirects=False)
+            except httpx.HTTPError:
+                self.gateway.last_failure = {**self.gateway.failure_context('GET', url), 'path_class': 'auth'}
+                raise
             self.gateway.exchanges += 1
             try:
                 parsed = urlsplit(str(outgoing.url))
@@ -118,6 +127,13 @@ class ConsentDriver:
                 elif response.is_success:
                     return
                 else:
+                    await self.gateway.record_failure(response, path_class='auth')
+                    if response.status_code in (401, 403):
+                        reason = f'consent navigation returned HTTP {response.status_code}'
+                        if origin == 'gateway' and not outgoing.headers.get('Cookie'):
+                            reason += ('; follow_url may require a browser cookie session; '
+                                       'configure gateway.auth.cookies or use consent: manual')
+                        raise TargetTransportError(reason)
                     raise ProbeNotApplicable('consent navigation did not complete authorization')
             finally:
                 await response.aclose()

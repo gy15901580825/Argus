@@ -52,12 +52,16 @@ def _mask_headers(value: Any, masked: list[str]) -> Any:
 def _redact(spec: dict) -> tuple[dict, list[str]]:
     masked: list[str] = []
 
-    def walk(value: Any) -> Any:
+    def walk(value: Any, path: tuple = ()) -> Any:
         if isinstance(value, dict):
             out = {}
             for k, v in value.items():
-                # browser_use stored credentials: site and label name the match in reports, so mask only values.
-                if k == "stored_credentials" and isinstance(v, list) and all(isinstance(e, dict) for e in v):
+                if (spec.get("kind") == "mcp_gateway" and path == ("features",)
+                        and k == "upstream_headers" and isinstance(v, dict) and set(v) == {"names"}
+                        and isinstance(v["names"], list) and all(isinstance(n, str) for n in v["names"])):
+                    # This feature declares names; gateway.auth.headers supplies the values.
+                    out[k] = {"names": list(v["names"])}
+                elif k == "stored_credentials" and isinstance(v, list) and all(isinstance(e, dict) for e in v):
                     _strings([e.get("value") for e in v], masked)
                     out[k] = [{**e, "value": MASK} if "value" in e else walk(e) for e in v]
                 elif isinstance(k, str) and _is_header_key(k):
@@ -66,10 +70,10 @@ def _redact(spec: dict) -> tuple[dict, list[str]]:
                     _strings(v, masked)
                     out[k] = MASK
                 else:
-                    out[k] = walk(v)
+                    out[k] = walk(v, (*path, k))
             return out
         if isinstance(value, list):
-            return [walk(v) for v in value]
+            return [walk(v, path) for v in value]
         return value
     return walk(spec), masked
 

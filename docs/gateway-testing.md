@@ -261,7 +261,12 @@ inside MRTR (`InputRequiredResult`). Each URL and redirect must have the exact
 configured origin of the gateway or a fixture, compared by scheme, hostname and
 port. Navigation has a ten-redirect cap and a timeout. Gateway headers and cookies
 attach only on the exact gateway origin. Evidence records origin, route class,
-status and query names, without URL values.
+status and query names, without URL values. A bearer credential that permits MCP
+calls may not permit browser consent. If gateway-origin navigation returns 401
+or 403 without a cookie, Argus keeps the error evidence and suggests configuring
+`gateway.auth.cookies` with a valid browser session or using `consent: manual`.
+A passing check after manual authorization can reuse its upstream token; the
+issuer-binding baseline revokes that token and needs fresh authorization.
 
 `consent: manual` prints the gateway-provided URL and instruction and waits for
 Enter after you complete authorization, within `timeout_s`. It skips without a
@@ -319,6 +324,13 @@ for these probes.
 Cases use fresh nonces to distinguish test calls from background health checks.
 Capture is bounded, including 200 requests per case and 64 KiB bodies. Truncation,
 drops and in-flight timeouts prevent a complete miss from passing.
+
+HTTP authentication errors keep the sealed fixture requests and any completed
+calls in the finding. The failed call records the HTTP method, MCP method when
+available, path class (`mcp`, `auth`, or `other`), status and a redacted response
+body. JSON-RPC errors retain only their code and message; other bodies retain
+at most 512 UTF-8 bytes after redaction, with a truncation flag. Header names
+remain visible in configured-header lists and hit labels; values stay masked.
 
 ### Probe 1: static OAuth issuer binding
 

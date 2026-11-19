@@ -279,7 +279,7 @@ class MCPGatewayTarget(Target):
         if self._script is None:
             raise ValueError('begin_probe with a gateway recipe is required')
         if not self._evidence:
-            self._evidence = await self._run()
+            await self._run()
         return json.dumps(self._evidence, sort_keys=True), (time.monotonic() - start) * 1000
 
     async def _run(self):
@@ -306,7 +306,8 @@ class MCPGatewayTarget(Target):
         for entry in install['entries'].values():
             for name, value in entry.get('headers', {}).items():
                 canaries['upstream_header:' + name] = value.split(' ', 1)[1] if name.lower() == 'authorization' else value
-        redactor = Redactor([*credentials.values(), *canaries.values(), self.spec.fixtures['control_token'], install['path_token']])
+        redactor = Redactor([*credentials.values(), *canaries.values(), self.spec.fixtures['control_token'], install['path_token'],
+                             *[install['entries'].get('oauth', {}).get(key, '') for key in ('client_id', 'client_secret')]])
         origins = {}
         host_ids = {}
         for name, origin in install['origins'].items():
@@ -329,6 +330,8 @@ class MCPGatewayTarget(Target):
             evidence['client_credentials'].append({'label': 'client_canary', 'kind': 'canary'})
         gateway = GatewayClient(self.spec.gateway, self.spec.timeout_s)
         self._gateway = gateway
+        gateway.redactor = redactor
+        self._evidence = evidence
         try:
             if 'consent' in script['drive'].get('steps', []):
                 gateway.consent = self.registry.drive_steps['consent'](gateway, install,
@@ -377,6 +380,7 @@ class MCPGatewayTarget(Target):
                     'case_id': case['id'], 'nonce': nonce, 'toggles': toggles,
                     'watch': {'canaries': case_canaries, 'secrets': hashes, 'watch_key': watch_key.hex(), 'case_key': secrets.token_hex(32)}})
                 calls = []
+                failure = None
                 try:
                     for attempt in range(case.get('calls_per_case', script['drive']['calls_per_case'])):
                         backoff = script['drive'].get('backoff_s', [])
@@ -386,6 +390,10 @@ class MCPGatewayTarget(Target):
                                                         path=case.get('upstream', {}).get('delivery')))
                     if script.get('settle_s'):
                         await asyncio.sleep(script['settle_s'])
+                except TargetTransportError as exc:
+                    failure = exc
+                    calls.append({'nonce': nonce, 'reply': 'transport_error',
+                                  'transport_error': gateway.last_failure or gateway.failure_context('POST', gateway.gateway['url'])})
                 finally:
                     sealed = await self._control('POST', f"/cases/{opened['case_seq']}/seal")
                 requests = sealed['fixture']['requests']
@@ -409,13 +417,18 @@ class MCPGatewayTarget(Target):
                 if 'delivery' in case.get('upstream', {}):
                     evidence['cases'][-1]['delivery'] = case['upstream']['delivery']
                 evidence['interaction_count'] += sum(r.get('actor') == 'gateway' for r in requests)
-            evidence['interaction_count'] += gateway.exchanges
+                if failure:
+                    raise failure
             if any('redirect' in case.get('upstream', {}) for case in script['cases']):
                 from argus.gateway_redirect_assertions import summarize
 
                 evidence['summary']['upstream_header_redirect'] = summarize(evidence, self.spec.features.get('upstream_headers', {}).get('names', []))
-            return redactor.clean(evidence)
+        except TargetTransportError:
+            evidence['transport_error'] = gateway.last_failure or gateway.failure_context('POST', gateway.gateway['url'])
+            raise
         finally:
+            evidence['interaction_count'] += gateway.exchanges
+            self._evidence = redactor.clean(evidence)
             try:
                 await self._release()
             finally:
