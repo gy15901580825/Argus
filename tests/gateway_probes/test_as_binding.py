@@ -187,7 +187,7 @@ async def test_mirror_client_credentials_is_not_applicable(tmp_path):
         await target.aclose()
 
 
-@pytest.mark.parametrize('backoff', ['2,5,10', [-1, 0, 0], [float('inf'), 0, 0], [0], [False, 0, 0], [31, 0, 0]])
+@pytest.mark.parametrize('backoff', ['2,5,10', [-1, 0, 0], [float('inf'), 0, 0], [0], [False, 0, 0], [31, 0, 0], 'more_calls'])
 async def test_invalid_backoff_is_refused_before_teardown(tmp_path, backoff):
     path = tmp_path / 'install.json'
     write_install(path, installation())
@@ -198,7 +198,9 @@ async def test_invalid_backoff_is_refused_before_teardown(tmp_path, backoff):
     try:
         probe = load_probe(PROBES / 'mcp_gateway_upstream_as_binding.yaml')
         recipe = json.loads(probe.scenario_payload)
-        recipe['drive']['backoff_s'] = backoff
+        recipe['drive']['backoff_s'] = [0, 0, 0] if backoff == 'more_calls' else backoff
+        if backoff == 'more_calls':
+            recipe['cases'][1]['calls_per_case'] = 4
         with pytest.raises(ValueError):
             await target.begin_probe(replace(probe, scenario_payload=json.dumps(recipe)))
         assert target._lease_id == 'existing'

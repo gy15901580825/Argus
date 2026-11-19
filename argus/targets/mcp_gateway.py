@@ -212,6 +212,9 @@ class MCPGatewayTarget(Target):
         backoff = drive.get('backoff_s', [])
         if not isinstance(backoff, list) or len(backoff) not in (0, drive['calls_per_case']):
             raise ValueError('drive.backoff_s must have one delay per call')
+        if backoff and any(case['role'] == 'attack' and case.get('calls_per_case', drive['calls_per_case']) > len(backoff)
+                           for case in script['cases']):
+            raise ValueError('drive.backoff_s must cover every attack call')
         for delay in backoff:
             _seconds(delay, 'drive.backoff_s', maximum=30)
         if type(drive.get('client_canaries', False)) is not bool:
