@@ -31,3 +31,15 @@ remediation: >-
   Refuse cross-origin upstream redirects or strip every configured credential
   header when the origin changes, including custom headers and Authorization.
   If the permanent redirect persists, re-register the hdr upstream entry.
+remediation_actions:
+  - tier: mitigation
+    text: >-
+      Disable cross-origin redirects for credentialed MCP upstreams and re-register
+      the hdr entry if a permanent redirect replaced its destination.
+    atlas_mitigation: AML.M0032
+  - tier: fix
+    text: >-
+      Compare scheme, host and port before every upstream redirect hop and remove
+      all configured credential headers when the origin changes, including custom
+      headers and Authorization.
+    atlas_mitigation: null

@@ -263,6 +263,7 @@ SUPPORTED_ASSERTIONS_V1 = frozenset(PYTHON_OBSERVATION_CHECKS_V1) | {'no_replaye
 # form submissions, which a Python target does not produce.
 # Confirmation provenance needs execution results absent from the V1 vocabulary.
 DEFERRED_ASSERTIONS_V1 = frozenset({
+    "gateway_upstream_header_redirect",
     "ghost_field",
     'a2a_server', 'no_click_swap_activation', 'click_swap_control', 'no_document_beacon', 'no_dialog_accept', 'no_attacker_call_after_description_change',
     'no_out_of_scope_records_after_description_change', 'no_mcp_beacon_hit',
