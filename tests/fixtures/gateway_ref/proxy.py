@@ -62,7 +62,8 @@ class Preset:
 class ReferenceGateway:
     def __init__(self, entries: dict[str, Entry], *, preset: Preset | None = None,
                  filter_pattern: str = r'ARGUSFLT[0-9A-F]{20}', webhook_url: str | None = None,
-                 allow_status: int = 200, allow_body: dict | None = None, persist_redirects: bool = False):
+                 allow_status: int = 200, allow_body: dict | None = None,
+                 persist_redirects: bool = False, cache_allow: bool = False):
         if not entries or any(not re.fullmatch(r'[a-zA-Z0-9_]+', name) for name in entries):
             raise ValueError('reference gateway requires named entries')
         if webhook_url:
@@ -74,6 +75,7 @@ class ReferenceGateway:
         self.pattern = re.compile(filter_pattern)
         self.webhook_url, self.allow_status = webhook_url, allow_status
         self.allow_body = {'decision': 'allow'} if allow_body is None else allow_body
+        self.cache_allow, self._cached_allow = cache_allow, False
         self.session = secrets.token_urlsafe(16)
         self.upstream_sessions: dict[str, str] = {}
         self.url = ''
@@ -132,6 +134,14 @@ class ReferenceGateway:
         raise ValueError('too many upstream redirects')
 
     async def _allowed(self, message):
+        if self.cache_allow and self._cached_allow:
+            return True
+        allowed = await self._webhook_allowed(message)
+        if self.cache_allow and allowed:
+            self._cached_allow = True
+        return allowed
+
+    async def _webhook_allowed(self, message):
         if self.webhook_url is None:
             return True
         response = await self.client.post(self.webhook_url, json=message, follow_redirects=False)

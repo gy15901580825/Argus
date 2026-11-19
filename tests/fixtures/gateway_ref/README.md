@@ -18,6 +18,8 @@ and requires the documented webhook allow status and JSON body. Change individua
 fields with `dataclasses.replace`. Redirects also support `no_follow`, and the
 filter supports `off` for inactive-filter controls. Webhook defaults are status 200
 and `{"decision": "allow"}`; `allow_status` and `allow_body` configure the contract.
+Set `cache_allow=True` to retain the first accepted webhook decision across calls.
+The webhook probe runs deny cases before its allow control to avoid that cache.
 
 httpx itself drops Authorization across the host change exercised by the tests;
 X-API-Key survives in the vulnerable preset. Both observations come from the

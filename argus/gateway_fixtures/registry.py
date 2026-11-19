@@ -81,6 +81,8 @@ def load_registry() -> Registry:
     registry.add_behavior('upstream', 'redirect', redirect)
     registry.add_behavior('upstream', 'idle', redirect_target)
     registry.add_behavior('foreign', 'idle', redirect_target)
+    from argus.gateway_fixtures.webhook import decision
+    registry.add_behavior('upstream', 'decision', decision)
     for entry_point in sorted(metadata.entry_points(group='argus.gateway_fixtures'), key=lambda ep: ep.name):
         try:
             entry_point.load()(registry)

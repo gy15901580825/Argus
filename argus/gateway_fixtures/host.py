@@ -216,6 +216,8 @@ class FixtureHost:
             if request.path in (path, path + '/moved'):
                 route, entry = ('mcp' if request.path == path else 'redirect_target'), name
                 break
+        if origin == 'upstream' and request.path == self.install['webhook']['path'].replace('{path_token}', self.install['path_token']):
+            route = 'webhook'
         body = bytearray()
         complete = True
         recorder = case.recorder if case else self._recorder()
@@ -259,6 +261,9 @@ class FixtureHost:
             elif response is None:
                 if origin in self._idle_handlers:
                     response = await self._idle_handlers[origin](context)
+                if response is None and context.route == 'webhook':
+                    from argus.gateway_fixtures.webhook import idle as webhook_idle
+                    response = await webhook_idle(context)
                 if response is None:
                     response = idle(context) if origin == 'upstream' else web.json_response({'error': 'not_found'}, status=404)
             if record:

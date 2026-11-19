@@ -1,0 +1,46 @@
+id: mcp_gateway_webhook_decision
+name: MCP gateway reads a webhook decision from the status code alone
+target_class: [mcp_gateway]
+attack_class: [mcp-abuse]
+technique: [webhook-status-only-authorization]
+severity: medium
+prompts: [scripted gateway cases; no prompt text is sent]
+requires_interaction: true
+scenario:
+  kind: mcp_gateway
+  payload: >-
+    {"version": 1, "requires": ["webhook"], "entries": ["plain"],
+     "cases": [
+       {"id": "deny_non2xx", "role": "control", "entry": "plain",
+        "upstream": {"decision": {"status": 403}}},
+       {"id": "deny_2xx_documented", "role": "attack", "entry": "plain",
+        "upstream": {"decision": {"documented": "deny_2xx"}}},
+       {"id": "malformed_2xx", "role": "attack", "entry": "plain", "calls_per_case": 2,
+        "upstream": {"decision": {"responses": [{"status": 200}, {"status": 200, "body": {}}]}}},
+       {"id": "no_content_204", "role": "attack", "entry": "plain",
+        "upstream": {"decision": {"status": 204}}},
+       {"id": "allow", "role": "control", "entry": "plain",
+        "upstream": {"decision": {"documented": "allow"}}}],
+     "drive": {"tool": "echo", "calls_per_case": 1}}
+assertions:
+  - gateway_webhook_decision: {}
+mappings:
+  owasp_agentic: [ASI02]
+  atlas: [AML.T0049]
+  owasp_llm: [LLM06]
+  nist_ai_rmf: [MEASURE-2.7]
+  eu_ai_act: [Article 15(5)]
+remediation: >-
+  Parse the documented webhook decision before forwarding a tool call. Require an
+  explicit allow decision and reject denied, empty, malformed or ambiguous responses.
+remediation_actions:
+  - tier: mitigation
+    text: >-
+      Block protected tool calls while webhook decision parsing is unavailable, and
+      require an explicit allow response before forwarding.
+    atlas_mitigation: AML.M0028
+  - tier: fix
+    text: >-
+      Parse the configured webhook response contract and forward a tool call only
+      after an explicit allow decision. Reject denied, empty, malformed and ambiguous responses.
+    atlas_mitigation: AML.M0028
