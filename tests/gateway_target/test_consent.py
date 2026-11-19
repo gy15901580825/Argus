@@ -238,12 +238,14 @@ async def listener(handler):
 
 
 class ConsentGateway:
-    def __init__(self, host, *, delivery='error', destination=None, redirects=0, repeat=False):
+    def __init__(self, host, *, delivery='error', destination=None, redirects=0, repeat=False, require_accept=False):
         self.host, self.delivery, self.destination = host, delivery, destination
         self.redirects, self.repeat = redirects, repeat
+        self.require_accept = require_accept
         self.cookie = 'argus-canary-cookie-' + secrets.token_hex(16)
         self.rotated = 'argus-canary-cookie-' + secrets.token_hex(16)
         self.bearer = 'argus-canary-bearer-' + secrets.token_hex(16)
+        self.session = 'argus-canary-session-' + secrets.token_hex(16)
         self.verifier, self.state = secrets.token_urlsafe(48), secrets.token_urlsafe(32)
         self.token = None
         self.calls = 0
@@ -292,7 +294,14 @@ class ConsentGateway:
             self.connected.set()
             return web.Response(status=204)
         message = await request.json()
+        if self.require_accept:
+            assert request.headers.get('Authorization') == 'Bearer ' + self.bearer
+            assert request.cookies.get('gateway_user') == (self.rotated if self.connected.is_set() else self.cookie)
+            if message.get('method') not in ('server/discover', 'initialize'):
+                assert request.headers.get('Mcp-Session-Id') == self.session
         if 'method' not in message:
+            if self.require_accept and not {'application/json', 'text/event-stream'} <= set(request.headers.get('Accept', '').split(', ')):
+                return web.Response(status=403, text='MCP Accept header required')
             self.answer_value = message
             self.answer.set()
             return web.Response(status=202)
@@ -331,7 +340,8 @@ class ConsentGateway:
                 await stream.write(('data: ' + json.dumps(response) + '\n\n').encode())
                 return stream
             return web.json_response(await self.upstream(message))
-        return web.json_response({'jsonrpc': '2.0', 'id': message['id'], 'result': result})
+        return web.json_response({'jsonrpc': '2.0', 'id': message['id'], 'result': result},
+            headers={'Mcp-Session-Id': self.session} if self.require_accept and method == 'initialize' else {})
 
     async def upstream(self, message):
         message = json.loads(json.dumps(message))
@@ -574,4 +584,57 @@ async def test_navigation_policy_refusal_releases_lease(tmp_path):
         target.spec.gateway['url'] = target.spec.gateway['url'].replace('127.0.0.1', 'localhost')
         with pytest.raises(TargetTransportError, match='consent.*origin'):
             await target.send_prompt('')
+        assert host.lease_id is None
+
+
+@pytest.mark.parametrize('require_accept', [False, True])
+async def test_consent_response_uses_mcp_accept_headers(tmp_path, require_accept):
+    async with running(tmp_path, delivery='sse', require_accept=require_accept) as (target, gateway, host):
+        await target.send_prompt('')
+        evidence = await target.collect_evidence()
+        assert evidence['cases'][0]['client']['calls'][0]['reply'] == 'result'
+        assert gateway.answer_value['result']['action'] == 'accept'
+        assert gateway.hops == ['/connect', '/callback']
+        assert host.lease_id is None
+
+
+async def test_consent_auth_refusal_keeps_redacted_body_and_fixture_record(tmp_path):
+    async with running(tmp_path) as (target, gateway, host):
+        original = gateway.handle
+        async def refused(request):
+            if request.path == '/callback':
+                return web.Response(status=403, text='Rejected ' + request.query['code'] + ' ' + gateway.rotated)
+            return await original(request)
+        async with listener(refused) as url:
+            gateway.url = url
+            target.spec.gateway['url'] = url + '/mcp'
+            with pytest.raises(TargetTransportError):
+                await target.send_prompt('')
+            evidence = await target.collect_evidence()
+            failure = evidence['cases'][0]['client']['calls'][-1]['transport_error']
+            assert failure['method'] == 'GET' and failure['path_class'] == 'auth' and failure['status'] == 403
+            assert failure['body']['text'] == 'Rejected <redacted> <redacted>'
+            assert any(r['route'] == 'authorize' for r in evidence['cases'][0]['fixture']['requests'])
+            assert gateway.rotated not in json.dumps(evidence) and host.lease_id is None
+
+
+@pytest.mark.parametrize('omit_accept', [False, True])
+async def test_missing_consent_accept_mutation_changes_result(tmp_path, monkeypatch, omit_accept):
+    if omit_accept:
+        original = GatewayClient._headers
+        def missing_accept(self, *args, **kwargs):
+            headers = original(self, *args, **kwargs)
+            del headers['Accept']
+            return headers
+        monkeypatch.setattr(GatewayClient, '_headers', missing_accept)
+    async with running(tmp_path, delivery='sse', require_accept=True) as (target, gateway, host):
+        if omit_accept:
+            with pytest.raises(TargetTransportError):
+                await target.send_prompt('')
+            failure = (await target.collect_evidence())['cases'][0]['client']['calls'][-1]['transport_error']
+            assert failure['status'] == 403 and failure['rpc_method'] == 'server_response'
+            assert gateway.hops == []
+        else:
+            await target.send_prompt('')
+            assert (await target.collect_evidence())['cases'][0]['client']['calls'][0]['reply'] == 'result'
         assert host.lease_id is None

@@ -14,6 +14,7 @@ from argus.gateway_fixtures.protocol import MODERN, MODERN_ERRORS, metadata, mir
 from argus.gateway_filter_assertions import capture, classify
 from argus.targets._base import ProbeNotApplicable, TargetTransportError
 from argus_transport.address_policy import target_client
+from argus_transport.security import Redactor
 
 LIST_PAGES_MAX = 20
 TOOLS_MAX = 1000
@@ -35,6 +36,8 @@ class GatewayClient:
         self.request_id = 0
         self.tools = {}
         self.consent = None
+        self.redactor = Redactor([*auth.get('headers', {}).values(), *auth.get('cookies', {}).values()])
+        self.last_failure = None
 
     async def server_request(self, message):
         if 'method' not in message or 'id' not in message:
@@ -54,12 +57,11 @@ class GatewayClient:
                 result['result'] = {'action': 'decline'}
         else:
             result['error'] = {'code': -32601, 'message': 'Server request unsupported'}
-        headers = {'MCP-Protocol-Version': self.era}
-        if self.session:
-            headers['Mcp-Session-Id'] = self.session
+        headers = self._headers()
         async with self.client.stream('POST', self.gateway['url'], json=result, headers=headers) as response:
             self.exchanges += 1
             if not response.is_success:
+                await self.record_failure(response, rpc_method='server_response')
                 raise TargetTransportError('gateway rejected the server request response')
         if navigate:
             await self.consent.open(navigate)
@@ -82,9 +84,56 @@ class GatewayClient:
             outgoing['Mcp-Session-Id'] = self.session
         return outgoing
 
+    def failure_context(self, method, url, status=None, *, rpc_method=None):
+        path = urlsplit(str(url)).path
+        context = {'method': method,
+                   'path_class': 'mcp' if path == urlsplit(self.gateway['url']).path else 'other',
+                   'status': status, 'body': {'kind': 'unavailable'}}
+        if rpc_method:
+            context['rpc_method'] = rpc_method
+        return context
+
+    async def record_failure(self, response, *, path_class=None, rpc_method=None):
+        failure = self.failure_context(response.request.method, response.request.url, response.status_code, rpc_method=rpc_method)
+        if path_class:
+            failure['path_class'] = path_class
+        self.last_failure = failure
+        for cookie in self.client.cookies.jar:
+            self.redactor.add(cookie.value)
+        raw = bytearray()
+        truncated = False
+        try:
+            async for chunk in response.aiter_bytes():
+                raw.extend(chunk[:65536 - len(raw)])
+                if len(raw) >= 65536:
+                    truncated = True
+                    break
+        except httpx.HTTPError:
+            truncated = True
+        except asyncio.CancelledError:
+            failure['body'] = self.failure_body(raw, truncated=True)
+            raise
+        failure['body'] = self.failure_body(raw, truncated=truncated)
+
+    def failure_body(self, raw, *, truncated=False):
+        text = raw.decode('utf-8', errors='replace')
+        try:
+            body = self.redactor.clean(json.loads(text))
+        except (ValueError, RecursionError):
+            body = None
+        error = body.get('error') if isinstance(body, dict) and body.get('jsonrpc') == '2.0' else None
+        if isinstance(error, dict) and type(error.get('code')) is int and isinstance(error.get('message'), str):
+            message = error['message'].encode()[:512].decode('utf-8', errors='ignore')
+            return {'kind': 'jsonrpc_error', 'code': error['code'], 'message': message,
+                    'truncated': truncated or len(error['message'].encode()) > 512}
+        text = self.redactor.clean(text) if body is None else json.dumps(body, ensure_ascii=False)
+        return {'kind': 'text', 'text': text.encode()[:512].decode('utf-8', errors='ignore'),
+                'truncated': truncated or len(text.encode()) > 512}
+
     async def _read_sse(self, response, channel, received, messages, state, request_id=None):
         raw = bytearray()
         async for chunk in response.aiter_bytes():
+            state.setdefault('response_prefix', bytearray()).extend(chunk[:65536 - len(state.get('response_prefix', b''))])
             state['budget']['size'] += len(chunk)
             if state['budget']['size'] > 65536:
                 raise TargetTransportError('gateway response exceeds 64 KiB')
@@ -142,6 +191,8 @@ class GatewayClient:
         if self.era == MODERN:
             outgoing.update(mirrored_headers(message))
         status = None
+        raw = bytearray()
+        self.last_failure = None
         try:
             async with asyncio.timeout(self.timeout_s):
                 for attempt in range(RESUMES_MAX + 1):
@@ -151,6 +202,7 @@ class GatewayClient:
                         self.exchanges += 1
                         status = response.status_code
                         if status in (401, 403):
+                            await self.record_failure(response, rpc_method=method)
                             raise TargetTransportError(f'gateway returned HTTP {status}')
                         if not response.is_success:
                             raw = bytearray()
@@ -171,7 +223,9 @@ class GatewayClient:
                             return self._observation(status, 'http_error', received, messages), None
                         if self.era != MODERN and 'Mcp-Session-Id' in response.headers:
                             self.session = response.headers['Mcp-Session-Id']
+                            self.redactor.add(self.session)
                         if 'text/event-stream' in response.headers.get('content-type', ''):
+                            state['response_prefix'] = raw = bytearray()
                             channel = 'post_sse' if verb == 'POST' else 'resumed_sse'
                             try:
                                 await self._read_sse(response, channel, received, messages, state, request_id)
@@ -208,14 +262,24 @@ class GatewayClient:
                     raise TargetTransportError('gateway returned a malformed MCP response')
                 return self._observation(status, 'jsonrpc_error' if 'error' in body else 'result', received, messages), body
         except (httpx.TimeoutException, TimeoutError):
+            if self.last_failure is not None:
+                raise TargetTransportError('gateway error response body timed out') from None
             return self._observation(None, 'timeout', received, messages), None
+        except TargetTransportError:
+            if self.last_failure is None:
+                self.last_failure = self.failure_context(verb, self.gateway['url'], status, rpc_method=method)
+                if status is not None:
+                    self.last_failure['body'] = self.failure_body(raw, truncated=state['budget']['size'] > 65536)
+            raise
         except httpx.HTTPError:
+            self.last_failure = self.failure_context(verb, self.gateway['url'], status, rpc_method=method)
             raise TargetTransportError('gateway connection failed') from None
 
     async def _get_call(self, params, *, headers=None, cookies=None):
         received, messages = [], []
         state = {'budget': {'size': 0}, 'cursor': '', 'retry_s': 0}
         task = None
+        self.last_failure = None
         observation, body = self._observation(None, 'timeout', [], []), None
         try:
             async with asyncio.timeout(self.timeout_s), AsyncExitStack() as stack:
@@ -223,18 +287,29 @@ class GatewayClient:
                     'GET', self.gateway['url'], headers=self._headers(headers, get=True), cookies=cookies))
                 self.exchanges += 1
                 if response.status_code in (401, 403):
+                    await self.record_failure(response)
                     raise TargetTransportError(f'gateway returned HTTP {response.status_code}')
                 if response.status_code == 405:
                     return await self.rpc('tools/call', params, headers=headers, cookies=cookies)
                 if not response.is_success or 'text/event-stream' not in response.headers.get('content-type', ''):
+                    await self.record_failure(response)
                     raise TargetTransportError('gateway standalone GET stream failed')
                 task = asyncio.create_task(self._read_sse(response, 'get_sse', received, messages, state))
                 observation, body = await self.rpc('tools/call', params, headers=headers, cookies=cookies, _budget=state['budget'])
                 await task
         except (httpx.TimeoutException, TimeoutError):
+            if self.last_failure is not None:
+                raise TargetTransportError('gateway error response body timed out') from None
             if body is None:
                 observation['reply'] = 'timeout'
+        except TargetTransportError:
+            if self.last_failure is None:
+                self.last_failure = self.failure_context('GET', self.gateway['url'])
+                if 'response_prefix' in state:
+                    self.last_failure['body'] = self.failure_body(state['response_prefix'])
+            raise
         except httpx.HTTPError:
+            self.last_failure = self.failure_context('GET', self.gateway['url'])
             raise TargetTransportError('gateway connection failed') from None
         finally:
             if task is not None:
@@ -343,6 +418,8 @@ class GatewayClient:
                         params['requestState'] = result['requestState']
                 return observation, body
         except TimeoutError:
+            if self.last_failure is not None:
+                raise TargetTransportError('gateway error response body timed out') from None
             observation['status'], observation['reply'] = None, 'timeout'
             return observation, None
 

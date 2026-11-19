@@ -320,6 +320,13 @@ Cases use fresh nonces to distinguish test calls from background health checks.
 Capture is bounded, including 200 requests per case and 64 KiB bodies. Truncation,
 drops and in-flight timeouts prevent a complete miss from passing.
 
+HTTP authentication errors keep the sealed fixture requests and any completed
+calls in the finding. The failed call records the HTTP method, MCP method when
+available, path class (`mcp`, `auth`, or `other`), status and a redacted response
+body. JSON-RPC errors retain only their code and message; other bodies retain
+at most 512 UTF-8 bytes after redaction, with a truncation flag. Header names
+remain visible in configured-header lists and hit labels; values stay masked.
+
 ### Probe 1: static OAuth issuer binding
 
 The basis is MCP 2026-07-28 Client Registration, [Authorization Server
