@@ -195,7 +195,7 @@ class RequestRecorder:
             try:
                 data = json.loads(raw)
                 body_record['shape'] = self._shape(data)
-                if route == 'mcp':
+                if route in ('mcp', 'redirect_target'):
                     body_record['jsonrpc'] = self._envelope(data)
             except (ValueError, RecursionError):
                 body_record['shape'] = {'type': 'unparsed'}

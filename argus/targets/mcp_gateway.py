@@ -200,7 +200,10 @@ class MCPGatewayTarget(Target):
             raise ValueError('drive.client_canaries must be a boolean')
         if 'settle_s' in script:
             _seconds(script['settle_s'], 'scenario.payload.settle_s', maximum=self.spec.case_window_s)
-        if 10 + len(script['cases']) * (drive['calls_per_case'] * self.spec.timeout_s + self.spec.case_window_s + 1) > 3600:
+        permanent = any(case.get('upstream', {}).get('redirect', {}).get('status') == 308 for case in script['cases'])
+        if permanent and 'redirect_recontact' in ids:
+            raise ValueError('redirect_recontact is reserved for the permanent redirect check')
+        if 10 + (len(script['cases']) + int(permanent)) * (drive['calls_per_case'] * self.spec.timeout_s + self.spec.case_window_s + 1) > 3600:
             raise ValueError('gateway recipe exceeds the one-hour fixture lease limit')
         return script
 
@@ -243,7 +246,8 @@ class MCPGatewayTarget(Target):
         if health.get('install_label') != install['install_label']:
             raise TargetTransportError('fixture host and install file do not match')
         script = self._script
-        ttl = min(3600, 10 + len(script['cases']) * (script['drive']['calls_per_case'] * self.spec.timeout_s + self.spec.case_window_s + 1))
+        permanent = any(case.get('upstream', {}).get('redirect', {}).get('status') == 308 for case in script['cases'])
+        ttl = min(3600, 10 + (len(script['cases']) + int(permanent)) * (script['drive']['calls_per_case'] * self.spec.timeout_s + self.spec.case_window_s + 1))
         self._lease_id = (await self._control('POST', '/lease', json={'ttl_s': ttl}))['lease_id']
         auth = self.spec.gateway.get('auth', {})
         credentials = {**{'auth_header:' + k: v for k, v in auth.get('headers', {}).items()},
@@ -278,7 +282,11 @@ class MCPGatewayTarget(Target):
                 if (entry, script['drive']['tool']) not in gateway.tools:
                     raise ProbeNotApplicable(f'entry {entry}: entry not registered')
             evidence['era'] = gateway.era
-            for case in script['cases']:
+            cases = list(script['cases'])
+            permanent = next((case for case in reversed(cases) if case.get('upstream', {}).get('redirect', {}).get('status') == 308), None)
+            if permanent:
+                cases.append({'id': 'redirect_recontact', 'role': 'control', 'entry': permanent['entry'], 'upstream': {}})
+            for case in cases:
                 nonce = secrets.token_hex(16)
                 watch_key = secrets.token_bytes(32)
                 hashes = {name: hmac.new(watch_key, value.encode(), hashlib.sha256).hexdigest() for name, value in credentials.items() if value}
@@ -304,8 +312,14 @@ class MCPGatewayTarget(Target):
                 requests = sealed['fixture']['requests']
                 evidence['cases'].append({'id': case['id'], 'role': case['role'], 'complete': sealed['complete'],
                     'dropped': sealed['dropped'], 'client': {'calls': calls, 'consent_hops': []}, 'fixture': sealed['fixture']})
+                if 'redirect' in case.get('upstream', {}):
+                    evidence['cases'][-1]['redirect'] = {key: case['upstream']['redirect'][key] for key in ('status', 'to')}
                 evidence['interaction_count'] += sum(r.get('actor') == 'gateway' for r in requests)
             evidence['interaction_count'] += gateway.exchanges
+            if any('redirect' in case.get('upstream', {}) for case in script['cases']):
+                from argus.gateway_redirect_assertions import summarize
+
+                evidence['summary']['upstream_header_redirect'] = summarize(evidence, self.spec.features.get('upstream_headers', {}).get('names', []))
             return redactor.clean(evidence)
         finally:
             try:

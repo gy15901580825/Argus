@@ -28,7 +28,7 @@ TOP_LEVEL_FAMILIES = {
     "semia": ("ambient_persuasion_", "encoded_payload_", "install_time_", "missing_",
               "obfuscated_code_", "shadow_credentials_"),
 }
-MCP_ABUSE_DIRS = ("mcp", "mcp_world", "mcp_protocol", "mcp_trap", "mcp_server", "mcp_scan")
+MCP_ABUSE_DIRS = ("mcp", "mcp_world", "mcp_protocol", "mcp_trap", "mcp_server", "mcp_scan", "mcp_gateway")
 
 # (path, regex with one named group `n`, count key). Each regex must match exactly once.
 REGISTRY: list[tuple[str, str, str]] = [
