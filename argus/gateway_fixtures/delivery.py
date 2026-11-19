@@ -5,6 +5,8 @@ import secrets
 
 import aiohttp.web as web
 
+from .record import REQUESTS_MAX
+
 CURRENT_PATHS = ('inline_json', 'post_sse_final', 'post_sse_notification', 'progress_message')
 LEGACY_PATHS = ('post_sse_resumed', 'get_stream_notification')
 
@@ -35,6 +37,8 @@ def delivery(path):
             else:
                 if cursor or key in listeners:
                     return web.Response(status=405)
+                if len(listeners) >= REQUESTS_MAX:
+                    return web.Response(status=429)
                 future = asyncio.get_running_loop().create_future()
                 listeners[key] = future
                 frame, nonce = None, None
@@ -70,6 +74,9 @@ def delivery(path):
                   'result': {'content': [{'type': 'text', 'text': text}], 'isError': False}}
         channel = 'post_json' if path == 'inline_json' else 'post_sse'
         if path == 'post_sse_resumed':
+            # Recording caps do not stop request handling, so pending streams need their own cap.
+            if len(pending) >= REQUESTS_MAX:
+                return web.Response(status=429)
             key = (context.entry, context.request.headers.get('Mcp-Session-Id'))
             cursor = secrets.token_hex(16)
             pending[(key, cursor)] = (result, context.nonce)

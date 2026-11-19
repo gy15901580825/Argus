@@ -467,3 +467,26 @@ async def test_sse_retry_cannot_outlive_case_deadline():
         assert len(requests) == 1
     finally:
         await client.aclose()
+
+
+async def test_pending_resumptions_have_a_bounded_capacity_and_recover(host):
+    from argus.gateway_fixtures.install import entry_url
+    from argus.gateway_fixtures.record import REQUESTS_MAX
+    from tests.gateway_fixtures.test_host import start_case
+
+    fixture = host[0]
+    async with httpx.AsyncClient(trust_env=False, timeout=2) as client:
+        auth = {'Authorization': 'Bearer ' + fixture.control_token}
+        await start_case(fixture, client, auth, toggles={'upstream': {'delivery': 'post_sse_resumed'}})
+        url = entry_url(fixture.install, 'plain')
+        message = {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call',
+                   'params': {'name': 'argus_fixture_emit',
+                              'arguments': {'nonce': 'case-nonce', 'path': 'post_sse_resumed'}}}
+        cursor = None
+        for _ in range(REQUESTS_MAX):
+            response = await client.post(url, json=message)
+            assert response.status_code == 200
+            cursor = next(line[4:] for line in response.text.splitlines() if line.startswith('id: '))
+        assert (await client.post(url, json=message)).status_code == 429
+        assert (await client.get(url, headers={'Last-Event-ID': cursor})).status_code == 200
+        assert (await client.post(url, json=message)).status_code == 200
