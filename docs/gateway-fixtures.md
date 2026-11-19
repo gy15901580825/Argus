@@ -260,3 +260,29 @@ Evidence in `client.consent_hops` contains only the origin name, route class,
 HTTP status and query parameter names. Response bodies, URL paths and query
 values are excluded. This step does not automate a gateway's administration UI
 or its restart procedure.
+
+The three `mcp_gateway_upstream_as_binding` probes check static OAuth client
+registration against MCP 2026-07-28 Client Registration, [Authorization Server
+Binding](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration#authorization-server-binding).
+Register the synthetic `oauth` entry with H, then enable `static_oauth_client`.
+The control revokes a previously cached fixture token so that the gateway must
+use its registration again during the captured case. The attack changes the
+protected-resource metadata to E and revokes H's tokens. Three attempts wait
+2, 5 and 10 seconds before the call, with the consent step enabled.
+
+The own-mode probe reports high severity for a static secret at E and medium
+for a static client ID alone. The `mixup_iss` and `mixup_no_iss` variants require
+`authorization_code`; E mirrors H's authorize endpoint while retaining its own
+issuer and token endpoint. Their assertions correlate H's code and the S256
+transform at E. [RFC 9207 section 2.4](https://www.rfc-editor.org/rfc/rfc9207.html#section-2.4)
+defines response issuer validation. A failed control or a gateway that never
+re-reads metadata produces skipped. For metadata cached until restart, use the
+configured manual restart workflow and repeat the probe.
+
+`gateway_upstream_as_binding` uses sealed request records, including consent
+agent authorization observations and gateway token requests. It computes its
+exposure summary from those records on every evaluation. A separate case
+metadata-contact count retains the gateway discovery witness if request records
+are removed for mutation testing. Fixture state and prior exposure summaries
+cannot substitute for current credential or code observations. The assertion runs
+without a model judge. Its rubric documents the spec and severity rules.

@@ -30,11 +30,14 @@ class StaticClient:
 
 
 class OAuthReferenceGateway(ReferenceGateway):
-    def __init__(self, entries, *, clients: dict[str, StaticClient], strategy='issuer', **kwargs):
+    def __init__(self, entries, *, clients: dict[str, StaticClient], strategy='issuer', validate_iss=None, **kwargs):
         super().__init__(entries, **kwargs)
         if strategy not in ('entry', 'issuer') or not clients or not set(clients) <= set(entries):
             raise ValueError('unknown upstream OAuth strategy or entry')
         self.strategy = strategy
+        if validate_iss is not None and type(validate_iss) is not bool:
+            raise ValueError('validate_iss must be a boolean')
+        self.validate_iss = strategy == 'issuer' if validate_iss is None else validate_iss
         self.registrations = {}
         for name, client in clients.items():
             key = name if strategy == 'entry' else client.issuer
@@ -143,7 +146,7 @@ class OAuthReferenceGateway(ReferenceGateway):
         values = parse_qs(location.query, keep_blank_values=True)
         if values.get('state') != [state]:
             raise OAuthError('OAuth state mismatch')
-        if self.strategy == 'issuer':
+        if self.validate_iss:
             # RFC 9207 requires comparison whenever iss is present, even without advertisement.
             if ('iss' in values and values['iss'] != [issuer]
                     or metadata.get('authorization_response_iss_parameter_supported') is True and 'iss' not in values):
@@ -156,4 +159,5 @@ class OAuthReferenceGateway(ReferenceGateway):
         try:
             return await super()._handle(request)
         except OAuthError as exc:
-            return self._error(None, -32000, str(exc))
+            message = await request.json()
+            return self._error(message.get('id'), -32000, str(exc))
