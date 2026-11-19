@@ -287,7 +287,7 @@ async def test_codes_and_tokens_expire_and_runtime_closes(serving):
     assert not host.oauth.codes and not host.oauth.tokens and host.oauth.redirect_uri is None
 
 
-def test_oauth_init_is_opt_in_stable_and_loopback_only(tmp_path):
+def test_oauth_init_is_opt_in_and_stable(tmp_path):
     assert set(create_install()['origins']) == {'upstream', 'foreign'}
     install = create_install(oauth=True)
     assert set(install['origins']) == {'upstream', 'foreign', 'issuer'}
@@ -300,14 +300,6 @@ def test_oauth_init_is_opt_in_stable_and_loopback_only(tmp_path):
     assert persisted['entries']['oauth']['client_secret'] in result.output
     assert runner.invoke(main, ['gateway-fixtures', 'sheet', '--install-file', str(path)]).exit_code == 0
     assert read_install(path) == persisted
-    for mode in ('compose', 'public'):
-        result = runner.invoke(main, ['gateway-fixtures', 'init', '--oauth', '--mode', mode,
-                                    '--install-file', str(tmp_path / (mode + '.json'))])
-        assert result.exit_code != 0
-    remote = installation()
-    remote['origins']['issuer']['listen'] = '0.0.0.0:8472'
-    with pytest.raises(DefinitionError, match='loopback'):
-        FixtureHost(remote, control_token='generated-control')
     malformed = copy.deepcopy(install)
     malformed['entries']['oauth']['client_secret'] = 'not-an-install-canary'
     with pytest.raises(DefinitionError, match='canaries'):

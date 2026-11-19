@@ -137,15 +137,22 @@ Gateway probes, the gateway target, registration checks and additional delivery
 behaviours are separate units.
 
 
-### Loopback OAuth fixtures
+### OAuth fixtures
 
 Add `--oauth` to `gateway-fixtures init` to mint an `oauth` entry and an `issuer`
 origin alongside the existing fixtures. The registration sheet prints the synthetic
 client ID, client secret, issuer and `argus.fixture` scope. These values remain
 stable in the install file. Existing installs retain their two-origin layout.
-OAuth fixture and control listeners must bind to loopback; this option supports
-`local-hosts` and `local-ports`. HTTPS can use the existing certificate options;
-HTTP is available for local development.
+OAuth fixtures use the same placement modes as the other fixtures:
+`local-hosts`, `local-ports`, `compose` and `public`. Compose adds `h.argus.test`
+for the issuer alongside `r.argus.test` and `e.argus.test`. Public mode requires
+explicit `--origin` values for all three origins. OAuth control listeners still
+bind to loopback. HTTPS uses the existing certificate options; HTTP remains
+available for development or behind a TLS-terminating proxy.
+
+```sh
+argus-probe gateway-fixtures init --oauth --mode compose
+```
 
 The protected entry serves RFC 9728 metadata at
 `/.well-known/oauth-protected-resource/u/{path_token}/oauth/mcp` and
@@ -225,7 +232,7 @@ features:
 ```
 
 `follow_url` is the operator's standing consent for automated navigation in this
-loopback conformance test. The client advertises URL elicitation and handles
+conformance test. The client advertises URL elicitation and handles
 `elicitation/create` with `mode: "url"`, or error `-32042` with the
 `data.elicitations` list defined by [MCP 2025-11-25 elicitation](https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation).
 It accepts the URL elicitation before navigating and retries a tool call once
@@ -233,9 +240,12 @@ after completing an error's required elicitations. A repeated authorization
 requirement reports skipped.
 
 Each initial URL and redirect must use a configured fixture origin or the
-gateway origin, with a literal loopback address. Navigation follows at most ten
-redirects and shares the gateway's cookie jar. Configured gateway authentication
-headers are sent only to the gateway origin. Each hop carries
+gateway origin. Origins match by scheme, lowercase hostname and port, with omitted
+ports normalized to 80 for HTTP and 443 for HTTPS. The check compares configured
+origins without resolving DNS and supports local, compose and public placement.
+Navigation follows at most ten redirects and shares the gateway's cookie jar.
+Gateway cookies and configured authentication headers are sent only to the
+gateway origin. Each hop carries
 `X-Argus-Consent-Agent` with the case nonce, so fixture front-channel requests
 have actor `argus_user_agent`. Token exchanges made by the gateway retain actor
 `gateway`.

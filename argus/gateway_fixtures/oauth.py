@@ -1,4 +1,4 @@
-"""Passive, loopback OAuth fixtures for RFC discovery and PKCE conformance."""
+"""Passive OAuth fixtures for RFC discovery and PKCE conformance."""
 from __future__ import annotations
 
 import base64

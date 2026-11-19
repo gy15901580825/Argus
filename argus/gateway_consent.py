@@ -1,8 +1,7 @@
-"""Operator-authorized URL consent for loopback gateway conformance cases."""
+"""Operator-authorized URL consent for gateway conformance cases."""
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import select
 import sys
 from urllib.parse import parse_qsl, urljoin, urlsplit
@@ -26,11 +25,12 @@ def _origin(url):
     try:
         parsed = urlsplit(url)
         if (parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username is not None
-                or parsed.password is not None or parsed.fragment or not ipaddress.ip_address(parsed.hostname).is_loopback):
+                or parsed.password is not None or parsed.fragment):
             raise ValueError
-        return parsed.scheme, parsed.hostname.lower(), parsed.port or (443 if parsed.scheme == 'https' else 80)
+        port = parsed.port
+        return parsed.scheme, parsed.hostname.lower(), port if port is not None else (443 if parsed.scheme == 'https' else 80)
     except (ValueError, TypeError, AttributeError):
-        raise TargetTransportError('consent URL requires a literal loopback HTTP(S) origin without userinfo or fragment') from None
+        raise TargetTransportError('consent URL requires an HTTP(S) origin without userinfo or fragment') from None
 
 
 class ConsentDriver:
@@ -98,7 +98,8 @@ class ConsentDriver:
                 headers['X-Argus-Consent-Agent'] = self.nonce
             # Construct each request without the client's gateway credential defaults.
             outgoing = httpx.Request('GET', url, headers=headers)
-            self.gateway.client.cookies.set_cookie_header(outgoing)
+            if origin == 'gateway':
+                self.gateway.client.cookies.set_cookie_header(outgoing)
             response = await self.gateway.client.send(outgoing, stream=True, follow_redirects=False)
             self.gateway.exchanges += 1
             try:
