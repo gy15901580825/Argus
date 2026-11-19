@@ -33,5 +33,27 @@ clients ignore environment proxies. The package stays under `tests/`, outside th
 wheel's `argus*` package discovery. `support.py` provides case behaviors only for
 these tests; production fixture behaviors belong to later units.
 
-Override `upstream_headers(entry_name)` for a later upstream authentication
-strategy. Authentication state and flows are not implemented here.
+`oauth.OAuthReferenceGateway(entries, clients={entry: StaticClient(issuer,
+client_id, client_secret, grant)}, strategy="issuer")` adds static upstream
+OAuth. The default grant is `client_credentials`; `authorization_code` uses
+S256 and the issuer fixture's automatic approval. The test client reads the
+authorization redirect directly and validates its callback, state and `iss`
+before the token exchange; interactive consent driving is a separate unit.
+
+`strategy="entry"` keys credentials and tokens by upstream entry and reuses
+the credentials with the server named by current protected-resource metadata.
+`strategy="issuer"` keys registrations by their configured issuer and tokens
+by issuer and resource. It refuses a changed authorization server before sending
+client credentials, following MCP 2026-07-28 Authorization Server Binding.
+It validates every present authorization-response `iss`, including when metadata
+does not advertise it, and requires `iss` when advertised, following RFC 9207.
+Both strategies re-read metadata after a 401, validate the metadata resource and
+issuer, and return fixed JSON-RPC errors when authorization fails. Metadata,
+authorization and token endpoints must use literal loopback IPs; redirects are
+never automatically followed. A second honest issuer tests metadata switching
+without depending on foreign-AS modes. Additional comparisons use the passive
+foreign fixture's `own` and `mirror_authorize` modes, including H-issued code
+correlations and S256 matches at its token endpoint. Own mode rejects authorize
+requests, so the authorization-code comparison observes client ID reuse there;
+mirror mode also observes the canary secret at the token endpoint.
+No OAuth probe or target consent step is added here.
