@@ -28,10 +28,16 @@ def classify(messages, path, reply=None):
     for classification in ('raw', 'redacted'):
         if classification in observed:
             return classification
-    if reply and ('error' in reply or isinstance(reply.get('result'), dict)
-                  and (reply['result'].get('isError') is True or reply['result'].get('content') == []
-                       or reply['result'].get('content') == [{'type': 'text', 'text': ''}])):
-        return 'blocked'
+    if reply:
+        result = reply.get('result')
+        if 'error' in reply:
+            return 'blocked'
+        if isinstance(result, dict):
+            content = result.get('content')
+            empty = isinstance(content, list) and all(isinstance(item, dict) and item.get('type') == 'text'
+                                                      and item.get('text') == '' for item in content)
+            if result.get('isError') is True or empty:
+                return 'blocked'
     return 'absent'
 
 

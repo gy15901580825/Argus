@@ -203,6 +203,8 @@ def test_channel_capture_seam(channel):
     assert classify([], 'post_sse_final', {'error': {'code': -32000}}) == 'blocked'
     assert classify([], 'post_sse_final', {'result': {'isError': True}}) == 'blocked'
     assert classify([], 'post_sse_final', {'result': {'content': []}}) == 'blocked'
+    assert classify([], 'post_sse_final', {'result': {'content': [
+        {'type': 'text', 'text': '', 'annotations': {'audience': ['user']}}]}}) == 'blocked'
 
 
 @pytest.mark.parametrize('value,evidence', [({'unexpected': True}, {}), ({}, {}), ({}, {'cases': []}), ({}, {'cases': [None]})])
