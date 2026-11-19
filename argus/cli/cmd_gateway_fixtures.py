@@ -1,0 +1,91 @@
+"""Long-running gateway fixtures and their stable registration sheet."""
+from __future__ import annotations
+
+import asyncio
+import signal
+
+import click
+
+from argus.gateway_fixtures.host import FixtureHost
+from argus.gateway_fixtures.install import DEFAULT_INSTALL, create_install, read_install, registration_sheet, write_install
+from argus.gateway_fixtures.registry import DefinitionError, load_registry
+
+
+@click.group('gateway-fixtures')
+def cmd_gateway_fixtures():
+    """Host passive MCP fixtures for gateways you operate."""
+
+
+@cmd_gateway_fixtures.command('init')
+@click.option('--install-file', type=click.Path(dir_okay=False), default=DEFAULT_INSTALL, show_default=True)
+@click.option('--mode', type=click.Choice(['local-hosts', 'local-ports', 'compose', 'public']), default='local-hosts', show_default=True)
+@click.option('--origin', 'origin_specs', multiple=True, metavar='NAME=PUBLIC_URL,LISTEN,HOST',
+              help='Override or add an origin. LISTEN is a numeric IP:port.')
+@click.option('--tls-cert', type=click.Path(dir_okay=False))
+@click.option('--tls-key', type=click.Path(dir_okay=False))
+def cmd_init(install_file, mode, origin_specs, tls_cert, tls_key):
+    """Mint synthetic canaries once and print values to register."""
+    try:
+        if bool(tls_cert) != bool(tls_key):
+            raise DefinitionError('TLS requires both --tls-cert and --tls-key')
+        origins = {}
+        if mode != 'public':
+            for name, alias, port in [('upstream', 'r', 8471), ('foreign', 'e', 8473)]:
+                host = f'{alias}.argus.test' if mode == 'compose' else ('127.0.0.2' if name == 'foreign' and mode == 'local-hosts' else '127.0.0.1')
+                origins[name] = {'public': f"{'https' if tls_cert else 'http'}://{host}:{port}",
+                                 'listen': f"{'0.0.0.0' if mode == 'compose' else host}:{port}", 'host': host}
+        for spec in origin_specs:
+            name, separator, values = spec.partition('=')
+            fields = values.split(',')
+            if not separator or len(fields) != 3:
+                raise DefinitionError('--origin requires NAME=PUBLIC_URL,LISTEN,HOST')
+            origins[name] = dict(zip(('public', 'listen', 'host'), fields))
+        install = create_install(origins=origins, tls={'cert': tls_cert, 'key': tls_key} if tls_cert else None)
+        write_install(install_file, install)
+    except (ValueError, OSError, KeyError) as exc:
+        raise click.ClickException(str(exc)) from None
+    click.echo(f'Wrote {install_file} (mode 0600).')
+    click.echo(registration_sheet(install))
+
+
+@cmd_gateway_fixtures.command('sheet')
+@click.option('--install-file', type=click.Path(dir_okay=False), default=DEFAULT_INSTALL, show_default=True)
+def cmd_sheet(install_file):
+    """Print the existing install's registration values."""
+    try:
+        click.echo(registration_sheet(read_install(install_file)))
+    except (ValueError, OSError, KeyError) as exc:
+        raise click.ClickException(str(exc)) from None
+
+
+async def _serve(host):
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(signum, stop.set)
+    try:
+        async with host:
+            click.echo(f'Fixtures serving; control API at {host.control_url}.')
+            await stop.wait()
+    finally:
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            loop.remove_signal_handler(signum)
+
+
+@cmd_gateway_fixtures.command('serve')
+@click.option('--install-file', type=click.Path(dir_okay=False), default=DEFAULT_INSTALL, show_default=True)
+@click.option('--control-bind', default='127.0.0.1:8470', show_default=True)
+@click.option('--control-token', envvar='ARGUS_FIXTURE_TOKEN', required=True,
+              help='Prefer ARGUS_FIXTURE_TOKEN so the token stays out of process arguments.')
+@click.option('--allow-remote-control', is_flag=True, help='Permit a non-loopback control bind with install TLS.')
+@click.option('--case-window-s', type=click.FloatRange(0, 3600), default=10.0, show_default=True)
+def cmd_serve(install_file, control_bind, control_token, allow_remote_control, case_window_s):
+    """Keep idle fixtures online during registration and between runs."""
+    try:
+        registry = load_registry()
+        host = FixtureHost(read_install(install_file, registry), control_token=control_token,
+                           control_bind=control_bind, allow_remote_control=allow_remote_control,
+                           registry=registry, case_window_s=case_window_s)
+        asyncio.run(_serve(host))
+    except (ValueError, OSError, KeyError) as exc:
+        raise click.ClickException(str(exc)) from None

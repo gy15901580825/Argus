@@ -44,6 +44,7 @@ nav:
   - Guides:
       - CI recipes: ci.md
       - Target plugins: plugins.md
+      - Gateway fixture host: gateway-fixtures.md
       - Integration scenarios: integration-scenarios.md
       - Local scenario drafts: draft-local-scenarios.md
       - Judge accuracy: judge-accuracy.md

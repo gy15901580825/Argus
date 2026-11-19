@@ -966,6 +966,7 @@ argus-probe scan-mcp            Call an MCP server's tools with inert payloads a
 argus-probe judge-check         Measure the chosen judge on Argus's labelled rubric cases
 argus-probe web-login           Log in to a chat page by hand and save the session for a web_chat target
 argus-probe draft-target        Draft a target spec and review checklist from a local OpenAPI file
+argus-probe gateway-fixtures    Initialize, serve and print registration values for passive MCP fixtures
 ```
 
 Each command's `--help` lists its flags.

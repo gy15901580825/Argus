@@ -67,6 +67,8 @@ scan-mcp = ["mcp>=2.3,<3"]
 # `web_chat` targets and `argus-probe web-login`: Playwright drives Chromium; run `playwright install chromium` too.
 web = ["playwright>=1.49"]
 dev = [
+    # Generates ephemeral certificates for loopback fixture TLS tests.
+    "cryptography>=46",
     "fonttools>=4.60,<5",
     "slowapi>=0.1.9,<1.0",
     "websockets>=12",
