@@ -62,12 +62,14 @@ class Preset:
 class ReferenceGateway:
     def __init__(self, entries: dict[str, Entry], *, preset: Preset | None = None,
                  filter_pattern: str = r'ARGUSFLT[0-9A-F]{20}', webhook_url: str | None = None,
-                 allow_status: int = 200, allow_body: dict | None = None):
+                 allow_status: int = 200, allow_body: dict | None = None, persist_redirects: bool = False):
         if not entries or any(not re.fullmatch(r'[a-zA-Z0-9_]+', name) for name in entries):
             raise ValueError('reference gateway requires named entries')
         if webhook_url:
             loopback_url(webhook_url)
         self.entries = dict(entries)
+        self.persist_redirects = persist_redirects
+        self.redirect_urls = {}
         self.preset = preset or Preset.safe()
         self.pattern = re.compile(filter_pattern)
         self.webhook_url, self.allow_status = webhook_url, allow_status
@@ -109,7 +111,7 @@ class ReferenceGateway:
             headers['Mcp-Session-Id'] = self.upstream_sessions[name]
         if last_event_id is not None:
             headers['Last-Event-ID'] = last_event_id
-        outgoing = self.client.build_request(request.method, entry.url, headers=headers, json=message)
+        outgoing = self.client.build_request(request.method, self.redirect_urls.get(name, entry.url), headers=headers, json=message)
         # Use httpx's redirect request construction, including its Authorization policy.
         for _ in range(11):
             loopback_url(str(outgoing.url))
@@ -119,6 +121,8 @@ class ReferenceGateway:
             following = response.next_request
             if following is None or self.preset.redirects == 'no_follow':
                 return response
+            if self.persist_redirects and response.status_code == 308:
+                self.redirect_urls[name] = str(following.url)
             await response.aclose()
             loopback_url(str(following.url))
             if self.preset.redirects == 'drop' and outgoing.url.copy_with(path='/', query=None) != following.url.copy_with(path='/', query=None):

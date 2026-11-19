@@ -212,8 +212,9 @@ class FixtureHost:
         arrived = time.monotonic()
         route, entry = 'other', None
         for name, info in self.install['entries'].items():
-            if request.path == info['path'].replace('{path_token}', self.install['path_token']):
-                route, entry = 'mcp', name
+            path = info['path'].replace('{path_token}', self.install['path_token'])
+            if request.path in (path, path + '/moved'):
+                route, entry = ('mcp' if request.path == path else 'redirect_target'), name
                 break
         body = bytearray()
         complete = True
@@ -262,6 +263,8 @@ class FixtureHost:
                     response = idle(context) if origin == 'upstream' else web.json_response({'error': 'not_found'}, status=404)
             if record:
                 record['response'] = {'status': response.status, 'behavior': behavior}
+                if 'redirect' in context.ext:
+                    record['response']['location_origin'] = ('foreign' if context.ext['redirect']['to'] == 'foreign' else 'upstream')
                 record['route'], record['entry'] = context.route, context.entry
                 record['ext'] = copy.deepcopy(context.ext)
             if not complete:

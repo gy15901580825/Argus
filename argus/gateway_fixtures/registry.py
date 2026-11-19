@@ -75,7 +75,12 @@ class Registry:
 
 
 def load_registry() -> Registry:
+    from .redirect import redirect, redirect_target
+
     registry = Registry()
+    registry.add_behavior('upstream', 'redirect', redirect)
+    registry.add_behavior('upstream', 'idle', redirect_target)
+    registry.add_behavior('foreign', 'idle', redirect_target)
     for entry_point in sorted(metadata.entry_points(group='argus.gateway_fixtures'), key=lambda ep: ep.name):
         try:
             entry_point.load()(registry)
