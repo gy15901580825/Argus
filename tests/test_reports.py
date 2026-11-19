@@ -1,6 +1,8 @@
 """Smoke tests for the three renderers over a minimal run dict."""
 
 import json
+import re
+import secrets
 import pytest
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -60,6 +62,77 @@ def test_render_html_mentions_probe_and_verdict():
     html = reports.render_html(RUN)
     assert "owasp_01_prompt_injection_basic" in html
     assert "fail" in html
+
+
+def _response_run(response):
+    return {**RUN, "findings": [{**RUN["findings"][0], "target_response": response}]}
+
+
+def _response_details(html):
+    block = re.search(r'<details class="target-response-json">.*?</details>', html, re.S)
+    assert block is not None
+    return ET.fromstring(block.group())
+
+
+def test_html_expands_long_json_as_complete_pretty_json():
+    response = {"cases": [{"path": "inline", "observations": ["safe"] * 300}], "complete": True}
+    raw = json.dumps(response)
+    assert len(raw) > 1000
+    html = reports.render_html(_response_run(raw))
+    details = _response_details(html)
+    assert "open" not in details.attrib
+    assert details.find("summary").text == "Target response (JSON)"
+    expanded = details.find("pre").text
+    assert json.loads(expanded) == response
+    assert '\n  "cases": [' in expanded
+    assert "Truncated" not in html
+    preview = html.split("<strong>Target response:</strong></p>", 1)[1].split("</pre>", 1)[0]
+    preview_text = ET.fromstring(preview.strip() + "</pre>").text
+    assert "..." in preview_text and len(preview_text) <= 800
+
+
+@pytest.mark.parametrize("size, truncated", [(19983, False), (19984, True)])
+def test_html_json_expansion_bound_and_truncation_note(size, truncated):
+    raw = json.dumps({"value": "x" * size})
+    html = reports.render_html(_response_run(raw))
+    details = _response_details(html)
+    expanded = details.find("pre").text
+    assert len(expanded) == 20000
+    note = details.find("p")
+    if truncated:
+        assert "Truncated at 20,000 characters" in "".join(note.itertext())
+        assert "--format json" in "".join(note.itertext())
+        assert "full value" in "".join(note.itertext())
+    else:
+        assert note is None
+        assert json.loads(expanded) == json.loads(raw)
+
+
+def test_html_expanded_json_preserves_masking_and_escapes_content():
+    from argus.cli.run_json import scrub_run
+
+    canary = secrets.token_hex(24)
+    injection = '</pre></details><script>alert("response")</script>&'
+    raw = json.dumps({"padding": "x" * 1200, "credential": canary, "content": injection})
+    run = scrub_run(_response_run(raw), [canary])
+    html = reports.render_html(run)
+    assert canary not in html
+    assert "<script>" not in html and "&lt;script&gt;" in html
+    expanded = json.loads(_response_details(html).find("pre").text)
+    assert expanded["credential"] == "***"
+    assert expanded["content"] == injection
+    assert run["findings"][0]["target_response"] == raw.replace(canary, "***")
+
+
+@pytest.mark.parametrize("response", ["plain response", "x" * 1200, '{"invalid": ' + "x" * 1200, "NaN"])
+def test_html_non_json_response_keeps_short_preview(response):
+    html = reports.render_html(_response_run(response))
+    assert '<details class="target-response-json">' not in html
+    if len(response) > 800:
+        assert "..." in html
+        assert response not in html
+    else:
+        assert f"<pre>{response}</pre>" in html
 
 
 @pytest.mark.parametrize("ids", [["ASI01", "ASI02"], []])

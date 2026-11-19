@@ -21,6 +21,17 @@ _jinja = Environment(
     loader=FileSystemLoader(_TEMPLATE_DIR),
     autoescape=select_autoescape(["html", "xml", "j2"]),
 )
+# Structured evidence needs more room than the preview; cap each expansion to bound report size.
+_HTML_JSON_RESPONSE_LIMIT = 20_000
+
+
+def _html_json_response(response: str) -> tuple[str, bool] | None:
+    try:
+        value = json.loads(response)
+        pretty = json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False)
+    except (ValueError, TypeError, RecursionError):
+        return None
+    return pretty[:_HTML_JSON_RESPONSE_LIMIT], len(pretty) > _HTML_JSON_RESPONSE_LIMIT
 
 
 def _verdict_counts(findings: list[dict]) -> dict:
@@ -90,6 +101,7 @@ def render_html(run: dict) -> str:
         atlas_names=remediation.atlas_mitigations(),
         is_deep_finding=is_deep_finding,
         evidence_notes=evidence_notes,
+        html_json_response=_html_json_response,
     )
 
 
