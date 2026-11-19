@@ -21,7 +21,7 @@ def cmd_gateway_fixtures():
 @click.option('--mode', type=click.Choice(['local-hosts', 'local-ports', 'compose', 'public']), default='local-hosts', show_default=True)
 @click.option('--origin', 'origin_specs', multiple=True, metavar='NAME=PUBLIC_URL,LISTEN,HOST',
               help='Override or add an origin. LISTEN is a numeric IP:port.')
-@click.option('--oauth', is_flag=True, help='Add the loopback OAuth issuer and protected entry.')
+@click.option('--oauth', is_flag=True, help='Add the OAuth issuer and protected entry in the selected placement mode.')
 @click.option('--tls-cert', type=click.Path(dir_okay=False))
 @click.option('--tls-key', type=click.Path(dir_okay=False))
 def cmd_init(install_file, mode, origin_specs, tls_cert, tls_key, oauth):

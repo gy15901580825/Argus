@@ -69,8 +69,6 @@ def validate_install(install: dict, registry: Registry) -> None:
     if 'issuer' in origins:
         if 'oauth' not in install.get('entries', {}):
             raise DefinitionError('issuer requires an OAuth entry')
-        if any(not ipaddress.ip_address(parse_listen(origin['listen'])[0]).is_loopback for origin in origins.values()):
-            raise DefinitionError('OAuth fixtures require loopback listeners')
         for field in ('client_id', 'client_secret'):
             value = install['entries']['oauth'].get(field)
             if not isinstance(value, str) or not value.startswith('argus-canary-') or len(value) < 32:

@@ -1,6 +1,7 @@
 """Loopback URL elicitation consent, origin boundaries and session continuity."""
 import asyncio
 import base64
+import copy
 import hashlib
 import json
 import secrets
@@ -12,14 +13,214 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 import httpx
 import pytest
 from aiohttp import web
+from click.testing import CliRunner
 
+from argus.cli.__main__ import main
 from argus.gateway_fixtures.host import FixtureHost, _SafeRunner
-from argus.gateway_fixtures.install import entry_url, write_install
-from argus.gateway_fixtures.oauth import issuer_url
+from argus.gateway_fixtures.install import create_install, entry_url, read_install, write_install
+from argus.gateway_fixtures.oauth import discovery_paths, issuer_url
+from argus.gateway_consent import ConsentDriver
+from argus.targets._gateway_client import GatewayClient
 from argus.runner import _send_failure
 from argus.targets import build_target
 from argus.targets._base import ProbeNotApplicable, TargetTransportError
 from tests.gateway_fixtures.test_oauth import installation, assert_private
+from tests.gateway_fixtures.test_host import start_case, seal
+
+
+@asynccontextmanager
+async def mocked_consent(monkeypatch, handler, *, scheme='http', explicit_port=False, install=None):
+    port = (':443' if scheme == 'https' else ':80') if explicit_port else ''
+    install = install or create_install(oauth=True, origins={
+        name: {'public': f'{scheme}://{alias}.argus.test{port}',
+               'listen': f'0.0.0.0:{8471 + index}', 'host': alias + '.argus.test'}
+        for index, (name, alias) in enumerate([('upstream', 'r'), ('foreign', 'e'), ('issuer', 'h')])
+    })
+    bearer, cookie = ('argus-canary-' + secrets.token_hex(16) for _ in range(2))
+    config = {'url': f'{scheme}://gateway.argus.test{port}/mcp',
+              'auth': {'headers': {'Authorization': 'Bearer ' + bearer}, 'cookies': {'gateway_user': cookie}}}
+    def no_dns(*args, **kwargs):
+        raise AssertionError('consent origin checks must not resolve DNS')
+    monkeypatch.setattr('socket.getaddrinfo', no_dns)
+    monkeypatch.setattr('argus.targets._gateway_client.target_client',
+        lambda module, **kwargs: httpx.AsyncClient(transport=httpx.MockTransport(handler), **kwargs))
+    gateway = GatewayClient(config, 2)
+    driver = ConsentDriver(gateway, install, 'follow_url', 2)
+    driver.begin_case(secrets.token_hex(16))
+    try:
+        yield driver, bearer, cookie
+    finally:
+        await gateway.aclose()
+
+
+@pytest.mark.parametrize('scheme', ['http', 'https'])
+async def test_configured_compose_origins_are_followed_without_dns(monkeypatch, scheme):
+    contacted = []
+    hosts = ['gateway.argus.test', 'r.argus.test', 'e.argus.test', 'h.argus.test', 'gateway.argus.test']
+    rotated = 'argus-canary-rotated-' + secrets.token_hex(16)
+    def respond(request):
+        index = len(contacted)
+        contacted.append(request.url.host)
+        assert request.url.host == hosts[index]
+        assert request.headers['X-Argus-Consent-Agent'] == driver.nonce
+        if index in (0, 4):
+            assert request.headers['Authorization'] == 'Bearer ' + bearer
+            assert request.headers['Cookie'] == 'gateway_user=' + (cookie if index == 0 else rotated)
+        else:
+            assert 'Authorization' not in request.headers and 'Cookie' not in request.headers
+        if index == 4:
+            return httpx.Response(204)
+        return httpx.Response(302, headers={
+            'Location': f'{scheme}://{hosts[index + 1]}/authorize' if index < 3 else f'{scheme}://{hosts[4]}/callback?code=canary',
+            **({'Set-Cookie': f'gateway_user={rotated}; Path=/'} if index == 0 else {})})
+    async with mocked_consent(monkeypatch, respond, scheme=scheme) as (driver, bearer, cookie):
+        await driver.open({'mode': 'url', 'elicitationId': 'placed-consent', 'message': 'Authorize fixture.',
+                           'url': f'{scheme}://GATEWAY.ARGUS.TEST/connect'})
+        assert contacted == hosts
+        assert [hop['origin'] for hop in driver.hops] == ['gateway', 'upstream', 'foreign', 'issuer', 'gateway']
+        assert [hop['status'] for hop in driver.hops] == [302, 302, 302, 302, 204]
+
+
+@pytest.mark.parametrize('scheme', ['http', 'https'])
+@pytest.mark.parametrize('explicit_port', [False, True])
+@pytest.mark.parametrize('origin', ['gateway', 'issuer'])
+async def test_consent_default_ports_normalize_both_ways(monkeypatch, scheme, explicit_port, origin):
+    contacted = []
+    def respond(request):
+        contacted.append(request.url.host)
+        return httpx.Response(204)
+    async with mocked_consent(monkeypatch, respond, scheme=scheme, explicit_port=explicit_port) as (driver, _, _):
+        host = 'gateway.argus.test' if origin == 'gateway' else 'h.argus.test'
+        port = '' if explicit_port else (':443' if scheme == 'https' else ':80')
+        await driver.follow(f'{scheme}://{host.upper()}{port}/authorize')
+        assert contacted == [host] and driver.hops[0]['origin'] == origin
+
+
+@pytest.mark.parametrize('host,port', [('gateway.argus.test', 8080), ('fixture.gateway.argus.test', 80)])
+async def test_gateway_cookies_stay_on_exact_gateway_origin(monkeypatch, host, port):
+    install = create_install(oauth=True, origins={
+        name: {'public': f'http://{host}:{port + index}', 'listen': f'127.0.0.1:{port + index}', 'host': host}
+        for index, name in enumerate(['upstream', 'foreign', 'issuer'])})
+    contacted = []
+    def respond(request):
+        contacted.append(str(request.url))
+        assert 'Cookie' not in request.headers and 'Authorization' not in request.headers
+        assert request.headers['X-Argus-Consent-Agent'] == driver.nonce
+        return httpx.Response(204)
+    async with mocked_consent(monkeypatch, respond, install=install) as (driver, _, _):
+        url = install['origins']['issuer']['public'] + '/authorize'
+        await driver.follow(url)
+        assert contacted == [url] and driver.hops[0]['origin'] == 'issuer'
+
+
+@pytest.mark.parametrize('redirect', [False, True])
+@pytest.mark.parametrize('destination', ['http://unlisted.argus.test/consent',
+    'https://gateway.argus.test/consent', 'http://gateway.argus.test:8080/consent',
+    'http://gateway.argus.test./consent', 'http://gateway.argus.test:0/consent'])
+async def test_consent_unlisted_origin_refused_at_each_hop(monkeypatch, redirect, destination):
+    contacted = []
+    def respond(request):
+        contacted.append(str(request.url))
+        if request.url.path == '/start':
+            return httpx.Response(302, headers={'Location': destination})
+        return httpx.Response(204)
+    async with mocked_consent(monkeypatch, respond) as (driver, _, _):
+        start = 'http://gateway.argus.test/start' if redirect else destination
+        with pytest.raises(TargetTransportError, match='consent.*origin'):
+            await driver.follow(start)
+        assert contacted == ([start] if redirect else [])
+        assert len(driver.hops) == int(redirect)
+
+
+@pytest.mark.parametrize('url', ['ftp://gateway.argus.test/consent', 'http://user@gateway.argus.test/consent',
+    'http://gateway.argus.test/consent#fragment', 'http://gateway.argus.test:invalid/consent', '/consent'])
+async def test_consent_still_refuses_malformed_urls_without_contact(monkeypatch, url):
+    contacted = []
+    def respond(request):
+        contacted.append(str(request.url))
+        return httpx.Response(204)
+    async with mocked_consent(monkeypatch, respond) as (driver, _, _):
+        with pytest.raises(TargetTransportError, match='consent.*HTTP'):
+            await driver.follow(url)
+        assert contacted == [] and driver.hops == []
+
+
+@pytest.mark.parametrize('mode', ['compose', 'public'])
+async def test_cli_placed_oauth_install_completes_consent_and_pins_callback(tmp_path, monkeypatch, mode):
+    scheme = 'http' if mode == 'compose' else 'https'
+    path = tmp_path / 'placed-install.json'
+    command = ['gateway-fixtures', 'init', '--oauth', '--mode', mode, '--install-file', str(path)]
+    if mode == 'public':
+        for name, alias, port in [('upstream', 'r', 8471), ('foreign', 'e', 8473), ('issuer', 'h', 8472)]:
+            command += ['--origin', f'{name}=https://{alias}.fixture.example:8443,0.0.0.0:{port},{alias}.fixture.example']
+    result = CliRunner().invoke(main, command)
+    assert result.exit_code == 0, result.output
+    install = read_install(path)
+    assert issuer_url(install) in result.output
+    assert all(origin['listen'].startswith('0.0.0.0:') for origin in install['origins'].values())
+    # Keep the placed URLs; only the test listeners move to ephemeral loopback ports.
+    listening = copy.deepcopy(install)
+    for origin in listening['origins'].values():
+        origin['listen'] = '127.0.0.1:0'
+    async with FixtureHost(listening, control_token=secrets.token_hex(16), control_bind='127.0.0.1:0', settle_s=0) as host:
+        async with httpx.AsyncClient(trust_env=False, timeout=2) as local:
+            auth = {'Authorization': 'Bearer ' + host.control_token}
+            lease, seq = await start_case(host, local, auth)
+            callback = f'{scheme}://gateway.argus.test/callback'
+            verifier, state = secrets.token_urlsafe(48), secrets.token_urlsafe(32)
+            challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip('=')
+            params = {'client_id': install['entries']['oauth']['client_id'], 'response_type': 'code',
+                      'redirect_uri': callback, 'resource': entry_url(install, 'oauth'), 'state': state,
+                      'code_challenge': challenge, 'code_challenge_method': 'S256'}
+            token_value, code_value = None, None
+            async def respond(request):
+                nonlocal token_value, code_value
+                if request.url.host == 'gateway.argus.test':
+                    assert request.headers['Authorization'] == 'Bearer ' + bearer
+                    assert request.headers['Cookie'] == 'gateway_user=' + cookie
+                    if request.url.path == '/connect':
+                        return httpx.Response(302, headers={'Location': issuer_url(install) + '/authorize?' + urlencode(params)})
+                    values = parse_qs(request.url.query.decode())
+                    assert values['state'] == [state] and values['iss'] == [issuer_url(install)]
+                    code_value = values['code'][0]
+                    token = await respond(httpx.Request('POST', issuer_url(install) + '/token', data={
+                        'grant_type': 'authorization_code', 'code': code_value, 'code_verifier': verifier,
+                        'redirect_uri': callback, 'resource': entry_url(install, 'oauth'),
+                        'client_id': install['entries']['oauth']['client_id'],
+                        'client_secret': install['entries']['oauth']['client_secret']}))
+                    assert token.status_code == 200
+                    token_value = token.json()['access_token']
+                    return httpx.Response(204)
+                name = next(name for name, origin in install['origins'].items()
+                            if request.url.host == urlsplit(origin['public']).hostname)
+                destination = host.origin_urls[name] + request.url.raw_path.decode()
+                response = await local.request(request.method, destination, content=request.content,
+                                               headers=request.headers)
+                return httpx.Response(response.status_code, headers=response.headers, content=response.content)
+            async with mocked_consent(monkeypatch, respond, scheme=scheme, install=install) as (driver, bearer, cookie):
+                driver.begin_case(host.case.nonce)
+                metadata = await respond(httpx.Request('GET', install['origins']['issuer']['public'] + discovery_paths(install)[0]))
+                assert metadata.json()['issuer'] == issuer_url(install)
+                assert metadata.json()['authorization_endpoint'] == issuer_url(install) + '/authorize'
+                await driver.open({'mode': 'url', 'elicitationId': 'placed', 'message': 'Authorize fixture.',
+                                   'url': f'{scheme}://gateway.argus.test/connect'})
+                assert [hop['origin'] for hop in driver.hops] == ['gateway', 'issuer', 'gateway']
+                assert host.oauth.redirect_uri == callback
+                changed = await respond(httpx.Request('GET', issuer_url(install) + '/authorize',
+                                                      params={**params, 'redirect_uri': callback + '/changed'}))
+                assert changed.json() == {'error': 'invalid_request'}
+                assert host.oauth.redirect_uri == callback
+                reply = await respond(httpx.Request('POST', entry_url(install, 'oauth'),
+                    headers={'Authorization': 'Bearer ' + token_value, 'MCP-Protocol-Version': '2025-11-25'},
+                    json={'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call',
+                          'params': {'name': 'argus_fixture_echo', 'arguments': {'nonce': driver.nonce}}}))
+                assert reply.status_code == 200 and reply.json()['result']['isError'] is False
+            evidence = await seal(host, local, auth, seq)
+            authorize = next(record for record in evidence['fixture']['requests'] if record['route'] == 'authorize')
+            assert authorize['actor'] == 'argus_user_agent'
+            assert_private(evidence, bearer, cookie, verifier, state, token_value, code_value,
+                           install['entries']['oauth']['client_secret'])
+            await local.delete(host.control_url + '/v1/lease/' + lease, headers=auth)
 
 
 @asynccontextmanager
@@ -371,6 +572,6 @@ async def test_manual_tty_user_can_finish_and_retry(tmp_path, monkeypatch):
 async def test_navigation_policy_refusal_releases_lease(tmp_path):
     async with running(tmp_path) as (target, gateway, host):
         target.spec.gateway['url'] = target.spec.gateway['url'].replace('127.0.0.1', 'localhost')
-        with pytest.raises(TargetTransportError, match='loopback'):
+        with pytest.raises(TargetTransportError, match='consent.*origin'):
             await target.send_prompt('')
         assert host.lease_id is None
