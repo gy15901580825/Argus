@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import hmac
 import ipaddress
@@ -189,9 +190,11 @@ class MCPGatewayTarget(Target):
             raise ValueError('scenario.payload.cases must contain 1 to 100 cases')
         ids = set()
         for case in script['cases']:
-            _fields(case, {'id', 'role', 'entry', *self.registry.origins}, {'id', 'role', 'entry'}, path='scenario.payload.cases[]')
+            _fields(case, {'id', 'role', 'entry', 'calls_per_case', *self.registry.origins}, {'id', 'role', 'entry'}, path='scenario.payload.cases[]')
             if not isinstance(case['id'], str) or not re.fullmatch(r'[\w-]{1,120}', case['id']) or case['id'] in ids:
                 raise ValueError('case ids must be distinct names of at most 120 characters')
+            if 'calls_per_case' in case and (type(case['calls_per_case']) is not int or not 1 <= case['calls_per_case'] <= 20):
+                raise ValueError('case calls_per_case must be between 1 and 20')
             ids.add(case['id'])
             if case['role'] not in ('control', 'attack') or case['entry'] not in [*script['entries'], *optional]:
                 raise ValueError('case must declare control/attack role and a listed entry')
@@ -207,7 +210,10 @@ class MCPGatewayTarget(Target):
         permanent = any(case.get('upstream', {}).get('redirect', {}).get('status') == 308 for case in script['cases'])
         if permanent and 'redirect_recontact' in ids:
             raise ValueError('redirect_recontact is reserved for the permanent redirect check')
-        if 10 + (len(script['cases']) + int(permanent)) * (drive['calls_per_case'] * self.spec.timeout_s + self.spec.case_window_s + 1) > 3600:
+        budget = sum(case.get('calls_per_case', drive['calls_per_case']) * self.spec.timeout_s + self.spec.case_window_s + 1 for case in script['cases'])
+        if permanent:
+            budget += drive['calls_per_case'] * self.spec.timeout_s + self.spec.case_window_s + 1
+        if 10 + budget > 3600:
             raise ValueError('gateway recipe exceeds the one-hour fixture lease limit')
         return script
 
@@ -251,7 +257,10 @@ class MCPGatewayTarget(Target):
             raise TargetTransportError('fixture host and install file do not match')
         script = self._script
         permanent = any(case.get('upstream', {}).get('redirect', {}).get('status') == 308 for case in script['cases'])
-        ttl = min(3600, 10 + (len(script['cases']) + int(permanent)) * (script['drive']['calls_per_case'] * self.spec.timeout_s + self.spec.case_window_s + 1))
+        budget = sum(case.get('calls_per_case', script['drive']['calls_per_case']) * self.spec.timeout_s + self.spec.case_window_s + 1 for case in script['cases'])
+        if permanent:
+            budget += script['drive']['calls_per_case'] * self.spec.timeout_s + self.spec.case_window_s + 1
+        ttl = min(3600, 10 + budget)
         self._lease_id = (await self._control('POST', '/lease', json={'ttl_s': ttl}))['lease_id']
         auth = self.spec.gateway.get('auth', {})
         credentials = {**{'auth_header:' + k: v for k, v in auth.get('headers', {}).items()},
@@ -309,12 +318,16 @@ class MCPGatewayTarget(Target):
                     cookies['argus_client_canary'] = client_canary
                     case_canaries['client_canary'] = client_canary
                     redactor.add(client_canary)
+                toggles = copy.deepcopy({o: case[o] for o in self.registry.origins if o in case})
+                if 'decision' in toggles.get('upstream', {}):
+                    from argus.gateway_fixtures.webhook import resolve_decision
+                    toggles['upstream']['decision'] = resolve_decision(toggles['upstream']['decision'], self.spec.features['webhook'])
                 opened = await self._control('POST', '/cases', json={'lease_id': self._lease_id, 'probe_id': self._probe_id,
-                    'case_id': case['id'], 'nonce': nonce, 'toggles': {o: case[o] for o in self.registry.origins if o in case},
+                    'case_id': case['id'], 'nonce': nonce, 'toggles': toggles,
                     'watch': {'canaries': case_canaries, 'secrets': hashes, 'watch_key': watch_key.hex(), 'case_key': secrets.token_hex(32)}})
                 calls = []
                 try:
-                    for _ in range(script['drive']['calls_per_case']):
+                    for _ in range(case.get('calls_per_case', script['drive']['calls_per_case'])):
                         calls.append(await gateway.call(install['install_label'], case['entry'], script['drive']['tool'], nonce, headers=headers, cookies=cookies))
                     if script.get('settle_s'):
                         await asyncio.sleep(script['settle_s'])
