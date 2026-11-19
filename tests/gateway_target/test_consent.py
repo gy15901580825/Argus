@@ -238,10 +238,11 @@ async def listener(handler):
 
 
 class ConsentGateway:
-    def __init__(self, host, *, delivery='error', destination=None, redirects=0, repeat=False, require_accept=False):
+    def __init__(self, host, *, delivery='error', destination=None, redirects=0, repeat=False, require_accept=False, consent_auth='cookie'):
         self.host, self.delivery, self.destination = host, delivery, destination
         self.redirects, self.repeat = redirects, repeat
         self.require_accept = require_accept
+        self.consent_auth = consent_auth
         self.cookie = 'argus-canary-cookie-' + secrets.token_hex(16)
         self.rotated = 'argus-canary-cookie-' + secrets.token_hex(16)
         self.bearer = 'argus-canary-bearer-' + secrets.token_hex(16)
@@ -263,7 +264,8 @@ class ConsentGateway:
     async def handle(self, request):
         if request.method == 'GET':
             self.hops.append(request.path)
-            assert request.cookies.get('gateway_user') == (self.cookie if request.path == '/connect' else self.rotated)
+            if self.consent_auth == 'cookie' and request.cookies.get('gateway_user') != (self.cookie if request.path == '/connect' else self.rotated):
+                return web.Response(status=403, text='Browser session required')
             assert request.headers.get('Authorization') == 'Bearer ' + self.bearer
             assert request.headers.get('X-Argus-Consent-Agent') == self.host.case.nonce
             if request.path == '/connect' or request.path.startswith('/hop/'):
@@ -634,6 +636,31 @@ async def test_missing_consent_accept_mutation_changes_result(tmp_path, monkeypa
             failure = (await target.collect_evidence())['cases'][0]['client']['calls'][-1]['transport_error']
             assert failure['status'] == 403 and failure['rpc_method'] == 'server_response'
             assert gateway.hops == []
+        else:
+            await target.send_prompt('')
+            assert (await target.collect_evidence())['cases'][0]['client']['calls'][0]['reply'] == 'result'
+        assert host.lease_id is None
+
+
+@pytest.mark.parametrize('consent_auth,cookie_session,want', [
+    ('cookie', False, 'error'), ('cookie', True, 'result'), ('bearer', False, 'result'),
+])
+async def test_cookie_only_consent_has_actionable_error_and_auth_mutation(tmp_path, consent_auth, cookie_session, want):
+    async with running(tmp_path, consent_auth=consent_auth) as (target, gateway, host):
+        if not cookie_session:
+            target.spec.gateway['auth']['cookies'] = {}
+        if want == 'error':
+            with pytest.raises(TargetTransportError) as raised:
+                await target.send_prompt('')
+            assert 'gateway.auth.cookies' in str(raised.value)
+            assert 'consent: manual' in str(raised.value)
+            evidence = await target.collect_evidence()
+            failure = evidence['cases'][0]['client']['calls'][-1]['transport_error']
+            assert failure['status'] == 403 and failure['path_class'] == 'auth'
+            assert failure['body']['text'] == 'Browser session required'
+            assert evidence['cases'][0]['client']['consent_hops'] == [
+                {'origin': 'gateway', 'route': 'other', 'status': 403, 'query': []}]
+            assert not evidence['cases'][0]['fixture']['requests']
         else:
             await target.send_prompt('')
             assert (await target.collect_evidence())['cases'][0]['client']['calls'][0]['reply'] == 'result'

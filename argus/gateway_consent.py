@@ -129,7 +129,11 @@ class ConsentDriver:
                 else:
                     await self.gateway.record_failure(response, path_class='auth')
                     if response.status_code in (401, 403):
-                        raise TargetTransportError(f'consent navigation returned HTTP {response.status_code}')
+                        reason = f'consent navigation returned HTTP {response.status_code}'
+                        if origin == 'gateway' and not outgoing.headers.get('Cookie'):
+                            reason += ('; follow_url may require a browser cookie session; '
+                                       'configure gateway.auth.cookies or use consent: manual')
+                        raise TargetTransportError(reason)
                     raise ProbeNotApplicable('consent navigation did not complete authorization')
             finally:
                 await response.aclose()
