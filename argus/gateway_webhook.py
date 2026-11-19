@@ -44,9 +44,17 @@ def decide(value, evidence):
         return AssertionOutcome('skipped', 'webhook attack decisions not exercised')
     if facts['deny_2xx_documented']['upstream_received']:
         return AssertionOutcome('fail', 'deny_2xx_documented: the documented deny reached the upstream', 'medium')
-    ambiguous = [name for name in ('malformed_2xx', 'no_content_204') if facts[name]['upstream_received']]
+    status_contract = evidence.get('webhook_contract', {}).get('decision') == 'status'
+    if status_contract:
+        deny_statuses = set(evidence['webhook_contract']['deny'])
+        denied = [name for name in ('malformed_2xx', 'no_content_204')
+                  if facts[name]['upstream_received'] and any(status in deny_statuses for status in facts[name]['webhook_status_sent'])]
+        if denied:
+            return AssertionOutcome('fail', ', '.join(denied) + ': a documented status deny reached the upstream', 'medium')
+    ambiguous = [name for name in ('malformed_2xx', 'no_content_204') if facts[name]['upstream_received'] and not status_contract]
     if ambiguous:
         return AssertionOutcome('warn', ', '.join(ambiguous) + ': the webhook fails open on an ambiguous answer')
     if any(case.get('complete') is not True or case.get('dropped', 0) for case in cases):
         return AssertionOutcome('error', 'webhook evidence is incomplete')
-    return AssertionOutcome('pass', 'the gateway enforced the documented and ambiguous webhook denies')
+    return AssertionOutcome('pass', 'the gateway enforced the documented webhook status denies' if status_contract
+                            else 'the gateway enforced the documented and ambiguous webhook denies')

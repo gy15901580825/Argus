@@ -199,6 +199,7 @@ features:
     action: redact
   webhook:
     stage: pre_call
+    decision: body
     allow: {status: 200, body: {decision: allow}}
     deny: {status: 200, body: {decision: deny}}
 registration:
@@ -245,7 +246,7 @@ case_window_s: 10
 | `fixtures` | Required `control_url`, nonempty `control_token`, and `install_file`. Relative install paths are resolved against the target file's directory. |
 | `features.upstream_headers` | Nonempty `names` list of configured credential headers. Probe 2 watches matching install canaries. |
 | `features.response_filter` | `action: redact` or `block`, matching the installed rule. |
-| `features.webhook` | `stage: pre_call` and `allow`/`deny`, each with an integer HTTP `status` and a `body` value. These describe the gateway contract. They do not install the hook. |
+| `features.webhook` | `stage: pre_call`, `decision: body` (default) or `status`, and documented `allow`/`deny` responses. See the contract examples below. These describe the gateway contract. They do not install the hook. |
 | `features.static_oauth_client` | All three keys are required. `grant` is `client_credentials` or `authorization_code`; `consent` is `none`, `follow_url` or `manual`; `trigger` is `challenge` or `manual_restart`. |
 | `registration.mode` | Only `manual` is accepted. Hook execution is reserved and unavailable. |
 | `timeout_s` | Per-call timeout, default 30, from 0.01 to 3600 seconds. |
@@ -254,6 +255,38 @@ case_window_s: 10
 Unknown nested keys and unclaimed feature keys are rejected. Bundled OAuth
 support needs no private pack. Fixture plugins can claim additional feature keys;
 see [Gateway fixture host](gateway-fixtures.md).
+
+For a body-decided webhook, keep `decision: body` and supply each response's
+`status` and `body`, as in the complete target above. Omitting `decision` keeps
+this behavior for existing targets. The documented deny body is tested with a
+2xx status; empty or malformed responses remain ambiguous-denial tests.
+
+For a status-only webhook that allows 200 and denies every other status, use:
+
+```yaml
+features:
+  webhook:
+    stage: pre_call
+    decision: status
+    allow: {status: 200, statuses: [200], body: {}}
+    deny: {status: 403, body: {}}
+```
+
+`status` selects the response sent for the allow or deny control. `statuses`
+lists the documented statuses for that decision. The allow set defaults to its
+single `status`; the deny set defaults to every other status from 200 through
+599. Set `deny.statuses` explicitly if the documentation names only particular
+denials, for example `[202, 204, 403]`. Both sets must be nonempty and disjoint,
+with distinct integer statuses, and each must include its response's `status`.
+The optional body is sent by the fixture but ignored when deciding the verdict.
+
+The `deny_2xx_documented` case uses a documented 2xx deny outside the allow set,
+preferring the configured deny status, then 204 or 202. If no such status exists,
+the probe is skipped with a reason naming that case. For a contract that allows
+every 2xx, list all statuses 200 through 299 under `allow.statuses`; this probe
+is not applicable. Allowed statuses with empty or malformed bodies do not count
+as authorization bypasses under a status-only contract. Invalid contracts are
+rejected when loading the target, before any fixture lease is changed.
 
 `consent: follow_url` is your standing consent to follow URL elicitations. Argus
 accepts legacy URL elicitation and error `-32042`, and modern URL input requests

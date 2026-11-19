@@ -64,7 +64,7 @@ class Preset:
 class ReferenceGateway:
     def __init__(self, entries: dict[str, Entry], *, preset: Preset | None = None,
                  filter_pattern: str = r'ARGUSFLT[0-9A-F]{20}', webhook_url: str | None = None,
-                 allow_status: int = 200, allow_body: dict | None = None,
+                 allow_status: int = 200, allow_body: dict | None = None, allow_statuses: list[int] | None = None,
                  persist_redirects: bool = False, cache_allow: bool = False,
                  get_support: bool = True, resume_support: bool = True,
                  protocol: str = 'auto', upstream_protocol: str = 'auto'):
@@ -83,6 +83,7 @@ class ReferenceGateway:
         self.pattern = re.compile(filter_pattern)
         self.webhook_url, self.allow_status = webhook_url, allow_status
         self.allow_body = {'decision': 'allow'} if allow_body is None else allow_body
+        self.allow_statuses = allow_statuses
         self.cache_allow, self._cached_allow = cache_allow, False
         self.get_support, self.resume_support = get_support, resume_support
         self.session = secrets.token_urlsafe(16)
@@ -186,6 +187,8 @@ class ReferenceGateway:
         response = await self.client.post(self.webhook_url, json=message, follow_redirects=False)
         if self.preset.webhook == 'status':
             return 200 <= response.status_code < 300
+        if self.allow_statuses is not None:
+            return response.status_code in self.allow_statuses
         try:
             return response.status_code == self.allow_status and response.json() == self.allow_body
         except ValueError:
