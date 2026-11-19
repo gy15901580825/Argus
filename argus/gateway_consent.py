@@ -41,9 +41,48 @@ class ConsentDriver:
         self.nonce = None
         self.hops = []
         self.completed = set()
+        self.manual_out_of_band = []
+        self.case_started = None
 
     def begin_case(self, nonce):
         self.nonce, self.hops, self.completed = nonce, [], set()
+        self.manual_out_of_band = []
+        self.case_started = asyncio.get_running_loop().time()
+
+    def requires_out_of_band(self, case, failure):
+        upstream = case.get('upstream', {})
+        changed = upstream.get('challenge') == 'invalid_token' or 'prm' in upstream
+        return (case.get('entry') == 'oauth' and changed and failure is not None
+                and failure.get('method') == 'POST' and failure.get('path_class') == 'mcp'
+                and failure.get('rpc_method') == 'tools/call' and failure.get('status') in (401, 403)
+                and not failure.get('consent_signal') and self.gateway.last_failure_body_complete)
+
+    async def reauthorize(self, entry):
+        reason = ('the gateway requires out-of-band re-authorization after the challenge; '
+                  'rerun interactively with consent: manual')
+        if self.mode != 'manual' or not sys.stdin.isatty():
+            raise ProbeNotApplicable(reason)
+        if self.manual_out_of_band:
+            raise ProbeNotApplicable('gateway still requires out-of-band re-authorization after the manual step')
+        print("Re-authorize this upstream in your gateway's own interface, using the "
+              f"connection/authorization page for the registered entry ({entry}), then press Enter.", flush=True)
+        loop = asyncio.get_running_loop()
+        started_ms = int((loop.time() - self.case_started) * 1000)
+        step = {'started_ms': started_ms, 'completed': False}
+        self.manual_out_of_band.append(step)
+        try:
+            deadline = loop.time() + self.timeout_s
+            while loop.time() < deadline:
+                if select.select([sys.stdin], [], [], 0)[0]:
+                    if not sys.stdin.readline():
+                        raise ProbeNotApplicable('manual out-of-band re-authorization cancelled')
+                    step['completed'] = True
+                    return
+                await asyncio.sleep(min(0.1, max(0, deadline - loop.time())))
+            raise ProbeNotApplicable('manual out-of-band re-authorization timed out')
+        finally:
+            step['completed_ms'] = int((loop.time() - self.case_started) * 1000)
+            step['duration_ms'] = step['completed_ms'] - started_ms
 
     def validate(self, elicitation):
         if (not isinstance(elicitation, dict) or elicitation.get('mode') != 'url'
