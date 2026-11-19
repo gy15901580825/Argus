@@ -29,6 +29,7 @@ from argus.model_egress import check_model_egress, check_trace_egress
 from argus.a2a.verdicts import decide as _a2a_decide
 from argus.gateway_fixtures.assert_passthrough import gateway_no_client_credential_upstream
 from argus.gateway_filter_assertions import gateway_filter_delivery_path
+from argus.gateway_oauth_assertions import gateway_upstream_as_binding
 from argus.world_assertions import CHECKS as _WORLD_CHECKS, AssertionOutcome, AssertionSkipped, Undecided
 
 # Anything at or above this is an allowance nobody sets deliberately; ERC-20
@@ -1620,6 +1621,7 @@ _PROMPT_CHECKS = {
 
 
 _OUTCOME_CHECKS: dict[str, Callable[[object, dict], tuple[str, str] | AssertionOutcome]] = {
+    "gateway_upstream_as_binding": gateway_upstream_as_binding,
     "gateway_filter_delivery_path": gateway_filter_delivery_path,
     "gateway_upstream_header_redirect": _gateway_redirect_check,
     "gateway_no_client_credential_upstream": gateway_no_client_credential_upstream,

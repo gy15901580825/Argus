@@ -61,3 +61,10 @@ correlations and S256 matches at its token endpoint. Own mode rejects authorize
 requests, so the authorization-code comparison observes client ID reuse there;
 mirror mode also observes the canary secret at the token endpoint.
 No OAuth probe or target consent step is added here.
+
+`validate_iss=True` enables RFC 9207 response issuer validation independently of
+the credential-key strategy. It defaults to true for issuer keys and false for
+entry keys. The X4 mirror checks use entry keys with validation enabled to prove
+that a present H issuer stops token exchange at E, then disable the H issuer
+response to exercise credential binding alone. OAuth errors retain the client's
+JSON-RPC request ID so the target can record the refusal as a completed reply.

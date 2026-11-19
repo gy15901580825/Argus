@@ -204,9 +204,19 @@ class MCPGatewayTarget(Target):
                 raise ValueError('case must declare control/attack role and a listed entry')
             self.registry.build_behaviors({origin: case[origin] for origin in self.registry.origins if origin in case})
         drive = script['drive']
-        _fields(drive, {'tool', 'calls_per_case', 'client_canaries', 'steps'}, {'tool', 'calls_per_case'}, path='scenario.payload.drive')
+        _fields(drive, {'tool', 'calls_per_case', 'client_canaries', 'steps', 'backoff_s', 'grant'}, {'tool', 'calls_per_case'}, path='scenario.payload.drive')
         if drive['tool'] not in ('echo', 'emit') or type(drive['calls_per_case']) is not int or not 1 <= drive['calls_per_case'] <= 20:
             raise ValueError('drive requires echo/emit and 1 to 20 calls_per_case')
+        if drive.get('grant') not in (None, 'authorization_code'):
+            raise ValueError('drive.grant must be authorization_code')
+        backoff = drive.get('backoff_s', [])
+        if not isinstance(backoff, list) or len(backoff) not in (0, drive['calls_per_case']):
+            raise ValueError('drive.backoff_s must have one delay per call')
+        if backoff and any(case['role'] == 'attack' and case.get('calls_per_case', drive['calls_per_case']) > len(backoff)
+                           for case in script['cases']):
+            raise ValueError('drive.backoff_s must cover every attack call')
+        for delay in backoff:
+            _seconds(delay, 'drive.backoff_s', maximum=30)
         if type(drive.get('client_canaries', False)) is not bool:
             raise ValueError('drive.client_canaries must be a boolean')
         steps = drive.get('steps', [])
@@ -225,6 +235,7 @@ class MCPGatewayTarget(Target):
             budget += sum((10 + case.get('calls_per_case', drive['calls_per_case'])) * self.spec.timeout_s for case in script['cases'])
         if permanent:
             budget += drive['calls_per_case'] * self.spec.timeout_s + self.spec.case_window_s + 1
+        budget += len(script['cases']) * sum(drive.get('backoff_s', []))
         if 10 + budget > 3600:
             raise ValueError('gateway recipe exceeds the one-hour fixture lease limit')
         return script
@@ -235,6 +246,9 @@ class MCPGatewayTarget(Target):
         missing = set(script['requires']) - self.spec.features.keys()
         if missing:
             raise ProbeNotApplicable(f'target does not declare feature {sorted(missing)[0]}')
+        grant = script['drive'].get('grant')
+        if grant and self.spec.features.get('static_oauth_client', {}).get('grant') != grant:
+            raise ProbeNotApplicable(f'probe requires static_oauth_client grant: {grant}')
         await self._release()
         self._script, self._probe_id, self._evidence = script, probe.id, {}
 
@@ -300,6 +314,10 @@ class MCPGatewayTarget(Target):
             origins[name] = {'scheme': parsed.scheme, 'class': category, 'host_id': host_id}
         evidence = {'interaction_count': 0, 'install_label': install['install_label'], 'era': None,
                     'origins': origins, 'cases': [], 'summary': {}}
+        if 'static_oauth_client' in self.spec.features:
+            evidence['static_oauth_client'] = {
+                'grant': self.spec.features['static_oauth_client']['grant'],
+                'confidential': bool(install['entries'].get('oauth', {}).get('client_secret'))}
         if script['drive'].get('client_canaries'):
             evidence['client_credentials'] = [{'label': label, 'kind': 'secret'} for label in credentials if not label.endswith(':payload')]
             evidence['client_credentials'].append({'label': 'client_canary', 'kind': 'canary'})
@@ -354,7 +372,10 @@ class MCPGatewayTarget(Target):
                     'watch': {'canaries': case_canaries, 'secrets': hashes, 'watch_key': watch_key.hex(), 'case_key': secrets.token_hex(32)}})
                 calls = []
                 try:
-                    for _ in range(case.get('calls_per_case', script['drive']['calls_per_case'])):
+                    for attempt in range(case.get('calls_per_case', script['drive']['calls_per_case'])):
+                        backoff = script['drive'].get('backoff_s', [])
+                        if case['role'] == 'attack' and backoff:
+                            await asyncio.sleep(backoff[attempt])
                         calls.append(await gateway.call(install['install_label'], case['entry'], script['drive']['tool'], nonce, headers=headers, cookies=cookies,
                                                         path=case.get('upstream', {}).get('delivery')))
                     if script.get('settle_s'):
@@ -372,6 +393,11 @@ class MCPGatewayTarget(Target):
                             call['classification'] = 'raw'
                 evidence['cases'].append({'id': case['id'], 'entry': case['entry'], 'role': case['role'], 'complete': sealed['complete'],
                     'dropped': sealed['dropped'], 'client': {'calls': calls, 'consent_hops': list(gateway.consent.hops) if gateway.consent else []}, 'fixture': sealed['fixture']})
+                if 'static_oauth_client' in self.spec.features:
+                    evidence['cases'][-1]['oauth'] = {'as_metadata_fetched': {
+                        origin: sum(record.get('actor') == 'gateway' and record.get('origin') == origin
+                                    and 'as_metadata_fetched' in record.get('ext', {}).get('oauth', {})
+                                    for record in requests) for origin in ('issuer', 'foreign')}}
                 if 'redirect' in case.get('upstream', {}):
                     evidence['cases'][-1]['redirect'] = {key: case['upstream']['redirect'][key] for key in ('status', 'to')}
                 if 'delivery' in case.get('upstream', {}):

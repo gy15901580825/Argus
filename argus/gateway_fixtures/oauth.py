@@ -167,7 +167,7 @@ class OAuthRuntime:
         return observation
 
     def _event(self, context, name, event):
-        context.ext['oauth'] = {name: event}
+        context.ext.setdefault('oauth', {})[name] = event
         if context.case_id is not None:
             events = context.state.setdefault('oauth', {}).setdefault(name, [])
             if len(events) < STATE_MAX:

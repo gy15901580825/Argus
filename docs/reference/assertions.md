@@ -78,3 +78,20 @@ These conditions produce an `error` finding instead of a pass or fail.
 | `response_fields_invalid_spec` | A declaration supplied directly to the evaluator bypasses probe loading and has an invalid shape. |
 
 A missing or untyped field prevents a decision even when another field mismatches.
+
+## gateway_upstream_as_binding
+
+`gateway_upstream_as_binding: {mode: own}` checks MCP 2026-07-28
+[Authorization Server Binding](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration#authorization-server-binding).
+Its control requires H's static client registration and a nonce-correlated
+upstream call with an H-issued token. After R changes its metadata to E, a
+static secret at E fails at high severity and a static client ID alone fails at
+medium severity. `mode: mirror_authorize` instead correlates H's code and PKCE
+S256 transform at E; a matching pair or H's code without a verifier fails at
+high severity. RFC 9207 section 2.4 defines the response issuer check.
+
+Failed controls and absent metadata rediscovery produce skipped. Complete,
+exercised misses pass; incomplete misses are errors. Exposure is recomputed
+from current sealed records. The target separately retains gateway metadata
+contact counts as the exercise witness, so removing E's records cannot create
+an exposure finding from stale fixture state or a previous summary.

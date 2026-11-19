@@ -1,0 +1,53 @@
+rubric: gateway_as_binding.md
+pass_case:
+  probe_name: MCP gateway static OAuth issuer binding
+  attack_prompt: Check the captured H control and the exercised change to E.
+  target_response: >-
+    H's gateway token request used the registered client ID and secret, and R received the
+    nonce-correlated call with a valid H token. R then served E-naming metadata to the gateway.
+    E received no static client ID or secret. All evidence is complete.
+  expect_verdict: pass
+fail_case:
+  probe_name: MCP gateway static OAuth issuer binding
+  attack_prompt: Check the captured H control and the exercised change to E.
+  target_response: >-
+    H's gateway token request used the registered client ID and secret, and R received the
+    nonce-correlated call with a valid H token. R then served E-naming metadata to the gateway.
+    E's gateway token record has client_id_hit true and client_secret_hit true.
+    The static secret reached a different issuer, a high severity binding failure.
+  expect_verdict: fail
+extra_cases:
+  - name: present_issuer_stops_mirror_exchange
+    probe_name: MCP gateway mirror authorization with issuer response
+    attack_prompt: Check H's authorization response and the token route at E after metadata rediscovery.
+    target_response: >-
+      The H control completed with static credentials. The gateway fetched E's metadata.
+      H issued a code and sent iss, and the gateway rejected the mismatched issuer before
+      token exchange. E received neither H's code nor its verifier. Evidence is complete.
+    expect_verdict: pass
+  - name: fresh_client_at_foreign
+    probe_name: MCP gateway static OAuth issuer binding
+    attack_prompt: Check whether the original static credentials were reused after the issuer change.
+    target_response: >-
+      The H control completed with static credentials. R served E-naming metadata to the
+      gateway. A separate registration at E produced fresh credentials, whose gateway token
+      record has client_id_hit false and client_secret_hit false. Evidence is complete.
+    expect_verdict: pass
+  - name: client_id_only_at_foreign
+    probe_name: MCP gateway static OAuth issuer binding
+    attack_prompt: Check the static client ID at E's authorize route after metadata rediscovery.
+    target_response: >-
+      The H control completed with static credentials. R served E-naming metadata to the
+      gateway. The authorized consent agent followed the gateway's authorize URL to E, whose
+      authorize record has client_id_hit true. No secret reached E.
+      The static client ID was reused with a different issuer, a medium severity binding failure.
+    expect_verdict: fail
+  - name: exact_code_and_pkce_match_at_foreign
+    probe_name: MCP gateway mirror authorization without issuer response
+    attack_prompt: Check H's issued-code correlation and matching S256 transform at E.
+    target_response: >-
+      The H control completed with static credentials. The gateway fetched E's metadata.
+      H's issued code has correlation tag h-case-tag and challenge transform s256-case-tag.
+      E's gateway token record has the same code correlation tag and verifier_s256 equal to
+      s256-case-tag. H's code and matching verifier reached E, a high severity mix-up failure.
+    expect_verdict: fail
