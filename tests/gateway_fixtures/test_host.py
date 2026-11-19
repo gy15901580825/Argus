@@ -451,3 +451,16 @@ async def test_fixture_tls_keeps_default_loopback_control_http(tmp_path):
         async with httpx.AsyncClient(trust_env=False, verify=False) as client:
             assert (await rpc(host, client, 'initialize')).status_code == 200
             assert (await client.get(host.control_url + '/v1/health', headers={'Authorization': 'Bearer test-token'})).status_code == 200
+
+
+async def test_authorization_canary_matches_payload_without_scheme(serving):
+    host, client, auth = serving
+    _, seq = await start_case(host, client, auth)
+    token = host.install['entries']['hdr']['headers']['Authorization'].partition(' ')[2]
+    changed = token[:-1] + ('0' if token[-1] != '0' else '1')
+    await rpc(host, client, 'tools/call', headers={'Cookie': 'observed=' + token})
+    await rpc(host, client, 'tools/call', headers={'Cookie': 'observed=' + changed})
+    evidence = await seal(host, client, auth, seq)
+    assert evidence['fixture']['requests'][0]['hits'] == ['upstream_header:Authorization']
+    assert evidence['fixture']['requests'][1]['hits'] == []
+    assert token not in json.dumps(evidence) and changed not in json.dumps(evidence)

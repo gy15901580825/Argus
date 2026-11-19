@@ -115,7 +115,8 @@ class FixtureHost:
         self._runners: list[web.AppRunner] = []
         self.origin_urls: dict[str, str] = {}
         self.control_url = ''
-        self._canaries = {f'upstream_header:{name}': value for entry in install['entries'].values()
+        self._canaries = {f'upstream_header:{name}': value.partition(' ')[2] if name.lower() == 'authorization' and ' ' in value else value
+                          for entry in install['entries'].values()
                           for name, value in entry.get('headers', {}).items()}
         self.seen = {entry: {'first': None, 'last': None, 'methods': [], 'hits': []} for entry in install['entries']}
         self._idle_handlers = {origin: factory({}) for (origin, name), factory in self.registry.behaviors.items() if name == 'idle'}
