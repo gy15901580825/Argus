@@ -263,3 +263,16 @@ async def test_reference_oauth_get_refusal_preserves_bodyless_request(tmp_path):
             assert response.status_code == 200
             assert response.json()['id'] is None
             assert response.json()['error']['code'] == -32000
+
+
+def test_consent_carried_authorize_id_is_reuse_but_token_requires_gateway_actor():
+    evidence = captured()
+    evidence['static_oauth_client']['grant'] = 'authorization_code'
+    forwarded = record('foreign', 'authorize', {'authorize': {'client_id_hit': True}}, actor='argus_user_agent')
+    evidence['cases'][1]['fixture']['requests'].append(forwarded)
+    status, result = verdict(evidence)
+    assert status == 'fail' and result.severity == 'medium'
+    forwarded.update(route='token', ext={'oauth': {'token': {'client_id_hit': True}}})
+    assert verdict(evidence)[0] == 'pass'
+    evidence['cases'][1]['fixture']['requests'].remove(forwarded)
+    assert verdict(evidence)[0] == 'pass'

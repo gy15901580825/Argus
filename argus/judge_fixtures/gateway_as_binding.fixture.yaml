@@ -38,7 +38,8 @@ extra_cases:
     attack_prompt: Check the static client ID at E's authorize route after metadata rediscovery.
     target_response: >-
       The H control completed with static credentials. R served E-naming metadata to the
-      gateway. E's gateway authorize record has client_id_hit true. No secret reached E.
+      gateway. The authorized consent agent followed the gateway's authorize URL to E, whose
+      authorize record has client_id_hit true. No secret reached E.
       The static client ID was reused with a different issuer, a medium severity binding failure.
     expect_verdict: fail
   - name: exact_code_and_pkce_match_at_foreign

@@ -88,8 +88,9 @@ def gateway_upstream_as_binding(value, evidence):
                 findings.append(('high', f"{case['id']}: client_secret_hit at foreign token endpoint violates MCP 2026-07-28 Authorization Server Binding"))
             elif (any(token['client_id_hit'] for token in foreign_tokens)
                   or any(record.get('origin') == 'foreign' and record.get('route') == 'authorize'
+                         and record.get('actor') in ('gateway', 'argus_user_agent')
                          and ('static_client_id' in record.get('hits', []) or record.get('ext', {}).get('oauth', {}).get('authorize', {}).get('client_id_hit') is True)
-                         for record in _records(case))):
+                         for record in _records(case, gateway_only=False))):
                 findings.append(('medium', f"{case['id']}: client_id_hit at foreign authorization server violates MCP 2026-07-28 Authorization Server Binding"))
         else:
             for token in foreign_tokens:
