@@ -63,7 +63,8 @@ class ReferenceGateway:
     def __init__(self, entries: dict[str, Entry], *, preset: Preset | None = None,
                  filter_pattern: str = r'ARGUSFLT[0-9A-F]{20}', webhook_url: str | None = None,
                  allow_status: int = 200, allow_body: dict | None = None,
-                 persist_redirects: bool = False, cache_allow: bool = False):
+                 persist_redirects: bool = False, cache_allow: bool = False,
+                 get_support: bool = True, resume_support: bool = True):
         if not entries or any(not re.fullmatch(r'[a-zA-Z0-9_]+', name) for name in entries):
             raise ValueError('reference gateway requires named entries')
         if webhook_url:
@@ -76,6 +77,7 @@ class ReferenceGateway:
         self.webhook_url, self.allow_status = webhook_url, allow_status
         self.allow_body = {'decision': 'allow'} if allow_body is None else allow_body
         self.cache_allow, self._cached_allow = cache_allow, False
+        self.get_support, self.resume_support = get_support, resume_support
         self.session = secrets.token_urlsafe(16)
         self.upstream_sessions: dict[str, str] = {}
         self.url = ''
@@ -222,6 +224,8 @@ class ReferenceGateway:
                 return web.Response(status=400, text='Unsupported protocol version')
             if request.method == 'GET':
                 last_id = request.headers.get('Last-Event-ID')
+                if not self.get_support or (last_id and not self.resume_support):
+                    return web.Response(status=405)
                 names = list(self.entries)
                 event_id = None
                 if last_id:

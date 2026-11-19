@@ -1613,7 +1613,7 @@ APPROVED.update({'mcp_gateway_webhook_decision': {'ids': ['ASI02'], 'reason': 'A
 APPROVED.update({'mcp_gateway_filter_delivery_paths': {
     'ids': [],
     'reason': 'The fixture emits a synthetic filter marker and compares transport delivery paths. Like MCP server conformance checks, this measures application enforcement without an agent goal, privileged tool misuse or credential disclosure. ASI01, ASI02 and ASI03 are excluded. AML.T0049 follows the sibling gateway conformance probe; LLM02 describes the configured disclosure filter whose bypass is measured.',
-    'evidence_sha256': '5d2af98ab54e949bf166a448beb1f5a4cea41455fb5777256f19bbab8ba23e68',
+    'evidence_sha256': '3295bff8601bfcc26f0dfc7f6e33ed8d410cd82c6be4a2e3a240c1a0701e0034',
 }})
 
 

@@ -337,7 +337,9 @@ class MCPGatewayTarget(Target):
                 requests = sealed['fixture']['requests']
                 if 'delivery' in case.get('upstream', {}):
                     markers = {record.get('ext', {}).get('delivery', {}).get('marker') for record in requests
-                               if record.get('body', {}).get('jsonrpc', {}).get('nonce') == nonce}
+                               if record.get('body', {}).get('jsonrpc', {}).get('nonce') == nonce
+                               or (record.get('method') == 'GET'
+                                   and record.get('ext', {}).get('delivery', {}).get('nonce') == nonce)}
                     for call in calls:
                         if markers.intersection(call.get('markers', [])):
                             call['classification'] = 'raw'
