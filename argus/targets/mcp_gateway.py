@@ -1,0 +1,343 @@
+"""Scripted gateway cases, attributed by nonce through passive fixtures."""
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import hmac
+import ipaddress
+import json
+import math
+import re
+import secrets
+import time
+from dataclasses import dataclass, field
+from difflib import get_close_matches
+from urllib.parse import urlsplit
+
+import httpx
+
+from argus.gateway_fixtures.install import read_install
+from argus.gateway_fixtures.registry import load_registry
+from argus.targets._base import KindInfo, ProbeNotApplicable, Target, TargetTransportError, Turn
+from argus.targets._gateway_client import GatewayClient
+from argus_transport.security import Redactor
+
+SANDBOX_REASON = 'registers hostile upstream fixtures in a gateway'
+
+
+def _unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError('duplicate JSON field')
+        result[key] = value
+    return result
+
+
+def _fields(value, allowed, required=(), *, path):
+    if not isinstance(value, dict):
+        raise ValueError(f'{path} must be an object')
+    unknown = value.keys() - set(allowed)
+    if unknown:
+        messages = []
+        for name in sorted(unknown, key=str):
+            matches = get_close_matches(str(name), sorted(allowed), n=1)
+            suggestion = f' Did you mean {matches[0]!r}?' if matches else ''
+            messages.append(f'unknown field {name!r} for {path}.{suggestion}')
+        raise ValueError(f"{' '.join(messages)} Valid fields: {', '.join(sorted(allowed))}")
+    missing = set(required) - value.keys()
+    if missing:
+        raise ValueError(f'{path} missing required fields: {sorted(missing)}')
+
+
+def _seconds(value, path, *, minimum=0, maximum=3600):
+    if type(value) not in (int, float) or not math.isfinite(value) or not minimum <= value <= maximum:
+        raise ValueError(f'{path} must be a finite number between {minimum} and {maximum}')
+
+
+def _url(value, path):
+    try:
+        parsed = urlsplit(value)
+        valid = parsed.scheme in ('http', 'https') and parsed.hostname and not parsed.username and not parsed.password and not parsed.fragment
+        parsed.port
+    except (ValueError, TypeError, AttributeError):
+        valid = False
+    if not valid:
+        raise ValueError(f'{path} must be an HTTP(S) URL without userinfo or fragment')
+
+
+def _strings(value, path):
+    if not isinstance(value, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in value.items()):
+        raise ValueError(f'{path} must map names to strings')
+
+
+def _feature(name, value):
+    if name == 'upstream_headers':
+        _fields(value, {'names'}, {'names'}, path='features.upstream_headers')
+        if not isinstance(value['names'], list) or not value['names'] or any(not isinstance(n, str) or not n for n in value['names']):
+            raise ValueError('features.upstream_headers.names must be a nonempty list of header names')
+    elif name == 'response_filter':
+        _fields(value, {'action'}, {'action'}, path='features.response_filter')
+        if value['action'] not in ('redact', 'block'):
+            raise ValueError('features.response_filter.action must be redact or block')
+    elif name == 'webhook':
+        _fields(value, {'stage', 'allow', 'deny'}, {'stage', 'allow', 'deny'}, path='features.webhook')
+        if value['stage'] != 'pre_call':
+            raise ValueError('features.webhook.stage must be pre_call')
+        for decision in ('allow', 'deny'):
+            shape = value[decision]
+            _fields(shape, {'status', 'body'}, {'status', 'body'}, path=f'features.webhook.{decision}')
+            if type(shape['status']) is not int or not 100 <= shape['status'] <= 599:
+                raise ValueError(f'features.webhook.{decision}.status must be an HTTP status')
+
+
+@dataclass(frozen=True)
+class MCPGatewaySpec:
+    kind: str = 'mcp_gateway'
+    sandbox: bool = False
+    gateway: dict = field(default_factory=dict)
+    fixtures: dict = field(default_factory=dict)
+    features: dict = field(default_factory=dict)
+    registration: dict = field(default_factory=lambda: {'mode': 'manual'})
+    timeout_s: float = 30
+    case_window_s: float = 10
+
+    def __post_init__(self):
+        if self.kind != 'mcp_gateway':
+            raise ValueError("kind must be 'mcp_gateway'")
+        if self.sandbox is not True:
+            raise ValueError(f'mcp_gateway requires sandbox: true — this adapter {SANDBOX_REASON}; use a non-production gateway or an isolated tenant')
+        _fields(self.gateway, {'url', 'protocol', 'auth', 'tools'}, {'url'}, path='gateway')
+        _url(self.gateway['url'], 'gateway.url')
+        if self.gateway.get('protocol', 'auto') not in ('auto', '2025-11-25', '2025-06-18'):
+            raise ValueError('gateway.protocol must be auto, 2025-11-25 or 2025-06-18; modern support is not implemented')
+        auth = self.gateway.get('auth', {})
+        _fields(auth, {'headers', 'cookies'}, path='gateway.auth')
+        for name in ('headers', 'cookies'):
+            _strings(auth.get(name, {}), f'gateway.auth.{name}')
+        tools = self.gateway.get('tools', {})
+        _fields(tools, {'match', 'prefix'}, path='gateway.tools')
+        if tools.get('match', 'fixture_marker') not in ('fixture_marker', 'prefix') or not isinstance(tools.get('prefix', ''), str):
+            raise ValueError('gateway.tools must use fixture_marker or prefix with a string prefix')
+        _fields(self.fixtures, {'control_url', 'control_token', 'install_file'}, {'control_url', 'control_token', 'install_file'}, path='fixtures')
+        _url(self.fixtures['control_url'], 'fixtures.control_url')
+        for name in ('control_token', 'install_file'):
+            if not isinstance(self.fixtures[name], str) or not self.fixtures[name]:
+                raise ValueError(f'fixtures.{name} must be a nonempty string')
+        _fields(self.registration, {'mode'}, path='registration')
+        if self.registration.get('mode', 'manual') != 'manual':
+            raise ValueError('registration.mode must be manual; hook is reserved')
+        _seconds(self.timeout_s, 'timeout_s', minimum=0.01)
+        _seconds(self.case_window_s, 'case_window_s')
+        if not isinstance(self.features, dict):
+            raise ValueError('features must be an object')
+        registry = load_registry()
+        for name, value in self.features.items():
+            if name in ('upstream_headers', 'response_filter', 'webhook'):
+                _feature(name, value)
+            else:
+                registry.validate_features({name: value})
+
+
+class MCPGatewayTarget(Target):
+    compatible_classes = frozenset({'mcp_gateway'})
+    kind_info = KindInfo(kind='mcp_gateway', required=frozenset({'gateway', 'fixtures', 'sandbox'}),
+                         description='An MCP gateway connected to passive upstream fixtures', sandbox_reason=SANDBOX_REASON)
+
+    def __init__(self, spec: MCPGatewaySpec):
+        self.spec = spec
+        self.registry = load_registry()
+        self._script = None
+        self._probe_id = None
+        self._evidence = {}
+        self._lease_id = None
+        self._control_client = httpx.AsyncClient(timeout=spec.timeout_s + spec.case_window_s + 1, trust_env=False,
+            headers={'Authorization': 'Bearer ' + spec.fixtures['control_token']})
+        self._gateway = None
+
+    async def _control(self, method, path, **kwargs):
+        try:
+            response = await self._control_client.request(method, self.spec.fixtures['control_url'].rstrip('/') + '/v1' + path, **kwargs)
+            if not response.is_success:
+                reason = 'fixtures in use' if response.status_code == 409 and path == '/lease' else 'fixture control failed'
+                raise TargetTransportError(f'{reason}: HTTP {response.status_code}')
+            return response.json()
+        except (httpx.HTTPError, ValueError):
+            raise TargetTransportError('fixture control API unavailable or malformed') from None
+
+    def _script_for(self, probe):
+        try:
+            raw = probe.scenario_payload
+            if not isinstance(raw, str):
+                raise ValueError
+            script = json.loads(raw, object_pairs_hook=_unique_object, parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
+        except (ValueError, AttributeError, TypeError):
+            raise ValueError('scenario.payload must be a valid JSON object; refusing to run an unstaged gateway') from None
+        _fields(script, {'version', 'requires', 'entries', 'cases', 'drive', 'settle_s'}, {'version', 'requires', 'entries', 'cases', 'drive'}, path='scenario.payload')
+        if type(script['version']) is not int or script['version'] != 1:
+            raise ValueError('scenario.payload.version must be 1')
+        for name in ('requires', 'entries'):
+            if not isinstance(script[name], list) or any(not isinstance(v, str) or not v for v in script[name]):
+                raise ValueError(f'scenario.payload.{name} must be a list of names')
+        if not script['entries']:
+            raise ValueError('scenario.payload.entries must not be empty')
+        if not isinstance(script['cases'], list) or not 1 <= len(script['cases']) <= 100:
+            raise ValueError('scenario.payload.cases must contain 1 to 100 cases')
+        ids = set()
+        for case in script['cases']:
+            _fields(case, {'id', 'role', 'entry', *self.registry.origins}, {'id', 'role', 'entry'}, path='scenario.payload.cases[]')
+            if not isinstance(case['id'], str) or not re.fullmatch(r'[\w-]{1,120}', case['id']) or case['id'] in ids:
+                raise ValueError('case ids must be distinct names of at most 120 characters')
+            ids.add(case['id'])
+            if case['role'] not in ('control', 'attack') or case['entry'] not in script['entries']:
+                raise ValueError('case must declare control/attack role and a listed entry')
+            self.registry.build_behaviors({origin: case[origin] for origin in self.registry.origins if origin in case})
+        drive = script['drive']
+        _fields(drive, {'tool', 'calls_per_case', 'client_canaries'}, {'tool', 'calls_per_case'}, path='scenario.payload.drive')
+        if drive['tool'] not in ('echo', 'emit') or type(drive['calls_per_case']) is not int or not 1 <= drive['calls_per_case'] <= 20:
+            raise ValueError('drive requires echo/emit and 1 to 20 calls_per_case')
+        if type(drive.get('client_canaries', False)) is not bool:
+            raise ValueError('drive.client_canaries must be a boolean')
+        if 'settle_s' in script:
+            _seconds(script['settle_s'], 'scenario.payload.settle_s', maximum=self.spec.case_window_s)
+        if 10 + len(script['cases']) * (drive['calls_per_case'] * self.spec.timeout_s + self.spec.case_window_s + 1) > 3600:
+            raise ValueError('gateway recipe exceeds the one-hour fixture lease limit')
+        return script
+
+    async def begin_probe(self, probe):
+        # Refused definitions must not tear down the caller's existing lease.
+        script = self._script_for(probe)
+        missing = set(script['requires']) - self.spec.features.keys()
+        if missing:
+            raise ProbeNotApplicable(f'target does not declare feature {sorted(missing)[0]}')
+        await self._release()
+        self._script, self._probe_id, self._evidence = script, probe.id, {}
+
+    async def _release(self):
+        if self._lease_id:
+            lease_id, self._lease_id = self._lease_id, None
+            await self._control('DELETE', f'/lease/{lease_id}')
+
+    async def aclose(self):
+        try:
+            await self._release()
+        finally:
+            if self._gateway:
+                await self._gateway.aclose()
+            await self._control_client.aclose()
+
+    async def collect_evidence(self):
+        return self._evidence
+
+    async def send_prompt(self, prompt: str, history: tuple[Turn, ...] = ()):
+        start = time.monotonic()
+        if self._script is None:
+            raise ValueError('begin_probe with a gateway recipe is required')
+        if not self._evidence:
+            self._evidence = await self._run()
+        return json.dumps(self._evidence, sort_keys=True), (time.monotonic() - start) * 1000
+
+    async def _run(self):
+        install = read_install(self.spec.fixtures['install_file'], self.registry)
+        health = await self._control('GET', '/health')
+        if health.get('install_label') != install['install_label']:
+            raise TargetTransportError('fixture host and install file do not match')
+        script = self._script
+        ttl = min(3600, 10 + len(script['cases']) * (script['drive']['calls_per_case'] * self.spec.timeout_s + self.spec.case_window_s + 1))
+        self._lease_id = (await self._control('POST', '/lease', json={'ttl_s': ttl}))['lease_id']
+        auth = self.spec.gateway.get('auth', {})
+        credentials = {**{'auth_header:' + k: v for k, v in auth.get('headers', {}).items()},
+                       **{'cookie:' + k: v for k, v in auth.get('cookies', {}).items()}}
+        for name, value in list(credentials.items()):
+            if name.startswith('auth_header:') and ' ' in value:
+                credentials[name + ':payload'] = value.split(' ', 1)[1]
+        canaries = {}
+        for entry in install['entries'].values():
+            for name, value in entry.get('headers', {}).items():
+                canaries['upstream_header:' + name] = value.split(' ', 1)[1] if name.lower() == 'authorization' else value
+        redactor = Redactor([*credentials.values(), *canaries.values(), self.spec.fixtures['control_token'], install['path_token']])
+        origins = {}
+        host_ids = {}
+        for name, origin in install['origins'].items():
+            parsed = urlsplit(origin['public'])
+            try:
+                address = ipaddress.ip_address(parsed.hostname)
+                category = 'loopback' if address.is_loopback else 'public' if address.is_global else 'private'
+            except ValueError:
+                category = 'unknown'
+            host_id = host_ids.setdefault(parsed.hostname, f'h{len(host_ids) + 1}')
+            origins[name] = {'scheme': parsed.scheme, 'class': category, 'host_id': host_id}
+        evidence = {'interaction_count': 0, 'install_label': install['install_label'], 'era': None,
+                    'origins': origins, 'cases': [], 'summary': {}}
+        gateway = GatewayClient(self.spec.gateway, self.spec.timeout_s)
+        self._gateway = gateway
+        try:
+            await gateway.initialize()
+            await gateway.discover(install['install_label'])
+            for entry in script['entries']:
+                if (entry, script['drive']['tool']) not in gateway.tools:
+                    raise ProbeNotApplicable(f'entry {entry}: entry not registered')
+            evidence['era'] = gateway.era
+            for case in script['cases']:
+                nonce = secrets.token_hex(16)
+                watch_key = secrets.token_bytes(32)
+                hashes = {name: hmac.new(watch_key, value.encode(), hashlib.sha256).hexdigest() for name, value in credentials.items() if value}
+                case_canaries = dict(canaries)
+                headers, cookies = {}, {}
+                if script['drive'].get('client_canaries'):
+                    client_canary = 'argus-canary-client-' + secrets.token_hex(16)
+                    headers['X-Argus-Client-Canary'] = client_canary
+                    cookies['argus_client_canary'] = client_canary
+                    case_canaries['client_canary'] = client_canary
+                    redactor.add(client_canary)
+                opened = await self._control('POST', '/cases', json={'lease_id': self._lease_id, 'probe_id': self._probe_id,
+                    'case_id': case['id'], 'nonce': nonce, 'toggles': {o: case[o] for o in self.registry.origins if o in case},
+                    'watch': {'canaries': case_canaries, 'secrets': hashes, 'watch_key': watch_key.hex(), 'case_key': secrets.token_hex(32)}})
+                calls = []
+                try:
+                    for _ in range(script['drive']['calls_per_case']):
+                        calls.append(await gateway.call(install['install_label'], case['entry'], script['drive']['tool'], nonce, headers=headers, cookies=cookies))
+                    if script.get('settle_s'):
+                        await asyncio.sleep(script['settle_s'])
+                finally:
+                    sealed = await self._control('POST', f"/cases/{opened['case_seq']}/seal")
+                requests = sealed['fixture']['requests']
+                evidence['cases'].append({'id': case['id'], 'role': case['role'], 'complete': sealed['complete'],
+                    'dropped': sealed['dropped'], 'client': {'calls': calls, 'consent_hops': []}, 'fixture': sealed['fixture']})
+                evidence['interaction_count'] += sum(r.get('actor') == 'gateway' for r in requests)
+            evidence['interaction_count'] += gateway.exchanges
+            return redactor.clean(evidence)
+        finally:
+            try:
+                await self._release()
+            finally:
+                await gateway.aclose()
+                self._gateway = None
+
+    async def check_registration(self):
+        install = read_install(self.spec.fixtures['install_file'], self.registry)
+        from types import SimpleNamespace
+
+        entries = list(install['entries'])
+        recipe = {'version': 1, 'requires': [], 'entries': entries,
+                  'cases': [{'id': 'check-' + name, 'role': 'control', 'entry': name, 'upstream': {}} for name in entries],
+                  'drive': {'tool': 'echo', 'calls_per_case': 1}}
+        await self.begin_probe(SimpleNamespace(id='gateway-registration-check', scenario_payload=json.dumps(recipe)))
+        await self.send_prompt('')
+        messages = []
+        for name, case in zip(entries, self._evidence['cases']):
+            nonce = case['client']['calls'][0]['nonce']
+            records = [r for r in case['fixture']['requests'] if r.get('actor') == 'gateway' and r.get('entry') == name
+                       and r.get('body', {}).get('jsonrpc', {}).get('nonce') == nonce]
+            if not records:
+                messages.append(f'entry {name}: the gateway never connected for the canary call')
+            if any(call['reply'] != 'result' for call in case['client']['calls']):
+                messages.append(f'entry {name}: gateway canary call failed')
+            if not case['complete']:
+                messages.append(f'entry {name}: fixture evidence is incomplete')
+            hits = {hit for record in records for hit in record['hits']}
+            configured = {header.lower() for header in self.spec.features.get('upstream_headers', {}).get('names', [])}
+            for header in install['entries'][name].get('headers', {}):
+                if header.lower() in configured and 'upstream_header:' + header not in hits:
+                    messages.append(f'entry {name}: {header} canary never arrived')
+        return messages

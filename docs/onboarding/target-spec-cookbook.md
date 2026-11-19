@@ -2,10 +2,10 @@
 
 Argus needs to know how to reach your AI agent. The "target spec" is a small JSON file (`argus-target.json`) that describes the agent endpoint and how to authenticate against it.
 
-The fastest way to generate it is interactively, for any of the 15 kinds `init` knows how to ask questions about (`openai_compat`, `anthropic_native`, `custom_http`, `grpc`, `browser_use`, `web_chat`, `payment_agent`, `mcp_agent`, `testbed_agent`, `http_upload`, `a2a_server`, `mcp_server`, `vllm_server`, `a2a_agent`, `python`):
+The fastest way to generate it is interactively, for any of the 16 kinds `init` knows how to ask questions about (`openai_compat`, `anthropic_native`, `custom_http`, `grpc`, `browser_use`, `web_chat`, `payment_agent`, `mcp_agent`, `testbed_agent`, `http_upload`, `a2a_server`, `mcp_server`, `vllm_server`, `a2a_agent`, `python`):
 
 ```bash
-argus-probe init --kind <one of those 15>
+argus-probe init --kind <one of those 16>
 ```
 
 Below are copy-paste templates for each supported agent shape, plus the gotchas we've run into in real deployments.

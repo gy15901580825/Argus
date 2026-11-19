@@ -32,7 +32,7 @@ Interactive prompts walk you through:
 - `Model name` — e.g. `gpt-4o-mini`, `claude-sonnet-4-6`, your own model id
 - `API key env var` — name of the env var holding your agent API key (e.g. `OPENAI_API_KEY`); the value is resolved at run time so the secret is never persisted in `target.json`
 
-The 15 supported `kind` values: `openai_compat`, `anthropic_native`, `custom_http`, `grpc`, `http_upload`, `browser_use`, `payment_agent`, `mcp_agent`, `testbed_agent`, `mcp_server`, `vllm_server`, `web_chat`, `a2a_server`, `a2a_agent`, `python`. See [target-spec-cookbook.md](./target-spec-cookbook.md) for non-OpenAI shapes.
+The 16 supported `kind` values: `openai_compat`, `anthropic_native`, `custom_http`, `grpc`, `http_upload`, `browser_use`, `payment_agent`, `mcp_agent`, `testbed_agent`, `mcp_gateway`, `mcp_server`, `vllm_server`, `web_chat`, `a2a_server`, `a2a_agent`, `python`. See [target-spec-cookbook.md](./target-spec-cookbook.md) for non-OpenAI shapes.
 
 Output: `argus-target.json`, plus `.github/workflows/argus-probe.yml` if you say yes to the workflow prompt. Init also prints the run command for the kind you pick.
 

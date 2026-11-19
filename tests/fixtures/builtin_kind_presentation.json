@@ -12,6 +12,7 @@
     "payment_agent",
     "a2a_agent",
     "testbed_agent",
+    "mcp_gateway",
     "mcp_server",
     "a2a_server",
     "vllm_server"
@@ -31,7 +32,8 @@
     "testbed_agent": "The general form of mcp_agent, payment_agent and a2a_agent",
     "mcp_server": "An MCP server you run over HTTP (tests the server, not an agent)",
     "a2a_server": "An A2A server (tests the server, not an agent)",
-    "vllm_server": "A vLLM model server (tests the server, not an agent)"
+    "vllm_server": "A vLLM model server (tests the server, not an agent)",
+    "mcp_gateway": "An MCP gateway connected to passive upstream fixtures"
   },
   "questions": {
     "openai_compat": [
@@ -246,6 +248,18 @@
       [
         "url",
         "vLLM server root URL, not the /v1 path (e.g. http://10.0.0.5:8000)",
+        null
+      ]
+    ],
+    "mcp_gateway": [
+      [
+        "gateway_json",
+        "Gateway connection settings (JSON)",
+        null
+      ],
+      [
+        "fixtures_json",
+        "Fixture control settings (JSON)",
         null
       ]
     ]
