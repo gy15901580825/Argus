@@ -293,6 +293,8 @@ def _send_failure(exc: Exception) -> tuple[str, str] | None:
     """
     from argus.targets._base import TargetBlockedError, TargetDeliveryError, TargetTransportError
 
+    if isinstance(exc, ProbeNotApplicable):
+        return VERDICT_SKIPPED, str(exc)
     if isinstance(exc, TargetBlockedError):
         return VERDICT_BLOCKED_BY_TARGET, f"{exc}; counted as blocked"
     if isinstance(exc, TargetAddressPolicyError):

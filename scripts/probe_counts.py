@@ -48,6 +48,7 @@ REGISTRY: list[tuple[str, str, str]] = [
     ("README.md", r"(?P<n>\d+)\s+hostile-server scenarios", "dir:mcp_trap"),
     ("README.md", r"(?P<n>\d+)\s+exposure checks of an", "dir:mcp_server"),
     ("README.md", r"(?P<n>\d+)\s+checks of an MCP server's tools", "dir:mcp_scan"),
+    ("README.md", r"checks of an MCP gateway \((?P<n>\d+)\)", "dir:mcp_gateway"),
     ("README.md", r"(?P<n>\d+)\s+Semia-mapped agent-skill detectors", "semia"),
     ("README.md", r"(?P<n>\d+)\s+agent-autonomy probes", "agent_autonomy"),
     ("README.md", r"(?P<n>\d+)\s+A2A server checks", "dir:a2a_server"),
