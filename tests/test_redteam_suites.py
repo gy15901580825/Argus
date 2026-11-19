@@ -182,6 +182,8 @@ def test_mcp_trap_probes_join_no_suite():
 
     suites = derive_suites(load_all_probes(PROBES_DIR))
     assert not [pid for ids in suites.values() for pid in ids if pid.startswith("mcp_trap_")]
+    assert len(suites["mcp"]) == 31
+    assert "mcp_gateway_webhook_decision" in suites["mcp"]
     assert {"mcp_sampling_resource_theft", "mcp_sampling_persistent_instruction", "mcp_sampling_covert_tool_call"} <= set(suites["mcp"])
 
 
@@ -193,4 +195,6 @@ def test_mcp_scan_probes_join_no_suite():
 
     suites = derive_suites(load_all_probes(PROBES_DIR))
     assert not [pid for ids in suites.values() for pid in ids if pid.startswith("mcp_scan_")]
+    assert len(suites["mcp"]) == 31
+    assert "mcp_gateway_webhook_decision" in suites["mcp"]
     assert {"mcp_sampling_resource_theft", "mcp_sampling_persistent_instruction", "mcp_sampling_covert_tool_call"} <= set(suites["mcp"])
