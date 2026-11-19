@@ -77,7 +77,7 @@ What Argus does:
   MCP-abuse probes (16 poisoned tool servers, 13 agent work-environment probes and 8 MCP protocol-surface probes, against `mcp_agent`; 5
   hostile-server scenarios for `argus-probe mcp-trap`; 4 exposure checks of an
   MCP server itself, against `mcp_server`; 11 checks of an MCP server's tools
-  for `argus-probe scan-mcp`; checks of an MCP gateway (7), against `mcp_gateway`), 16
+  for `argus-probe scan-mcp`; [checks of an MCP gateway](docs/gateway-testing.md) (7), against `mcp_gateway`), 16
   Semia-mapped agent-skill detectors (missing human gate, encoded payload,
   install-time exec, shadow credentials; Semia is
   [arXiv:2605.00314](https://arxiv.org/abs/2605.00314)), 4 agent-autonomy probes (AGENTS.md

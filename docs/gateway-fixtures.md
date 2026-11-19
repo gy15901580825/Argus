@@ -1,5 +1,8 @@
 # Gateway fixture host
 
+For placement, manual registration, target specs and a safe/vulnerable worked
+example, see [Test an MCP gateway](gateway-testing.md).
+
 Keep the fixtures online while registering their entries in a gateway you operate.
 Use a non-production gateway or an isolated tenant. The install contains synthetic
 canaries; never add real gateway credentials to it.
@@ -132,9 +135,9 @@ def register(registry):
 
 Duplicate registrations and failed plugin loads are definition errors. Plugins
 load before listening; a failed plugin cannot silently disappear from a run.
-The host currently supports legacy MCP initialization, tool listing and calls.
-Gateway probes, the gateway target, registration checks and additional delivery
-behaviours are separate units.
+The host supports both protocol eras, tool discovery and calls, redirects,
+delivery-path cases and webhook decisions. The gateway target and registration
+check drive these behaviors through your gateway.
 
 
 ### OAuth fixtures
@@ -211,7 +214,7 @@ Programmatic callers opt in with `create_install(oauth=True)` or
 from an install containing the issuer origin. Behaviour factories still receive
 only toggle configuration. The host's OAuth handler uses
 `RequestContext.recorder.oauth_observation` to derive safe fields under the
-case's correlation key. This fixture infrastructure adds no probe.
+case's correlation key.
 
 ### Gateway-initiated authorization consent
 
@@ -276,8 +279,8 @@ for a static client ID alone. The `mixup_iss` and `mixup_no_iss` variants requir
 issuer and token endpoint. Their assertions correlate H's code and the S256
 transform at E. [RFC 9207 section 2.4](https://www.rfc-editor.org/rfc/rfc9207.html#section-2.4)
 defines response issuer validation. A failed control or a gateway that never
-re-reads metadata produces skipped. For metadata cached until restart, use the
-configured manual restart workflow and repeat the probe.
+re-reads metadata produces skipped. For metadata cached until restart, arrange
+the restart yourself and repeat the probe; the runner does not restart gateways.
 
 `gateway_upstream_as_binding` uses sealed request records, including consent
 agent authorization observations and gateway token requests. It computes its
