@@ -248,7 +248,7 @@ case_window_s: 10
 | `features.webhook` | `stage: pre_call` and `allow`/`deny`, each with an integer HTTP `status` and a `body` value. These describe the gateway contract. They do not install the hook. |
 | `features.static_oauth_client` | All three keys are required. `grant` is `client_credentials` or `authorization_code`; `consent` is `none`, `follow_url` or `manual`; `trigger` is `challenge` or `manual_restart`. |
 | `registration.mode` | Only `manual` is accepted. Hook execution is reserved and unavailable. |
-| `timeout_s` | Per-call timeout, default 30, greater than zero and at most 3600. |
+| `timeout_s` | Per-call timeout, default 30, from 0.01 to 3600 seconds. |
 | `case_window_s` | Case timing budget, default 10, from 0 to 3600. The fixture host also has its own `serve --case-window-s` drain limit. |
 
 Unknown nested keys and unclaimed feature keys are rejected. Bundled OAuth
