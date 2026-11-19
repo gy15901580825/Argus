@@ -184,6 +184,12 @@ class MCPGatewayTarget(Target):
         for name in ('requires', 'entries'):
             if not isinstance(script[name], list) or any(not isinstance(v, str) or not v for v in script[name]):
                 raise ValueError(f'scenario.payload.{name} must be a list of names')
+        # OAuth recipes need their install and feature before behavior or consent setup.
+        if 'static_oauth_client' in script['requires']:
+            if 'issuer' not in self.registry.origins:
+                raise ProbeNotApplicable('this install has no OAuth issuer; re-run gateway-fixtures init --oauth to test issuer binding')
+            if 'static_oauth_client' not in self.spec.features:
+                raise ProbeNotApplicable('target does not declare feature static_oauth_client')
         if not script['entries']:
             raise ValueError('scenario.payload.entries must not be empty')
         optional = script.get('optional_entries', [])

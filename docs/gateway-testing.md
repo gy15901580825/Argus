@@ -294,13 +294,17 @@ not enable the consent drive step. A successful check does not prove that a
 filter or webhook works. The probes establish those controls separately.
 
 `list-probes` lists the seven compatible gateway probes. Use `--probes` with one
-ID or a comma-separated list to select a run. With an OAuth install, `all` can
-select all seven. With a two-origin install, select the four non-OAuth IDs
-explicitly. The current runner parses OAuth recipes before checking their feature
-requirements, so `all` against a two-origin install reports three setup errors
-for the unknown `issuer` case field instead of skips. Other missing feature keys
-skip their probes. For OAuth runs, substitute `oauth-gateway.yaml` in the check,
-list and run commands. No judge key is needed for these probes.
+ID, a comma-separated list, or `all` to select a run. With a two-origin install,
+`--probes all` runs the four non-OAuth probes and skips all three issuer-binding
+probes with a reason that the install has no OAuth issuer. Re-run
+`gateway-fixtures init --oauth` with a new install file to test issuer binding.
+OAuth probes also skip when the target does not declare `static_oauth_client`;
+other missing feature keys skip their probes. Skips do not make a run incomplete
+or change its exit code. An OAuth install still reports genuine setup errors.
+With an OAuth install and target, `all` selects all seven; the mix-up variants
+require the authorization-code grant. For OAuth runs, substitute
+`oauth-gateway.yaml` in the check, list and run commands. No judge key is needed
+for these probes.
 
 ## Read the results
 
@@ -545,21 +549,21 @@ registration from safe credential handling. This example declares only
 `X-API-Key` because the vulnerable gateway replaces the configured upstream
 Authorization header with the client header.
 
-You can also run the four non-OAuth probes together:
+You can also select all compatible probes:
 
 ```sh
 argus-probe run --local --target .scratch/safe-gateway.yaml \
-  --probes mcp_gateway_client_credential_passthrough,mcp_gateway_filter_delivery_paths,mcp_gateway_header_cross_origin_redirect,mcp_gateway_webhook_decision \
+  --probes all \
   --out .scratch/safe-all.html
 argus-probe run --local --target .scratch/vulnerable-gateway.yaml \
-  --probes mcp_gateway_client_credential_passthrough,mcp_gateway_filter_delivery_paths,mcp_gateway_header_cross_origin_redirect,mcp_gateway_webhook_decision \
+  --probes all \
   --out .scratch/vulnerable-all.html
 ```
 
 The safe gateway passes those four probes. The vulnerable gateway fails them;
 probe 2 observes `X-API-Key` at E even though the HTTP client drops Authorization
-across the host change. The command selects the four probes this two-origin
-install supports. The reference OAuth strategy and its issuer-binding comparisons
+across the host change. Both runs skip the three OAuth probes because this
+two-origin install has no issuer. The reference OAuth strategy and its issuer-binding comparisons
 are documented in the source checkout's
 [reference gateway README](https://github.com/gy15901580825/Argus/blob/main/tests/fixtures/gateway_ref/README.md).
 
