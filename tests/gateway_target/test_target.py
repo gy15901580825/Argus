@@ -414,3 +414,26 @@ def test_gateway_plugin_feature_is_validated(monkeypatch):
     settings['features']['neutral']['mode'] = 'other'
     with pytest.raises(TargetLoadError, match='observe mode'):
         check_target_spec(settings)
+
+
+async def test_case_toggles_reach_control_and_reset_between_cases(host):
+    def state_behavior(config):
+        async def handle(context):
+            context.state['enabled'] = config['enabled']
+            return None
+        return handle
+    host[0].registry.add_behavior('upstream', 'test_case_state', state_behavior)
+    async with ReferenceGateway(entries(host)) as gateway:
+        target = build_target(target_spec(host, gateway))
+        target.registry = host[0].registry
+        script = recipe()
+        for case, enabled in zip(script['cases'], (True, False)):
+            case['upstream'] = {'test_case_state': {'enabled': enabled}}
+        try:
+            await target.begin_probe(probe(script))
+            await target.send_prompt('')
+            evidence = await target.collect_evidence()
+            assert [case['fixture']['state'] for case in evidence['cases']] == [{'enabled': True}, {'enabled': False}]
+            assert host[0].case is None and host[0].lease_id is None
+        finally:
+            await target.aclose()
