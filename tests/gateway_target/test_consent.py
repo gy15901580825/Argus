@@ -96,6 +96,13 @@ class ConsentGateway:
             self.answer.set()
             return web.Response(status=202)
         method = message['method']
+        if self.delivery == 'mrtr':
+            self.capabilities = message['params']['_meta']['io.modelcontextprotocol/clientCapabilities']
+        if method == 'server/discover':
+            if self.delivery != 'mrtr':
+                return web.Response(status=400, text='Initialize first')
+            return web.json_response({'jsonrpc': '2.0', 'id': message['id'],
+                'result': {'resultType': 'complete', 'supportedVersions': ['2026-07-28'], 'capabilities': {}}})
         if method == 'notifications/initialized':
             return web.Response(status=202)
         if method == 'initialize':
@@ -106,6 +113,10 @@ class ConsentGateway:
         else:
             self.calls += 1
             if not self.token or self.repeat:
+                if self.delivery == 'mrtr':
+                    return web.json_response({'jsonrpc': '2.0', 'id': message['id'], 'result': {
+                        'resultType': 'input_required', 'requestState': 'consent-state',
+                        'inputRequests': {'consent': {'method': 'elicitation/create', 'params': self.elicitation()}}}})
                 if self.delivery == 'error':
                     return web.json_response({'jsonrpc': '2.0', 'id': message['id'], 'error': {
                         'code': -32042, 'message': 'Authorization required.', 'data': {'elicitations': [self.elicitation()]}}})
@@ -125,6 +136,7 @@ class ConsentGateway:
         message = json.loads(json.dumps(message))
         if message['method'] == 'tools/call':
             message['params']['name'] = 'argus_fixture_echo'
+            message['params']['_meta'] = {}
         response = await self.client.post(entry_url(self.host.install, 'oauth'), json=message,
             headers={'Authorization': 'Bearer ' + self.token, 'MCP-Protocol-Version': '2025-11-25'})
         assert response.status_code == 200
@@ -157,7 +169,7 @@ async def running(tmp_path, *, mode='follow_url', steps=True, **kwargs):
                 await target.aclose()
 
 
-@pytest.mark.parametrize('delivery', ['error', 'sse'])
+@pytest.mark.parametrize('delivery', ['error', 'sse', 'mrtr'])
 async def test_authorization_url_roundtrip_completes_case(tmp_path, delivery):
     async with running(tmp_path, delivery=delivery) as (target, gateway, host):
         text, _ = await target.send_prompt('')
@@ -167,7 +179,7 @@ async def test_authorization_url_roundtrip_completes_case(tmp_path, delivery):
         assert gateway.hops == ['/connect', '/callback']
         assert [hop['origin'] for hop in case['client']['consent_hops']] == ['gateway', 'issuer', 'gateway']
         assert [hop['status'] for hop in case['client']['consent_hops']] == [302, 302, 204]
-        assert gateway.capabilities['elicitation'] == {'url': {}}
+        assert gateway.capabilities['elicitation'] == ({'form': {}, 'url': {}} if delivery == 'mrtr' else {'url': {}})
         authorize = next(r for r in case['fixture']['requests'] if r['route'] == 'authorize')
         token = next(r for r in case['fixture']['requests'] if r['route'] == 'token')
         assert authorize['actor'] == 'argus_user_agent' and token['actor'] == 'gateway'

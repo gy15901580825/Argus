@@ -111,8 +111,8 @@ class MCPGatewaySpec:
             raise ValueError(f'mcp_gateway requires sandbox: true — this adapter {SANDBOX_REASON}; use a non-production gateway or an isolated tenant')
         _fields(self.gateway, {'url', 'protocol', 'auth', 'tools'}, {'url'}, path='gateway')
         _url(self.gateway['url'], 'gateway.url')
-        if self.gateway.get('protocol', 'auto') not in ('auto', '2025-11-25', '2025-06-18'):
-            raise ValueError('gateway.protocol must be auto, 2025-11-25 or 2025-06-18; modern support is not implemented')
+        if self.gateway.get('protocol', 'auto') not in ('auto', '2026-07-28', '2025-11-25', '2025-06-18'):
+            raise ValueError('gateway.protocol must be auto, 2026-07-28, 2025-11-25 or 2025-06-18')
         auth = self.gateway.get('auth', {})
         _fields(auth, {'headers', 'cookies'}, path='gateway.auth')
         for name in ('headers', 'cookies'):
@@ -321,6 +321,14 @@ class MCPGatewayTarget(Target):
                 cases.append({'id': 'redirect_recontact', 'role': 'control', 'entry': permanent['entry'], 'upstream': {}})
             for case in cases:
                 if case['entry'] in script.get('optional_entries', []) and (case['entry'], script['drive']['tool']) not in gateway.tools:
+                    continue
+                path = case.get('upstream', {}).get('delivery')
+                if (gateway.era == '2026-07-28' and path in ('post_sse_resumed', 'get_stream_notification')
+                        or gateway.era != '2026-07-28' and path == 'mrtr_input_request'):
+                    evidence['cases'].append({'id': case['id'], 'entry': case['entry'], 'role': case['role'],
+                        'delivery': path, 'complete': True, 'dropped': 0,
+                        'client': {'calls': [], 'consent_hops': []}, 'fixture': {'requests': [], 'state': {}},
+                        'not_exercised': 'delivery path does not belong to the negotiated era'})
                     continue
                 nonce = secrets.token_hex(16)
                 if gateway.consent:

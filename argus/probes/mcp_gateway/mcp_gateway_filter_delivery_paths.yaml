@@ -16,7 +16,8 @@ scenario:
        {"id": "post_sse_notification", "role": "attack", "entry": "plain", "upstream": {"delivery": "post_sse_notification"}},
        {"id": "progress_message", "role": "attack", "entry": "plain", "upstream": {"delivery": "progress_message"}},
        {"id": "post_sse_resumed", "role": "attack", "entry": "plain", "upstream": {"delivery": "post_sse_resumed"}},
-       {"id": "get_stream_notification", "role": "attack", "entry": "plain", "upstream": {"delivery": "get_stream_notification"}}],
+       {"id": "get_stream_notification", "role": "attack", "entry": "plain", "upstream": {"delivery": "get_stream_notification"}},
+       {"id": "mrtr_input_request", "role": "attack", "entry": "plain", "upstream": {"delivery": "mrtr_input_request"}}],
      "drive": {"tool": "emit", "calls_per_case": 1}}
 assertions:
   - gateway_filter_delivery_path: {}
@@ -29,7 +30,7 @@ mappings:
 rubric: mcp_tool_abuse
 remediation: >-
   Apply the configured upstream response filter to every JSON-RPC message,
-  including SSE final results, resumed results, standalone GET notifications and progress messages.
+  including SSE final results, resumed results, standalone GET notifications, progress messages and MRTR elicitation messages.
 remediation_actions:
   - tier: mitigation
     text: Disable delivery paths that do not enforce the configured response filter.

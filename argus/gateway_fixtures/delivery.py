@@ -1,4 +1,4 @@
-"""Passive marked results and notifications on bounded legacy streams."""
+"""Passive marked results and notifications on request-scoped and legacy streams."""
 import asyncio
 import json
 import secrets
@@ -6,13 +6,15 @@ import secrets
 import aiohttp.web as web
 
 from .record import REQUESTS_MAX
+from .protocol import MODERN, PREFIX, is_modern
 
 CURRENT_PATHS = ('inline_json', 'post_sse_final', 'post_sse_notification', 'progress_message')
+MODERN_PATHS = ('mrtr_input_request',)
 LEGACY_PATHS = ('post_sse_resumed', 'get_stream_notification')
 
 
 def delivery(path):
-    if not isinstance(path, str) or path not in (*CURRENT_PATHS, *LEGACY_PATHS):
+    if not isinstance(path, str) or path not in (*CURRENT_PATHS, *LEGACY_PATHS, *MODERN_PATHS):
         raise ValueError('unknown delivery path')
     marker = 'ARGUSFLT' + secrets.token_hex(10).upper()
 
@@ -25,6 +27,9 @@ def delivery(path):
         context.state['delivery'] = served
 
     async def handle(context):
+        modern = is_modern(context.message, context.request.headers)
+        if (modern and path in LEGACY_PATHS) or (not modern and path in MODERN_PATHS):
+            return None
         if context.route == 'mcp' and context.request.method == 'GET' and path in LEGACY_PATHS:
             cursor = context.request.headers.get('Last-Event-ID')
             key = (context.entry, context.request.headers.get('Mcp-Session-Id'))
@@ -72,6 +77,9 @@ def delivery(path):
         text = f'argus-path={path} begin {marker} end'
         result = {'jsonrpc': '2.0', 'id': message['id'],
                   'result': {'content': [{'type': 'text', 'text': text}], 'isError': False}}
+        if modern:
+            result['result'].update({'resultType': 'complete',
+                '_meta': {PREFIX + 'serverInfo': {'name': 'argus-fixture', 'version': '1'}}})
         channel = 'post_json' if path == 'inline_json' else 'post_sse'
         if path == 'post_sse_resumed':
             # Recording caps do not stop request handling, so pending streams need their own cap.
@@ -93,6 +101,18 @@ def delivery(path):
                                     'params': {'level': 'info', 'logger': 'argus-fixture', 'data': text}}, context.nonce))
             result['result']['content'][0]['text'] = 'argus-fixture:ok'
             return web.json_response(result)
+        if path == 'mrtr_input_request':
+            if 'inputResponses' in params:
+                result['result']['content'][0]['text'] = 'argus-fixture:ok'
+                return web.json_response(result)
+            capabilities = params.get('_meta', {}).get(PREFIX + 'clientCapabilities', {})
+            if 'elicitation' not in capabilities:
+                return None
+            result['result'] = {'resultType': 'input_required',
+                'inputRequests': {'filter_prompt': {'method': 'elicitation/create',
+                    'params': {'mode': 'form', 'message': text,
+                               'requestedSchema': {'type': 'object', 'properties': {}}}}},
+                'requestState': 'argus-fixture-input'}
         if path == 'inline_json':
             response = web.json_response(result)
         else:
@@ -114,7 +134,7 @@ def delivery(path):
             for frame in frames:
                 await response.write(('event: message\ndata: ' + json.dumps(frame) + '\n\n').encode())
             await response.write_eof()
-        witness(context, channel, context.nonce)
+        witness(context, 'mrtr' if path == 'mrtr_input_request' else channel, context.nonce)
         return response
 
     return handle

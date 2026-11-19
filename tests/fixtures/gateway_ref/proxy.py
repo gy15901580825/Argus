@@ -1,4 +1,4 @@
-"""Small legacy Streamable HTTP proxy for offline conformance tests."""
+"""Small dual-era Streamable HTTP proxy for offline conformance tests."""
 from __future__ import annotations
 
 import asyncio
@@ -14,6 +14,8 @@ from aiohttp import web
 
 from argus.gateway_fixtures.host import _SafeRunner
 from argus.gateway_fixtures.upstream import ERAS
+from argus.gateway_fixtures.protocol import MODERN, PREFIX, SUPPORTED_ERAS, is_modern, metadata, mirrored_headers, validate
+from argus.targets._gateway_client import GatewayClient
 
 
 def loopback_url(url: str) -> None:
@@ -64,11 +66,16 @@ class ReferenceGateway:
                  filter_pattern: str = r'ARGUSFLT[0-9A-F]{20}', webhook_url: str | None = None,
                  allow_status: int = 200, allow_body: dict | None = None,
                  persist_redirects: bool = False, cache_allow: bool = False,
-                 get_support: bool = True, resume_support: bool = True):
+                 get_support: bool = True, resume_support: bool = True,
+                 protocol: str = 'auto', upstream_protocol: str = 'auto'):
         if not entries or any(not re.fullmatch(r'[a-zA-Z0-9_]+', name) for name in entries):
             raise ValueError('reference gateway requires named entries')
         if webhook_url:
             loopback_url(webhook_url)
+        if protocol not in ('auto', *SUPPORTED_ERAS) or upstream_protocol not in ('auto', *SUPPORTED_ERAS):
+            raise ValueError('unknown reference protocol')
+        self.protocol, self.upstream_protocol = protocol, upstream_protocol
+        self.upstream_eras = {}
         self.entries = dict(entries)
         self.persist_redirects = persist_redirects
         self.redirect_urls = {}
@@ -101,8 +108,29 @@ class ReferenceGateway:
         """Override here to supply an upstream authentication strategy."""
         return dict(self.entries[name].headers)
 
-    async def _request(self, name, request, *, message=None, last_event_id=None):
+    async def _request(self, name, request, *, message=None, last_event_id=None, _detect=False):
         entry = self.entries[name]
+        legacy = (_detect or self.upstream_protocol == 'auto'
+                  and request.headers.get('MCP-Protocol-Version', ERAS[0]) in ERAS)
+        if _detect or legacy:
+            era = request.headers.get('MCP-Protocol-Version', ERAS[0])
+        else:
+            if name not in self.upstream_eras:
+                probe = GatewayClient({'url': entry.url, 'protocol': self.upstream_protocol,
+                    'auth': {'headers': await self.upstream_headers(name)}}, 5)
+                await probe.client.aclose()
+                async def exchange(probe_request):
+                    return await self._request(name, probe_request,
+                        message=json.loads(probe_request.content), _detect=True)
+                probe.client = httpx.AsyncClient(transport=httpx.MockTransport(exchange))
+                try:
+                    await probe.initialize()
+                    self.upstream_eras[name] = probe.era
+                    if probe.session:
+                        self.upstream_sessions[name] = probe.session
+                finally:
+                    await probe.aclose()
+            era = self.upstream_eras[name]
         headers = httpx.Headers(await self.upstream_headers(name))
         for key in ('Accept', 'MCP-Protocol-Version'):
             if key in request.headers:
@@ -111,7 +139,16 @@ class ReferenceGateway:
             for key in ('Authorization', 'Cookie'):
                 if key in request.headers:
                     headers[key] = request.headers[key]
-        if name in self.upstream_sessions:
+        headers['MCP-Protocol-Version'] = era
+        if message is not None and era == MODERN:
+            params = message.get('params', {})
+            message = {**message, 'params': {**params, '_meta': {**params.get('_meta', {}), **metadata()}}}
+            headers.update(mirrored_headers(message))
+        elif message is not None:
+            params = dict(message.get('params', {}))
+            params['_meta'] = {k: v for k, v in params.get('_meta', {}).items() if not k.startswith('io.modelcontextprotocol/')}
+            message = {**message, 'params': params}
+        if name in self.upstream_sessions and era != MODERN:
             headers['Mcp-Session-Id'] = self.upstream_sessions[name]
         if last_event_id is not None:
             headers['Last-Event-ID'] = last_event_id
@@ -120,7 +157,7 @@ class ReferenceGateway:
         for _ in range(11):
             loopback_url(str(outgoing.url))
             response = await self.client.send(outgoing, stream=True, follow_redirects=False)
-            if 'Mcp-Session-Id' in response.headers:
+            if era != MODERN and 'Mcp-Session-Id' in response.headers:
                 self.upstream_sessions[name] = response.headers['Mcp-Session-Id']
             following = response.next_request
             if following is None or self.preset.redirects == 'no_follow':
@@ -158,6 +195,9 @@ class ReferenceGateway:
         encoded = json.dumps(value)
         return self.pattern.sub('[REDACTED]', encoded).encode() if self.preset.response_filter != 'off' else encoded.encode()
 
+    def _session_headers(self, request):
+        return {} if request.headers.get('MCP-Protocol-Version') == MODERN else {'Mcp-Session-Id': self.session}
+
     async def _relay(self, request, responses):
         streams = [(name, response) for name, response in responses if response.headers.get('content-type', '').split(';')[0] == 'text/event-stream']
         if not streams:
@@ -167,10 +207,10 @@ class ReferenceGateway:
                 if response.headers.get('content-type', '').split(';')[0] == 'application/json':
                     body = self._json(json.loads(body))
                 return web.Response(body=body, status=response.status_code,
-                                    headers={'Content-Type': response.headers.get('content-type', 'application/json'), 'Mcp-Session-Id': self.session})
+                                    headers={'Content-Type': response.headers.get('content-type', 'application/json'), **self._session_headers(request)})
             finally:
                 await response.aclose()
-        output = web.StreamResponse(headers={'Content-Type': 'text/event-stream', 'Mcp-Session-Id': self.session})
+        output = web.StreamResponse(headers={'Content-Type': 'text/event-stream', **self._session_headers(request)})
         await output.prepare(request)
         queue = asyncio.Queue(maxsize=32)
 
@@ -220,9 +260,11 @@ class ReferenceGateway:
     async def _handle(self, request):
         responses = []
         try:
-            if request.headers.get('MCP-Protocol-Version', ERAS[0]) not in ERAS:
+            if self.protocol in ERAS and request.headers.get('MCP-Protocol-Version', ERAS[0]) not in ERAS:
                 return web.Response(status=400, text='Unsupported protocol version')
             if request.method == 'GET':
+                if self.protocol == MODERN or request.headers.get('MCP-Protocol-Version') == MODERN:
+                    return web.Response(status=405, headers={'Allow': 'POST'})
                 last_id = request.headers.get('Last-Event-ID')
                 if not self.get_support or (last_id and not self.resume_support):
                     return web.Response(status=405)
@@ -241,7 +283,21 @@ class ReferenceGateway:
             message = await request.json()
             if not isinstance(message, dict) or message.get('jsonrpc') != '2.0':
                 return self._error(None, -32600, 'Invalid request')
+            modern = is_modern(message, request.headers)
+            if modern or self.protocol == MODERN:
+                rejected = validate(message, request.headers, SUPPORTED_ERAS if self.protocol == 'auto' else (self.protocol,))
+                if rejected is not None:
+                    return rejected
             method, request_id = message.get('method'), message.get('id')
+            if method == 'server/discover':
+                return web.json_response({'jsonrpc': '2.0', 'id': request_id, 'result': {
+                    'resultType': 'complete', 'supportedVersions': list(SUPPORTED_ERAS if self.protocol == 'auto' else (self.protocol,)),
+                    'capabilities': {'tools': {}},
+                    '_meta': {PREFIX + 'serverInfo': {'name': 'reference-gateway', 'version': '1'}}}})
+            if method == 'initialize':
+                if modern:
+                    return web.json_response({'jsonrpc': '2.0', 'id': request_id,
+                        'error': {'code': -32601, 'message': 'Method not found'}}, status=404)
             if method in ('initialize', 'tools/list'):
                 tools, result = [], {}
                 for name in self.entries:
@@ -256,11 +312,14 @@ class ReferenceGateway:
                         tools.extend({**tool, 'name': name + '__' + tool['name']} for tool in result['tools'])
                 if method == 'tools/list':
                     result = {'tools': tools}
+                    if modern:
+                        result.update({'resultType': 'complete',
+                            '_meta': {PREFIX + 'serverInfo': {'name': 'reference-gateway', 'version': '1'}}})
                 else:
-                    result = {**result, 'protocolVersion': result.get('protocolVersion', ERAS[0]),
+                    result = {**result, 'protocolVersion': self.protocol if self.protocol in ERAS else result.get('protocolVersion', ERAS[0]),
                               'serverInfo': {'name': 'reference-gateway', 'version': '1'}}
                 return web.Response(body=self._json({'jsonrpc': '2.0', 'id': request_id, 'result': result}),
-                                    headers={'Content-Type': 'application/json', 'Mcp-Session-Id': self.session})
+                                    headers={'Content-Type': 'application/json', **self._session_headers(request)})
             if method == 'tools/call':
                 params = message['params']
                 name, separator, tool = params['name'].partition('__')

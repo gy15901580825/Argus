@@ -1,9 +1,9 @@
-"""Harmless legacy MCP responses; tool descriptions survive gateway renaming."""
+"""Harmless dual-era MCP responses; tool descriptions survive gateway renaming."""
 from __future__ import annotations
 
 import aiohttp.web as web
 
-ERAS = ('2025-11-25', '2025-06-18')
+from .protocol import LEGACY_ERAS as ERAS, PREFIX, SUPPORTED_ERAS, is_modern
 
 
 def idle(context) -> web.Response:
@@ -20,7 +20,11 @@ def idle(context) -> web.Response:
     method, params = message.get('method'), message.get('params', {})
     if not isinstance(params, dict):
         return _error(request_id, -32602, 'Invalid params')
-    if method == 'initialize':
+    if method == 'server/discover':
+        result = {'supportedVersions': list(SUPPORTED_ERAS), 'capabilities': {'tools': {}}}
+    elif method == 'initialize':
+        if is_modern(message, context.request.headers):
+            return _error(request_id, -32601, 'Method not found', status=404)
         era = params.get('protocolVersion')
         result = {'protocolVersion': era if era in ERAS else ERAS[0], 'capabilities': {'tools': {}},
                   'serverInfo': {'name': 'argus-fixture', 'version': '1'}}
@@ -45,9 +49,13 @@ def idle(context) -> web.Response:
     elif method == 'ping':
         result = {}
     else:
-        return _error(request_id, -32601, 'Method not found')
+        return _error(request_id, -32601, 'Method not found',
+                      status=404 if is_modern(message, context.request.headers) else 200)
+    if is_modern(message, context.request.headers):
+        result.update({'resultType': 'complete',
+                       '_meta': {PREFIX + 'serverInfo': {'name': 'argus-fixture', 'version': '1'}}})
     return web.json_response({'jsonrpc': '2.0', 'id': request_id, 'result': result})
 
 
-def _error(request_id, code: int, message: str) -> web.Response:
-    return web.json_response({'jsonrpc': '2.0', 'id': request_id, 'error': {'code': code, 'message': message}})
+def _error(request_id, code: int, message: str, *, status=200) -> web.Response:
+    return web.json_response({'jsonrpc': '2.0', 'id': request_id, 'error': {'code': code, 'message': message}}, status=status)

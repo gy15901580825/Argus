@@ -24,7 +24,7 @@ _HEADERS = frozenset(('content-type', 'accept', 'content-length', 'mcp-protocol-
     'mcp-method', 'mcp-name', 'last-event-id', 'user-agent'))
 _PUBLIC_PARAMS = {'response_type': {'code'}, 'code_challenge_method': {'S256'},
                   'grant_type': {'client_credentials', 'authorization_code', 'refresh_token'}}
-_METHODS = frozenset(('initialize', 'ping', 'tools/list', 'tools/call', 'notifications/initialized',
+_METHODS = frozenset(('server/discover', 'initialize', 'ping', 'tools/list', 'tools/call', 'notifications/initialized',
     'notifications/cancelled', 'subscriptions/listen'))
 _PROTOCOLS = frozenset(('2025-06-18', '2025-11-25', '2026-07-28'))
 
@@ -141,7 +141,7 @@ class RequestRecorder:
             if isinstance(arguments, dict) and self.nonce is not None and arguments.get('nonce') == self.nonce:
                 result['nonce'] = self.nonce
             meta = params.get('_meta', {})
-            protocol = meta.get('protocolVersion') if isinstance(meta, dict) else None
+            protocol = meta.get('io.modelcontextprotocol/protocolVersion', meta.get('protocolVersion')) if isinstance(meta, dict) else None
             protocol = params.get('protocolVersion', protocol)
             if isinstance(protocol, str) and protocol in _PROTOCOLS:
                 result['protocol_version'] = protocol

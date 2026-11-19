@@ -108,7 +108,7 @@ async def test_token_required_on_every_control_route(serving):
         assert (await client.get(host.control_url + path, headers={'Authorization': 'Bearer changed'})).status_code == 401
     health = await client.get(host.control_url + '/v1/health', headers=auth)
     assert health.status_code == 200
-    assert health.json()['eras'] == ['2025-11-25', '2025-06-18']
+    assert health.json()['eras'] == ['2026-07-28', '2025-11-25', '2025-06-18']
     assert host.control_token not in health.text
 
 

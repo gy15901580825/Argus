@@ -1,4 +1,4 @@
-"""Bounded legacy MCP exchanges through an operator's gateway."""
+"""Bounded dual-era MCP exchanges through an operator's gateway."""
 from __future__ import annotations
 
 import asyncio
@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from argus.gateway_fixtures.upstream import ERAS
+from argus.gateway_fixtures.protocol import MODERN, MODERN_ERRORS, metadata, mirrored_headers
 from argus.gateway_filter_assertions import capture, classify
 from argus.targets._base import ProbeNotApplicable, TargetTransportError
 from argus_transport.address_policy import target_client
@@ -66,6 +67,8 @@ class GatewayClient:
     def capture_message(self, message, channel):
         if not isinstance(message, dict) or message.get('jsonrpc') != '2.0':
             raise TargetTransportError('gateway returned a malformed MCP message')
+        if self.era == MODERN and 'method' in message and 'id' in message:
+            raise TargetTransportError('modern gateway sent a server-initiated request')
         return capture(message, channel)
 
     async def aclose(self):
@@ -75,7 +78,7 @@ class GatewayClient:
         outgoing = httpx.Headers(headers or {})
         outgoing.update({'Accept': 'text/event-stream' if get else 'application/json, text/event-stream',
                          'MCP-Protocol-Version': self.era})
-        if self.session:
+        if self.session and self.era != MODERN:
             outgoing['Mcp-Session-Id'] = self.session
         return outgoing
 
@@ -129,9 +132,15 @@ class GatewayClient:
             message['id'] = request_id
         if params is not None:
             message['params'] = params
+        if self.era == MODERN:
+            message['params'] = {**(params or {}), '_meta': {**(params or {}).get('_meta', {}), **metadata()}}
+            if self.consent:
+                message['params']['_meta']['io.modelcontextprotocol/clientCapabilities']['elicitation']['url'] = {}
         received, messages = [], []
         state = {'budget': _budget if _budget is not None else {'size': 0}, 'cursor': '', 'retry_s': 0}
         verb, outgoing, body = 'POST', self._headers(headers), None
+        if self.era == MODERN:
+            outgoing.update(mirrored_headers(message))
         status = None
         try:
             async with asyncio.timeout(self.timeout_s):
@@ -144,8 +153,23 @@ class GatewayClient:
                         if status in (401, 403):
                             raise TargetTransportError(f'gateway returned HTTP {status}')
                         if not response.is_success:
+                            raw = bytearray()
+                            async for chunk in response.aiter_bytes():
+                                state['budget']['size'] += len(chunk)
+                                if state['budget']['size'] > 65536:
+                                    raise TargetTransportError('gateway response exceeds 64 KiB')
+                                raw.extend(chunk)
+                            try:
+                                error_body = json.loads(raw)
+                            except (ValueError, TypeError):
+                                error_body = None
+                            if (isinstance(error_body, dict) and error_body.get('jsonrpc') == '2.0'
+                                    and error_body.get('id') == request_id and isinstance(error_body.get('error'), dict)):
+                                received.append(self.capture_message(error_body, 'post_json'))
+                                messages.append(error_body)
+                                return self._observation(status, 'jsonrpc_error', received, messages), error_body
                             return self._observation(status, 'http_error', received, messages), None
-                        if 'Mcp-Session-Id' in response.headers:
+                        if self.era != MODERN and 'Mcp-Session-Id' in response.headers:
                             self.session = response.headers['Mcp-Session-Id']
                         if 'text/event-stream' in response.headers.get('content-type', ''):
                             channel = 'post_sse' if verb == 'POST' else 'resumed_sse'
@@ -174,7 +198,7 @@ class GatewayClient:
                             messages.append(body)
                         if body is not None:
                             break
-                    if not state['cursor'] or attempt == RESUMES_MAX:
+                    if self.era == MODERN or not state['cursor'] or attempt == RESUMES_MAX:
                         return self._observation(status, 'timeout', received, messages), None
                     await asyncio.sleep(state['retry_s'])
                     verb, outgoing = 'GET', self._headers(headers, get=True)
@@ -222,7 +246,19 @@ class GatewayClient:
         return observation, body
 
     async def initialize(self):
-        candidates = ERAS if self.era == 'auto' else (self.era,)
+        requested = self.era
+        if requested in ('auto', MODERN):
+            self.era = MODERN
+            observation, body = await self.rpc('server/discover', {})
+            error = body.get('error', {}) if body else {}
+            if body and 'result' in body:
+                return
+            if error.get('code') in MODERN_ERRORS or error.get('code') == -32601 and observation['status'] == 404:
+                raise TargetTransportError('gateway modern MCP negotiation failed; no compatible modern version')
+            if requested == MODERN or observation.get('status') != 400:
+                raise TargetTransportError('gateway modern MCP discovery failed')
+            self.session = None
+        candidates = ERAS if requested == 'auto' else (requested,)
         for era in candidates:
             self.era = era
             _, body = await self.rpc('initialize', {'protocolVersion': era, 'capabilities': {'elicitation': {'url': {}}} if self.consent else {},
@@ -266,6 +302,50 @@ class GatewayClient:
                 raise TargetTransportError('gateway returned an invalid cursor')
         raise TargetTransportError('gateway tool discovery exceeds page limit')
 
+    async def _tool_call(self, params, *, headers=None, cookies=None):
+        observation = self._observation(None, 'timeout', [], [])
+        body, budget = None, {'size': 0}
+        try:
+            async with asyncio.timeout(self.timeout_s):
+                for round_trip in range(3):
+                    current, body = await self.rpc('tools/call', params, headers=headers, cookies=cookies, _budget=budget)
+                    observation['status'], observation['reply'] = current['status'], current['reply']
+                    observation['messages'].extend(current['messages'])
+                    observation['channels'] = sorted(set(observation['channels']) | set(current['channels']))
+                    observation['markers'] = sorted(set(observation['markers']) | set(current['markers']))
+                    result = body.get('result') if body else None
+                    if self.era != MODERN or not isinstance(result, dict) or result.get('resultType') != 'input_required':
+                        return observation, body
+                    if round_trip == 2:
+                        return observation, body
+                    if 'inputRequests' not in result and 'requestState' not in result:
+                        raise TargetTransportError('gateway returned malformed input-required result')
+                    if 'requestState' in result and not isinstance(result['requestState'], str):
+                        raise TargetTransportError('gateway returned malformed request state')
+                    requests = result.get('inputRequests', {})
+                    if not isinstance(requests, dict) or len(requests) > 10:
+                        raise TargetTransportError('gateway returned malformed input requests')
+                    responses = {}
+                    for key, request in requests.items():
+                        if not isinstance(request, dict) or request.get('method') != 'elicitation/create':
+                            raise TargetTransportError('gateway requested an undeclared client capability')
+                        elicitation = request.get('params', {})
+                        if not isinstance(elicitation, dict):
+                            raise TargetTransportError('gateway returned malformed elicitation')
+                        action = 'decline'
+                        if elicitation.get('mode') == 'url' and self.consent:
+                            await self.consent.open(elicitation)
+                            action = 'accept'
+                        responses[key] = {'action': action}
+                    params = {**params, 'inputResponses': responses}
+                    params.pop('requestState', None)
+                    if 'requestState' in result:
+                        params['requestState'] = result['requestState']
+                return observation, body
+        except TimeoutError:
+            observation['status'], observation['reply'] = None, 'timeout'
+            return observation, None
+
     async def call(self, install_label, entry, tool, nonce, *, headers=None, cookies=None, path=None):
         for attempt in range(2):
             name = self.tools.get((entry, tool))
@@ -279,7 +359,7 @@ class GatewayClient:
                 if path == 'get_stream_notification':
                     observation, body = await self._get_call(params, headers=headers, cookies=cookies)
                 else:
-                    observation, body = await self.rpc('tools/call', params, headers=headers, cookies=cookies)
+                    observation, body = await self._tool_call(params, headers=headers, cookies=cookies)
                 error = body.get('error', {}) if body else {}
                 if not (isinstance(error, dict) and error.get('code') == -32042 and self.consent):
                     break

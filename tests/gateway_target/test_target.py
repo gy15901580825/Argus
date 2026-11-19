@@ -71,7 +71,7 @@ async def test_mangled_discovery_nonces_and_count(host, era):
             text, _ = await target.send_prompt('this must never reach an upstream')
             evidence = await target.collect_evidence()
             assert json.loads(text) == evidence
-            assert evidence['era'] == ('2025-11-25' if era == 'auto' else era)
+            assert evidence['era'] == ('2026-07-28' if era == 'auto' else era)
             assert len(evidence['cases']) == 2
             nonces = []
             for case, entry in zip(evidence['cases'], ('plain', 'hdr')):
@@ -84,7 +84,7 @@ async def test_mangled_discovery_nonces_and_count(host, era):
                 assert len(records) == 2
                 assert all(r['entry'] == entry and r['body']['jsonrpc']['nonce'] == nonce for r in records)
             assert nonces[0] != nonces[1]
-            assert evidence['interaction_count'] == 3 + 4 + 4
+            assert evidence['interaction_count'] == (2 if era == 'auto' else 3) + 4 + 4
             assert host[0].lease_id is None and host[0].case is None
             await target.send_prompt('repeat')
             assert await target.collect_evidence() == evidence
@@ -254,7 +254,7 @@ async def test_background_requests_do_not_acquire_the_case_nonce(host, monkeypat
             await target.begin_probe(probe())
             await target.send_prompt('')
             evidence = await target.collect_evidence()
-            assert evidence['interaction_count'] == 15
+            assert evidence['interaction_count'] == 14
             for case in evidence['cases']:
                 nonce = case['client']['calls'][0]['nonce']
                 records = case['fixture']['requests']
@@ -337,7 +337,7 @@ async def test_prefix_discovery_fallback(host):
         try:
             await target.begin_probe(probe())
             await target.send_prompt('')
-            assert (await target.collect_evidence())['interaction_count'] == 11
+            assert (await target.collect_evidence())['interaction_count'] == 10
         finally:
             await target.aclose()
 

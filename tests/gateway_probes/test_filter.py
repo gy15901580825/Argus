@@ -82,6 +82,9 @@ async def test_filter_toggle_flips_same_result_verdict(host, base, protocol):
         evidence, outcome = await run(host, replace(base, response_filter=mode), protocol=protocol)
         assert outcome.verdict == expected
         paths = evidence['summary']['filter_delivery_paths']
+        assert paths[-1]['path'] == 'mrtr_input_request' and not paths[-1]['served_by_upstream']
+        assert paths[-1]['classification'] == 'absent'
+        paths = paths[:-1]
         assert [p['path'] for p in paths] == list((*CURRENT_PATHS, *LEGACY_PATHS))
         assert all(p['served_by_upstream'] and p['era'] == protocol for p in paths)
         assert paths[0]['classification'] == ('raw' if mode == 'off' else 'redacted')
@@ -100,7 +103,8 @@ async def test_filter_toggle_flips_same_result_verdict(host, base, protocol):
             assert outcome.severity == 'medium' and 'post_sse_final' in outcome.reason
             mutated = deepcopy(evidence)
             for case in mutated['cases'][1:]:
-                case['client']['calls'][0]['classification'] = 'redacted'
+                for call in case['client']['calls']:
+                    call['classification'] = 'redacted'
             assert check({}, mutated).verdict == 'pass'
         serialized = json.dumps(evidence)
         for secret in [host[0].control_token, host[0].install['path_token'], *host[0]._canaries.values()]:
@@ -191,8 +195,8 @@ async def test_missing_feature_and_entry_skip(host):
             await target.aclose()
 
 
-@pytest.mark.parametrize('path', ['mrtr_input_request', 'unknown', {}, None])
-def test_modern_and_unknown_delivery_definitions_refused(path):
+@pytest.mark.parametrize('path', ['unknown', {}, None])
+def test_unknown_delivery_definitions_refused(path):
     with pytest.raises(ValueError):
         delivery(path)
 
@@ -322,7 +326,7 @@ async def test_get_stream_filter_and_support_mutations(host, protocol, base):
 
 @pytest.mark.parametrize('path', LEGACY_PATHS)
 async def test_legacy_witness_requires_get_channel_cursor_and_nonce(host, path):
-    evidence, outcome = await run(host, Preset.safe(), recipe=filter_recipe('inline_json', path))
+    evidence, outcome = await run(host, Preset.safe(), recipe=filter_recipe('inline_json', path), protocol='2025-11-25')
     assert outcome.verdict == 'pass'
     records = evidence['cases'][1]['fixture']['requests']
     index = next(i for i, r in enumerate(records) if r['ext'].get('delivery'))
