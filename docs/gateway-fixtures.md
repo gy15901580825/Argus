@@ -119,3 +119,56 @@ load before listening; a failed plugin cannot silently disappear from a run.
 The host currently supports legacy MCP initialization, tool listing and calls.
 Gateway probes, the gateway target, registration checks and additional delivery
 behaviours are separate units.
+
+
+### Loopback OAuth fixtures
+
+Add `--oauth` to `gateway-fixtures init` to mint an `oauth` entry and an `issuer`
+origin alongside the existing fixtures. The registration sheet prints the synthetic
+client ID, client secret, issuer and `argus.fixture` scope. These values remain
+stable in the install file. Existing installs retain their two-origin layout.
+OAuth fixture and control listeners must bind to loopback; this option supports
+`local-hosts` and `local-ports`. HTTPS can use the existing certificate options;
+HTTP is available for local development.
+
+The protected entry serves RFC 9728 metadata at
+`/.well-known/oauth-protected-resource/u/{path_token}/oauth/mcp` and
+`/.well-known/oauth-protected-resource`. The root fallback selects this install's
+OAuth entry. Its 401 Bearer challenge names the path-specific `resource_metadata`
+URL. Metadata always reports the exact protected entry URL as `resource`.
+
+The issuer identifier is `<issuer-origin>/a/{path_token}`. Discovery serves the
+same metadata at the RFC 8414 OAuth path-insertion URL, the OpenID path-insertion
+URL and the OpenID path-append URL. The GET authorize endpoint auto-approves a
+registered client using `response_type=code`, PKCE S256 and the exact `resource`.
+The first successful request pins the exact callback URI for the running install;
+restart requires pinning again. POST token requests use form encoding and either
+`client_secret_basic` or `client_secret_post`. Both `client_credentials` and
+`authorization_code` produce opaque 60-second tokens, restricted to the OAuth
+entry. Codes expire after 60 seconds and can be redeemed once. Refresh grants
+and refresh tokens are unsupported. No fixture initiates network requests.
+
+Case toggles use these shapes:
+
+| Origin | Toggle | Values |
+| --- | --- | --- |
+| `upstream` | `prm` | `{"authorization_servers": ["issuer"]}` or `{"authorization_servers": ["foreign"]}` |
+| `upstream` | `challenge` | `"invalid_token"`, revoking existing issuer tokens at case start |
+| `issuer` | `iss` | `"always"` (default) or `"never"`; RFC 9207 metadata advertisement follows this toggle |
+
+Every accepted OAuth request passes through the recorder. `ext.oauth` and bounded
+`state.oauth` events describe discovery, authorization, issued-code correlations
+and token requests. Resource values use `corr` plus `matches_expected`; code
+values use `corr` and hit labels. PKCE values use `verifier_s256`, including the
+front-channel challenge. The raw code, verifier, client secret and access token
+are excluded from evidence. Protocol state is separate from exported case state;
+sealing removes outstanding codes, and the metadata/issuer toggles return to idle.
+Case canary watches include `static_client_id` and `static_client_secret`.
+
+Programmatic callers opt in with `create_install(oauth=True)` or
+`load_registry(oauth=True)`. `read_install` and `FixtureHost` select this registry
+from an install containing the issuer origin. Behaviour factories still receive
+only toggle configuration. The host's OAuth handler uses
+`RequestContext.recorder.oauth_observation` to derive safe fields under the
+case's correlation key. Gateway OAuth strategies and consent driving are added
+in later units; this fixture unit adds no probe.

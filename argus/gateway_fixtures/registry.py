@@ -74,11 +74,14 @@ class Registry:
                 raise DefinitionError(f'unknown fixture drive step: {name}')
 
 
-def load_registry() -> Registry:
+def load_registry(*, oauth: bool = False) -> Registry:
     from .delivery import delivery
     from .redirect import redirect, redirect_target
 
     registry = Registry()
+    if oauth:
+        from .oauth import register
+        register(registry)
     registry.add_behavior('upstream', 'delivery', delivery)
     registry.add_behavior('upstream', 'redirect', redirect)
     registry.add_behavior('upstream', 'idle', redirect_target)
