@@ -395,14 +395,25 @@ class MCPGatewayTarget(Target):
                         backoff = script['drive'].get('backoff_s', [])
                         if case['role'] == 'attack' and backoff:
                             await asyncio.sleep(backoff[attempt])
-                        calls.append(await gateway.call(install['install_label'], case['entry'], script['drive']['tool'], nonce, headers=headers, cookies=cookies,
-                                                        path=case.get('upstream', {}).get('delivery')))
+                        try:
+                            call = await gateway.call(install['install_label'], case['entry'], script['drive']['tool'], nonce,
+                                                      headers=headers, cookies=cookies, path=case.get('upstream', {}).get('delivery'))
+                        except TargetTransportError:
+                            if not gateway.consent or not gateway.consent.requires_out_of_band(case, gateway.last_failure):
+                                raise
+                            calls.append({'nonce': nonce, 'reply': 'transport_error', 'transport_error': gateway.last_failure})
+                            await gateway.consent.reauthorize(case['entry'])
+                            call = await gateway.call(install['install_label'], case['entry'], script['drive']['tool'], nonce,
+                                                      headers=headers, cookies=cookies, path=case.get('upstream', {}).get('delivery'))
+                        calls.append(call)
                     if script.get('settle_s'):
                         await asyncio.sleep(script['settle_s'])
                 except TargetTransportError as exc:
                     failure = exc
                     calls.append({'nonce': nonce, 'reply': 'transport_error',
                                   'transport_error': gateway.last_failure or gateway.failure_context('POST', gateway.gateway['url'])})
+                except ProbeNotApplicable as exc:
+                    failure = exc
                 finally:
                     sealed = await self._control('POST', f"/cases/{opened['case_seq']}/seal")
                 requests = sealed['fixture']['requests']
@@ -416,6 +427,10 @@ class MCPGatewayTarget(Target):
                             call['classification'] = 'raw'
                 evidence['cases'].append({'id': case['id'], 'entry': case['entry'], 'role': case['role'], 'complete': sealed['complete'],
                     'dropped': sealed['dropped'], 'client': {'calls': calls, 'consent_hops': list(gateway.consent.hops) if gateway.consent else []}, 'fixture': sealed['fixture']})
+                if gateway.consent and gateway.consent.manual_out_of_band:
+                    evidence['cases'][-1]['client']['manual_out_of_band'] = list(gateway.consent.manual_out_of_band)
+                if isinstance(failure, ProbeNotApplicable):
+                    evidence['cases'][-1]['not_exercised'] = str(failure)
                 if 'static_oauth_client' in self.spec.features:
                     evidence['cases'][-1]['oauth'] = {'as_metadata_fetched': {
                         origin: sum(record.get('actor') == 'gateway' and record.get('origin') == origin

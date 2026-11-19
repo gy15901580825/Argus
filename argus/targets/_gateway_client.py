@@ -38,6 +38,7 @@ class GatewayClient:
         self.consent = None
         self.redactor = Redactor([*auth.get('headers', {}).values(), *auth.get('cookies', {}).values()])
         self.last_failure = None
+        self.last_failure_body_complete = False
 
     async def server_request(self, message):
         if 'method' not in message or 'id' not in message:
@@ -98,6 +99,7 @@ class GatewayClient:
         if path_class:
             failure['path_class'] = path_class
         self.last_failure = failure
+        self.last_failure_body_complete = False
         for cookie in self.client.cookies.jar:
             self.redactor.add(cookie.value)
         raw = bytearray()
@@ -114,6 +116,39 @@ class GatewayClient:
             failure['body'] = self.failure_body(raw, truncated=True)
             raise
         failure['body'] = self.failure_body(raw, truncated=truncated)
+        self.last_failure_body_complete = not truncated
+        if self.consent_signal(raw):
+            failure['consent_signal'] = True
+
+    @staticmethod
+    def consent_signal(raw):
+        try:
+            messages = [json.loads(raw)]
+        except (ValueError, RecursionError):
+            messages = []
+            for event in bytes(raw).replace(b'\r\n', b'\n').split(b'\n\n'):
+                data = b'\n'.join(line[5:].lstrip() for line in event.splitlines() if line.startswith(b'data:'))
+                try:
+                    messages.append(json.loads(data))
+                except (ValueError, RecursionError):
+                    continue
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            if message.get('method') == 'elicitation/create':
+                params = message.get('params', {})
+                if isinstance(params, dict) and params.get('mode') == 'url' and isinstance(params.get('url'), str):
+                    return True
+            error = message.get('error', {})
+            if isinstance(error, dict) and error.get('code') == -32042:
+                data = error.get('data', {})
+                elicitations = data.get('elicitations', []) if isinstance(data, dict) else []
+                if isinstance(elicitations, list) and any(isinstance(item, dict) and isinstance(item.get('url'), str) for item in elicitations):
+                    return True
+            result = message.get('result', {})
+            if isinstance(result, dict) and result.get('resultType') == 'input_required' and result.get('inputRequests'):
+                return True
+        return False
 
     def failure_body(self, raw, *, truncated=False):
         text = raw.decode('utf-8', errors='replace')
@@ -201,7 +236,7 @@ class GatewayClient:
                                                   headers=outgoing, cookies=cookies) as response:
                         self.exchanges += 1
                         status = response.status_code
-                        if status in (401, 403):
+                        if status in (401, 403) or status >= 500:
                             await self.record_failure(response, rpc_method=method)
                             raise TargetTransportError(f'gateway returned HTTP {status}')
                         if not response.is_success:

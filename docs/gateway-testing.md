@@ -303,9 +303,27 @@ issuer-binding baseline revokes that token and needs fresh authorization.
 
 `consent: manual` prints the gateway-provided URL and instruction and waits for
 Enter after you complete authorization, within `timeout_s`. It skips without a
-TTY. It does not poll the admin UI or invent a connect URL. Use `none` for a
-client-credentials flow that needs no user. If consent is requested with `none`,
-the probe skips. `trigger: manual_restart` is accepted as configuration, but the
+TTY. Some gateways return HTTP 401 or 403 on `tools/call` after the OAuth case
+invalidates a token or changes protected-resource metadata, without a URL
+elicitation, a URL in error `-32042`, or an MRTR input request. Argus classifies
+this as requiring out-of-band re-authorization and retains the refused request,
+redacted response body and sealed fixture records.
+
+For these gateways, set `features.static_oauth_client.consent: manual` and run
+interactively. When prompted, open your gateway's own interface and use the
+connection/authorization page for the registered upstream entry to re-authorize
+it. Complete that authorization, then press Enter in Argus within `timeout_s`.
+Argus retries the call once and records the manual step and its timing in
+`client.manual_out_of_band`. The same procedure applies to the control and attack
+cases, so keep the gateway interface open for the next prompt. Argus does not
+automate the gateway's UI or admin API or invent a connect URL.
+
+With `follow_url`, `none`, or a non-TTY run, this condition reports skipped with
+"the gateway requires out-of-band re-authorization after the challenge; rerun
+interactively with consent: manual". A 401 or 403 before the case changes the
+challenge or metadata, a consent-page refusal, and a 5xx response remain errors.
+Use `none` for a client-credentials flow that needs no user. If ordinary URL
+consent is requested with `none`, the probe skips. `trigger: manual_restart` is accepted as configuration, but the
 runner does not restart your gateway or pause to request a restart. The bundled
 probe still revokes H tokens and issues challenges. A gateway that does not
 rediscover metadata reports skipped; arrange its restart yourself and rerun.
