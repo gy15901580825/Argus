@@ -13,6 +13,7 @@ import secrets
 import time
 from dataclasses import dataclass, field
 from difflib import get_close_matches
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import httpx
@@ -132,7 +133,7 @@ class MCPGatewaySpec:
         _seconds(self.case_window_s, 'case_window_s')
         if not isinstance(self.features, dict):
             raise ValueError('features must be an object')
-        registry = load_registry()
+        registry = load_registry(oauth=True) if 'static_oauth_client' in self.features else load_registry()
         for name, value in self.features.items():
             if name in ('upstream_headers', 'response_filter', 'webhook'):
                 _feature(name, value)
@@ -147,7 +148,10 @@ class MCPGatewayTarget(Target):
 
     def __init__(self, spec: MCPGatewaySpec):
         self.spec = spec
-        self.registry = load_registry()
+        oauth = 'static_oauth_client' in spec.features
+        if Path(spec.fixtures['install_file']).is_file():
+            oauth = 'issuer' in read_install(spec.fixtures['install_file'])['origins']
+        self.registry = load_registry(oauth=True) if oauth else load_registry()
         self._script = None
         self._probe_id = None
         self._evidence = {}
@@ -200,17 +204,25 @@ class MCPGatewayTarget(Target):
                 raise ValueError('case must declare control/attack role and a listed entry')
             self.registry.build_behaviors({origin: case[origin] for origin in self.registry.origins if origin in case})
         drive = script['drive']
-        _fields(drive, {'tool', 'calls_per_case', 'client_canaries'}, {'tool', 'calls_per_case'}, path='scenario.payload.drive')
+        _fields(drive, {'tool', 'calls_per_case', 'client_canaries', 'steps'}, {'tool', 'calls_per_case'}, path='scenario.payload.drive')
         if drive['tool'] not in ('echo', 'emit') or type(drive['calls_per_case']) is not int or not 1 <= drive['calls_per_case'] <= 20:
             raise ValueError('drive requires echo/emit and 1 to 20 calls_per_case')
         if type(drive.get('client_canaries', False)) is not bool:
             raise ValueError('drive.client_canaries must be a boolean')
+        steps = drive.get('steps', [])
+        if not isinstance(steps, list) or any(not isinstance(step, str) for step in steps) or len(set(steps)) != len(steps):
+            raise ValueError('drive.steps must contain distinct step names')
+        self.registry.validate_drive_steps(steps)
+        if 'consent' in steps and 'static_oauth_client' not in self.spec.features:
+            raise ValueError('consent drive step requires features.static_oauth_client')
         if 'settle_s' in script:
             _seconds(script['settle_s'], 'scenario.payload.settle_s', maximum=self.spec.case_window_s)
         permanent = any(case.get('upstream', {}).get('redirect', {}).get('status') == 308 for case in script['cases'])
         if permanent and 'redirect_recontact' in ids:
             raise ValueError('redirect_recontact is reserved for the permanent redirect check')
         budget = sum(case.get('calls_per_case', drive['calls_per_case']) * self.spec.timeout_s + self.spec.case_window_s + 1 for case in script['cases'])
+        if 'consent' in steps:
+            budget += sum((10 + case.get('calls_per_case', drive['calls_per_case'])) * self.spec.timeout_s for case in script['cases'])
         if permanent:
             budget += drive['calls_per_case'] * self.spec.timeout_s + self.spec.case_window_s + 1
         if 10 + budget > 3600:
@@ -258,6 +270,8 @@ class MCPGatewayTarget(Target):
         script = self._script
         permanent = any(case.get('upstream', {}).get('redirect', {}).get('status') == 308 for case in script['cases'])
         budget = sum(case.get('calls_per_case', script['drive']['calls_per_case']) * self.spec.timeout_s + self.spec.case_window_s + 1 for case in script['cases'])
+        if 'consent' in script['drive'].get('steps', []):
+            budget += sum((10 + case.get('calls_per_case', script['drive']['calls_per_case'])) * self.spec.timeout_s for case in script['cases'])
         if permanent:
             budget += script['drive']['calls_per_case'] * self.spec.timeout_s + self.spec.case_window_s + 1
         ttl = min(3600, 10 + budget)
@@ -292,6 +306,9 @@ class MCPGatewayTarget(Target):
         gateway = GatewayClient(self.spec.gateway, self.spec.timeout_s)
         self._gateway = gateway
         try:
+            if 'consent' in script['drive'].get('steps', []):
+                gateway.consent = self.registry.drive_steps['consent'](gateway, install,
+                    self.spec.features['static_oauth_client']['consent'], self.spec.timeout_s)
             await gateway.initialize()
             await gateway.discover(install['install_label'])
             for entry in script['entries']:
@@ -306,6 +323,8 @@ class MCPGatewayTarget(Target):
                 if case['entry'] in script.get('optional_entries', []) and (case['entry'], script['drive']['tool']) not in gateway.tools:
                     continue
                 nonce = secrets.token_hex(16)
+                if gateway.consent:
+                    gateway.consent.begin_case(nonce)
                 watch_key = secrets.token_bytes(32)
                 hashes = {name: hmac.new(watch_key, value.encode(), hashlib.sha256).hexdigest() for name, value in credentials.items() if value}
                 if script['drive'].get('client_canaries') and gateway.session:
@@ -344,7 +363,7 @@ class MCPGatewayTarget(Target):
                         if markers.intersection(call.get('markers', [])):
                             call['classification'] = 'raw'
                 evidence['cases'].append({'id': case['id'], 'entry': case['entry'], 'role': case['role'], 'complete': sealed['complete'],
-                    'dropped': sealed['dropped'], 'client': {'calls': calls, 'consent_hops': []}, 'fixture': sealed['fixture']})
+                    'dropped': sealed['dropped'], 'client': {'calls': calls, 'consent_hops': list(gateway.consent.hops) if gateway.consent else []}, 'fixture': sealed['fixture']})
                 if 'redirect' in case.get('upstream', {}):
                     evidence['cases'][-1]['redirect'] = {key: case['upstream']['redirect'][key] for key in ('status', 'to')}
                 if 'delivery' in case.get('upstream', {}):
