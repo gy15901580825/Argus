@@ -376,6 +376,7 @@ argus-probe judge-check --judge-provider litellm --judge-model gemini/gemini-2.5
 | `testbed_agent` | Generic form of `mcp_agent` / `payment_agent`; `environment` picks the testbed |
 | `http_upload` | File-upload-and-render sinks (upload then inline-render an active payload) |
 | `a2a_agent` | Agents that talk to A2A peers, run against an A2A peer testbed |
+| `mcp_gateway` | An MCP gateway connected to passive upstream fixtures; requires `sandbox: true` |
 | `mcp_server` | MCP servers you run over Streamable HTTP; tests the server, not an agent |
 | `a2a_server` | A2A servers: inbound authentication, task boundaries and callback registration |
 | `vllm_server` | vLLM model servers, checked against published vLLM advisories |
@@ -966,7 +967,7 @@ argus-probe scan-mcp            Call an MCP server's tools with inert payloads a
 argus-probe judge-check         Measure the chosen judge on Argus's labelled rubric cases
 argus-probe web-login           Log in to a chat page by hand and save the session for a web_chat target
 argus-probe draft-target        Draft a target spec and review checklist from a local OpenAPI file
-argus-probe gateway-fixtures    Initialize, serve and print registration values for passive MCP fixtures
+argus-probe gateway-fixtures    Initialize, serve, print registration values and check passive MCP fixtures
 ```
 
 Each command's `--help` lists its flags.

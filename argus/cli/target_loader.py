@@ -147,6 +147,13 @@ def check_target_spec(
         ) from exc
     substituted: list[str] = []
     spec = _expand_env(spec, substituted, skip_transport=spec["kind"] in _BUILTIN_KINDS)
+    if spec["kind"] == "mcp_gateway":
+        from argus.targets.mcp_gateway import MCPGatewaySpec
+
+        try:
+            MCPGatewaySpec(**{k: v for k, v in spec.items() if k != "input_limits"})
+        except ValueError as exc:
+            raise TargetLoadError(str(exc)) from exc
     if isinstance(info.validate, _BuiltinValidation):
         spec = info.validate.anchor(spec, base_dir)
     return spec, list(dict.fromkeys(substituted))

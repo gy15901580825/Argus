@@ -86,14 +86,14 @@ What Argus does:
   (see RESULTS.md), and 99 [garak](https://github.com/NVIDIA/garak)
   wrappers for NVIDIA's existing catalog. Exact per-standard counts are
   generated, not hand-maintained — see [`docs/probe-mapping.md`](docs/probe-mapping.md).
-- **15 target adapters**: `openai_compat`, `anthropic_native`, `custom_http`
+- **16 target adapters**: `openai_compat`, `anthropic_native`, `custom_http`
   (Jinja2 + JSONPath), `grpc` (with reflection auto-discovery), `http_upload`
   (file-upload-and-render sinks), `browser_use` (Playwright-driven
   full-browser flows), `web_chat` (an agent reachable only through its chat
   page; Argus types into the page in Chromium), `payment_agent` (x402 wallet-carrying agents, runs
   against the payment testbed), `mcp_agent` (MCP tool-server abuse, runs
   against the MCP testbed, with a fixed `/mcp` mode for agents configured once; `"testbed_url": "local"` starts the selected
-  testbed for the run), `mcp_server` (an MCP server's own HTTP exposure:
+  testbed for the run), `mcp_gateway` (scripted cases through a sandboxed gateway and passive fixtures), `mcp_server` (an MCP server's own HTTP exposure:
   foreign Origin, missing auth, env/shell/file tools, versions with a published
   advisory; it lists tools and never
   calls one), `a2a_agent` (outbound A2A handling and observed cascades in a testbed), `a2a_server` (A2A 1.0 authentication and declared task or callback boundaries), `vllm_server` (reads a vLLM server's `/version` and matches it
@@ -279,7 +279,7 @@ like this:
 
 Other `kind` values: `anthropic_native`, `custom_http` (with Jinja2 body
 templates and JSONPath response extractors), `grpc`, `http_upload`,
-`browser_use`, `web_chat`, `payment_agent`, `mcp_agent`, `mcp_server`, `testbed_agent`, `vllm_server`, `a2a_server`, `a2a_agent`, `python`. Full target-spec cookbook in
+`browser_use`, `web_chat`, `payment_agent`, `mcp_agent`, `mcp_gateway`, `mcp_server`, `testbed_agent`, `vllm_server`, `a2a_server`, `a2a_agent`, `python`. Full target-spec cookbook in
 [`docs/onboarding/target-spec-cookbook.md`](docs/onboarding/target-spec-cookbook.md).
 
 Install the `argus-probe` CLI from PyPI (Python 3.11+). The package
@@ -458,7 +458,7 @@ argus-probe scan-skill --sample key-grab
 
 | Sub-project | Role |
 |---|---|
-| [`argus/`](argus/) | The `argus-probe` package: probe library, judge harness, 15 target adapters, guardrail wrappers (used by the local demo runner) and the CLI in `argus/cli/`. Install it from this repo with `pip install .`. |
+| [`argus/`](argus/) | The `argus-probe` package: probe library, judge harness, 16 target adapters, guardrail wrappers (used by the local demo runner) and the CLI in `argus/cli/`. Install it from this repo with `pip install .`. |
 | [`client_agent/`](client_agent/) | Edge agent (Playwright) for `browser_use` probes in server mode. |
 | [`demo_target/`](demo_target/) | Deliberately-vulnerable FastAPI chatbot for offline demos. |
 | [`payment_testbed/`](payment_testbed/) | Mock x402 payment world + insecure demo agent, for `payment_agent` probes. |

@@ -89,3 +89,30 @@ def cmd_serve(install_file, control_bind, control_token, allow_remote_control, c
         asyncio.run(_serve(host))
     except (ValueError, OSError, KeyError) as exc:
         raise click.ClickException(str(exc)) from None
+
+
+async def _check_target(target):
+    try:
+        return await target.check_registration()
+    finally:
+        await target.aclose()
+
+
+@cmd_gateway_fixtures.command('check')
+@click.option('--target', 'target_arg', required=True, help='Sandboxed mcp_gateway target JSON or YAML.')
+def cmd_check(target_arg):
+    """Verify discovery and canary calls through the registered gateway."""
+    from argus.cli.target_loader import load_target_spec
+    from argus.targets import build_target
+    from argus.targets._base import ProbeNotApplicable, TargetTransportError
+
+    try:
+        spec = load_target_spec(target_arg)
+        if spec['kind'] != 'mcp_gateway':
+            raise ValueError('gateway-fixtures check requires kind: mcp_gateway')
+        messages = asyncio.run(_check_target(build_target(spec)))
+    except (ValueError, OSError, KeyError, ProbeNotApplicable, TargetTransportError) as exc:
+        raise click.ClickException(str(exc)) from None
+    if messages:
+        raise click.ClickException('\n'.join(messages))
+    click.echo('Gateway registration verified: fixture tools and configured header canaries reached each entry.')

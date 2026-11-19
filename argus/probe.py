@@ -64,6 +64,7 @@ VALID_TARGET_CLASSES = {
     "a2a_server",
     "a2a_agent",
     "mcp_server",
+    "mcp_gateway",
     # The vLLM version probe tests the model server itself, not an agent.
     "vllm_server",
 }

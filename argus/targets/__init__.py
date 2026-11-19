@@ -25,6 +25,7 @@ from argus.targets.grpc import GRPCSpec, GRPCTarget
 from argus.targets.http_upload import HTTPUploadSpec, HTTPUploadTarget
 from argus.targets.mcp_agent import MCPAgentSpec, MCPAgentTarget
 from argus.targets.mcp_server import MCPServerSpec, MCPServerTarget
+from argus.targets.mcp_gateway import MCPGatewaySpec, MCPGatewayTarget
 from argus.targets.openai_compat import OpenAICompatSpec, OpenAICompatTarget
 from argus.targets.payment_agent import PaymentAgentSpec, PaymentAgentTarget
 from argus.targets.python_target import PythonSpec, PythonTarget
@@ -42,6 +43,7 @@ _BUILDERS = {
     "a2a_agent": (A2AAgentSpec, A2AAgentTarget),
     "mcp_agent": (MCPAgentSpec, MCPAgentTarget),
     "mcp_server": (MCPServerSpec, MCPServerTarget),
+    "mcp_gateway": (MCPGatewaySpec, MCPGatewayTarget),
     "openai_compat": (OpenAICompatSpec, OpenAICompatTarget),
     "payment_agent": (PaymentAgentSpec, PaymentAgentTarget),
     "python": (PythonSpec, PythonTarget),
@@ -192,6 +194,14 @@ class _BuiltinValidation:
         _check_sandbox(spec, self.sandbox_reason)
 
     def anchor(self, spec: dict[str, Any], base_dir: Path | None) -> dict[str, Any]:
+        if self.kind == "mcp_gateway" and base_dir is not None:
+            anchored = dict(spec)
+            fixtures = dict(spec["fixtures"])
+            path = Path(fixtures["install_file"])
+            if not path.is_absolute():
+                fixtures["install_file"] = str(base_dir / path)
+            anchored["fixtures"] = fixtures
+            return anchored
         if self.kind != "python" or base_dir is None:
             return spec
         from argus.targets.python_target import is_path_entry, split_entry
@@ -447,6 +457,14 @@ _BUILTIN_KINDS = {
                 '{"kind": "openai_compat", "endpoint_url": "http://127.0.0.1:8093/v1/chat/completions", "model": "argus-demo-mcp-agent"}',
             ),
         ),
+    ),
+    "mcp_gateway": _builtin_info(
+        "mcp_gateway",
+        required=MCPGatewayTarget.kind_info.required,
+        description=MCPGatewayTarget.kind_info.description,
+        sandbox_reason=MCPGatewayTarget.kind_info.sandbox_reason,
+        init_questions=(("gateway_json", "Gateway connection settings (JSON)", None),
+                        ("fixtures_json", "Fixture control settings (JSON)", None)),
     ),
     "mcp_server": _builtin_info(
         "mcp_server",

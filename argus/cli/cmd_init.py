@@ -216,6 +216,13 @@ def init_command(
                 f"inner target spec is not valid JSON: {exc}"
             ) from exc
 
+    if kind == "mcp_gateway":
+        for field in ("gateway", "fixtures"):
+            try:
+                spec[field] = json.loads(str(spec.pop(field + "_json")))
+            except json.JSONDecodeError as exc:
+                raise click.UsageError(f"{field} settings are not valid JSON: {exc}") from exc
+
     if info.sandbox_reason is not None:
         spec["sandbox"] = True
 
