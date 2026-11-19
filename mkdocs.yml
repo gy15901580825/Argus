@@ -45,6 +45,7 @@ nav:
       - CI recipes: ci.md
       - Target plugins: plugins.md
       - Gateway fixture host: gateway-fixtures.md
+      - Test an MCP gateway: gateway-testing.md
       - Integration scenarios: integration-scenarios.md
       - Local scenario drafts: draft-local-scenarios.md
       - Judge accuracy: judge-accuracy.md
