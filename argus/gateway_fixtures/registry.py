@@ -75,9 +75,11 @@ class Registry:
 
 
 def load_registry() -> Registry:
+    from .delivery import delivery
     from .redirect import redirect, redirect_target
 
     registry = Registry()
+    registry.add_behavior('upstream', 'delivery', delivery)
     registry.add_behavior('upstream', 'redirect', redirect)
     registry.add_behavior('upstream', 'idle', redirect_target)
     registry.add_behavior('foreign', 'idle', redirect_target)

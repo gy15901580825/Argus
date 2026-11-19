@@ -328,16 +328,25 @@ class MCPGatewayTarget(Target):
                 calls = []
                 try:
                     for _ in range(case.get('calls_per_case', script['drive']['calls_per_case'])):
-                        calls.append(await gateway.call(install['install_label'], case['entry'], script['drive']['tool'], nonce, headers=headers, cookies=cookies))
+                        calls.append(await gateway.call(install['install_label'], case['entry'], script['drive']['tool'], nonce, headers=headers, cookies=cookies,
+                                                        path=case.get('upstream', {}).get('delivery')))
                     if script.get('settle_s'):
                         await asyncio.sleep(script['settle_s'])
                 finally:
                     sealed = await self._control('POST', f"/cases/{opened['case_seq']}/seal")
                 requests = sealed['fixture']['requests']
+                if 'delivery' in case.get('upstream', {}):
+                    markers = {record.get('ext', {}).get('delivery', {}).get('marker') for record in requests
+                               if record.get('body', {}).get('jsonrpc', {}).get('nonce') == nonce}
+                    for call in calls:
+                        if markers.intersection(call.get('markers', [])):
+                            call['classification'] = 'raw'
                 evidence['cases'].append({'id': case['id'], 'entry': case['entry'], 'role': case['role'], 'complete': sealed['complete'],
                     'dropped': sealed['dropped'], 'client': {'calls': calls, 'consent_hops': []}, 'fixture': sealed['fixture']})
                 if 'redirect' in case.get('upstream', {}):
                     evidence['cases'][-1]['redirect'] = {key: case['upstream']['redirect'][key] for key in ('status', 'to')}
+                if 'delivery' in case.get('upstream', {}):
+                    evidence['cases'][-1]['delivery'] = case['upstream']['delivery']
                 evidence['interaction_count'] += sum(r.get('actor') == 'gateway' for r in requests)
             evidence['interaction_count'] += gateway.exchanges
             if any('redirect' in case.get('upstream', {}) for case in script['cases']):
