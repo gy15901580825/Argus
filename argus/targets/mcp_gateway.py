@@ -173,7 +173,7 @@ class MCPGatewayTarget(Target):
             script = json.loads(raw, object_pairs_hook=_unique_object, parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
         except (ValueError, AttributeError, TypeError):
             raise ValueError('scenario.payload must be a valid JSON object; refusing to run an unstaged gateway') from None
-        _fields(script, {'version', 'requires', 'entries', 'cases', 'drive', 'settle_s'}, {'version', 'requires', 'entries', 'cases', 'drive'}, path='scenario.payload')
+        _fields(script, {'version', 'requires', 'entries', 'optional_entries', 'cases', 'drive', 'settle_s'}, {'version', 'requires', 'entries', 'cases', 'drive'}, path='scenario.payload')
         if type(script['version']) is not int or script['version'] != 1:
             raise ValueError('scenario.payload.version must be 1')
         for name in ('requires', 'entries'):
@@ -181,6 +181,10 @@ class MCPGatewayTarget(Target):
                 raise ValueError(f'scenario.payload.{name} must be a list of names')
         if not script['entries']:
             raise ValueError('scenario.payload.entries must not be empty')
+        optional = script.get('optional_entries', [])
+        if (not isinstance(optional, list) or any(not isinstance(v, str) or not v for v in optional)
+                or len(set(optional)) != len(optional) or set(optional) & set(script['entries'])):
+            raise ValueError('scenario.payload.optional_entries must contain distinct names outside entries')
         if not isinstance(script['cases'], list) or not 1 <= len(script['cases']) <= 100:
             raise ValueError('scenario.payload.cases must contain 1 to 100 cases')
         ids = set()
@@ -189,7 +193,7 @@ class MCPGatewayTarget(Target):
             if not isinstance(case['id'], str) or not re.fullmatch(r'[\w-]{1,120}', case['id']) or case['id'] in ids:
                 raise ValueError('case ids must be distinct names of at most 120 characters')
             ids.add(case['id'])
-            if case['role'] not in ('control', 'attack') or case['entry'] not in script['entries']:
+            if case['role'] not in ('control', 'attack') or case['entry'] not in [*script['entries'], *optional]:
                 raise ValueError('case must declare control/attack role and a listed entry')
             self.registry.build_behaviors({origin: case[origin] for origin in self.registry.origins if origin in case})
         drive = script['drive']
@@ -273,6 +277,9 @@ class MCPGatewayTarget(Target):
             origins[name] = {'scheme': parsed.scheme, 'class': category, 'host_id': host_id}
         evidence = {'interaction_count': 0, 'install_label': install['install_label'], 'era': None,
                     'origins': origins, 'cases': [], 'summary': {}}
+        if script['drive'].get('client_canaries'):
+            evidence['client_credentials'] = [{'label': label, 'kind': 'secret'} for label in credentials if not label.endswith(':payload')]
+            evidence['client_credentials'].append({'label': 'client_canary', 'kind': 'canary'})
         gateway = GatewayClient(self.spec.gateway, self.spec.timeout_s)
         self._gateway = gateway
         try:
@@ -287,9 +294,13 @@ class MCPGatewayTarget(Target):
             if permanent:
                 cases.append({'id': 'redirect_recontact', 'role': 'control', 'entry': permanent['entry'], 'upstream': {}})
             for case in cases:
+                if case['entry'] in script.get('optional_entries', []) and (case['entry'], script['drive']['tool']) not in gateway.tools:
+                    continue
                 nonce = secrets.token_hex(16)
                 watch_key = secrets.token_bytes(32)
                 hashes = {name: hmac.new(watch_key, value.encode(), hashlib.sha256).hexdigest() for name, value in credentials.items() if value}
+                if script['drive'].get('client_canaries') and gateway.session:
+                    hashes['gateway_session_id'] = hmac.new(watch_key, gateway.session.encode(), hashlib.sha256).hexdigest()
                 case_canaries = dict(canaries)
                 headers, cookies = {}, {}
                 if script['drive'].get('client_canaries'):
@@ -310,7 +321,7 @@ class MCPGatewayTarget(Target):
                 finally:
                     sealed = await self._control('POST', f"/cases/{opened['case_seq']}/seal")
                 requests = sealed['fixture']['requests']
-                evidence['cases'].append({'id': case['id'], 'role': case['role'], 'complete': sealed['complete'],
+                evidence['cases'].append({'id': case['id'], 'entry': case['entry'], 'role': case['role'], 'complete': sealed['complete'],
                     'dropped': sealed['dropped'], 'client': {'calls': calls, 'consent_hops': []}, 'fixture': sealed['fixture']})
                 if 'redirect' in case.get('upstream', {}):
                     evidence['cases'][-1]['redirect'] = {key: case['upstream']['redirect'][key] for key in ('status', 'to')}
