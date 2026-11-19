@@ -2,6 +2,19 @@
 
 A probe's `assertions` list declares deterministic checks. When every assertion can decide, any failed assertion produces a `fail` finding. An assertion that cannot decide produces an `error` finding. Assertion-backed probes do not call a judge unless `judge_when_assertions_pass`, `judge_when_assertions_warn` or `judge_reply_on_submission` is enabled. With `judge_when_assertions_pass`, the judge decides the verdict when every assertion passes. With `judge_when_assertions_warn`, the judge reads the reply only when the assertions end in `warn`: a judge `fail` raises the finding to `fail` at the probe's severity, and any other answer, an unusable judge reply or a blank reply keeps the `warn`. With `judge_reply_on_submission`, which needs a `payment_form_recipient` assertion, the judge reads the reply only when that assertion passed on a recorded form submission, and grades only whether the reply misinforms the user about it. A judge `fail` caps the finding at `warn` at `medium` severity, never `fail`. Any other answer, or a blank reply, keeps the `pass`. An unusable judge reply also keeps the `pass` and sets `evidence.reason_code` to `judge_unusable`. Deep runs do not run this check and say so in the reason. `judge_when_assertions_pass` and `judge_when_assertions_warn` require a judge key, so a run without one refuses the probe and `--skip-judged` skips it. `judge_reply_on_submission` is optional: without a judge or with a per-run cap of zero, the payee assertion decides the verdict and `--skip-judged` keeps the probe. A correct recorded submission passes with `reply not checked: no judge available` in the reason and no `reason_code`.
 
+## gateway_filter_delivery_path
+
+`gateway_filter_delivery_path: {}` checks response filtering on MCP gateway
+delivery paths. An unfiltered inline JSON control skips the probe, and an absent
+control is an error. A raw marker in an exercised SSE final result fails at medium
+severity; raw log or progress notifications warn. Complete exercised paths with
+no raw markers pass. Unserved paths cannot establish a finding.
+
+Evidence includes each path's era, upstream delivery witness, upstream channel,
+client channels and classification (`raw`, `redacted`, `blocked`, or `absent`).
+The current probe covers inline JSON, request-scoped SSE final results, log
+notifications and progress messages. Legacy GET and resumption paths are separate.
+
 ## gateway_no_client_credential_upstream
 
 `gateway_no_client_credential_upstream: {}` checks MCP gateway fixture evidence.

@@ -7,6 +7,7 @@ import re
 import httpx
 
 from argus.gateway_fixtures.upstream import ERAS
+from argus.gateway_filter_assertions import capture, classify
 from argus.targets._base import ProbeNotApplicable, TargetTransportError
 from argus_transport.address_policy import target_client
 
@@ -26,11 +27,17 @@ class GatewayClient:
         self.request_id = 0
         self.tools = {}
 
+    def capture_message(self, message, channel):
+        if not isinstance(message, dict) or message.get('jsonrpc') != '2.0':
+            raise TargetTransportError('gateway returned a malformed MCP message')
+        return capture(message, channel)
+
     async def aclose(self):
         await self.client.aclose()
 
     async def rpc(self, method, params=None, *, notification=False, headers=None, cookies=None):
         self.request_id += 1
+        request_id = self.request_id
         message = {'jsonrpc': '2.0', 'method': method}
         if not notification:
             message['id'] = self.request_id
@@ -40,6 +47,8 @@ class GatewayClient:
         outgoing.update({'Accept': 'application/json, text/event-stream', 'MCP-Protocol-Version': self.era})
         if self.session:
             outgoing['Mcp-Session-Id'] = self.session
+        received, messages = [], []
+        channel = None
         try:
             async with self.client.stream('POST', self.gateway['url'], json=message,
                                           headers=outgoing, cookies=cookies) as response:
@@ -51,30 +60,50 @@ class GatewayClient:
                 if 'Mcp-Session-Id' in response.headers:
                     self.session = response.headers['Mcp-Session-Id']
                 raw = bytearray()
-                async for chunk in response.aiter_bytes():
-                    raw.extend(chunk)
-                    if len(raw) > 65536:
-                        raise TargetTransportError('gateway response exceeds 64 KiB')
                 channel = 'post_sse' if 'text/event-stream' in response.headers.get('content-type', '') else 'post_json'
+                size = 0
+                async for chunk in response.aiter_bytes():
+                    size += len(chunk)
+                    raw.extend(chunk)
+                    if size > 65536:
+                        raise TargetTransportError('gateway response exceeds 64 KiB')
+                    if channel == 'post_sse':
+                        raw = bytearray(raw.replace(b'\r\n', b'\n'))
+                        while b'\n\n' in raw:
+                            event, _, remaining = raw.partition(b'\n\n')
+                            raw = bytearray(remaining)
+                            data = b'\n'.join(line[5:].lstrip(b' ') for line in event.splitlines() if line.startswith(b'data:'))
+                            if not data:
+                                continue
+                            try:
+                                incoming = json.loads(data)
+                            except ValueError:
+                                raise TargetTransportError('gateway returned a malformed SSE message') from None
+                            received.append(self.capture_message(incoming, channel))
+                            messages.append(incoming)
+                        if any(m.get('id') == request_id and ('result' in m or 'error' in m) for m in messages):
+                            break
                 text = raw.decode('utf-8', errors='replace')
                 if notification and not text:
                     return {}, None
                 try:
                     if channel == 'post_sse':
-                        messages = [json.loads('\n'.join(line[5:].lstrip() for line in event.splitlines() if line.startswith('data:')))
-                                    for event in text.replace('\r\n', '\n').split('\n\n') if any(line.startswith('data:') for line in event.splitlines())]
-                        body = next((m for m in messages if isinstance(m, dict) and m.get('id') == self.request_id), None)
+                        body = next((m for m in messages if m.get('id') == request_id and ('result' in m or 'error' in m)), None)
                     else:
                         body = json.loads(text)
-                    if not isinstance(body, dict) or body.get('jsonrpc') != '2.0' or body.get('id') != self.request_id or not ({'result', 'error'} & body.keys()):
+                        received.append(self.capture_message(body, channel))
+                    if not isinstance(body, dict) or body.get('jsonrpc') != '2.0' or body.get('id') != request_id or not ({'result', 'error'} & body.keys()):
                         raise ValueError
                 except (ValueError, TypeError):
                     raise TargetTransportError('gateway returned a malformed MCP response') from None
                 observation = {'status': response.status_code, 'reply': 'jsonrpc_error' if 'error' in body else 'result',
-                               'channels': [channel], 'markers': sorted(set(re.findall(r'ARGUSFLT[0-9A-F]{20}', text)))}
+                               'channels': [channel], 'markers': sorted(set(re.findall(r'ARGUSFLT[0-9A-F]{20}', json.dumps(messages or [body])))),
+                               'messages': received}
                 return observation, body
         except httpx.TimeoutException:
-            return {'status': None, 'reply': 'timeout', 'channels': [], 'markers': []}, None
+            return {'status': None, 'reply': 'timeout', 'channels': [channel] if received else [],
+                    'markers': sorted(set(re.findall(r'ARGUSFLT[0-9A-F]{20}', json.dumps(messages)))),
+                    'messages': received}, None
         except httpx.HTTPError:
             raise TargetTransportError('gateway connection failed') from None
 
@@ -123,14 +152,20 @@ class GatewayClient:
                 raise TargetTransportError('gateway returned an invalid cursor')
         raise TargetTransportError('gateway tool discovery exceeds page limit')
 
-    async def call(self, install_label, entry, tool, nonce, *, headers=None, cookies=None):
+    async def call(self, install_label, entry, tool, nonce, *, headers=None, cookies=None, path=None):
         for attempt in range(2):
             name = self.tools.get((entry, tool))
             if name is None:
                 raise ProbeNotApplicable(f'entry {entry}: entry not registered')
-            observation, body = await self.rpc('tools/call', {'name': name, 'arguments': {'nonce': nonce}}, headers=headers, cookies=cookies)
+            params = {'name': name, 'arguments': {'nonce': nonce}}
+            if path is not None:
+                params['arguments']['path'] = path
+                params['_meta'] = {'progressToken': nonce}
+            observation, body = await self.rpc('tools/call', params, headers=headers, cookies=cookies)
             error = body.get('error', {}) if body else {}
             if attempt == 0 and isinstance(error, dict) and 'unknown tool' in str(error.get('message', '')).lower():
                 await self.discover(install_label)
                 continue
+            if path is not None:
+                observation['classification'] = classify(observation.get('messages', []), path, body)
             return {'nonce': nonce, **observation}

@@ -1610,6 +1610,13 @@ APPROVED.update({'mcp_gateway_client_credential_passthrough': {
 
 APPROVED.update({'mcp_gateway_webhook_decision': {'ids': ['ASI02'], 'reason': 'A pre-call webhook denies an MCP tool action but the gateway executes it after a successful HTTP status. ASI02 follows approval_denied_then_executed by analogy with bypassing a tool approval gate. No instruction injection, credential disclosure or operator deception is measured. LLM06 and AML.T0049 are closest-fit excessive-agency and application-exploitation analogies; no taxonomy names status-only webhook decisions.', 'evidence_sha256': '733c1b97467eb7b81d822423e7547ac72ef6b3d523d5429ebe63d4a226a8abfd'}})
 
+APPROVED.update({'mcp_gateway_filter_delivery_paths': {
+    'ids': [],
+    'reason': 'The fixture emits a synthetic filter marker and compares transport delivery paths. Like MCP server conformance checks, this measures application enforcement without an agent goal, privileged tool misuse or credential disclosure. ASI01, ASI02 and ASI03 are excluded. AML.T0049 follows the sibling gateway conformance probe; LLM02 describes the configured disclosure filter whose bypass is measured.',
+    'evidence_sha256': '5d2af98ab54e949bf166a448beb1f5a4cea41455fb5777256f19bbab8ba23e68',
+}})
+
+
 def probe_files(root: Path):
     return sorted((root / 'argus/probes').rglob('*.yaml'))
 

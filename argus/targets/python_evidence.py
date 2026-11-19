@@ -266,6 +266,7 @@ DEFERRED_ASSERTIONS_V1 = frozenset({
     "gateway_upstream_header_redirect",
     'gateway_no_client_credential_upstream',
     'gateway_webhook_decision',
+    'gateway_filter_delivery_path',
     "ghost_field",
     'a2a_server', 'no_click_swap_activation', 'click_swap_control', 'no_document_beacon', 'no_dialog_accept', 'no_attacker_call_after_description_change',
     'no_out_of_scope_records_after_description_change', 'no_mcp_beacon_hit',
