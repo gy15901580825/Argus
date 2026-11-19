@@ -63,6 +63,7 @@ class RequestContext:
     nonce: str | None
     state: dict
     ext: dict = field(default_factory=dict)
+    recorder: RequestRecorder | None = None
 
 
 @dataclass
@@ -90,11 +91,13 @@ class FixtureHost:
     def __init__(self, install: dict, *, control_token: str, control_bind: str = '127.0.0.1:8470',
                  allow_remote_control: bool = False, registry: Registry | None = None,
                  settle_s: float = 0.3, case_window_s: float = 10, body_timeout_s: float = 5):
-        self.registry = registry or load_registry()
+        self.registry = registry or load_registry(oauth='issuer' in install.get('origins', {}))
         validate_install(install, self.registry)
         if not isinstance(control_token, str) or not control_token or not control_token.isascii():
             raise DefinitionError('a nonempty ASCII control token is required')
         control_host, _ = parse_listen(control_bind)
+        if 'issuer' in install['origins'] and not ipaddress.ip_address(control_host).is_loopback:
+            raise DefinitionError('OAuth fixtures require a loopback control listener')
         if not ipaddress.ip_address(control_host).is_loopback and not (allow_remote_control and install.get('tls')):
             raise DefinitionError('non-loopback control bind requires --allow-remote-control and TLS')
         if any(parse_listen(origin['listen']) == parse_listen(control_bind) and parse_listen(control_bind)[1] != 0
@@ -118,6 +121,12 @@ class FixtureHost:
         self._canaries = {f'upstream_header:{name}': value.partition(' ')[2] if name.lower() == 'authorization' and ' ' in value else value
                           for entry in install['entries'].values()
                           for name, value in entry.get('headers', {}).items()}
+        self.oauth = None
+        if 'issuer' in install['origins']:
+            from .oauth import OAuthRuntime
+            self.oauth = OAuthRuntime(self.install)
+            self._canaries.update({name: install['entries']['oauth'][field] for name, field in
+                                   [('static_client_id', 'client_id'), ('static_client_secret', 'client_secret')]})
         self.seen = {entry: {'first': None, 'last': None, 'methods': [], 'hits': []} for entry in install['entries']}
         self._idle_handlers = {origin: factory({}) for (origin, name), factory in self.registry.behaviors.items() if name == 'idle'}
 
@@ -174,6 +183,8 @@ class FixtureHost:
         for runner in reversed(self._runners):
             await runner.cleanup()
         self._runners.clear()
+        if self.oauth:
+            self.oauth.close()
 
     async def __aenter__(self):
         return await self.start()
@@ -194,7 +205,9 @@ class FixtureHost:
                 if authority in expected:
                     origin = name
                     break
-            if origin is None or self.install['path_token'] not in request.path.split('/'):
+            from .oauth import classify
+            root_prm = origin == 'upstream' and self.oauth and classify(self.install, origin, request.path)
+            if origin is None or (self.install['path_token'] not in request.path.split('/') and not root_prm):
                 return web.json_response({'error': 'not_found'}, status=404)
             return await self._request(request, origin)
         return handle
@@ -218,6 +231,11 @@ class FixtureHost:
                 break
         if origin == 'upstream' and request.path == self.install['webhook']['path'].replace('{path_token}', self.install['path_token']):
             route = 'webhook'
+        if self.oauth:
+            from .oauth import classify
+            classified = classify(self.install, origin, request.path)
+            if classified:
+                route, entry = classified
         body = bytearray()
         complete = True
         recorder = case.recorder if case else self._recorder()
@@ -248,9 +266,13 @@ class FixtureHost:
                 message = None
             context = RequestContext(request, bytes(body), message, self.install, origin, route, entry,
                                      case.case_id if case else None, case.nonce if case else None,
-                                     case.state if case else {})
+                                     case.state if case else {}, recorder=recorder)
             response, behavior = None, origin + '.idle'
-            if complete and case:
+            if complete and self.oauth:
+                response = await self.oauth.handle(context)
+                if response is not None:
+                    behavior = origin + '.oauth'
+            if complete and case and response is None:
                 for name, handler in case.behaviors.get(origin, []):
                     response = await handler(context)
                     if response is not None:
@@ -355,6 +377,8 @@ class FixtureHost:
                     if time.monotonic() >= self.lease_until:
                         recorder.seal(complete=False)
                         return web.json_response({'error': 'invalid lease'}, status=409)
+                    if self.oauth:
+                        self.oauth.begin_case(data['toggles'])
                     self.case_seq += 1
                     self.case = _Case(self.case_seq, data['case_id'], data['probe_id'], data['nonce'], recorder, behaviors)
                     self.case.drained.set()
@@ -410,6 +434,8 @@ class FixtureHost:
             await asyncio.gather(*tasks, return_exceptions=True)
             captured = case.recorder.seal(complete=complete)
             captured['requests'].sort(key=lambda record: record['seq'])
+            if self.oauth:
+                self.oauth.end_case()
             self.last_evidence = {'case_seq': case.seq, 'case_id': case.case_id, 'probe_id': case.probe_id,
                                   'complete': captured['complete'], 'dropped': captured['dropped'],
                                   'fixture': {'requests': captured['requests'], 'state': copy.deepcopy(case.state)}}

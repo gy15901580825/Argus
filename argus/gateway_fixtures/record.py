@@ -1,6 +1,7 @@
 """Only bounded, derived request observations survive case recording."""
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import ipaddress
@@ -68,6 +69,21 @@ class RequestRecorder:
         return {'len': len(value.encode('utf-8', errors='surrogatepass')),
                 'corr': hmac.new(self._case_key, value.encode('utf-8', errors='surrogatepass'), hashlib.sha256).hexdigest()[:16],
                 'hits': hits}
+
+    def oauth_observation(self, value: str, *, verifier=False, challenge=False) -> dict[str, Any]:
+        """Expose OAuth correlations and S256 without retaining protocol credentials."""
+        if self._sealed:
+            raise RuntimeError('recorder is sealed')
+        result = self.matcher.match(value)
+        self.complete &= result.complete
+        observation = {'corr': hmac.new(self._case_key, value.encode('utf-8', errors='surrogatepass'),
+                                       hashlib.sha256).hexdigest()[:16], 'hits': result.hits}
+        if verifier and re.fullmatch(r'[A-Za-z0-9._~-]{43,128}', value):
+            observation['verifier_s256'] = base64.urlsafe_b64encode(
+                hashlib.sha256(value.encode('ascii')).digest()).decode('ascii').rstrip('=')
+        elif challenge and not result.hits and re.fullmatch(r'[A-Za-z0-9_-]{43}', value):
+            observation['verifier_s256'] = value
+        return observation
 
     def _parameters(self, pairs: Iterable[tuple[str, str]]) -> list[dict[str, Any]]:
         result = []

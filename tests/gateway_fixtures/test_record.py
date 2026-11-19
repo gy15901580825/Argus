@@ -41,8 +41,24 @@ def test_generated_credentials_never_enter_evidence():
     for _ in range(200):
         canary = 'canary-' + ''.join(rng.choices(alphabet, k=40))
         secret = 'secret-' + ''.join(rng.choices(alphabet, k=40))
+        verifier = ''.join(rng.choices(string.ascii_letters + string.digits + '-._~', k=64))
         secret_digest = hmac.new(b'w' * 32, secret.encode(), hashlib.sha256).hexdigest()
         rec = recorder({'synthetic': canary}, {'external': secret_digest})
+        oauth_request = request(rec, headers=[('Content-Type', 'application/x-www-form-urlencoded')],
+            body=('client_secret=' + quote(secret, safe='') + '&code=' + quote(canary, safe='')
+                  + '&code_verifier=' + verifier).encode())
+        oauth_request['ext']['oauth'] = {
+            'code': rec.oauth_observation(canary),
+            'verifier': rec.oauth_observation(verifier, verifier=True),
+            'challenge': rec.oauth_observation(base64.urlsafe_b64encode(secret.encode()).decode().rstrip('='), challenge=True),
+        }
+        expected = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode('ascii')).digest()).decode().rstrip('=')
+        assert oauth_request['ext']['oauth']['verifier']['verifier_s256'] == expected
+        assert oauth_request['ext']['oauth']['code']['hits'] == ['synthetic']
+        assert len(oauth_request['ext']['oauth']['code']['corr']) == 16
+        for credential in (canary, secret, verifier):
+            for variant in encodings(credential):
+                assert variant not in json.dumps(oauth_request)
         for encode in (lambda x: x, lambda x: quote(x, safe=''),
                        lambda x: quote(quote(x, safe=''), safe=''),
                        lambda x: base64.b64encode(x.encode()).decode()):
@@ -356,3 +372,25 @@ def test_invalid_unicode_cannot_match_a_replacement_character_secret():
         headers=[('Content-Type', 'application/json')], body=body)
     assert captured['hits'] == []
     assert captured['body']['complete'] is False
+
+
+def test_oauth_s256_known_answer_and_seal_gate():
+    rec = recorder()
+    verifier = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'
+    challenge = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM'
+    assert rec.oauth_observation(verifier, verifier=True)['verifier_s256'] == challenge
+    assert rec.oauth_observation(challenge, challenge=True)['verifier_s256'] == challenge
+    assert 'verifier_s256' not in rec.oauth_observation('malformed', verifier=True)
+    assert 'verifier_s256' not in rec.oauth_observation('malformed', challenge=True)
+    rec.seal()
+    with pytest.raises(RuntimeError, match='sealed'):
+        rec.oauth_observation(verifier, verifier=True)
+
+
+def test_watched_challenge_never_enters_evidence_verbatim():
+    value = 'A' * 43
+    rec = recorder({'synthetic': value})
+    observation = rec.oauth_observation(value, challenge=True)
+    assert observation['hits'] == ['synthetic']
+    assert 'verifier_s256' not in observation
+    assert value not in json.dumps(observation)

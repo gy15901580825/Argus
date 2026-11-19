@@ -66,6 +66,15 @@ def validate_install(install: dict, registry: Registry) -> None:
                     return 'hostname'
             if (parsed.scheme, address_class(parsed.hostname), parsed.port is None) != (peer.scheme, address_class(peer.hostname), peer.port is None):
                 raise DefinitionError(f'fixture origins must be symmetric: {name}, {other}')
+    if 'issuer' in origins:
+        if 'oauth' not in install.get('entries', {}):
+            raise DefinitionError('issuer requires an OAuth entry')
+        if any(not ipaddress.ip_address(parse_listen(origin['listen'])[0]).is_loopback for origin in origins.values()):
+            raise DefinitionError('OAuth fixtures require loopback listeners')
+        for field in ('client_id', 'client_secret'):
+            value = install['entries']['oauth'].get(field)
+            if not isinstance(value, str) or not value.startswith('argus-canary-') or len(value) < 32:
+                raise DefinitionError('OAuth clients require install canaries')
     tls = install.get('tls')
     if tls is not None and (not tls.get('cert') or not tls.get('key')):
         raise DefinitionError('TLS requires both a certificate and key')
@@ -76,13 +85,15 @@ def validate_install(install: dict, registry: Registry) -> None:
 
 
 def create_install(*, origins: dict | None = None, tls: dict | None = None,
-                   registry: Registry | None = None) -> dict:
-    registry = registry or load_registry()
+                   registry: Registry | None = None, oauth: bool = False) -> dict:
+    registry = registry or load_registry(oauth=oauth)
     if origins is None:
         origins = {
             'upstream': {'public': 'http://127.0.0.1:8471', 'listen': '127.0.0.1:8471', 'host': '127.0.0.1'},
             'foreign': {'public': 'http://127.0.0.2:8473', 'listen': '127.0.0.2:8473', 'host': '127.0.0.2'},
         }
+        if 'issuer' in registry.origins:
+            origins['issuer'] = {'public': 'http://127.0.0.3:8472', 'listen': '127.0.0.3:8472', 'host': '127.0.0.3'}
     install = {
         'version': 1, 'install_label': 'fx-' + secrets.token_hex(3),
         'path_token': secrets.token_urlsafe(16),
@@ -118,7 +129,7 @@ def write_install(path: str | Path, install: dict) -> None:
 
 def read_install(path: str | Path, registry: Registry | None = None) -> dict:
     install = json.loads(Path(path).read_text(encoding='utf-8'))
-    validate_install(install, registry or load_registry())
+    validate_install(install, registry or load_registry(oauth='issuer' in install.get('origins', {})))
     return install
 
 

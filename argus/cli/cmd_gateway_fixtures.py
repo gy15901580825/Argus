@@ -21,17 +21,18 @@ def cmd_gateway_fixtures():
 @click.option('--mode', type=click.Choice(['local-hosts', 'local-ports', 'compose', 'public']), default='local-hosts', show_default=True)
 @click.option('--origin', 'origin_specs', multiple=True, metavar='NAME=PUBLIC_URL,LISTEN,HOST',
               help='Override or add an origin. LISTEN is a numeric IP:port.')
+@click.option('--oauth', is_flag=True, help='Add the loopback OAuth issuer and protected entry.')
 @click.option('--tls-cert', type=click.Path(dir_okay=False))
 @click.option('--tls-key', type=click.Path(dir_okay=False))
-def cmd_init(install_file, mode, origin_specs, tls_cert, tls_key):
+def cmd_init(install_file, mode, origin_specs, tls_cert, tls_key, oauth):
     """Mint synthetic canaries once and print values to register."""
     try:
         if bool(tls_cert) != bool(tls_key):
             raise DefinitionError('TLS requires both --tls-cert and --tls-key')
         origins = {}
         if mode != 'public':
-            for name, alias, port in [('upstream', 'r', 8471), ('foreign', 'e', 8473)]:
-                host = f'{alias}.argus.test' if mode == 'compose' else ('127.0.0.2' if name == 'foreign' and mode == 'local-hosts' else '127.0.0.1')
+            for name, alias, port in [('upstream', 'r', 8471), ('foreign', 'e', 8473)] + ([('issuer', 'h', 8472)] if oauth else []):
+                host = f'{alias}.argus.test' if mode == 'compose' else ({'foreign': '127.0.0.2', 'issuer': '127.0.0.3'}.get(name, '127.0.0.1') if mode == 'local-hosts' else '127.0.0.1')
                 origins[name] = {'public': f"{'https' if tls_cert else 'http'}://{host}:{port}",
                                  'listen': f"{'0.0.0.0' if mode == 'compose' else host}:{port}", 'host': host}
         for spec in origin_specs:
@@ -40,7 +41,7 @@ def cmd_init(install_file, mode, origin_specs, tls_cert, tls_key):
             if not separator or len(fields) != 3:
                 raise DefinitionError('--origin requires NAME=PUBLIC_URL,LISTEN,HOST')
             origins[name] = dict(zip(('public', 'listen', 'host'), fields))
-        install = create_install(origins=origins, tls={'cert': tls_cert, 'key': tls_key} if tls_cert else None)
+        install = create_install(origins=origins, oauth=oauth, tls={'cert': tls_cert, 'key': tls_key} if tls_cert else None)
         write_install(install_file, install)
     except (ValueError, OSError, KeyError) as exc:
         raise click.ClickException(str(exc)) from None
@@ -82,8 +83,9 @@ async def _serve(host):
 def cmd_serve(install_file, control_bind, control_token, allow_remote_control, case_window_s):
     """Keep idle fixtures online during registration and between runs."""
     try:
-        registry = load_registry()
-        host = FixtureHost(read_install(install_file, registry), control_token=control_token,
+        install = read_install(install_file)
+        registry = load_registry(oauth='issuer' in install['origins'])
+        host = FixtureHost(install, control_token=control_token,
                            control_bind=control_bind, allow_remote_control=allow_remote_control,
                            registry=registry, case_window_s=case_window_s)
         asyncio.run(_serve(host))
