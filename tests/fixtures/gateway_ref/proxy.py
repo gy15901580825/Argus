@@ -108,22 +108,29 @@ class ReferenceGateway:
         """Override here to supply an upstream authentication strategy."""
         return dict(self.entries[name].headers)
 
-    async def _request(self, name, request, *, message=None, last_event_id=None):
+    async def _request(self, name, request, *, message=None, last_event_id=None, _detect=False):
         entry = self.entries[name]
-        if (name not in self.upstream_eras and self.upstream_protocol == 'auto'
-                and request.headers.get('MCP-Protocol-Version', ERAS[0]) in ERAS):
-            self.upstream_eras[name] = request.headers.get('MCP-Protocol-Version', ERAS[0])
-        if name not in self.upstream_eras:
-            probe = GatewayClient({'url': entry.url, 'protocol': self.upstream_protocol,
-                'auth': {'headers': await self.upstream_headers(name)}}, 5)
-            try:
-                await probe.initialize()
-                self.upstream_eras[name] = probe.era
-                if probe.session:
-                    self.upstream_sessions[name] = probe.session
-            finally:
-                await probe.aclose()
-        era = self.upstream_eras[name]
+        legacy = (_detect or self.upstream_protocol == 'auto'
+                  and request.headers.get('MCP-Protocol-Version', ERAS[0]) in ERAS)
+        if _detect or legacy:
+            era = request.headers.get('MCP-Protocol-Version', ERAS[0])
+        else:
+            if name not in self.upstream_eras:
+                probe = GatewayClient({'url': entry.url, 'protocol': self.upstream_protocol,
+                    'auth': {'headers': await self.upstream_headers(name)}}, 5)
+                await probe.client.aclose()
+                async def exchange(probe_request):
+                    return await self._request(name, probe_request,
+                        message=json.loads(probe_request.content), _detect=True)
+                probe.client = httpx.AsyncClient(transport=httpx.MockTransport(exchange))
+                try:
+                    await probe.initialize()
+                    self.upstream_eras[name] = probe.era
+                    if probe.session:
+                        self.upstream_sessions[name] = probe.session
+                finally:
+                    await probe.aclose()
+            era = self.upstream_eras[name]
         headers = httpx.Headers(await self.upstream_headers(name))
         for key in ('Accept', 'MCP-Protocol-Version'):
             if key in request.headers:
@@ -305,8 +312,11 @@ class ReferenceGateway:
                         tools.extend({**tool, 'name': name + '__' + tool['name']} for tool in result['tools'])
                 if method == 'tools/list':
                     result = {'tools': tools}
+                    if modern:
+                        result.update({'resultType': 'complete',
+                            '_meta': {PREFIX + 'serverInfo': {'name': 'reference-gateway', 'version': '1'}}})
                 else:
-                    result = {**result, 'protocolVersion': result.get('protocolVersion', ERAS[0]),
+                    result = {**result, 'protocolVersion': self.protocol if self.protocol in ERAS else result.get('protocolVersion', ERAS[0]),
                               'serverInfo': {'name': 'reference-gateway', 'version': '1'}}
                 return web.Response(body=self._json({'jsonrpc': '2.0', 'id': request_id, 'result': result}),
                                     headers={'Content-Type': 'application/json', **self._session_headers(request)})

@@ -2,7 +2,7 @@
 import base64
 import binascii
 
-from aiohttp import web
+import aiohttp.web as web
 
 MODERN = '2026-07-28'
 LEGACY_ERAS = ('2025-11-25', '2025-06-18')
@@ -66,12 +66,18 @@ def validate(message, headers, supported=SUPPORTED_ERAS):
             or not isinstance(meta.get(PREFIX + 'clientCapabilities'), dict)):
         return error(request_id, -32602, 'Missing required request metadata')
     version = meta[PREFIX + 'protocolVersion']
-    for name, expected in mirrored_headers(message).items():
+    required = {'MCP-Protocol-Version': version, 'Mcp-Method': message['method']}
+    if message['method'] in ('tools/call', 'prompts/get', 'resources/read'):
+        source = params.get('uri') if message['method'] == 'resources/read' else params.get('name')
+        if not isinstance(source, str):
+            return error(request_id, -32602, 'Invalid params')
+        required['Mcp-Name'] = source
+    for name, expected in required.items():
         actual = headers.get(name)
-        if actual is None or decode_header(actual) != expected:
-            # Mcp-Name is encoded for transport but compared as its body value.
-            if name != 'Mcp-Name' or actual is None or decode_header(actual) != decode_header(expected):
-                return error(request_id, -32020, 'Header mismatch')
+        if name == 'Mcp-Name' and actual is not None:
+            actual = decode_header(actual)
+        if actual != expected:
+            return error(request_id, -32020, 'Header mismatch')
     if version not in supported:
         return error(request_id, -32022, 'Unsupported protocol version',
                      data={'supported': list(supported), 'requested': version})

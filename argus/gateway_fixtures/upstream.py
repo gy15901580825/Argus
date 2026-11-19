@@ -6,7 +6,6 @@ import aiohttp.web as web
 from .protocol import LEGACY_ERAS as ERAS, PREFIX, SUPPORTED_ERAS, is_modern
 
 
-
 def idle(context) -> web.Response:
     if context.route != 'mcp':
         return web.json_response({'error': 'not_found'}, status=404)
@@ -50,7 +49,8 @@ def idle(context) -> web.Response:
     elif method == 'ping':
         result = {}
     else:
-        return _error(request_id, -32601, 'Method not found')
+        return _error(request_id, -32601, 'Method not found',
+                      status=404 if is_modern(message, context.request.headers) else 200)
     if is_modern(message, context.request.headers):
         result.update({'resultType': 'complete',
                        '_meta': {PREFIX + 'serverInfo': {'name': 'argus-fixture', 'version': '1'}}})

@@ -31,7 +31,7 @@ async def test_modern_full_probe_mutation(host, base):
         mrtr = paths['mrtr_input_request']
         assert mrtr['served_by_upstream']
         assert mrtr['classification'] == ('redacted' if mode == 'all_messages' else 'raw')
-        assert mrtr['client_channels'] == ['mrtr']
+        assert mrtr['client_channels'] == ['mrtr', 'post_json']
         assert all(r['method'] == 'POST' for c in evidence['cases'] for r in c['fixture']['requests'])
         for case in evidence['cases']:
             for record in case['fixture']['requests']:
@@ -91,7 +91,7 @@ async def test_client_detects_single_era_server(host, server_era):
         client = GatewayClient({'url': gateway.url}, 2)
         try:
             await client.initialize()
-            assert client.era == (MODERN if server_era == MODERN else '2025-11-25')
+            assert client.era == server_era
             await client.discover(host[0].install['install_label'])
             assert ('hdr', 'emit') in client.tools
         finally:
@@ -226,3 +226,101 @@ def test_mirrored_name_encoding(value):
     encoded = header_value(value)
     assert decode_header(encoded) == value
     assert encoded == value if value == 'plain' else encoded.startswith('=?base64?')
+
+
+async def test_mrtr_retry_preserves_state_and_observations_without_persisting_it():
+    state = 'generated-opaque-state-canary'
+    marker = 'ARGUSFLT' + 'A' * 20
+    sent = []
+    def respond(request):
+        message = json.loads(request.content)
+        sent.append(message)
+        if len(sent) == 1:
+            result = {'resultType': 'input_required', 'requestState': state,
+                'inputRequests': {'form': {'method': 'elicitation/create', 'params': {
+                    'mode': 'form', 'message': f'argus-path=mrtr_input_request begin {marker} end',
+                    'requestedSchema': {'type': 'object', 'properties': {}}}}}}
+        else:
+            assert message['params']['requestState'] == state
+            assert message['params']['inputResponses'] == {'form': {'action': 'decline'}}
+            assert message['id'] != sent[0]['id']
+            assert message['params']['name'] == sent[0]['params']['name']
+            assert message['params']['arguments'] == sent[0]['params']['arguments']
+            result = {'resultType': 'complete', 'content': [{'type': 'text', 'text': 'ok'}]}
+        return httpx.Response(200, json={'jsonrpc': '2.0', 'id': message['id'], 'result': result})
+    client = GatewayClient({'url': 'http://127.0.0.1:1/mcp', 'protocol': MODERN}, 1)
+    await client.client.aclose()
+    client.client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    client.tools = {('plain', 'emit'): 'argus_fixture_emit'}
+    try:
+        observation = await client.call('label', 'plain', 'emit', 'nonce', path='mrtr_input_request')
+        assert observation['classification'] == 'raw'
+        assert observation['channels'] == ['mrtr', 'post_json']
+        assert [m['kind'] for m in observation['messages']] == ['input_required', 'result']
+        assert state not in json.dumps(observation)
+        assert len(sent) == 2
+    finally:
+        await client.aclose()
+
+
+async def test_mrtr_repeated_input_is_bounded_by_rounds_and_total_bytes():
+    sent = []
+    padding = ''
+    def respond(request):
+        message = json.loads(request.content)
+        sent.append(message)
+        return httpx.Response(200, json={'jsonrpc': '2.0', 'id': message['id'],
+            'result': {'resultType': 'input_required', 'requestState': 'opaque' + padding}})
+    client = GatewayClient({'url': 'http://127.0.0.1:1/mcp', 'protocol': MODERN}, 1)
+    await client.client.aclose()
+    client.client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    client.tools = {('plain', 'emit'): 'argus_fixture_emit'}
+    try:
+        observation = await client.call('label', 'plain', 'emit', 'nonce', path='mrtr_input_request')
+        assert len(sent) == 3 and len(observation['messages']) == 3
+        assert len({m['id'] for m in sent}) == 3
+        sent.clear()
+        padding = 'x' * 40000
+        with pytest.raises(TargetTransportError, match='64 KiB'):
+            await client.call('label', 'plain', 'emit', 'nonce', path='mrtr_input_request')
+        assert len(sent) == 2
+    finally:
+        await client.aclose()
+
+
+async def test_dual_reference_accepts_modern_and_legacy_clients_concurrently(host):
+    async with ReferenceGateway(entries(host)) as gateway:
+        for era in ('2025-11-25', MODERN, '2025-06-18', MODERN):
+            client = GatewayClient({'url': gateway.url, 'protocol': era}, 2)
+            try:
+                await client.initialize()
+                await client.discover(host[0].install['install_label'])
+                assert client.era == era
+                call = await client.call(host[0].install['install_label'], 'plain', 'echo', 'nonce')
+                assert call['reply'] == 'result'
+                assert (client.session is None) == (era == MODERN)
+            finally:
+                await client.aclose()
+
+
+@pytest.mark.parametrize('strategy', ['entry', 'issuer'])
+async def test_modern_reference_negotiation_retains_upstream_oauth(tmp_path, strategy):
+    from tests.gateway_target.test_consent import running
+    from tests.fixtures.gateway_ref.oauth import OAuthReferenceGateway, StaticClient
+    from tests.fixtures.gateway_ref import Entry
+    from argus.gateway_fixtures.oauth import issuer_url
+    async with running(tmp_path) as (_, _, fixture):
+        config = fixture.install['entries']['oauth']
+        async with OAuthReferenceGateway({'oauth': Entry(entry_url(fixture.install, 'oauth'))},
+                clients={'oauth': StaticClient(issuer_url(fixture.install), config['client_id'], config['client_secret'])},
+                strategy=strategy) as gateway:
+            client = GatewayClient({'url': gateway.url}, 2)
+            try:
+                await client.initialize()
+                await client.discover(fixture.install['install_label'])
+                observation = await client.call(fixture.install['install_label'], 'oauth', 'echo', 'nonce')
+                assert observation['reply'] == 'result'
+                assert gateway.upstream_eras['oauth'] == MODERN
+                assert client.session is None
+            finally:
+                await client.aclose()

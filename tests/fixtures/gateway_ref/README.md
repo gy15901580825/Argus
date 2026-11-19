@@ -1,12 +1,16 @@
 # Reference gateway for offline tests
 
 `ReferenceGateway(entries, preset=Preset.safe())` is an async context manager.
-Its `url` is a legacy Streamable HTTP MCP endpoint on an ephemeral loopback port.
-Unsupported protocol headers receive a fixed HTTP 400 so clients can fall back
-to legacy initialization.
+Its `url` is a dual-era Streamable HTTP MCP endpoint on an ephemeral loopback port.
+Modern clients send per-request metadata and mirrored headers; legacy clients
+initialize a session. `protocol` restricts the client-facing era for detection
+tests. `upstream_protocol` defaults to `auto`, with modern discovery and the
+specified HTTP 400 fallback for upstreams that need legacy initialization.
 Entries are `Entry(url, headers)` values; discovered tool names become
 `<entry>__<upstream-tool>`, while descriptions and schemas retain fixture markers.
-The proxy exposes one client session and tracks each upstream's session separately.
+Legacy client and upstream sessions are tracked separately. Modern traffic has
+no session, and GET returns 405. MRTR elicitation results use the common filter
+relay, so JSON-only filtering skips them when delivered on request-scoped SSE.
 POST SSE, standalone GET streams, and GET resumption use the same relay; event IDs
 are prefixed with the entry name so resumption reaches the correct upstream.
 

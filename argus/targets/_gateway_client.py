@@ -134,6 +134,8 @@ class GatewayClient:
             message['params'] = params
         if self.era == MODERN:
             message['params'] = {**(params or {}), '_meta': {**(params or {}).get('_meta', {}), **metadata()}}
+            if self.consent:
+                message['params']['_meta']['io.modelcontextprotocol/clientCapabilities']['elicitation']['url'] = {}
         received, messages = [], []
         state = {'budget': _budget if _budget is not None else {'size': 0}, 'cursor': '', 'retry_s': 0}
         verb, outgoing, body = 'POST', self._headers(headers), None
@@ -300,6 +302,50 @@ class GatewayClient:
                 raise TargetTransportError('gateway returned an invalid cursor')
         raise TargetTransportError('gateway tool discovery exceeds page limit')
 
+    async def _tool_call(self, params, *, headers=None, cookies=None):
+        observation = self._observation(None, 'timeout', [], [])
+        body, budget = None, {'size': 0}
+        try:
+            async with asyncio.timeout(self.timeout_s):
+                for round_trip in range(3):
+                    current, body = await self.rpc('tools/call', params, headers=headers, cookies=cookies, _budget=budget)
+                    observation['status'], observation['reply'] = current['status'], current['reply']
+                    observation['messages'].extend(current['messages'])
+                    observation['channels'] = sorted(set(observation['channels']) | set(current['channels']))
+                    observation['markers'] = sorted(set(observation['markers']) | set(current['markers']))
+                    result = body.get('result') if body else None
+                    if self.era != MODERN or not isinstance(result, dict) or result.get('resultType') != 'input_required':
+                        return observation, body
+                    if round_trip == 2:
+                        return observation, body
+                    if 'inputRequests' not in result and 'requestState' not in result:
+                        raise TargetTransportError('gateway returned malformed input-required result')
+                    if 'requestState' in result and not isinstance(result['requestState'], str):
+                        raise TargetTransportError('gateway returned malformed request state')
+                    requests = result.get('inputRequests', {})
+                    if not isinstance(requests, dict) or len(requests) > 10:
+                        raise TargetTransportError('gateway returned malformed input requests')
+                    responses = {}
+                    for key, request in requests.items():
+                        if not isinstance(request, dict) or request.get('method') != 'elicitation/create':
+                            raise TargetTransportError('gateway requested an undeclared client capability')
+                        elicitation = request.get('params', {})
+                        if not isinstance(elicitation, dict):
+                            raise TargetTransportError('gateway returned malformed elicitation')
+                        action = 'decline'
+                        if elicitation.get('mode') == 'url' and self.consent:
+                            await self.consent.open(elicitation)
+                            action = 'accept'
+                        responses[key] = {'action': action}
+                    params = {**params, 'inputResponses': responses}
+                    params.pop('requestState', None)
+                    if 'requestState' in result:
+                        params['requestState'] = result['requestState']
+                return observation, body
+        except TimeoutError:
+            observation['status'], observation['reply'] = None, 'timeout'
+            return observation, None
+
     async def call(self, install_label, entry, tool, nonce, *, headers=None, cookies=None, path=None):
         for attempt in range(2):
             name = self.tools.get((entry, tool))
@@ -313,7 +359,7 @@ class GatewayClient:
                 if path == 'get_stream_notification':
                     observation, body = await self._get_call(params, headers=headers, cookies=cookies)
                 else:
-                    observation, body = await self.rpc('tools/call', params, headers=headers, cookies=cookies)
+                    observation, body = await self._tool_call(params, headers=headers, cookies=cookies)
                 error = body.get('error', {}) if body else {}
                 if not (isinstance(error, dict) and error.get('code') == -32042 and self.consent):
                     break

@@ -73,6 +73,22 @@ Lease expiry removes case behaviours without requiring another control request.
 The host disables access logs and returns fixed parser errors. Raw requests and
 watch keys never enter evidence. Fixtures make no outbound calls.
 
+## Protocol versions
+
+The upstream fixture accepts MCP 2026-07-28 request metadata and legacy
+initialization for 2025-11-25 and 2025-06-18 on the same endpoint. The gateway
+target's `gateway.protocol: auto` sends `server/discover` with modern metadata
+first, and falls back to legacy initialization on an unrecognized HTTP 400.
+Recognized modern errors do not trigger legacy fallback.
+
+Modern requests mirror their body metadata into `MCP-Protocol-Version`,
+`Mcp-Method` and, for tool calls, `Mcp-Name`. The fixture validates those mirrors
+and records them under its existing secret-redaction policy. Modern traffic
+has no session, standalone GET stream or resumption. Probe 4 reports its two
+legacy paths as not exercised in this era and tests an elicitation message in
+an MRTR `InputRequiredResult` instead. A raw marker on that side channel warns;
+a raw final-result marker fails.
+
 ## Fixture plugins
 
 Register a function under the `argus.gateway_fixtures` entry-point group:
