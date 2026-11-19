@@ -159,5 +159,5 @@ class OAuthReferenceGateway(ReferenceGateway):
         try:
             return await super()._handle(request)
         except OAuthError as exc:
-            message = await request.json()
+            message = await request.json() if request.method == 'POST' else {}
             return self._error(message.get('id'), -32000, str(exc))

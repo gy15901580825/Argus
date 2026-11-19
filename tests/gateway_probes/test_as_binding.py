@@ -248,3 +248,18 @@ def test_stale_fixture_state_and_summary_cannot_supply_foreign_exposure():
     evidence['cases'][1]['fixture']['state']['oauth'] = {'token': [{'at': 'foreign', 'client_secret_hit': True}]}
     evidence['summary']['upstream_as_binding'] = {'token': [{'at': 'foreign', 'client_secret_hit': True}]}
     assert verdict(evidence)[0] == 'pass'
+
+
+async def test_reference_oauth_get_refusal_preserves_bodyless_request(tmp_path):
+    import httpx
+    async with FixtureHost(installation(), control_token=secrets.token_hex(16), control_bind='127.0.0.1:0', settle_s=0.001) as host:
+        for name, url in host.origin_urls.items():
+            host.install['origins'][name]['public'] = url
+        client = host.install['entries']['oauth']
+        async with OAuthReferenceGateway({'oauth': Entry(entry_url(host.install, 'oauth'))},
+            clients={'oauth': StaticClient(issuer_url(host.install, 'foreign'), client['client_id'], client['client_secret'])}) as gateway:
+            async with httpx.AsyncClient(trust_env=False) as connection:
+                response = await connection.get(gateway.url)
+            assert response.status_code == 200
+            assert response.json()['id'] is None
+            assert response.json()['error']['code'] == -32000
