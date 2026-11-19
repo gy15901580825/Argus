@@ -70,7 +70,12 @@ h1 { border-bottom: 2px solid #333; }
   <p><strong>Attack prompt:</strong></p>
   <pre>{{ f.attack_prompt }}</pre>
   <p><strong>Target response:</strong></p>
-  <pre>{{ f.target_response | truncate(800) }}</pre>
+  <pre>{{ f.target_response | truncate(800) }}</pre>{% set response_json = html_json_response(f.target_response) %}{% if response_json %}
+  <details class="target-response-json">
+    <summary>Target response (JSON)</summary>
+    <pre>{{ response_json[0] }}</pre>
+    {% if response_json[1] %}<p>Truncated at 20,000 characters. Use <code>--format json</code> for the full value.</p>{% endif %}
+  </details>{% endif %}
   {% if f.judge_model %}
   <p><strong>Judge reasoning:</strong> {{ f.reasoning }}</p>
   {% elif f.verdict in ("error", "blocked_by_target", "skipped", "aborted_cost") %}
