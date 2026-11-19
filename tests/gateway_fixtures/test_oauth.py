@@ -20,9 +20,8 @@ from argus.gateway_fixtures.registry import DefinitionError, load_registry
 from tests.gateway_fixtures.test_host import seal, start_case
 from tests.gateway_fixtures.test_record import encodings
 
-# RFC 7636 Appendix B supplies an independent S256 known-answer check.
-VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'
-CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM'
+VERIFIER = secrets.token_urlsafe(48)
+CHALLENGE = base64.urlsafe_b64encode(hashlib.sha256(VERIFIER.encode('ascii')).digest()).decode().rstrip('=')
 
 
 def installation():
@@ -64,6 +63,12 @@ async def authorize(serving, **overrides):
     host, _, _ = serving
     return await request(serving, 'issuer', urlsplit(issuer_url(host.install)).path + '/authorize',
                          params=authorize_params(host, **overrides))
+
+
+def authorization_error(response):
+    if response.status_code == 302:
+        return {'error': parse_qs(urlsplit(response.headers['location']).query)['error'][0]}
+    return response.json()
 
 
 async def token(serving, **overrides):
@@ -192,7 +197,7 @@ async def test_authorization_code_pkce_and_private_evidence(serving, iss_mode):
 async def test_resource_indicator_mismatch_recorded_at_both_endpoints(serving, bad_resource):
     host, client, auth = serving
     _, seq = await start_case(host, client, auth)
-    assert (await authorize(serving, resource=bad_resource)).json() == {'error': 'invalid_target'}
+    assert authorization_error(await authorize(serving, resource=bad_resource)) == {'error': 'invalid_target'}
     assert (await token(serving, resource=bad_resource)).json() == {'error': 'invalid_target'}
     assert (await token(serving)).status_code == 200
     evidence = await seal(host, client, auth, seq)
@@ -214,12 +219,12 @@ async def test_resource_indicator_mismatch_recorded_at_both_endpoints(serving, b
     ({'scope': 'other'}, 'invalid_scope'),
 ])
 async def test_authorize_rejects_invalid_requests_then_control_succeeds(serving, change, error):
-    assert (await authorize(serving, **change)).json() == {'error': error}
+    assert authorization_error(await authorize(serving, **change)) == {'error': error}
     assert (await authorize(serving)).status_code == 302
 
 
 async def test_callback_pins_only_after_success(serving):
-    assert (await authorize(serving, redirect_uri='http://127.0.0.1:9001/callback', response_type='token')).status_code == 400
+    assert authorization_error(await authorize(serving, redirect_uri='http://127.0.0.1:9001/callback', response_type='token')) == {'error': 'unsupported_response_type'}
     assert (await authorize(serving)).status_code == 302
     assert (await authorize(serving, redirect_uri='http://127.0.0.1:9001/callback')).json() == {'error': 'invalid_request'}
 
@@ -236,7 +241,7 @@ async def test_token_rejects_invalid_requests_then_control_succeeds(serving, cha
 
 
 @pytest.mark.parametrize('change', [
-    {'code_verifier': VERIFIER[:-1] + 'Y'}, {'code_verifier': ''},
+    {'code_verifier': VERIFIER[:-1] + ('Y' if VERIFIER[-1] != 'Y' else 'X')}, {'code_verifier': ''},
     {'redirect_uri': 'http://127.0.0.1:9001/callback'}, {'code': 'unknown'},
 ])
 async def test_code_redeeming_requires_pkce_code_and_exact_callback(serving, change):
@@ -317,3 +322,21 @@ def test_oauth_init_is_opt_in_stable_and_loopback_only(tmp_path):
 def test_unknown_oauth_toggles_fail_closed(toggles):
     with pytest.raises(DefinitionError):
         load_registry(oauth=True).build_behaviors(toggles)
+
+
+@pytest.mark.parametrize('iss_mode', ['always', 'never'])
+async def test_authorization_error_redirect_preserves_state_and_iss(serving, iss_mode):
+    host, client, auth = serving
+    _, seq = await start_case(host, client, auth, toggles={'issuer': {'iss': iss_mode}})
+    state = secrets.token_urlsafe(32)
+    response = await authorize(serving, resource='https://resource.test/other', state=state)
+    assert response.status_code == 302
+    values = parse_qs(urlsplit(response.headers['location']).query)
+    assert values['error'] == ['invalid_target']
+    assert values['state'] == [state]
+    assert values.get('iss') == ([issuer_url(host.install)] if iss_mode == 'always' else None)
+    assert 'code' not in values
+    assert host.oauth.redirect_uri is None
+    evidence = await seal(host, client, auth, seq)
+    assert not evidence['fixture']['state']['oauth'].get('codes_issued')
+    assert_private(evidence, state)

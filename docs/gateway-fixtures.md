@@ -141,7 +141,8 @@ The issuer identifier is `<issuer-origin>/a/{path_token}`. Discovery serves the
 same metadata at the RFC 8414 OAuth path-insertion URL, the OpenID path-insertion
 URL and the OpenID path-append URL. The GET authorize endpoint auto-approves a
 registered client using `response_type=code`, PKCE S256 and the exact `resource`.
-The first successful request pins the exact callback URI for the running install;
+Authorization errors with a validated callback redirect with `error`, supplied
+`state` and the configured `iss`. The first successful request pins the exact callback URI for the running install;
 restart requires pinning again. POST token requests use form encoding and either
 `client_secret_basic` or `client_secret_post`. Both `client_credentials` and
 `authorization_code` produce opaque 60-second tokens, restricted to the OAuth

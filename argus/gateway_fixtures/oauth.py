@@ -229,24 +229,30 @@ class OAuthRuntime:
             valid_redirect = False
         if not valid_redirect or self.redirect_uri is not None and redirect != self.redirect_uri:
             return _error('invalid_request')
+        def authorization_error(name):
+            return self._redirect(params, parsed, [('error', name)])
+
         # First successful request pins the exact callback for this install's lifetime.
         if params.get('response_type') != 'code':
-            return _error('unsupported_response_type')
+            return authorization_error('unsupported_response_type')
         if params.get('code_challenge_method') != 'S256' or not re.fullmatch(r'[A-Za-z0-9_-]{43}', challenge_value):
-            return _error('invalid_request')
+            return authorization_error('invalid_request')
         if not event['resource']['matches_expected']:
-            return _error('invalid_target')
+            return authorization_error('invalid_target')
         if params.get('scope', SCOPE) != SCOPE:
-            return _error('invalid_scope')
+            return authorization_error('invalid_scope')
         self.codes = {key: value for key, value in self.codes.items() if value.expires > time.monotonic()}
         if len(self.codes) >= STATE_MAX:
-            return _error('temporarily_unavailable', 503)
+            return authorization_error('temporarily_unavailable')
         self.redirect_uri = redirect
         code = secrets.token_urlsafe(32)
         self.codes[_digest(code)] = _Code(self.client['client_id'], redirect, challenge_value, time.monotonic() + TTL_S)
         self._event(context, 'codes_issued', {'by': 'issuer', **context.recorder.oauth_observation(code),
                                            'h_sent_iss': self.send_iss})
-        pairs = list(parse_qsl(parsed.query, keep_blank_values=True)) + [('code', code)]
+        return self._redirect(params, parsed, [('code', code)])
+
+    def _redirect(self, params, parsed, response):
+        pairs = list(parse_qsl(parsed.query, keep_blank_values=True)) + response
         if 'state' in params:
             pairs.append(('state', params['state']))
         if self.send_iss:
