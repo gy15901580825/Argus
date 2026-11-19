@@ -34,3 +34,24 @@ def test_mcp_scan_fixture_servers_import_no_outbound_client():
     for f in files:
         hits = TRAP_BANNED.findall(f.read_text())
         assert not hits, f"{f.name} imports an outbound client: {hits}"
+
+
+def test_gateway_fixture_package_imports_no_outbound_client():
+    import ast
+
+    fixtures = pathlib.Path(__file__).resolve().parents[2] / "argus" / "gateway_fixtures"
+    files = list(fixtures.rglob("*.py"))
+    assert files, f"{fixtures} is missing; this guard cannot check what it cannot read"
+    forbidden = {"httpx", "httpx2", "requests", "socket", "smtplib", "ftplib", "websockets"}
+    for path in files:
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(node, (ast.Import, ast.ImportFrom)):
+                continue
+            modules = [alias.name for alias in node.names] if isinstance(node, ast.Import) else [node.module or ""]
+            for module in modules:
+                assert module.split(".")[0] not in forbidden, f"{path.name}: {module}"
+                assert not module.startswith(("http.client", "mcp.client")), f"{path.name}: {module}"
+                assert not module.startswith("urllib") or module == "urllib.parse", f"{path.name}: {module}"
+                assert not module.startswith("aiohttp") or module == "aiohttp.web", f"{path.name}: {module}"
+            if isinstance(node, ast.ImportFrom) and node.module == "mcp":
+                assert all("Client" not in alias.name for alias in node.names), path.name

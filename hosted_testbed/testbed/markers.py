@@ -1,3 +1,5 @@
+# The decoding policy is also implemented in argus/gateway_fixtures/match.py.
+# This separate deployment cannot import the Argus engine.
 import base64
 import itertools
 import re
