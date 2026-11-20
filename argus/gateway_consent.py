@@ -36,6 +36,7 @@ def _origin(url):
 class ConsentDriver:
     def __init__(self, gateway, install, mode, timeout_s):
         self.gateway, self.mode, self.timeout_s = gateway, mode, timeout_s
+        self.oauth_install = 'oauth' in install.get('entries', {})
         self.allowed = {_origin(value['public']): name for name, value in install['origins'].items()}
         self.allowed[_origin(gateway.gateway['url'])] = 'gateway'
         self.nonce = None
@@ -49,12 +50,13 @@ class ConsentDriver:
         self.manual_out_of_band = []
         self.case_started = asyncio.get_running_loop().time()
 
-    def requires_out_of_band(self, case, failure):
+    def requires_out_of_band(self, case, failure, *, run_challenged=False):
         upstream = case.get('upstream', {})
         changed = upstream.get('challenge') == 'invalid_token' or 'prm' in upstream
-        return (case.get('entry') == 'oauth' and changed and failure is not None
+        return ((case.get('entry') == 'oauth' or self.oauth_install and run_challenged)
+                and (changed or run_challenged) and failure is not None
                 and failure.get('method') == 'POST' and failure.get('path_class') == 'mcp'
-                and failure.get('rpc_method') == 'tools/call' and failure.get('status') in (401, 403)
+                and failure.get('rpc_method') in ('initialize', 'tools/list', 'tools/call') and failure.get('status') in (401, 403)
                 and not failure.get('consent_signal') and self.gateway.last_failure_body_complete)
 
     async def reauthorize(self, entry):

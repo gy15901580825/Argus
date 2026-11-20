@@ -83,7 +83,7 @@ def test_mirror_correlates_exact_code_and_challenge(code_match, verifier, want):
     requests = evidence['cases'][1]['fixture']['requests']
     requests.append(record('issuer', 'authorize', {'codes_issued': {'by': 'issuer', 'corr': 'h-code', 'verifier_s256': 'challenge', 'h_sent_iss': False}}))
     requests.append(record('foreign', 'token', {'token': {'code': {'corr': 'h-code' if code_match else 'other', 'len': 43},
-        'verifier_s256': verifier, 'client_secret_hit': True, 'code_issued_by': 'issuer', 'verifier_matches_challenge_from': 'issuer'}}))
+        'verifier_s256': verifier, 'client_secret_hit': False, 'code_issued_by': 'issuer', 'verifier_matches_challenge_from': 'issuer'}}))
     assert verdict(evidence, 'mirror_authorize')[0] == want
     requests[:] = [r for r in requests if r['origin'] != 'foreign' or r['route'] != 'token']
     assert verdict(evidence, 'mirror_authorize')[0] == 'pass'
@@ -155,11 +155,11 @@ async def test_reference_strategies_and_e_record_mutation(tmp_path, variant, gra
                     assert facts['h_sent_iss'] and facts['h_authorize_static_client_id']
                     assert not facts['token']
                 if want == 'fail':
-                    assert result.severity == 'high' if variant else result.severity in ('high', 'medium')
+                    assert result.severity == 'high'
                     if variant:
                         assert 'verifier_s256' in result.reason
                     else:
-                        assert ('client_secret_hit' if grant == 'client_credentials' else 'client_id_hit') in result.reason
+                        assert 'client_secret_hit' in result.reason
                     mutated = copy.deepcopy(evidence)
                     for case in mutated['cases']:
                         if case['role'] == 'attack':
