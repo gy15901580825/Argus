@@ -236,7 +236,7 @@ class MCPGatewayTarget(Target):
         if permanent and 'redirect_recontact' in ids:
             raise ValueError('redirect_recontact is reserved for the permanent redirect check')
         budget = sum(case.get('calls_per_case', drive['calls_per_case']) * self.spec.timeout_s + self.spec.case_window_s + 1 for case in script['cases'])
-        if 'consent' in steps:
+        if 'consent' in steps or 'static_oauth_client' in self.spec.features:
             budget += sum((10 + case.get('calls_per_case', drive['calls_per_case'])) * self.spec.timeout_s for case in script['cases'])
         if permanent:
             budget += drive['calls_per_case'] * self.spec.timeout_s + self.spec.case_window_s + 1
@@ -299,7 +299,8 @@ class MCPGatewayTarget(Target):
         script = self._script
         permanent = any(case.get('upstream', {}).get('redirect', {}).get('status') == 308 for case in script['cases'])
         budget = sum(case.get('calls_per_case', script['drive']['calls_per_case']) * self.spec.timeout_s + self.spec.case_window_s + 1 for case in script['cases'])
-        if 'consent' in script['drive'].get('steps', []):
+        if ('consent' in script['drive'].get('steps', [])
+                or self._oauth_challenged and 'static_oauth_client' in self.spec.features):
             budget += sum((10 + case.get('calls_per_case', script['drive']['calls_per_case'])) * self.spec.timeout_s for case in script['cases'])
         if permanent:
             budget += script['drive']['calls_per_case'] * self.spec.timeout_s + self.spec.case_window_s + 1

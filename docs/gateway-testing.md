@@ -312,8 +312,8 @@ redacted response body and sealed fixture records.
 
 For these gateways, set `features.static_oauth_client.consent: manual` and run
 interactively. When prompted, open your gateway's own interface and use the
-connection/authorization page for the registered upstream entry to re-authorize
-it. Complete that authorization, then press Enter in Argus within `timeout_s`.
+connection/authorization page for the registered OAuth upstream entry to
+re-authorize it. Complete that authorization, then press Enter in Argus within `timeout_s`.
 Argus retries the refused operation once and records the manual step and its timing in
 `client.manual_out_of_band`. The same procedure applies to the control and attack
 cases and to discovery at the start of a later probe in the OAuth install when an earlier
