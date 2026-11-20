@@ -227,3 +227,42 @@ def test_code_alone_does_not_override_transport_error(mode):
     assert verdict(evidence, mode)[0] == 'error'
     evidence.pop('transport_error')
     assert verdict(evidence, mode)[0] == 'fail'
+
+
+async def test_plain_case_recovery_prompts_for_oauth_entry(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from argus.targets._base import ProbeNotApplicable
+    from argus.gateway_fixtures.install import entry_url
+    from tests.fixtures.gateway_ref import Entry
+    from tests.fixtures.gateway_ref.out_of_band import ReauthorizationRequired
+    async with running(tmp_path, mode='manual') as (target, gateway, host):
+        monkeypatch.setattr('sys.stdin.isatty', lambda: False)
+        with pytest.raises(ProbeNotApplicable):
+            await target.send_prompt('')
+        await gateway.reauthorize('oauth')
+        gateway.entries['plain'] = Entry(entry_url(host.install, 'plain'))
+        blocked = [True]
+        original = gateway._request
+        async def refuse_call(name, request, **kwargs):
+            if name == 'plain' and kwargs.get('message', {}).get('method') == 'tools/call' and blocked[0]:
+                raise ReauthorizationRequired
+            return await original(name, request, **kwargs)
+        monkeypatch.setattr(gateway, '_request', refuse_call)
+        entries = []
+        manual = ConsentDriver.reauthorize
+        async def reauthorize(driver, entry):
+            entries.append(entry)
+            blocked[0] = False
+            await manual(driver, entry)
+        monkeypatch.setattr(ConsentDriver, 'reauthorize', reauthorize)
+        ready = terminal(monkeypatch)
+        ready[0] = True
+        script = {'version': 1, 'requires': [], 'entries': ['plain'],
+                  'cases': [{'id': 'plain-call', 'role': 'control', 'entry': 'plain', 'upstream': {}}],
+                  'drive': {'tool': 'echo', 'calls_per_case': 1}}
+        await target.begin_probe(SimpleNamespace(id='plain-after-oauth', scenario_payload=json.dumps(script)))
+        await target.send_prompt('')
+        assert entries == ['oauth']
+        case, = (await target.collect_evidence())['cases']
+        assert case['client']['manual_out_of_band'][0]['completed'] is True
+        assert case['client']['calls'][-1]['reply'] == 'result'

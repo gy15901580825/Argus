@@ -424,7 +424,7 @@ class MCPGatewayTarget(Target):
                             if not gateway.consent or not gateway.consent.requires_out_of_band(case, gateway.last_failure, run_challenged=self._oauth_challenged):
                                 raise
                             calls.append({'nonce': nonce, 'reply': 'transport_error', 'transport_error': gateway.last_failure})
-                            await gateway.consent.reauthorize(case['entry'])
+                            await gateway.consent.reauthorize('oauth')
                             call = await gateway.call(install['install_label'], case['entry'], script['drive']['tool'], nonce,
                                                       headers=headers, cookies=cookies, path=case.get('upstream', {}).get('delivery'))
                         calls.append(call)
