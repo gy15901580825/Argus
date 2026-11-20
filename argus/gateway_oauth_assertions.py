@@ -1,4 +1,6 @@
 """MCP Authorization Server Binding checks from sealed fixture request records."""
+from collections import Counter
+
 from argus.world_assertions import AssertionOutcome
 
 
@@ -17,7 +19,7 @@ def _events(records, name, origin=None):
 def _summary(case):
     gateway = _records(case)
     all_records = _records(case, gateway_only=False)
-    codes = _events(all_records, 'codes_issued', 'issuer')
+    codes = _events([record for record in all_records if record.get('origin') in ('issuer', 'foreign')], 'codes_issued')
     tokens = []
     for record in gateway:
         if record.get('route') != 'token':
@@ -27,8 +29,8 @@ def _summary(case):
         token['client_id_hit'] = event.get('client_id_hit') is True or 'static_client_id' in record.get('hits', [])
         token['client_secret_hit'] = event.get('client_secret_hit') is True or 'static_client_secret' in record.get('hits', [])
         issued = next((code for code in codes if code.get('corr') and code['corr'] == event.get('code', {}).get('corr')), None)
-        token['code_issued_by'] = 'issuer' if issued else None
-        token['verifier_matches_challenge_from'] = ('issuer' if issued and token.get('verifier_s256')
+        token['code_issued_by'] = issued['by'] if issued else None
+        token['verifier_matches_challenge_from'] = (issued['by'] if issued and token.get('verifier_s256')
             and token['verifier_s256'] == issued.get('verifier_s256') else None)
         tokens.append(token)
     return {'id': case['id'], 'prm_served': _events(gateway, 'prm_served', 'upstream'),
@@ -80,24 +82,28 @@ def gateway_upstream_as_binding(value, evidence):
         step = ('never re-read protected resource metadata after the 401; restart the gateway or use trigger: manual_restart'
                 if mode == 'own' else 'never fetched foreign authorization-server metadata after the switch')
         return AssertionOutcome('skipped', 'the gateway ' + step)
-    findings = []
+    findings = Counter()
     for case, fact in exercised:
         foreign_tokens = [token for token in fact['token'] if token['at'] == 'foreign']
-        if any(token['client_secret_hit'] for token in foreign_tokens):
-            findings.append(('high', f"{case['id']}: client_secret_hit at foreign token endpoint violates MCP 2026-07-28 Authorization Server Binding"))
-        elif (any(token['client_id_hit'] for token in foreign_tokens)
-              or any(record.get('origin') == 'foreign' and record.get('route') == 'authorize'
-                     and ('static_client_id' in record.get('hits', []) or record.get('ext', {}).get('oauth', {}).get('authorize', {}).get('client_id_hit') is True)
-                     for record in _records(case, gateway_only=False))):
-            findings.append(('medium', f"{case['id']}: client_id_hit at foreign authorization server violates MCP 2026-07-28 Authorization Server Binding"))
+        secret_hits = sum(token['client_secret_hit'] for token in foreign_tokens)
+        if secret_hits:
+            findings[('high', f"{case['id']}: client_secret_hit at foreign token endpoint violates MCP 2026-07-28 Authorization Server Binding", 'token requests')] += secret_hits
+        else:
+            authorize_hits = sum(record.get('origin') == 'foreign' and record.get('route') == 'authorize'
+                and ('static_client_id' in record.get('hits', []) or record.get('ext', {}).get('oauth', {}).get('authorize', {}).get('client_id_hit') is True)
+                for record in _records(case, gateway_only=False))
+            id_hits = sum(token['client_id_hit'] for token in foreign_tokens) + authorize_hits
+            if id_hits:
+                findings[('medium', f"{case['id']}: client_id_hit at foreign authorization server violates MCP 2026-07-28 Authorization Server Binding", 'requests' if authorize_hits else 'token requests')] += id_hits
         for token in foreign_tokens:
             if token['code_issued_by'] == 'issuer' and (token['verifier_matches_challenge_from'] == 'issuer'
                     or not token.get('verifier_s256') and not evidence.get('transport_error')):
                 detail = 'verifier_s256 matches the challenge for that code' if token.get('verifier_s256') else 'without a PKCE verifier'
-                findings.append(('high', f"{case['id']}: H-issued code reached foreign token endpoint; {detail} (MCP Mix-Up Attacks; RFC 9207)"))
+                findings[('high', f"{case['id']}: H-issued code reached foreign token endpoint; {detail} (MCP Mix-Up Attacks; RFC 9207)", 'token requests')] += 1
     if findings:
-        severity = 'high' if any(severity == 'high' for severity, _ in findings) else 'medium'
-        return AssertionOutcome('fail', '; '.join(reason for _, reason in findings), severity)
+        severity = 'high' if any(severity == 'high' for severity, _, _ in findings) else 'medium'
+        return AssertionOutcome('fail', '; '.join(reason + (f' ({count} {unit})' if count > 1 else '')
+            for (_, reason, unit), count in findings.items()), severity)
     if evidence.get('transport_error'):
         return AssertionOutcome('error', 'authorization-server binding transport failed without positive exposure')
     if any(not case.get('complete') or case.get('dropped', 0)
