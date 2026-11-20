@@ -419,6 +419,14 @@ come from the gateway actor. A gateway-generated E authorization URL carrying
 the static client ID counts regardless of who opens it, including the consent
 agent, an operator browser, or a script.
 
+The case summary includes codes issued by H (`by: issuer`) and by E
+(`by: foreign`), regardless of who carried the authorize request. Token
+summaries correlate each observed code and verifier with that case's issuance
+records through `code_issued_by` and `verifier_matches_challenge_from`. E's own
+code does not count as an H code in the mix-up decision. Every token request
+stays in evidence. Each distinct finding sentence appears once per case, with
+a count such as `(16 token requests)` when it describes repeated exchanges.
+
 In every variant, a static secret at E fails high and a static client ID alone
 at E fails medium. A correlated H code and matching verifier at E fail high.
 An H code alone without a verifier keeps its existing high finding on a
