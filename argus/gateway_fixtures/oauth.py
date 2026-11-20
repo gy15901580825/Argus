@@ -122,6 +122,7 @@ class _Code:
     redirect_uri: str
     challenge: str
     expires: float
+    origin: str
 
 
 class OAuthRuntime:
@@ -222,7 +223,8 @@ class OAuthRuntime:
 
     def _authorize(self, context, params):
         challenge_value = params.get('code_challenge', '')
-        event = {'at': 'issuer', 'client_id_hit': params.get('client_id') == self.client['client_id'],
+        origin = context.origin
+        event = {'at': origin, 'client_id_hit': params.get('client_id') == self.client['client_id'],
                  'resource': self._resource_observation(context, params.get('resource', '')),
                  'state_present': 'state' in params,
                  'code_challenge_method': 'S256' if params.get('code_challenge_method') == 'S256' else 'other',
@@ -241,7 +243,7 @@ class OAuthRuntime:
         if not valid_redirect or self.redirect_uri is not None and redirect != self.redirect_uri:
             return _error('invalid_request')
         def authorization_error(name):
-            return self._redirect(params, parsed, [('error', name)])
+            return self._redirect(params, parsed, [('error', name)], origin=origin)
 
         # First successful request pins the exact callback for this install's lifetime.
         if params.get('response_type') != 'code':
@@ -257,17 +259,17 @@ class OAuthRuntime:
             return authorization_error('temporarily_unavailable')
         self.redirect_uri = redirect
         code = secrets.token_urlsafe(32)
-        self.codes[_digest(code)] = _Code(self.client['client_id'], redirect, challenge_value, time.monotonic() + TTL_S)
-        self._event(context, 'codes_issued', {'by': 'issuer', **context.recorder.oauth_observation(code),
-                                           'h_sent_iss': self.send_iss,
+        self.codes[_digest(code)] = _Code(self.client['client_id'], redirect, challenge_value, time.monotonic() + TTL_S, origin)
+        self._event(context, 'codes_issued', {'by': origin, **context.recorder.oauth_observation(code),
+                                           'h_sent_iss': origin == 'issuer' and self.send_iss,
                                            'verifier_s256': event['challenge'].get('verifier_s256')})
-        return self._redirect(params, parsed, [('code', code)])
+        return self._redirect(params, parsed, [('code', code)], origin=origin)
 
-    def _redirect(self, params, parsed, response):
+    def _redirect(self, params, parsed, response, *, origin='issuer'):
         pairs = list(parse_qsl(parsed.query, keep_blank_values=True)) + response
         if 'state' in params:
             pairs.append(('state', params['state']))
-        if self.send_iss:
+        if origin == 'issuer' and self.send_iss:
             pairs.append(('iss', issuer_url(self.install)))
         location = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(pairs), ''))
         return web.Response(status=302, headers={'Location': location, 'Cache-Control': 'no-store'})
@@ -309,8 +311,10 @@ class OAuthRuntime:
         if params.get('scope', SCOPE) != SCOPE:
             return _error('invalid_scope')
         if grant == 'authorization_code':
-            issued = self.codes.pop(_digest(code), None)
-            if (issued is None or issued.expires <= time.monotonic()
+            issued = self.codes.get(_digest(code))
+            if issued is not None and issued.origin == 'issuer':
+                self.codes.pop(_digest(code))
+            if (issued is None or issued.origin != 'issuer' or issued.expires <= time.monotonic()
                     or issued.client_id != client_id or issued.redirect_uri != params.get('redirect_uri')
                     or not re.fullmatch(r'[A-Za-z0-9._~-]{43,128}', verifier)
                     or base64.urlsafe_b64encode(hashlib.sha256(verifier.encode('ascii')).digest()).decode().rstrip('=') != issued.challenge):

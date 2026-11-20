@@ -144,8 +144,8 @@ async def test_metadata_switch_and_strategy_mutation(serving, grant, strategies)
 def change_authorization_response(host, *, iss_value=None, omit_iss=False, change_state=False):
     original = host.oauth._redirect
 
-    def redirect(params, parsed, response):
-        result = original(params, parsed, response)
+    def redirect(params, parsed, response, **kwargs):
+        result = original(params, parsed, response, **kwargs)
         location = urlsplit(result.headers['Location'])
         pairs = [(name, value) for name, value in parse_qsl(location.query)
                  if not (name == 'iss' and (omit_iss or iss_value is not None))]
@@ -193,7 +193,7 @@ async def test_foreign_as_strategy_mutation(serving, strategies, grant, mode, is
             id_sent = any('static_client_id' in record['hits'] for record in foreign)
             secret_sent = any('static_client_secret' in record['hits'] for record in foreign)
             assert id_sent is (strategy == 'entry')
-            sends_secret = grant == 'client_credentials' or mode == 'mirror_authorize'
+            sends_secret = True
             assert secret_sent is (strategy == 'entry' and sends_secret)
             if strategy == 'entry' and mode == 'mirror_authorize':
                 event = token_events(evidence)[0]

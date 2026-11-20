@@ -303,8 +303,9 @@ issuer-binding baseline revokes that token and needs fresh authorization.
 
 `consent: manual` prints the gateway-provided URL and instruction and waits for
 Enter after you complete authorization, within `timeout_s`. It skips without a
-TTY. Some gateways return HTTP 401 or 403 on `tools/call` after the OAuth case
-invalidates a token or changes protected-resource metadata, without a URL
+TTY. Some gateways return HTTP 401 or 403 on `initialize`, `tools/list`, or
+`tools/call` after an OAuth case invalidates a token or changes protected-resource
+metadata, without a URL
 elicitation, a URL in error `-32042`, or an MRTR input request. Argus classifies
 this as requiring out-of-band re-authorization and retains the refused request,
 redacted response body and sealed fixture records.
@@ -313,15 +314,20 @@ For these gateways, set `features.static_oauth_client.consent: manual` and run
 interactively. When prompted, open your gateway's own interface and use the
 connection/authorization page for the registered upstream entry to re-authorize
 it. Complete that authorization, then press Enter in Argus within `timeout_s`.
-Argus retries the call once and records the manual step and its timing in
+Argus retries the refused operation once and records the manual step and its timing in
 `client.manual_out_of_band`. The same procedure applies to the control and attack
-cases, so keep the gateway interface open for the next prompt. Argus does not
+cases and to discovery at the start of a later probe in the OAuth install when an earlier
+probe may have left the upstream unauthorized. Startup refusals and pauses are
+recorded under `startup.calls` and `startup.manual_out_of_band`; case pauses stay
+under `cases[].client.manual_out_of_band`. Keep the gateway interface open for
+the next prompt. Argus does not
 automate the gateway's UI or admin API or invent a connect URL.
 
 With `follow_url`, `none`, or a non-TTY run, this condition reports skipped with
 "the gateway requires out-of-band re-authorization after the challenge; rerun
-interactively with consent: manual". A 401 or 403 before the case changes the
-challenge or metadata, a consent-page refusal, and a 5xx response remain errors.
+interactively with consent: manual". A 401 or 403 before any OAuth challenge or
+metadata change in this run, a refusal in a non-OAuth install, a consent-page
+refusal, and a 5xx response remain errors.
 Use `none` for a client-credentials flow that needs no user. If ordinary URL
 consent is requested with `none`, the probe skips. `trigger: manual_restart` is accepted as configuration, but the
 runner does not restart your gateway or pause to request a restart. The bundled
@@ -402,15 +408,25 @@ tokens and makes three calls after delays of 2, 5 and 10 seconds.
 
 | Probe ID | Attack and decision |
 | --- | --- |
-| `mcp_gateway_upstream_as_binding` | E advertises its own issuer and endpoints. The static secret reaching E's token endpoint fails high. A static client ID alone at E's authorize or token endpoint fails medium. E's own authorize endpoint rejects requests, so an authorization-code flow can expose only the ID here. |
+| `mcp_gateway_upstream_as_binding` | E advertises its own issuer and endpoints. The static secret reaching E's token endpoint fails high. A static client ID alone at E's authorize or token endpoint fails medium. E's own authorize endpoint validates the client ID, redirect URI and S256 challenge and issues a single-use, case-bound code. Its token endpoint records the exchange and returns `invalid_grant`, so no usable token is issued. |
 | `mcp_gateway_upstream_as_binding_mixup_iss` | Authorization code only. E advertises H's authorize endpoint and E's token endpoint. H sends its `iss`. An H-issued code with its matching PKCE verifier reaching E fails high; H's code reaching E without a verifier also fails high. An issuer-validating gateway can stop the exchange and pass. |
 | `mcp_gateway_upstream_as_binding_mixup_no_iss` | The same mirror setup, but H omits `iss` and does not advertise support. The same code/verifier exposure rules apply. Correct credential binding still protects this case. |
 
 These probes pass only on a complete exercised miss. Failed H controls or no
 metadata rediscovery skip. Mirror variants require a gateway fetch of E metadata
 and skip for `client_credentials`. None has a warn outcome. Token evidence must
-come from the gateway actor. A gateway-generated E authorization URL carried by
-the consent agent can establish client ID reuse in the own variant.
+come from the gateway actor. A gateway-generated E authorization URL carrying
+the static client ID counts regardless of who opens it, including the consent
+agent, an operator browser, or a script.
+
+In every variant, a static secret at E fails high and a static client ID alone
+at E fails medium. A correlated H code and matching verifier at E fail high.
+An H code alone without a verifier keeps its existing high finding on a
+completed exchange, but does not override a transport error. Argus seals an
+attack case after a transport error and evaluates the captured
+records. Positive exposure still decides the finding, with the transport error
+retained as context, even when a later call returns 401 or 403. Without positive
+exposure, the existing error and skipped rules apply.
 
 ### Probe 2: configured headers across redirects
 

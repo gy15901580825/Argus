@@ -202,7 +202,7 @@ async def test_manual_wait_is_bounded_and_retains_attempt(tmp_path, monkeypatch,
 
 
 async def test_removing_classification_restores_error(tmp_path, monkeypatch):
-    monkeypatch.setattr(ConsentDriver, 'requires_out_of_band', lambda *args: False)
+    monkeypatch.setattr(ConsentDriver, 'requires_out_of_band', lambda *args, **kwargs: False)
     async with running(tmp_path) as (target, gateway, host):
         with pytest.raises(TargetTransportError) as raised:
             await target.send_prompt('')

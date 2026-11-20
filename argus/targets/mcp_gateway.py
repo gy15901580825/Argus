@@ -149,6 +149,8 @@ class MCPGatewayTarget(Target):
         if Path(spec.fixtures['install_file']).is_file():
             oauth = 'issuer' in read_install(spec.fixtures['install_file'])['origins']
         self.registry = load_registry(oauth=True) if oauth else load_registry()
+        self._oauth_challenged = False
+        self._binding_assertion = None
         self._script = None
         self._probe_id = None
         self._evidence = {}
@@ -261,6 +263,8 @@ class MCPGatewayTarget(Target):
                 except NoDocumentedDeny as exc:
                     raise ProbeNotApplicable(str(exc)) from None
         await self._release()
+        self._binding_assertion = next((entry['gateway_upstream_as_binding']
+            for entry in getattr(probe, 'assertions', ()) if 'gateway_upstream_as_binding' in entry), None)
         self._script, self._probe_id, self._evidence = script, probe.id, {}
 
     async def _release(self):
@@ -342,11 +346,26 @@ class MCPGatewayTarget(Target):
         gateway.redactor = redactor
         self._evidence = evidence
         try:
-            if 'consent' in script['drive'].get('steps', []):
+            if ('consent' in script['drive'].get('steps', [])
+                    or self._oauth_challenged and 'static_oauth_client' in self.spec.features):
                 gateway.consent = self.registry.drive_steps['consent'](gateway, install,
                     self.spec.features['static_oauth_client']['consent'], self.spec.timeout_s)
-            await gateway.initialize()
-            await gateway.discover(install['install_label'])
+            if gateway.consent:
+                gateway.consent.begin_case(secrets.token_hex(16))
+            for operation in (gateway.initialize, lambda: gateway.discover(install['install_label'])):
+                try:
+                    await operation()
+                except TargetTransportError:
+                    if not gateway.consent or not gateway.consent.requires_out_of_band(
+                            {'entry': 'oauth'}, gateway.last_failure, run_challenged=self._oauth_challenged):
+                        raise
+                    startup = evidence.setdefault('startup', {'calls': []})
+                    startup['calls'].append({'reply': 'transport_error', 'transport_error': gateway.last_failure})
+                    try:
+                        await gateway.consent.reauthorize('oauth')
+                    finally:
+                        startup['manual_out_of_band'] = list(gateway.consent.manual_out_of_band)
+                    await operation()
             for entry in script['entries']:
                 if (entry, script['drive']['tool']) not in gateway.tools:
                     raise ProbeNotApplicable(f'entry {entry}: entry not registered')
@@ -388,6 +407,9 @@ class MCPGatewayTarget(Target):
                 opened = await self._control('POST', '/cases', json={'lease_id': self._lease_id, 'probe_id': self._probe_id,
                     'case_id': case['id'], 'nonce': nonce, 'toggles': toggles,
                     'watch': {'canaries': case_canaries, 'secrets': hashes, 'watch_key': watch_key.hex(), 'case_key': secrets.token_hex(32)}})
+                if gateway.consent and (toggles.get('upstream', {}).get('challenge') == 'invalid_token'
+                                        or 'prm' in toggles.get('upstream', {})):
+                    self._oauth_challenged = True
                 calls = []
                 failure = None
                 try:
@@ -399,7 +421,7 @@ class MCPGatewayTarget(Target):
                             call = await gateway.call(install['install_label'], case['entry'], script['drive']['tool'], nonce,
                                                       headers=headers, cookies=cookies, path=case.get('upstream', {}).get('delivery'))
                         except TargetTransportError:
-                            if not gateway.consent or not gateway.consent.requires_out_of_band(case, gateway.last_failure):
+                            if not gateway.consent or not gateway.consent.requires_out_of_band(case, gateway.last_failure, run_challenged=self._oauth_challenged):
                                 raise
                             calls.append({'nonce': nonce, 'reply': 'transport_error', 'transport_error': gateway.last_failure})
                             await gateway.consent.reauthorize(case['entry'])
@@ -442,6 +464,12 @@ class MCPGatewayTarget(Target):
                     evidence['cases'][-1]['delivery'] = case['upstream']['delivery']
                 evidence['interaction_count'] += sum(r.get('actor') == 'gateway' for r in requests)
                 if failure:
+                    if (case['role'] == 'attack' and self._binding_assertion is not None
+                            and any(call.get('reply') == 'transport_error' for call in calls)):
+                        from argus.gateway_oauth_assertions import gateway_upstream_as_binding
+                        evidence['transport_error'] = gateway.last_failure or gateway.failure_context('POST', gateway.gateway['url'])
+                        if gateway_upstream_as_binding(self._binding_assertion, evidence).verdict == 'fail':
+                            break
                     raise failure
             if any('redirect' in case.get('upstream', {}) for case in script['cases']):
                 from argus.gateway_redirect_assertions import summarize

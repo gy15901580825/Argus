@@ -133,17 +133,50 @@ async def test_foreign_token_always_fixed_error_even_malformed(serving, kind):
     assert_private(evidence, canary, host.install['entries']['oauth']['client_secret'])
 
 
-async def test_own_authorize_records_but_never_echoes_or_issues_code(serving):
+async def test_own_authorize_issues_single_use_case_bound_code(serving):
     host, client, auth = serving
-    _, seq = await start_case(host, client, auth)
+    lease, seq = await start_case(host, client, auth)
     params = authorize_params(host)
     response = await request(serving, 'foreign', urlsplit(issuer_url(host.install, 'foreign')).path + '/authorize', params=params)
-    assert response.json() == {'error': 'invalid_grant'} and 'location' not in response.headers
+    assert response.status_code == 302
+    values = parse_qs(urlsplit(response.headers['location']).query)
+    code = values['code'][0]
+    assert values['state'] == [params['state']] and 'iss' not in values
+    exchange = token_params(host, grant_type='authorization_code', code=code, code_verifier=VERIFIER,
+                            redirect_uri=params['redirect_uri'])
+    # E codes cannot become usable H tokens.
+    assert (await token(serving, **{k: v for k, v in exchange.items() if k not in ('client_id', 'client_secret')})).status_code == 400
+    for _ in range(2):
+        assert (await foreign_token(serving, data=exchange)).json() == {'error': 'invalid_grant'}
     evidence = await seal(host, client, auth, seq)
-    assert evidence['fixture']['state']['oauth']['authorize'][0]['client_id_hit']
-    assert 'codes_issued' not in evidence['fixture']['state']['oauth']
-    assert_private(evidence, params['state'])
+    state = evidence['fixture']['state']['oauth']
+    assert state['authorize'][0]['client_id_hit']
+    assert state['codes_issued'][0]['by'] == 'foreign'
+    events = [event for event in state['token'] if event['at'] == 'foreign']
+    assert events[0]['code_issued_by'] == 'foreign'
+    assert events[0]['verifier_matches_challenge_from'] == 'foreign'
+    assert events[0]['client_secret_hit'] and events[0]['client_id_hit']
+    assert events[1]['code_issued_by'] is None
     assert not host.oauth.codes and not host.oauth.tokens
+    assert_private(evidence, code, VERIFIER, params['state'], host.install['entries']['oauth']['client_secret'])
+    _, seq = await start_case(host, client, auth, lease=lease, case_id='next')
+    await foreign_token(serving, data=exchange)
+    evidence = await seal(host, client, auth, seq)
+    assert evidence['fixture']['state']['oauth']['token'][0]['code_issued_by'] is None
+
+
+@pytest.mark.parametrize('change,error', [({'client_id': 'changed'}, 'unauthorized_client'),
+    ({'redirect_uri': 'invalid'}, 'invalid_request'), ({'code_challenge_method': 'plain'}, 'invalid_request'),
+    ({'code_challenge': 'invalid'}, 'invalid_request')])
+async def test_own_authorize_validates_like_issuer(serving, change, error):
+    host, client, auth = serving
+    _, seq = await start_case(host, client, auth)
+    response = await request(serving, 'foreign', urlsplit(issuer_url(host.install, 'foreign')).path + '/authorize',
+                             params={**authorize_params(host), **change})
+    values = parse_qs(urlsplit(response.headers['location']).query) if response.status_code == 302 else response.json()
+    assert values['error'] in (error, [error])
+    evidence = await seal(host, client, auth, seq)
+    assert not evidence['fixture']['state']['oauth'].get('codes_issued')
 
 
 async def test_foreign_correlation_is_case_scoped_and_preserves_h_code(serving):
@@ -181,22 +214,26 @@ async def test_s256_match_requires_challenge_bound_to_the_same_code(serving):
     assert events[1]['verifier_matches_challenge_from'] == 'issuer'
 
 
-async def test_generated_foreign_evidence_privacy_and_s256(serving):
+@pytest.mark.parametrize('mode', ['own', 'mirror_authorize'])
+async def test_generated_foreign_evidence_privacy_and_s256(serving, mode):
     host, client, auth = serving
     lease = None
     for index in range(200):
         verifier = secrets.token_urlsafe(48)
         challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode('ascii')).digest()).decode().rstrip('=')
         lease, seq = await start_case(host, client, auth, lease=lease, case_id=f'generated-{index}',
-                                     toggles={'foreign': {'as_mode': 'mirror_authorize'}})
-        code = parse_qs(urlsplit((await authorize(serving, code_challenge=challenge)).headers['location']).query)['code'][0]
+                                     toggles={'foreign': {'as_mode': mode}})
+        origin = 'foreign' if mode == 'own' else 'issuer'
+        authorized = await request(serving, origin, urlsplit(issuer_url(host.install, origin)).path + '/authorize',
+                                   params=authorize_params(host, code_challenge=challenge))
+        code = parse_qs(urlsplit(authorized.headers['location']).query)['code'][0]
         response = await foreign_token(serving, data=token_params(host, grant_type='authorization_code', code=code,
             code_verifier=verifier, extra=secrets.token_urlsafe(32)))
         assert response.json() == {'error': 'invalid_grant'}
         evidence = await seal(host, client, auth, seq)
         event = evidence['fixture']['state']['oauth']['token'][0]
         assert event['verifier_s256'] == challenge
-        assert event['verifier_matches_challenge_from'] == 'issuer'
+        assert event['verifier_matches_challenge_from'] == origin
         assert_private(evidence, code, verifier, host.install['entries']['oauth']['client_secret'])
 
 
