@@ -55,6 +55,8 @@ REGISTRY: list[tuple[str, str, str]] = [
     ("README.md", r"(?P<n>\d+)\s+A2A peer probes", "dir:a2a_world"),
     ("README.md", r"(?P<n>\d+)\s+vLLM version check", "dir:vllm_server"),
     ("README.md", r"(?P<n>\d+)\s+custom unicode-smuggling probe", "dir:custom"),
+    ("README.md", r"(?P<n>\d+)\s+\[document-injection probes\]", "dir:document"),
+    ("docs/document-injection.md", r"pack contains (?P<n>\d+) opt-in probes", "dir:document"),
     ("README.md", r"(?P<n>\d+)\s+\[garak\]", "dir:garak"),
     ("README.md", r"─ (?P<n>\d+) YAML\s", "total"),
     ("CITATION.cff", r"Argus runs (?P<n>\d+) red-team probes", "total"),
