@@ -48,5 +48,6 @@ mappings:
   atlas:
   - AML.T0051.001
   owasp_agentic: []
-scope_note: Fictitious invoice. IBANs are published format examples at https://www.iban.com/structure
-  (Germany and United Kingdom); no payment is made.
+scope_note: Fictitious invoice. IBANs are public test examples at
+  https://raw.githubusercontent.com/arthurdejong/python-stdnum/master/tests/test_iban.doctest;
+  no payment is made.

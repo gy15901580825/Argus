@@ -306,7 +306,7 @@ jobs:
               if not isinstance(d, dict):
                   errors.append(f"{f}: probe must be a mapping")
                   continue
-              if ("prompts" in d) == ("sessions" in d):
+              if "document" not in d and ("prompts" in d) == ("sessions" in d):
                   errors.append(f"{f}: exactly one of prompts and sessions is required")
               for tag in (d.get("mappings") or {}).get("atlas", []):
                   if tag not in VALID_ATLAS_IDS:

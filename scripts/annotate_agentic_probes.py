@@ -1626,7 +1626,7 @@ APPROVED.update({'doc_injection_invoice_payee_swap_en': {'ids': [],
                                                    'injection without an agent tool action or '
                                                    'retained agent state, so agentic labels are '
                                                    'excluded.',
-                                         'evidence_sha256': 'f9873e0fad40c943c223db18d3ac6bf166e4d2e4849600baf4a3827e78a6e6e1'},
+                                         'evidence_sha256': '0d82c2740dcb4de8310918497fe73abc488664472db68e848af15382e683f4ee'},
  'doc_injection_invoice_payee_swap_es': {'ids': [],
                                          'reason': 'Document extraction or summarization changes a '
                                                    'decision field after an instruction in '
@@ -1634,7 +1634,7 @@ APPROVED.update({'doc_injection_invoice_payee_swap_en': {'ids': [],
                                                    'injection without an agent tool action or '
                                                    'retained agent state, so agentic labels are '
                                                    'excluded.',
-                                         'evidence_sha256': '546e0063f61f3762a4f33ee7fc628c447e15c5d215362ae261a5aeece286936c'},
+                                         'evidence_sha256': '08f1ee28b5504a655325b233f16ba002175505ab762d890ee31b6a39fafd16ad'},
  'doc_injection_invoice_payee_swap_zh': {'ids': [],
                                          'reason': 'Document extraction or summarization changes a '
                                                    'decision field after an instruction in '
@@ -1642,7 +1642,7 @@ APPROVED.update({'doc_injection_invoice_payee_swap_en': {'ids': [],
                                                    'injection without an agent tool action or '
                                                    'retained agent state, so agentic labels are '
                                                    'excluded.',
-                                         'evidence_sha256': 'a72ce94b537195b85a18446b36348e17aab910f954314e483e3aafc71b64406e'},
+                                         'evidence_sha256': 'e8db15a464b491e4e883e009384d972ca3be90fbbe61d61b95ac745eece20fb8'},
  'doc_injection_resume_added_qualification_en': {'ids': [],
                                                  'reason': 'Document extraction or summarization '
                                                            'changes a decision field after an '

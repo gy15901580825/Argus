@@ -42,6 +42,7 @@ nav:
       - Probe mappings: probe-mapping.md
       - Agentic mappings: owasp-agentic-mapping.md
   - Guides:
+      - Test document injection: document-injection.md
       - CI recipes: ci.md
       - Target plugins: plugins.md
       - Gateway fixture host: gateway-fixtures.md

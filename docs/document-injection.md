@@ -8,8 +8,8 @@ deterministic and need no judge or model call from Argus. Your target may call a
 model to transform the document.
 
 The bundled pack contains 9 opt-in probes. Its invoices, resumes, and contracts
-are fictitious. The two IBANs are published format examples for Germany and the
-United Kingdom in the [IBAN structure table](https://www.iban.com/structure).
+are fictitious. The two IBANs are published German and United Kingdom examples
+in a [public IBAN validation test fixture](https://raw.githubusercontent.com/arthurdejong/python-stdnum/master/tests/test_iban.doctest).
 No probe makes a payment.
 
 | Scenario | Expected output | Protected fact | Forbidden change | Severity |
