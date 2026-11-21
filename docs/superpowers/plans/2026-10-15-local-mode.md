@@ -38,7 +38,7 @@
 2. A finding with `severity` missing or `None` under `--fail-on`: ranks as `info`, never raises. Test in Task 4 (`test_findings_at_or_above_treats_unknown_severity_as_info`).
 3. A failure mid-run (judge provider misconfigured, target unreachable after some probes): the CLI prints one line to stderr and exits 1, no traceback. Test in Task 5 (`test_local_midrun_error_exits_1`).
 4. `--local` together with `--api-url` or `--token`: usage error, exit 2, so a misconfigured CI job does not silently run locally. Test in Task 5 (`test_local_rejects_api_url`).
-5. Installed from a wheel (not the source tree), the orchestrator package must still find its 205 probe YAMLs and rubrics. Verified in Task 1 step 5 and Task 7.
+5. Installed from a wheel (not the source tree), the orchestrator package must still find its 329 probe YAMLs and rubrics. Verified in Task 1 step 5 and Task 7.
 
 ---
 
@@ -117,7 +117,7 @@ from orchestrator.redteam.persona_loader import default_personas, default_strate
 print('personas', len(default_personas()), 'strategies', len(default_strategies()))
 "
 ```
-Expected: `probes_dir` contains `site-packages`, `probes 205`, `rubrics` > 0, `personas` > 0, `strategies` > 0. If `import orchestrator.redteam.api` raises `ModuleNotFoundError` for a third-party module, add that module to `dependencies` and repeat from Step 2. Record the final dependency list in the report.
+Expected: `probes_dir` contains `site-packages`, `probes 329`, `rubrics` > 0, `personas` > 0, `strategies` > 0. If `import orchestrator.redteam.api` raises `ModuleNotFoundError` for a third-party module, add that module to `dependencies` and repeat from Step 2. Record the final dependency list in the report.
 
 - [ ] **Step 4: Confirm the orchestrator test suite and import contracts still pass**
 
