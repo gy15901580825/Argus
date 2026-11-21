@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from typing import Iterator, Literal
 from urllib.parse import urlsplit, urlunsplit
@@ -38,7 +39,7 @@ from .models import (
 NAME_RE = re.compile(r"[a-z][a-z0-9_]{0,31}\Z")
 ENV_NAME_RE = re.compile(r"[A-Z_][A-Z0-9_]{0,63}\Z")
 SECRET_WORDS = ("key", "token", "secret", "password", "auth", "header", "cookie")
-CONTEXT_KEYS_V2 = frozenset(_CONTEXT_KEYS) | {"material"}
+CONTEXT_KEYS_V2 = frozenset(_CONTEXT_KEYS) | {"material", "slots"}
 V2_FIELD_NAMES = frozenset(
     {"let", "run", "attempt", "var", "concat", "generate", "base64", "env", "query",
      "lifecycle", "id", "if_present", "expect", "http_status", "when", "capture",
@@ -67,6 +68,7 @@ _EXPR_KINDS = {
 @dataclass(frozen=True)
 class TransportContextV2(TransportContext):
     material: str | None = None
+    slots: Mapping[str, str] | None = None
 
 
 def _name(value, *, allow_run_id=False):
@@ -83,11 +85,15 @@ def _name(value, *, allow_run_id=False):
 def value_expr_v2(value: dict, depth: int = 0, *, visible: frozenset[str]) -> dict:
     if depth > 16:
         raise ValueError("Binding nesting exceeds maximum")
-    object_fields(value, _EXPR_KINDS | {"missing"})
+    object_fields(value, _EXPR_KINDS | {"missing", "slot"})
     kinds = set(value) & _EXPR_KINDS
     if len(kinds) != 1:
         raise ValueError("Binding requires one variant")
     kind = next(iter(kinds))
+    if "slot" in value:
+        if kind != "context" or value[kind] != "slots":
+            raise ValueError("slot requires a slots context binding")
+        text(value["slot"])
     if "missing" in value:
         if kind not in {"context", "var", "env"}:
             raise ValueError("Binding requires one variant")

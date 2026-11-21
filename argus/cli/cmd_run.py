@@ -66,7 +66,7 @@ def _seed_length(_ctx, _param, value):
               help="Persona/strategy pairings per base probe; capped at the available pairings.")
 @click.option("--max-rounds", type=click.IntRange(1, 20), default=20, show_default=True,
               help="Maximum rounds per adaptive thread.")
-@click.option("--seed", default=None, callback=_seed_length, help="Replay persona/strategy pairings; omitted means a fresh seed.")
+@click.option("--seed", default=None, callback=_seed_length, help="Replay document arm order or deep persona/strategy pairings; omitted means a fresh seed.")
 @click.option("--trials", type=click.IntRange(1, 20), default=None, help="Repeat each whole static probe 1-20 times, replacing its YAML trials count.")
 @click.option("--max-wait", type=float, default=1800.0, help="Max seconds to wait for run completion. Ignored with --local.")
 @click.option("--per-run-cap", "per_run_cap", type=float, callback=_finite_cap, default=None, help="Maximum USD judge/attacker spend for this run. A run whose estimate is above it does not start; the run also stops when a completed call takes spend past it. Default: $0.50 static, $5.00 deep.")
@@ -119,7 +119,7 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
         raise click.UsageError("--mode deep cannot repeat trials; use --trials 1 or --mode static")
     if mode == "static":
         ctx = click.get_current_context()
-        typed = ["--" + name.replace("_", "-") for name in ("deep_pairs", "max_rounds", "seed")
+        typed = ["--" + name.replace("_", "-") for name in ("deep_pairs", "max_rounds")
                  if ctx.get_parameter_source(name) == ParameterSource.COMMANDLINE]
         if typed:
             raise click.UsageError(f"{', '.join(typed)} requires --mode deep")

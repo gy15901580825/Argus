@@ -356,12 +356,22 @@ def test_cli_deep_limits_are_usage_errors(tmp_path, engine, flag, value):
     assert not engine.target.calls
 
 
-@pytest.mark.parametrize('flag,value', [('--deep-pairs', '3'), ('--max-rounds', '20'), ('--seed', 'x')])
+@pytest.mark.parametrize('flag,value', [('--deep-pairs', '3'), ('--max-rounds', '20')])
 def test_static_rejects_explicit_deep_flags_even_at_default(tmp_path, engine, flag, value):
     result = CliRunner().invoke(main, arguments(tmp_path, extra=['--mode', 'static', flag, value]))
     assert result.exit_code == 2, result.output
     assert flag in result.output and '--mode deep' in result.output
     assert not engine.target.calls
+
+
+def test_static_accepts_replay_seed(tmp_path, engine, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(api_client, 'post_run', lambda *a, body: seen.update(body) or {'run_id': 'run-1'})
+    monkeypatch.setattr(api_client, 'poll_until_complete', lambda *a, **k: {'status': 'completed', 'findings': []})
+    monkeypatch.setattr(api_client, 'get_report', lambda *a, **k: 'report')
+    result = CliRunner().invoke(main, arguments(tmp_path, local_run=False, extra=['--seed', 'document-order']))
+    assert result.exit_code == 0, result.output
+    assert seen['seed'] == 'document-order'
 
 
 def test_server_cli_generates_and_echoes_replay_seed(tmp_path, engine, monkeypatch):

@@ -70,6 +70,8 @@ def _bind_v2(
     if "context" in value or "var" in value or "env" in value:
         if "context" in value:
             item = getattr(context, value["context"])
+            if "slot" in value and item is not None:
+                item = item.get(value["slot"])
         elif "var" in value:
             item = scope.get(value["var"])
         else:

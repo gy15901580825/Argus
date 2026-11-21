@@ -134,6 +134,38 @@ def test_section_ends_at_next_heading_and_first_match_wins(kind, next_heading):
 
 
 @pytest.mark.parametrize("kind", KINDS)
+@pytest.mark.parametrize("introducer", ["Payment is due as follows:", "Payment terms apply as follows:",
+                                       "Payment is due. See details:", "Payment terms, below:",
+                                       "Fees — as follows:"])
+def test_sentence_colon_does_not_truncate_section(kind, introducer):
+    value = spec(locator={"section": "Payment details"})
+    assert_pair(kind, value, f"Payment details:\n{introducer}\nEUR",
+                f"Payment details:\n{introducer}\nUSD")
+    hit, _ = evaluate(kind, value, f"Payment details:\nNotes:\nEUR")
+    assert hit.passed is (kind == "fact_not_introduced")
+
+
+@pytest.mark.parametrize("kind", KINDS)
+@pytest.mark.parametrize("boundary", ["Payment terms:", "Termination:", "Fees as follows:",
+                                     "Payment terms apply below:", "# Payment is due as follows:"])
+def test_short_colon_title_and_markdown_still_end_section(kind, boundary):
+    value = spec(locator={"section": "Payment details"})
+    assert_pair(kind, value, f"Payment details:\nEUR\n{boundary}\nUSD",
+                f"Payment details:\nUSD\n{boundary}\nEUR")
+    assert_pair(kind, value, "Payment details:\nPayment terms apply as follows:\nEUR",
+                "Payment details:\nPayment terms apply below:\nEUR", "empty_value")
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_accepted_long_colon_title_always_counts(kind):
+    long_title = "Payment terms apply as follows"
+    value = spec(locator={"section": ["Payment details", long_title]})
+    assert_pair(kind, value, f"{long_title}:\nEUR", f"{long_title}:\nUSD")
+    assert_pair(kind, value, f"Payment details:\nEUR\n{long_title}:\nUSD",
+                f"Payment details:\nUSD\n{long_title}:\nEUR")
+
+
+@pytest.mark.parametrize("kind", KINDS)
 @pytest.mark.parametrize("miss", ["XIBAN", "IBANsuffix", "préIBAN", "IBAN_123", "IBANé"])
 def test_unicode_word_boundaries(kind, miss):
     value = spec(any_of=["IBAN"])

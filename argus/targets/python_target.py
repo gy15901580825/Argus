@@ -21,7 +21,7 @@ from types import ModuleType
 from argus_transport.stops import RunStopped
 from argus_transport.cleanup import CleanupReport, CleanupStateUnknown, validate_cleanup_report
 
-from argus.targets._base import Target, TargetTransportError, Turn
+from argus.targets._base import Target, TargetBlockedError, TargetTransportError, Turn
 from argus.targets.custom_http import CustomHTTPTarget, run_log_from_metadata
 from argus.targets.python_evidence import accumulate_python_evidence, validate_python_evidence, validate_python_observations
 
@@ -124,7 +124,8 @@ class PythonTarget(Target):
         return self._last_run_log
 
     async def send_prompt(
-        self, prompt: str, history: tuple[Turn, ...] = (), *, material: str | None = None
+        self, prompt: str, history: tuple[Turn, ...] = (), *, material: str | None = None,
+        slots: dict[str, str] | None = None,
     ) -> tuple[str, float]:
         self._last_run_log = None
         if self._close_task is not None:
@@ -144,6 +145,8 @@ class PythonTarget(Target):
             "conversation_id": self._conversation_id,
             "probe_id": self._probe_id,
         }
+        if slots is not None:
+            context["slots"] = dict(slots)
         self._context = copy.deepcopy(context)
         started = time.monotonic()
         try:
@@ -156,6 +159,8 @@ class PythonTarget(Target):
             raise TimeoutError("timeout: python target exceeded timeout_s") from None
         except RunStopped as exc:
             self._entry_stop = exc
+            raise
+        except TargetBlockedError:
             raise
         except Exception as exc:
             raise TargetTransportError(

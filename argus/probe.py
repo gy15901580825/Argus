@@ -23,6 +23,7 @@ from argus.a2a.world import (
 )
 from argus.agentic import VALID_OWASP_AGENTIC_IDS
 from argus.remediation import parse_actions
+from argus.documents import Document, load_document
 
 logger = logging.getLogger(__name__)
 _warned_judge_model = False
@@ -67,6 +68,7 @@ VALID_TARGET_CLASSES = {
     "mcp_gateway",
     # The vLLM version probe tests the model server itself, not an agent.
     "vllm_server",
+    "document_transform",
 }
 
 # Each pair has the same support across built-in adapters' compatible_classes.
@@ -196,6 +198,7 @@ class Probe:
     remediation_actions: tuple[dict, ...] = ()
 
     indirect: tuple[IndirectItem, ...] = ()
+    document: Document | None = None
     sessions: tuple[tuple[str, ...], ...] = ()
     scenario_control: str = ""
     trials: int = 1
@@ -227,6 +230,8 @@ class Probe:
 
     @property
     def exchange_count(self) -> int:
+        if self.document is not None:
+            return self.trials * (1 + len(self.document.controls))
         return self.trials * (2 if self.is_phased else 1) * len(self.prompts)
 
     @property
@@ -313,6 +318,7 @@ def load_probe(path: Path) -> Probe:
                     validate_response_fields(entry["response_fields"])
                 except ValueError:
                     raise ValueError(f"invalid response_fields spec in {path}") from None
+        document = load_document(raw, fact_ids) if "document" in raw else None
         scenario_kind = None
         scenario_payload = ""
         scenario_options = {}
@@ -356,7 +362,7 @@ def load_probe(path: Path) -> Probe:
             not isinstance(no_contact_reason, str) or not no_contact_reason.strip() or not markers
         ):
             raise ValueError(f"no_contact_reason must be a nonempty string next to contact_markers in {path}")
-        if ("prompts" in raw) == has_sessions:
+        if document is None and ("prompts" in raw) == has_sessions:
             raise ValueError(
                 f"exactly one of prompts and sessions is required in {path}"
             )
@@ -383,6 +389,8 @@ def load_probe(path: Path) -> Probe:
                     f"conversation cannot be combined with sessions in {path}"
                 )
             prompts = tuple(prompt for group in sessions for prompt in group)
+        elif document is not None:
+            prompts = ()
         else:
             prompts = tuple(raw["prompts"])
         sent = " ".join(prompts + tuple(i["task"] + " " + i["material"] for i in indirect)).lower()
@@ -415,7 +423,7 @@ def load_probe(path: Path) -> Probe:
             or raw.get("iterative")
         ):
             raise ValueError(f"sessions require scenario.control or reply-only assertions in {path}")
-        trials = raw.get("trials", 1)
+        trials = raw.get("trials", 3 if document is not None else 1)
         if type(trials) is not int or not 1 <= trials <= 20:
             raise ValueError(f"trials must be an integer from 1 to 20 in {path}")
         if raw.get("iterative") and trials > 1:
@@ -485,6 +493,7 @@ def load_probe(path: Path) -> Probe:
                 path,
             )
         return Probe(
+            document=document,
             indirect=tuple(IndirectItem(**item) for item in indirect),
             requires_capabilities=tuple(capabilities),
             contact_markers=tuple(m.lower() for m in markers),

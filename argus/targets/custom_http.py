@@ -43,7 +43,7 @@ LEGACY_TRANSPORT_FIELDS = frozenset(
 
 
 def _dry_run_ctx() -> dict:
-    return {"prompt": "", "api_key": "", "history": [], "conversation_id": ""}
+    return {"prompt": "", "slots": {}, "api_key": "", "history": [], "conversation_id": ""}
 
 
 def _uses_context(value, name):
@@ -77,6 +77,19 @@ def _v2_uses_context(spec, name):
         _v2_expression_uses_context(item.expression, name)
         for item in _iter_expressions(spec)
     )
+
+
+def _expression_carries_slot(expression, document):
+    if expression.get("context") == "slots":
+        return expression.get("slot", document.injected_slot) == document.injected_slot
+    if expression.get("context") == "prompt":
+        return document.primary == document.injected_slot
+    for kind in ("object", "array", "concat", "base64"):
+        if kind in expression:
+            value = expression[kind]
+            children = value.values() if kind == "object" else [value] if kind == "base64" else value
+            return any(_expression_carries_slot(child, document) for child in children)
+    return False
 
 
 @dataclass(frozen=True)
@@ -147,6 +160,7 @@ class CustomHTTPTarget(Target):
             "http-chat",
             "tool-using",
             "rag",
+            "document_transform",
         }
     )
 
@@ -211,7 +225,8 @@ class CustomHTTPTarget(Target):
                     parse(path)
 
     async def send_prompt(
-        self, prompt: str, history: tuple[Turn, ...] = (), *, material: str | None = None
+        self, prompt: str, history: tuple[Turn, ...] = (), *, material: str | None = None,
+        slots: dict[str, str] | None = None,
     ) -> tuple[str, float]:
         self._last_run_log = None
         self._last_transport_evidence = {}
@@ -219,7 +234,7 @@ class CustomHTTPTarget(Target):
             self._conversation_id = uuid.uuid4().hex
             self._session_id = None
         if self.spec.transport is None:
-            return await self._send_legacy(prompt, history)
+            return await self._send_legacy(prompt, history, slots)
         spec = self.spec.transport
         context_type = TransportContextV2 if isinstance(spec, TransportSpecV2) else TransportContext
         context = context_type(
@@ -227,7 +242,7 @@ class CustomHTTPTarget(Target):
             history=tuple({"role": t.role, "content": t.content} for t in history),
             conversation_id=self._conversation_id,
             session_id=self._session_id,
-            **({"material": material} if isinstance(spec, TransportSpecV2) else {}),
+            **({"material": material, "slots": slots} if isinstance(spec, TransportSpecV2) else {}),
         )
         if isinstance(spec, TransportSpecV2):
             if self._v2_run is None:
@@ -281,9 +296,10 @@ class CustomHTTPTarget(Target):
             raise TimeoutError("timeout: target operation exceeded its budget")
         raise TargetTransportError(f"target_error: {result.reason_code.value}")
 
-    async def _send_legacy(self, prompt, history):
+    async def _send_legacy(self, prompt, history, slots=None):
         context = {
             "prompt": prompt,
+            "slots": slots or {},
             "api_key": self.spec.api_key or "",
             "history": [{"role": t.role, "content": t.content} for t in history],
             "conversation_id": self._conversation_id,
@@ -315,6 +331,9 @@ class CustomHTTPTarget(Target):
         self._last_run_log = run_log_from_metadata(metadata)
 
     async def begin_probe(self, probe) -> None:
+        document = getattr(probe, "document", None)
+        if document is not None and not self.carries_document_slot(document):
+            raise ProbeNotApplicable(f"slot_not_in_template: injected slot {document.injected_slot!r} is not carried")
         self._indirect = getattr(probe, "indirect", ())
         if self._material_required and not self._indirect:
             raise ProbeNotApplicable("target requires material; probe has no indirect field")
@@ -322,6 +341,18 @@ class CustomHTTPTarget(Target):
         self._conversation_id = None
         self._session_id = None
         self._last_transport_evidence = {}
+
+    def carries_document_slot(self, document) -> bool:
+        if self.spec.transport is None:
+            templates = [self._body_tpl, *(tpl for _, _, tpl in self._header_tpls)]
+            return any(document.injected_slot in tpl.document_slots or (
+                tpl.uses_prompt and document.injected_slot == document.primary
+            ) for tpl in templates)
+        if isinstance(self.spec.transport, TransportSpecV2):
+            return any(_expression_carries_slot(item.expression, document)
+                       for item in _iter_expressions(self.spec.transport))
+        return (document.injected_slot == document.primary
+                and _uses_context(self.spec.transport.request.body, "prompt"))
 
     async def aclose(self) -> None:
         if self._v2_run is not None:

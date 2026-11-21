@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from jinja2 import Template, TemplateError, TemplateSyntaxError
+from jinja2 import Template, TemplateError, TemplateSyntaxError, nodes
 from jinja2.sandbox import ImmutableSandboxedEnvironment, SecurityError
 
 
@@ -33,9 +33,19 @@ def compile_template(source: str, field: str, dry_run_ctx: dict[str, Any]) -> Te
     depend on real data (e.g. indexing an empty history) and are left to send time.
     """
     try:
-        tpl = _env.from_string(source)
+        ast = _env.parse(source)
+        tpl = _env.from_string(ast)
     except TemplateSyntaxError as e:
         raise ValueError(f"{field}: template syntax error: {e}") from e
+    slots = set()
+    for node in ast.find_all((nodes.Getattr, nodes.Getitem)):
+        if isinstance(node.node, nodes.Name) and node.node.name == "slots":
+            if isinstance(node, nodes.Getattr):
+                slots.add(node.attr)
+            elif isinstance(node.arg, nodes.Const) and isinstance(node.arg.value, str):
+                slots.add(node.arg.value)
+    tpl.document_slots = frozenset(slots)
+    tpl.uses_prompt = any(node.name == "prompt" for node in ast.find_all(nodes.Name))
     try:
         tpl.render(**dry_run_ctx)
     except (SecurityError, OverflowError) as e:

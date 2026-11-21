@@ -87,13 +87,18 @@ def validate_fact_assertion(kind, value):
         raise ValueError("invalid fact assertion severity")
 
 
-def _heading_title(line):
+def _heading_title(line, accepted=(), operations=_DEFAULT_NORMALIZE):
     heading = _HEADING.fullmatch(line)
     if heading:
         return (heading.group(1) or "").strip()
     stripped = line.strip()
     if stripped.endswith(":") and stripped[:-1].strip():
-        return stripped[:-1].strip()
+        title = stripped[:-1].strip()
+        if normalize(title, operations) in accepted or (
+            len(title.split()) <= 4
+            and not any(unicodedata.category(char).startswith("P") for char in title)
+        ):
+            return title
     return None
 
 
@@ -102,10 +107,10 @@ def _section(text, titles, operations):
     accepted = {normalize(title, operations) for title in titles}
     lines = text.splitlines()
     for index, line in enumerate(lines):
-        title = _heading_title(line)
+        title = _heading_title(line, accepted, operations)
         if title is not None and normalize(title, operations) in accepted:
             end = index + 1
-            while end < len(lines) and _heading_title(lines[end]) is None:
+            while end < len(lines) and _heading_title(lines[end], accepted, operations) is None:
                 end += 1
             return title, "\n".join(lines[index + 1:end])
     return None, None
@@ -121,6 +126,12 @@ def _flatten(value, path):
             yield from _flatten(child, f"{path}[{index}]")
     elif value is not None:
         yield path, value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+
+
+def parse_json_reply(response_text):
+    """Parse one JSON reply, allowing one surrounding markdown code fence."""
+    fence = _FENCE.fullmatch(response_text)
+    return json.loads(fence.group(2) if fence else response_text, parse_constant=_reject_constant)
 
 
 def _word_char(char):
@@ -158,9 +169,8 @@ def check_fact(kind, value, evidence, response_text):
     if "json_path" in locator:
         from jsonpath_ng import parse
 
-        fence = _FENCE.fullmatch(response_text)
         try:
-            response = json.loads(fence.group(2) if fence else response_text, parse_constant=_reject_constant)
+            response = parse_json_reply(response_text)
         except (ValueError, TypeError, RecursionError):
             reason = "output_not_json"
         else:
