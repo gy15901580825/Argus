@@ -1,6 +1,6 @@
 # Run Argus in CI
 
-These recipes use argus-probe 1.19.0 and Python 3.11. Commit an
+These recipes use argus-probe 1.19.1 and Python 3.11. Commit an
 `argus-target.json` that points at a test agent reachable from your runner. See
 [the target spec cookbook](onboarding/target-spec-cookbook.md) for other transports.
 For an OpenAI-compatible agent, start with this and replace the URL and model:
@@ -62,7 +62,7 @@ and names the flag to gate CI. Counts include individual trials.
 | 130 / 143 | Interrupted or terminated, for example by a CI timeout. | Not written. |
 
 Publish reports even when the scan fails, and preserve its exit code. A report
-may be absent after startup failure or cancellation. Each scan in 1.19.0 writes
+may be absent after startup failure or cancellation. Each scan in 1.19.1 writes
 one `--format`; SARIF and JUnit together require two scans, each with its own
 cost cap. JUnit represents failures and errors regardless of `--fail-on`, so a
 CI test publisher can impose a stricter policy than the CLI. The Azure and
@@ -118,7 +118,7 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:
-          argus-version: "1.19.0"
+          argus-version: "1.19.1"
           target: argus-target.json
           probes: all
           format: sarif
@@ -152,7 +152,7 @@ argus:
   image: python:3.11-slim
   timeout: 30m
   script:
-    - python -m pip install 'argus-probe==1.19.0'
+    - python -m pip install 'argus-probe==1.19.1'
     - mkdir -p reports
     - >-
       argus-probe run --local --target argus-target.json
@@ -195,7 +195,7 @@ jobs:
       - task: UsePythonVersion@0
         inputs:
           versionSpec: "3.11"
-      - script: python -m pip install 'argus-probe==1.19.0'
+      - script: python -m pip install 'argus-probe==1.19.1'
         displayName: Install Argus
       - bash: |
           mkdir -p reports
@@ -239,7 +239,7 @@ pipeline {
       steps {
         sh '''
           python3.11 -m venv .argus-venv
-          .argus-venv/bin/python -m pip install 'argus-probe==1.19.0'
+          .argus-venv/bin/python -m pip install 'argus-probe==1.19.1'
           mkdir -p reports
         '''
         withCredentials([string(credentialsId: 'argus-judge-key', variable: 'ANTHROPIC_API_KEY')]) {
@@ -333,7 +333,7 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:
-          argus-version: "1.19.0"
+          argus-version: "1.19.1"
           target: argus-target.json
           probes: all
           format: sarif
@@ -363,7 +363,7 @@ steps work around the CLI scan in other systems with a Docker-capable runner.
 
 ## Use the published CLI image
 
-The public image is `ghcr.io/gy15901580825/argus-probe:1.19.0`; no registry login
+The public image is `ghcr.io/gy15901580825/argus-probe:1.19.1`; no registry login
 is needed. It supports Linux amd64 and arm64. For a Docker-capable Linux runner,
 this replaces the pip install and scan steps above. The image entrypoint is
 `argus-probe`, so arguments start with `run`:
@@ -374,7 +374,7 @@ docker run --rm --network host --user "$(id -u):$(id -g)" \
   -e ANTHROPIC_API_KEY \
   --mount type=bind,src="$PWD/argus-target.json",dst=/target.json,readonly \
   --mount type=bind,src="$PWD/reports",dst=/reports \
-  ghcr.io/gy15901580825/argus-probe:1.19.0 \
+  ghcr.io/gy15901580825/argus-probe:1.19.1 \
   run --local --target /target.json --probes all --skip-judged \
   --fail-on high --per-run-cap 0.50 --format junit --out /reports/argus.xml
 ```
