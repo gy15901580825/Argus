@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import inspect
+import random
+import secrets
 import json
 import logging
 import re
@@ -24,6 +26,7 @@ from argus.input_budget import InputLimits, fit_history
 from argus.placeholders import needs_rendering, render_generator_name, target_model_name
 from argus.a2a.events import events_from_trials
 from argus.cost_meter import CostExceededError
+from argus.documents import Document
 from argus.events import Event
 from argus.deep_thread import DeepThread
 from argus.phases import PhaseRun, clean_failure, judge_trial
@@ -393,8 +396,9 @@ def aborted_finding(probe, reasoning: str, *, history: bool = False) -> Finding:
 
 
 class Runner:
-    def __init__(self, target, judge, rubrics_dir: Path) -> None:
+    def __init__(self, target, judge, rubrics_dir: Path, *, seed: str | None = None) -> None:
         self._target = target
+        self._seed = seed if seed is not None else secrets.token_hex(16)
         input_limits = getattr(target, "input_limits", None)
         self._input_limits = input_limits if isinstance(input_limits, InputLimits) else InputLimits()
         self._judge = judge
@@ -578,7 +582,9 @@ class Runner:
             return
 
         self._sends_ok = self._sends_failed = 0
-        if not getattr(probe, "iterative", False) and probe.trials > 1:
+        if isinstance(getattr(probe, "document", None), Document):
+            inner = self._run_document(probe)
+        elif not getattr(probe, "iterative", False) and probe.trials > 1:
             inner = self._run_static_trials(probe, rubric_text)
         else:
             inner = self._run_once(probe, rubric_text, deep_state=deep_state)
@@ -746,6 +752,92 @@ class Runner:
                 # Judge verdicts only: judge_model is empty when an assertion decided it.
                 f = replace(f, evidence={**(f.evidence or {}), "exposure": "not_exercised"})
             yield f
+
+    async def _run_document(self, probe) -> AsyncIterator[Finding]:
+        from argus.documents import ArmCounts, document_verdict
+
+        document = probe.document
+        fact_ids = [value["id"] for entry in probe.assertions for kind, value in entry.items()
+                    if kind in {"fact_preserved", "fact_not_introduced"}]
+        arms = {name: ArmCounts(facts=dict.fromkeys(fact_ids, 0))
+                for name in ("attack", *document.controls)}
+        exchanges = []
+        rng = random.Random(self._seed)
+        probed_at = datetime.now(timezone.utc)
+        attack_prompt = attack_reply = ""
+        total_latency = 0.0
+        severities = []
+        self._evidence_failed = False
+        for trial in range(1, probe.trials + 1):
+            order = list(arms)
+            rng.shuffle(order)
+            for name in order:
+                counts = arms[name]
+                slots = document.arm_slots(name)
+                prompt = slots[document.primary]
+                if name == "attack":
+                    attack_prompt = prompt
+                record = {"arm": name, "trial": trial,
+                          "request_sha256": {slot: hashlib.sha256(text.encode("utf-8")).hexdigest()
+                                             for slot, text in slots.items()},
+                          "reply_excerpt": "", "facts": {}}
+                try:
+                    # Every arm starts cold, including adapter evidence and server sessions.
+                    await self._target.begin_probe(probe)
+                    response, latency = await self._target.send_prompt(prompt, history=(), slots=slots)
+                except ProbeNotApplicable as exc:
+                    yield self._skip(probe, str(exc))
+                    return
+                except Exception as exc:
+                    failure = _send_failure(exc)
+                    if failure is None:
+                        raise
+                    verdict, reason = failure
+                    if verdict == VERDICT_BLOCKED_BY_TARGET:
+                        counts.blocked += 1
+                    else:
+                        counts.errors += 1
+                    self._note_send(reason if verdict == VERDICT_ERROR else None)
+                    record.update(outcome=verdict, reason=reason,
+                                  evidence=_transport_failure_evidence(exc) or {})
+                    exchanges.append(record)
+                    continue
+                self._note_send(None)
+                total_latency += latency
+                record["reply_excerpt"] = response[:200]
+                if name == "attack":
+                    attack_reply = response
+                if not document.has_document(response):
+                    counts.no_document += 1
+                    record["outcome"] = "no_document"
+                else:
+                    finding = await self._assertion_finding(probe, prompt, response, latency, probed_at)
+                    record.update(outcome=finding.verdict, reason=finding.reasoning,
+                                  facts=(finding.evidence or {}).get("facts", {}))
+                    if finding.verdict == VERDICT_ERROR:
+                        counts.errors += 1
+                    else:
+                        counts.valid += 1
+                        if finding.verdict in {VERDICT_FAIL, VERDICT_WARN}:
+                            counts.violating += 1
+                            if name == "attack":
+                                severities.append(finding.severity)
+                        for fact_id, fact in record["facts"].items():
+                            counts.facts[fact_id] += int(fact["violated"])
+                exchanges.append(record)
+        verdict, reason = document_verdict(arms)
+        levels = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+        severity = max(severities, key=levels.__getitem__, default=probe.severity) if verdict in {
+            VERDICT_FAIL, VERDICT_WARN
+        } else "info"
+        yield self._finding(
+            probe, attack_prompt, attack_reply, total_latency, probed_at,
+            verdict=verdict, severity=severity, confidence=1.0, reasoning=reason,
+            evidence={"document": {"arms": {name: arm.as_dict() for name, arm in arms.items()},
+                                   "trials": probe.trials, "seed": self._seed,
+                                   "injected_slot": document.injected_slot},
+                      "exchanges": exchanges},
+        )
 
     async def _run_static_trials(self, probe, rubric_text) -> AsyncIterator[Finding]:
         records = []

@@ -105,6 +105,16 @@ def render_html(run: dict) -> str:
     )
 
 
+def document_arm_table(finding: dict) -> str:
+    arms = finding["evidence"]["document"]["arms"]
+    lines = ["| Arm | Valid | Violating | No document | Blocked | Errors |",
+             "| --- | ---: | ---: | ---: | ---: | ---: |"]
+    for name, arm in arms.items():
+        name = name.replace("|", "\\|").replace("\n", " ").replace("\r", " ")
+        lines.append(f"| {name} | {arm['valid']} | {arm['violating']} | {arm['no_document']} | {arm['blocked']} | {arm['errors']} |")
+    return "\n".join(lines)
+
+
 def remediation_markdown(actions: list[dict]) -> str:
     names = remediation.atlas_mitigations()
     sections = []
@@ -167,7 +177,9 @@ def render_sarif(run: dict) -> str:
             "ruleId": rid,
             "level": sev_to_level.get(f.get("severity", "info"), "note"),
             "kind": verdict_to_kind.get(f.get("verdict"), "notApplicable"),
-            "message": {"text": f.get("reasoning", "")},
+            "message": {"text": f.get("reasoning", ""),
+                        **({"markdown": f.get("reasoning", "") + "\n\n" + document_arm_table(f)}
+                           if (f.get("evidence") or {}).get("document") else {})},
             # SARIF 2.1.0 requires every result to carry at least one location
             # so GitHub code-scanning can dedupe and place alerts. Red-team
             # findings target a deployed agent (not a source line), so we
@@ -190,6 +202,8 @@ def render_sarif(run: dict) -> str:
                 "attack_prompt": f.get("attack_prompt", ""),
                 "target_response": f.get("target_response", "")[:1000],
                 **({"evidence": f["evidence"]} if is_deep_finding(f) else {}),
+                **({"document": f["evidence"]["document"]}
+                   if (f.get("evidence") or {}).get("document") else {}),
                 **({"evidence_notes": notes} if (notes := evidence_notes(f)) else {}),
                 "judge_model": f.get("judge_model"),
                 "escalated_model": f.get("escalated_model"),

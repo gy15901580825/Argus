@@ -26,7 +26,7 @@ def cleanup(context: dict) -> dict | None: ...
 def close(context: dict) -> None: ...
 ```
 
-All three functions may instead be `async def`. Synchronous functions run in a worker thread. `context` contains `history` (role/content dictionaries), `conversation_id`, and `probe_id`. Hooks receive a copy of the most recent context. `material` carries scenario material when configured; it is otherwise `None`.
+All three functions may instead be `async def`. Synchronous functions run in a worker thread. `context` contains `history` (role/content dictionaries), `conversation_id`, and `probe_id`. Document probes also supply `context["slots"]`, a dictionary of this arm's input documents, and bind `prompt` to the primary slot. Each document arm starts with empty history and fresh probe evidence. Hooks receive a copy of the most recent context. `material` carries scenario material when configured; it is otherwise `None`. Raising `TargetBlockedError` from `argus.targets._base` records a target refusal rather than a transport error.
 
 For example, this agent performs no actions and reports the tool ledger it actually observed:
 

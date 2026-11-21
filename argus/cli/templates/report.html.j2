@@ -90,7 +90,14 @@ h1 { border-bottom: 2px solid #333; }
         "not payment, therefore payment prose": an MCP finding used to render
         "No payment authorization was presented" over a tool call it never
         showed. -#}
-    {% if 'scenario' in f.evidence %}
+    {% if 'document' in f.evidence %}
+    <table>
+      <thead><tr><th>Arm</th><th>Valid</th><th>Violating</th><th>No document</th><th>Blocked</th><th>Errors</th></tr></thead>
+      <tbody>{% for name, arm in f.evidence.document.arms.items() %}
+        <tr><td>{{ name }}</td><td>{{ arm.valid }}</td><td>{{ arm.violating }}</td><td>{{ arm.no_document }}</td><td>{{ arm.blocked }}</td><td>{{ arm.errors }}</td></tr>
+      {% endfor %}</tbody>
+    </table>
+    {% elif 'scenario' in f.evidence %}
     {% set scenario = f.evidence.scenario %}
     <h3>Integration scenario</h3>
     <p>Outcome: <strong>{{ scenario.outcome }}</strong>. Material contact: {{ scenario.touch }}.
@@ -194,7 +201,7 @@ h1 { border-bottom: 2px solid #333; }
       {% endfor %}
     </ul>
     {% endif %}
-    {% if 'items' not in f.evidence and 'trap_requests' not in f.evidence and not ('rounds' in f.evidence and 'scope_note' in f.evidence) %}
+    {% if 'document' not in f.evidence and 'items' not in f.evidence and 'trap_requests' not in f.evidence and not ('rounds' in f.evidence and 'scope_note' in f.evidence) %}
     <p class="note">
       {{ f.evidence.interaction_count }} request(s) to the testbed{% if 'tools_list_count' in f.evidence %}, {{ f.evidence.tools_list_count }} tool listing(s) served{% endif %}.
       {% if f.evidence.expected_payee %}Session payee: <code>{{ f.evidence.expected_payee }}</code>.{% endif %}
