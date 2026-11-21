@@ -31,6 +31,7 @@ def test_all_nine_document_probes_load_and_validate():
         assert probe.severity == ("high" if "invoice" in probe.id else "medium")
         assert probe.mappings.owasp_llm == ("LLM01",)
         assert probe.mappings.atlas == ("AML.T0051.001",)
+        assert probe.mappings.nist_ai_rmf == ("MEASURE-2.7",)
         assert probe.mappings.owasp_agentic == ()
         document = probe.document
         assert document.primary == document.injected_slot == "source"

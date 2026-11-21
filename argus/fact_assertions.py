@@ -48,7 +48,7 @@ def validate_fact_assertion(kind, value):
     if not isinstance(locator, dict) or len(locator) != 1:
         raise ValueError("locator requires exactly one json_path or section")
     if "json_path" in locator:
-        from argus_transport.models import path
+        from argus.jsonpath_syntax import path
 
         path(locator["json_path"])
         if kind == "fact_not_introduced" and locator["json_path"] == "$":

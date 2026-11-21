@@ -53,4 +53,6 @@ mappings:
   - LLM01
   atlas:
   - AML.T0051.001
+  nist_ai_rmf:
+  - MEASURE-2.7
   owasp_agentic: []

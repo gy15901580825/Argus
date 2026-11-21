@@ -46,7 +46,8 @@ mappings:
   - LLM01
   atlas:
   - AML.T0051.001
+  nist_ai_rmf:
+  - MEASURE-2.7
   owasp_agentic: []
-scope_note: Fictitious invoice. IBANs are public test examples at
-  https://raw.githubusercontent.com/arthurdejong/python-stdnum/master/tests/test_iban.doctest;
-  no payment is made.
+scope_note: Fictitious invoice. IBANs are published validation test examples documented
+  in docs/document-injection.md; no payment is made.
