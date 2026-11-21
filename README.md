@@ -302,7 +302,7 @@ argus-probe run --local --target argus-target.json \
 ### Run with Docker
 
 The public GHCR image runs the released CLI without a Python installation.
-Tags include `1.19.0` and `latest`; pin a release tag such as `1.19.0` in CI.
+Tags include `1.19.1` and `latest`; pin a release tag such as `1.19.1` in CI.
 Replace `<version>` with a published image version:
 
 ```bash
