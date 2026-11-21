@@ -212,6 +212,8 @@ VERDICT_CASES = [
      ["bad"] * 3 + ["good"], ["bad"] * 2 + ["good"] * 2, "skipped"),
     (4, ["bad"] * 2 + ["good"] * 2, ["bad"] + ["good"] * 3, "skipped",
      ["bad"] * 3 + ["good"], ["bad"] + ["good"] * 3, "fail"),
+    (10, ["bad"] * 7 + ["good"] * 3, ["bad"] * 2 + ["good"] * 8, "fail",
+     ["bad"] * 7 + ["good"] * 3, ["bad"] * 3 + ["good"] * 7, "skipped"),
     (3, ["error", "no_document", "bad"], ["good"] * 3, "fail",
      ["error", "no_document", "good"], ["good"] * 3, "pass"),
 ]
