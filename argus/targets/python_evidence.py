@@ -238,6 +238,8 @@ _CHECK_DECLARATIONS = {
         'tool_calls': _ARGS,
     }, None),
     'response_fields': ({}, {}, None),
+    'fact_preserved': ({}, {}, None),
+    'fact_not_introduced': ({}, {}, None),
     'no_secret_in_response': ({}, {}, None),
     'no_marker_in_response': ({}, {}, None),
     'reported_page_value': ({}, {}, None),

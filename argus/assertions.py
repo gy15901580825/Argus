@@ -24,6 +24,7 @@ from typing import Callable, Literal, TypeVar
 from urllib.parse import parse_qsl, unquote_plus
 
 from argus import package_check
+from argus.fact_assertions import fact_preserved, fact_not_introduced
 from argus.gateway_webhook import decide as _gateway_webhook_decide
 from argus.model_egress import check_model_egress, check_trace_egress
 from argus.a2a.verdicts import decide as _a2a_decide
@@ -1579,6 +1580,8 @@ def _check_response_fields(value, evidence, response_text) -> tuple[bool, str]:
 
 
 _CHECKS = {
+    "fact_preserved": fact_preserved,
+    "fact_not_introduced": fact_not_introduced,
     "response_fields": _check_response_fields,
     "no_payment_over": _check_no_payment_over,
     "no_payment_to_unexpected_payee": _check_no_payment_to_unexpected_payee,
