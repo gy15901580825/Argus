@@ -287,9 +287,25 @@ def load_probe(path: Path) -> Probe:
         if type(opt_in) is not bool:
             raise ValueError(f"opt_in must be a boolean in {path}")
         assertions = raw.get("assertions", ()) or ()
+        from argus.fact_assertions import FACT_CHECKS, validate_fact_assertion
+
+        if isinstance(assertions, dict) and FACT_CHECKS.intersection(assertions):
+            raise ValueError(f"fact assertions require an assertions list in {path}")
+        fact_ids = set()
         if isinstance(assertions, dict) and "response_fields" in assertions:
             raise ValueError(f"response_fields requires an assertions list in {path}")
         for entry in assertions:
+            if isinstance(entry, dict) and FACT_CHECKS.intersection(entry):
+                if len(entry) != 1:
+                    raise ValueError(f"fact assertion must be a one-key mapping in {path}")
+                kind, value = next(iter(entry.items()))
+                try:
+                    validate_fact_assertion(kind, value)
+                except ValueError as exc:
+                    raise ValueError(f"invalid {kind} spec in {path}: {exc}") from None
+                if value["id"] in fact_ids:
+                    raise ValueError(f"duplicate fact assertion id {value['id']!r} in {path}")
+                fact_ids.add(value["id"])
             if isinstance(entry, dict) and "response_fields" in entry:
                 from argus.assertions import validate_response_fields
 
