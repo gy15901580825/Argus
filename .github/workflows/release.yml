@@ -44,7 +44,7 @@ jobs:
       - name: Install build tools
         run: |
           python -m pip install --upgrade pip
-          pip install build twine pyyaml
+          pip install build twine "pyyaml>=6.0,<7" "jsonpath-ng>=1.6"
 
       - name: Read package version
         id: version
@@ -58,7 +58,13 @@ jobs:
 
       - name: Count probes in the checkout
         id: probes
-        run: echo "probes=$(python scripts/probe_counts.py --total)" >> "$GITHUB_OUTPUT"
+        run: |
+          probes=$(python scripts/probe_counts.py --total)
+          if [[ ! "$probes" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Probe count must be a positive integer; got '$probes'" >&2
+            exit 1
+          fi
+          printf 'probes=%s\n' "$probes" >> "$GITHUB_OUTPUT"
 
       - name: Build sdist + wheel
         run: |
