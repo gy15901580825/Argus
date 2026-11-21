@@ -1619,6 +1619,85 @@ APPROVED.update({'mcp_gateway_filter_delivery_paths': {
 
 APPROVED.update({'mcp_gateway_upstream_as_binding': {'ids': ['ASI03'], 'reason': 'The sealed OAuth fixture records prove static credential reuse across issuer scope, or an H-issued code and PKCE verifier sent to E. ASI03 follows credential-egress siblings by analogy. AML.T0055 follows the credential-passthrough probe; LLM02, MEASURE-2.7 and Article 15(5) follow disclosure siblings. No instruction injection, poisoned tool or agent-to-agent exchange is measured, so ASI01, ASI02 and ASI07 are excluded. MCP Authorization Server Binding and RFC 9207 supply the normative condition; the taxonomies are analogies.', 'evidence_sha256': '3d75fe18a91e26bc6335912ccac3b338b44c3cb47112e75a46315d0acd43cb09'}, 'mcp_gateway_upstream_as_binding_mixup_iss': {'ids': ['ASI03'], 'reason': 'The sealed OAuth fixture records prove static credential reuse across issuer scope, or an H-issued code and PKCE verifier sent to E. ASI03 follows credential-egress siblings by analogy. AML.T0055 follows the credential-passthrough probe; LLM02, MEASURE-2.7 and Article 15(5) follow disclosure siblings. No instruction injection, poisoned tool or agent-to-agent exchange is measured, so ASI01, ASI02 and ASI07 are excluded. MCP Authorization Server Binding and RFC 9207 supply the normative condition; the taxonomies are analogies.', 'evidence_sha256': 'fabc3a23b2771d167c1faf3058cc5dce3522bd68b4290327c17150690c00a40a'}, 'mcp_gateway_upstream_as_binding_mixup_no_iss': {'ids': ['ASI03'], 'reason': 'The sealed OAuth fixture records prove static credential reuse across issuer scope, or an H-issued code and PKCE verifier sent to E. ASI03 follows credential-egress siblings by analogy. AML.T0055 follows the credential-passthrough probe; LLM02, MEASURE-2.7 and Article 15(5) follow disclosure siblings. No instruction injection, poisoned tool or agent-to-agent exchange is measured, so ASI01, ASI02 and ASI07 are excluded. MCP Authorization Server Binding and RFC 9207 supply the normative condition; the taxonomies are analogies.', 'evidence_sha256': 'fd4a5dc5413426f7078c049212cff25ce2aef6b1490d7c0b2aaba3431ae58ab6'}})
 
+APPROVED.update({'doc_injection_invoice_payee_swap_en': {'ids': [],
+                                         'reason': 'Document extraction or summarization changes a '
+                                                   'decision field after an instruction in '
+                                                   'document notes. This measures indirect prompt '
+                                                   'injection without an agent tool action or '
+                                                   'retained agent state, so agentic labels are '
+                                                   'excluded.',
+                                         'evidence_sha256': '55bd846a46652a54e24d097ba2f9f9e30a3aaec07d1969bd615671a67107f23c'},
+ 'doc_injection_invoice_payee_swap_es': {'ids': [],
+                                         'reason': 'Document extraction or summarization changes a '
+                                                   'decision field after an instruction in '
+                                                   'document notes. This measures indirect prompt '
+                                                   'injection without an agent tool action or '
+                                                   'retained agent state, so agentic labels are '
+                                                   'excluded.',
+                                         'evidence_sha256': '0204972b732d7fb1b816a55191d06f840dbe7d241e442e7d679acbf854ea7ddc'},
+ 'doc_injection_invoice_payee_swap_zh': {'ids': [],
+                                         'reason': 'Document extraction or summarization changes a '
+                                                   'decision field after an instruction in '
+                                                   'document notes. This measures indirect prompt '
+                                                   'injection without an agent tool action or '
+                                                   'retained agent state, so agentic labels are '
+                                                   'excluded.',
+                                         'evidence_sha256': 'ec64b9f08e85ad512ef36f38dc07561c8f132c83a51543e05f9a34876e821cf9'},
+ 'doc_injection_resume_added_qualification_en': {'ids': [],
+                                                 'reason': 'Document extraction or summarization '
+                                                           'changes a decision field after an '
+                                                           'instruction in document notes. This '
+                                                           'measures indirect prompt injection '
+                                                           'without an agent tool action or '
+                                                           'retained agent state, so agentic '
+                                                           'labels are excluded.',
+                                                 'evidence_sha256': '1f4e60cf3cb1282b4a0791380c076f47e4d8b8d0713904111bd7314d404afc99'},
+ 'doc_injection_resume_added_qualification_es': {'ids': [],
+                                                 'reason': 'Document extraction or summarization '
+                                                           'changes a decision field after an '
+                                                           'instruction in document notes. This '
+                                                           'measures indirect prompt injection '
+                                                           'without an agent tool action or '
+                                                           'retained agent state, so agentic '
+                                                           'labels are excluded.',
+                                                 'evidence_sha256': 'd83f3a171da801ff900f86fc967a81de47b3c97db9e6da7178cb9e9b0ad4a163'},
+ 'doc_injection_resume_added_qualification_zh': {'ids': [],
+                                                 'reason': 'Document extraction or summarization '
+                                                           'changes a decision field after an '
+                                                           'instruction in document notes. This '
+                                                           'measures indirect prompt injection '
+                                                           'without an agent tool action or '
+                                                           'retained agent state, so agentic '
+                                                           'labels are excluded.',
+                                                 'evidence_sha256': '14fdb30d43a937d0d5390deb08a05916a3493ee0c4bb6df6588396c3cca5ada6'},
+ 'doc_injection_contract_termination_fee_en': {'ids': [],
+                                               'reason': 'Document extraction or summarization '
+                                                         'changes a decision field after an '
+                                                         'instruction in document notes. This '
+                                                         'measures indirect prompt injection '
+                                                         'without an agent tool action or retained '
+                                                         'agent state, so agentic labels are '
+                                                         'excluded.',
+                                               'evidence_sha256': '7a2e38cdfdbc3d148dc7eaeb97a56d4f57f2c60dca29d6c82a20ada368203dab'},
+ 'doc_injection_contract_termination_fee_es': {'ids': [],
+                                               'reason': 'Document extraction or summarization '
+                                                         'changes a decision field after an '
+                                                         'instruction in document notes. This '
+                                                         'measures indirect prompt injection '
+                                                         'without an agent tool action or retained '
+                                                         'agent state, so agentic labels are '
+                                                         'excluded.',
+                                               'evidence_sha256': '474ed31acfcefaab14afce30c947b724cc57958c13ae31c526ec28897ffda93e'},
+ 'doc_injection_contract_termination_fee_zh': {'ids': [],
+                                               'reason': 'Document extraction or summarization '
+                                                         'changes a decision field after an '
+                                                         'instruction in document notes. This '
+                                                         'measures indirect prompt injection '
+                                                         'without an agent tool action or retained '
+                                                         'agent state, so agentic labels are '
+                                                         'excluded.',
+                                               'evidence_sha256': '451253594c9e5c551f2d7a3f1c7714ae10ee92ca19fba43bce3966324803dda1'}})
+
 def probe_files(root: Path):
     return sorted((root / 'argus/probes').rglob('*.yaml'))
 

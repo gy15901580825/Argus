@@ -24,6 +24,10 @@ The [target spec cookbook](onboarding/target-spec-cookbook.md) covers endpoint
 configuration. The [probe cheatsheet](onboarding/probe-id-cheatsheet.md) helps
 you choose probes.
 
+For a document extraction or summary API, use the
+[document-injection guide](document-injection.md) to check facts with paired
+attack and control documents.
+
 ## Read the results
 
 The [CLI guide](cli.md) lists commands and exit codes. The

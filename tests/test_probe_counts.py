@@ -22,6 +22,12 @@ def test_families_cover_every_probe_once():
     assert sum(parts) == counts["total"]
 
 
+def test_builtin_total_and_document_family_count():
+    counts = probe_counts.counts()
+    assert counts["total"] == 329
+    assert counts["dir:document"] == 9
+
+
 @pytest.fixture
 def copy_root(tmp_path):
     for rel in {rel for rel, _, _ in probe_counts.REGISTRY}:

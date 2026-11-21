@@ -55,7 +55,7 @@ def test_public_stop_is_exact_legacy_class_with_mutable_cleanup():
 
 def test_client_image_layout_public_stop_has_no_engine_dependency(tmp_path):
     root = Path(__file__).resolve().parents[1]
-    for package in ('argus_transport', 'client_agent'):
+    for package in ('argus_transport', 'argus_jsonpath', 'client_agent'):
         shutil.copytree(root / package, tmp_path / package, ignore=shutil.ignore_patterns('__pycache__'))
     program = """
 import importlib.abc, sys

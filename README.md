@@ -7,7 +7,7 @@
 
 # Argus
 
-**Attack your AI agent before someone else does.** Argus runs 320 red-team
+**Attack your AI agent before someone else does.** Argus runs 329 red-team
 probes against an agent through the tools it calls, the content it reads and
 the requests it gets, then shows which attacks got through. Try it in about a
 minute, no API key needed: `pip install argus-probe && argus-probe quickstart`.
@@ -29,7 +29,7 @@ minute, no API key needed: `pip install argus-probe && argus-probe quickstart`.
   that use it, and reports risky behaviour: decoy secrets it read, suspicious
   commands it ran and requests it tried to send to other hosts.
 
-Around those sits a library of 320 adversarial probes in all (OWASP LLM Top
+Around those sits a library of 329 adversarial probes in all (OWASP LLM Top
 10, MITRE ATLAS, NIST AI RMF, garak wrappers), most of them for chat, gRPC and
 browser-using agents. Findings come out as SARIF 2.1.0, JUnit XML and HTML;
 failed findings from the library carry fix-it text, and the SARIF can be
@@ -70,7 +70,7 @@ AI RMF** IDs, so your security team can trace it to those frameworks.
 
 What Argus does:
 
-- **320 probes** in the bundled library — 15 OWASP LLM Top 10 hand-authored, 5 chat extraction probes, 1 built-in memory probe,
+- **329 probes** in the bundled library — 15 OWASP LLM Top 10 hand-authored, 5 chat extraction probes, 1 built-in memory probe,
   5 from public LLM system cards (best-of-N, crescendo, confused deputy,
   many-shot jailbreak, sleeper agent), 67 browser-agent specific, 27
   payment-abuse probes (x402 wallet flows, against `payment_agent`), 64
@@ -83,7 +83,8 @@ What Argus does:
   [arXiv:2605.00314](https://arxiv.org/abs/2605.00314)), 4 agent-autonomy probes (AGENTS.md
   install, credential grab, guardrail log noise with its control),
   6 A2A server checks (against `a2a_server`), 9 A2A peer probes (against `a2a_agent`), 1 vLLM version check (against `vllm_server`), 1 custom unicode-smuggling probe
-  (see RESULTS.md), and 99 [garak](https://github.com/NVIDIA/garak)
+  (see RESULTS.md), 9 [document-injection probes](docs/document-injection.md)
+  (opt-in invoice, resume, and contract transformations), and 99 [garak](https://github.com/NVIDIA/garak)
   wrappers for NVIDIA's existing catalog. Exact per-standard counts are
   generated, not hand-maintained — see [`docs/probe-mapping.md`](docs/probe-mapping.md).
 - **16 target adapters**: `openai_compat`, `anthropic_native`, `custom_http`
@@ -425,7 +426,7 @@ argus-probe scan-skill --sample key-grab
 │  argus  (engine; argus.server is the FastAPI app for server mode)       │
 │    probe loader  ──▶  target adapter  ──▶  judge harness                │
 │        │                  │                      │                      │
-│        └──── 320 YAML     │                      └──▶ fast model, then  │
+│        └──── 329 YAML     │                      └──▶ fast model, then  │
 │              probes       │                           strong model on   │
 │                           │                           high/critical,    │
 │                  ┌────────┴─────────┐                 confidence ≥ 0.7  │

@@ -18,7 +18,8 @@ COPY pyproject.toml LICENSE NOTICE ./
 COPY docs/cli.md docs/cli.md
 COPY argus/ argus/
 COPY argus_transport/ argus_transport/
-RUN pip install --no-cache-dir ".[server]" && rm -rf /app/argus /app/argus_transport
+COPY argus_jsonpath/ argus_jsonpath/
+RUN pip install --no-cache-dir ".[server]" && rm -rf /app/argus /app/argus_transport /app/argus_jsonpath
 
 ENV PYTHONUNBUFFERED=1
 

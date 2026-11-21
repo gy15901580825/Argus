@@ -279,8 +279,8 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install PyYAML
-        run: pip install pyyaml
+      - name: Install probe loader dependencies
+        run: pip install "pyyaml>=6.0,<7" "jsonpath-ng>=1.6"
 
       - name: Every probe parses and declares mappings + a real rubric
         run: |
@@ -306,7 +306,7 @@ jobs:
               if not isinstance(d, dict):
                   errors.append(f"{f}: probe must be a mapping")
                   continue
-              if ("prompts" in d) == ("sessions" in d):
+              if "document" not in d and ("prompts" in d) == ("sessions" in d):
                   errors.append(f"{f}: exactly one of prompts and sessions is required")
               for tag in (d.get("mappings") or {}).get("atlas", []):
                   if tag not in VALID_ATLAS_IDS:
@@ -384,7 +384,7 @@ jobs:
           python-version: "3.11"
       - name: Build wheel from checkout
         run: |
-          python -m pip install build pyyaml
+          python -m pip install build "pyyaml>=6.0,<7" "jsonpath-ng>=1.6"
           python -m build --wheel --outdir "$RUNNER_TEMP/cli-context"
           cp docker/cli.Dockerfile "$RUNNER_TEMP/cli-context/Dockerfile"
       - name: Build amd64 image and smoke test

@@ -9,6 +9,8 @@ from enum import Enum
 from typing import Any, Literal, NotRequired, TypeAlias, TypedDict
 from urllib.parse import urlsplit
 
+from argus_jsonpath import path
+
 ContextKey: TypeAlias = Literal[
     "prompt", "scenario_url", "history", "conversation_id", "session_id", "run_id"
 ]
@@ -82,8 +84,6 @@ _CONTROL_HEADERS = {
     "proxy-authorization",
     "accept-encoding",
 }
-# jsonpath_ng reads a backslash in a quoted name as an escape, so a bracket name may not hold one.
-_PATH = re.compile(r"\$(?:\.[A-Za-z_][\w-]*|\[\d+\]|\['[^'\\\r\n]+'\])*\Z")
 
 
 class FrozenDict(dict):
@@ -144,20 +144,6 @@ def positive(value, maximum=None):
         raise ValueError("Expected positive finite number")
     if maximum is not None and value > maximum:
         raise ValueError("Transport resource limit exceeds maximum")
-    return value
-
-
-def path(value, legacy=False):
-    text(value)
-    if not legacy and not _PATH.fullmatch(value):
-        raise ValueError("Unsupported transport JSONPath: use $.name, $[0] or $['name'], where a bracket name "
-                         "is not empty and has no quote, backslash or line break")
-    from jsonpath_ng import parse
-
-    try:
-        parse(value)
-    except Exception as exc:
-        raise ValueError("Invalid transport JSONPath") from exc
     return value
 
 
