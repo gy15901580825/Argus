@@ -31,7 +31,7 @@ from argus_transport.address_policy import TargetAddressPolicyError
 from argus.coverage import build_coverage, build_summary
 from argus.cost_meter import CostExceededError, CostMeter
 from argus.judge import Judge
-from argus.probe import load_probe_library
+from argus.probe import Probe, load_probe_library
 from argus.persona_strategy import (
     DEFAULT_DEEP_PAIRS,
     DEFAULT_MAX_ROUNDS,
@@ -234,7 +234,7 @@ def _resolve_request_probe_ids(req: RunRequest, target_obj: Any = None) -> list[
             p.id
             for p in load_probe_library(PROBES_DIR)
             if p.id in ids and (getattr(p, "is_phased", False) or getattr(p, "sessions", ())
-                                or getattr(p, "document", None) is not None)
+                                or (isinstance(p, Probe) and p.document is not None))
         ]
         if phased:
             raise HTTPException(

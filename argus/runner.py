@@ -26,6 +26,7 @@ from argus.input_budget import InputLimits, fit_history
 from argus.placeholders import needs_rendering, render_generator_name, target_model_name
 from argus.a2a.events import events_from_trials
 from argus.cost_meter import CostExceededError
+from argus.documents import Document
 from argus.events import Event
 from argus.deep_thread import DeepThread
 from argus.phases import PhaseRun, clean_failure, judge_trial
@@ -581,7 +582,7 @@ class Runner:
             return
 
         self._sends_ok = self._sends_failed = 0
-        if getattr(probe, "document", None) is not None:
+        if isinstance(getattr(probe, "document", None), Document):
             inner = self._run_document(probe)
         elif not getattr(probe, "iterative", False) and probe.trials > 1:
             inner = self._run_static_trials(probe, rubric_text)

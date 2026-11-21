@@ -24,6 +24,7 @@ from argus_transport import (
 from argus_transport.spec_v2 import TransportContextV2, _iter_expressions, material_binding
 from argus.targets._base import ProbeNotApplicable, Target, TargetBlockedError, TargetTransportError, Turn
 from argus.targets._template import compile_template, render
+from argus.documents import Document
 
 LEGACY_TRANSPORT_FIELDS = frozenset(
     {
@@ -332,7 +333,7 @@ class CustomHTTPTarget(Target):
 
     async def begin_probe(self, probe) -> None:
         document = getattr(probe, "document", None)
-        if document is not None and not self.carries_document_slot(document):
+        if isinstance(document, Document) and not self.carries_document_slot(document):
             raise ProbeNotApplicable(f"slot_not_in_template: injected slot {document.injected_slot!r} is not carried")
         self._indirect = getattr(probe, "indirect", ())
         if self._material_required and not self._indirect:
