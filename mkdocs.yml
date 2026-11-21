@@ -39,6 +39,7 @@ nav:
       - Assertions: reference/assertions.md
       - Services: reference/services.md
       - Run stream: reference/run-stream.md
+      - Framework coverage: reference/coverage.md
       - Probe mappings: probe-mapping.md
       - Agentic mappings: owasp-agentic-mapping.md
   - Guides:
