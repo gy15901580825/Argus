@@ -9,6 +9,8 @@
 !client_agent/redteam_runner/**
 !argus_transport/
 !argus_transport/**
+!argus_jsonpath/
+!argus_jsonpath/**
 **/__pycache__
 **/*.py[cod]
 **/.env

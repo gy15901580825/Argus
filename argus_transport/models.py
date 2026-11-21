@@ -9,7 +9,7 @@ from enum import Enum
 from typing import Any, Literal, NotRequired, TypeAlias, TypedDict
 from urllib.parse import urlsplit
 
-from argus.jsonpath_syntax import path
+from argus_jsonpath import path
 
 ContextKey: TypeAlias = Literal[
     "prompt", "scenario_url", "history", "conversation_id", "session_id", "run_id"

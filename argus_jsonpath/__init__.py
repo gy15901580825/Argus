@@ -1,4 +1,4 @@
-"""JSONPath validation shared by probe loading and transport specifications."""
+"""Lightweight JSONPath validation shared by probe loading and transport."""
 
 import re
 
