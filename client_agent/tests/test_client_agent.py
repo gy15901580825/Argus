@@ -397,7 +397,7 @@ def test_client_image_imports_same_shared_transport():
     expected = TransportSpec.from_dict(raw).to_dict()
     repository = Path(__file__).resolve().parents[2]
     source_files = [
-        "argus_transport/models.py", "argus_transport/engine.py",
+        "argus_transport/models.py", "argus_transport/engine.py", "argus_jsonpath/__init__.py",
         "argus_transport/security.py", "argus_transport/browser.py",
         "client_agent/redteam_runner/browser_probe.py",
         "client_agent/redteam_runner/target_agent_driver.py",
