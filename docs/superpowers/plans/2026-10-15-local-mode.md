@@ -1192,7 +1192,7 @@ Insert a new step before "## 3. Get an Argus API token":
 ```markdown
 ## 3a. Run locally (no server)
 
-Set a judge key and add `--local`. The CLI loads the 205 probes, sends them to your agent and judges the replies in this process:
+Set a judge key and add `--local`. The CLI loads the 329 probes, sends them to your agent and judges the replies in this process:
 
 ```bash
 export ANTHROPIC_API_KEY="<your key>"        # or REDTEAM_MODEL_PROVIDER=azure plus the Azure variables
