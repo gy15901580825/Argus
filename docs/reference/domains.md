@@ -87,6 +87,7 @@ behavior rather than a declared field:
 A chat-only target gets only the probes that carry their facts in the attack
 (the `none` level), including a chat-only production target. Declaring a domain
 does not give it access to the mock tool worlds. Most deterministic checks
-of domain actions need `seed` or `tool` integration. Fact files for `none`
-probes carry jurisdiction, source URL and an as-of date per fact; keyword
+of domain actions need `seed` or `tool` integration. No fact-file probes ship
+yet. A future `none`-level probe that compares an answer with a fact will record
+that fact's jurisdiction, source URL and as-of date. Keyword
 matches alone are weak signals and cannot establish a deterministic advice verdict.
