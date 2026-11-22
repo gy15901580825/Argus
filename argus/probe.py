@@ -24,6 +24,7 @@ from argus.a2a.world import (
 from argus.agentic import VALID_OWASP_AGENTIC_IDS
 from argus.remediation import parse_actions
 from argus.documents import Document, load_document
+from argus.domains import DOMAINS
 
 logger = logging.getLogger(__name__)
 _warned_judge_model = False
@@ -212,6 +213,7 @@ class Probe:
     no_contact_reason: str = ""
 
     scenario_options: Mapping[str, str] = field(default_factory=FrozenOptions)
+    domains: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "scenario_options", FrozenOptions(self.scenario_options))
@@ -251,6 +253,17 @@ def load_probe(path: Path) -> Probe:
     # Validation stays fresh, and mutable fields never escape the parsing cache.
     raw = deepcopy(_parse_probe_yaml(Path(path).read_text()))
     try:
+        probe_name = f"probe {raw.get('id', path.stem)!r} ({raw.get('name', path.stem)})"
+        domains = raw.get("domains", [])
+        if not isinstance(domains, list):
+            raise ValueError(f"{probe_name}: domains must be a list in {path}")
+        for domain in domains:
+            if not isinstance(domain, str) or domain not in DOMAINS:
+                raise ValueError(
+                    f"{probe_name}: unknown domain {domain!r}; valid ids: {', '.join(DOMAINS)}"
+                )
+        if len(domains) != len(set(domains)):
+            raise ValueError(f"{probe_name}: domains repeats an id in {path}")
         if raw["severity"] not in VALID_SEVERITIES:
             raise ValueError(f"invalid severity {raw['severity']!r} in {path}")
         for tc in raw["target_class"]:
@@ -492,7 +505,8 @@ def load_probe(path: Path) -> Probe:
                 "--judge-model or judge environment variables (REDTEAM_FAST_MODEL).",
                 path,
             )
-        return Probe(
+        probe = Probe(
+            domains=tuple(domains),
             document=document,
             indirect=tuple(IndirectItem(**item) for item in indirect),
             requires_capabilities=tuple(capabilities),
@@ -539,6 +553,9 @@ def load_probe(path: Path) -> Probe:
             remediation=str(raw.get("remediation", "") or ""),
             remediation_actions=parse_actions(raw.get("remediation_actions"), str(path)),
         )
+        if probe.domains and probe.needs_judge:
+            raise ValueError(f"{probe_name}: domain-tagged probes require deterministic assertions (needs_judge must be false)")
+        return probe
     except KeyError as exc:
         raise ValueError(f"missing required key {exc.args[0]!r} in {path}") from exc
 

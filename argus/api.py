@@ -130,14 +130,17 @@ def compatible_probe_ids(target_obj: Any, *, include_opt_in: bool = True) -> lis
     on either side means compatible), conversation history, and the probe's
     unsupported_trap_modes for a browser target. Reads the instance, because
     testbed_agent sets its classes per spec and its history per inner target.
-    Default selections set include_opt_in=False; explicit ids retain compatibility.
+    Default selections set include_opt_in=False. A declared domain narrows this
+    library selection; named ids and suites bypass it.
     """
     classes = getattr(target_obj, "compatible_classes", frozenset())
     history = getattr(target_obj, "supports_history", False)
+    domain = getattr(target_obj, "domain", None)
     return [
         p.id
         for p in load_probe_library(PROBES_DIR)
         if (include_opt_in or not getattr(p, "opt_in", False))
+        and (domain is None or not p.domains or domain in p.domains)
         and (not classes or not p.target_class or set(p.target_class) & classes)
         and (
             history

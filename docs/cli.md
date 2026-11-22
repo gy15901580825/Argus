@@ -239,6 +239,8 @@ records `evidence.history: false`.
 
 ### Choosing probes
 
+For the target spec's optional `domain`, probe YAML `domains`, and `list-probes --domain`, see [Deployment domains](https://github.com/gy15901580825/Argus/blob/main/docs/reference/domains.md).
+
 `--probes all` selects every non-opt-in probe the target can run: the probes whose `target_class` matches the target kind, less any `conversation` probe when the target cannot carry a conversation (for example an `mcp_agent` whose `inner` target is `grpc`), and less any probe whose `unsupported_trap_modes` covers a `browser_use` target's trap mode (for example `encoded_payload_base64_link` on every browser target). `argus-probe list-probes --target argus-target.json` prints the current list and count for your target spec. `argus-probe list-probes --target-class <class>` lists the probes that declare one class. A probe id you name yourself runs as given; one that does not fit the target is reported as `skipped`.
 
 ### Without a judge key

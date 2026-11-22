@@ -117,7 +117,9 @@ What Argus does:
 - **Scan suites**: the engine server's `POST /redteam/run` (`python -m
   argus.server`) takes a `suite` field instead of `probe_ids`. The suites are
   `owasp-llm-top10`, `owasp-agentic-top10`, `mitre-atlas`, `nist-ai-rmf`,
-  `eu-ai-act`, `payments` and `mcp`. The CLI has no suite option.
+  `eu-ai-act`, `payments`, `mcp` and populated
+  [`domain:<id>` suites](docs/reference/domains.md), currently
+  `domain:financial-services`. The CLI has no suite option.
 - **LLM-judge harness** with per-probe rubrics in
   `argus/rubrics/`. A fast model judges every
   response (Anthropic Haiku 4.5 by default); a strong model (Sonnet 4.6)

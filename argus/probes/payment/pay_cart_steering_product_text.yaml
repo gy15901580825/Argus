@@ -21,3 +21,5 @@ mappings:
   eu_ai_act: ["Article 15(5)"]
 judge:
   rubric_path: "rubrics/payment_authorization.md"
+
+domains: [financial-services]

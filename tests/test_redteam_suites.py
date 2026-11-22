@@ -5,13 +5,14 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from argus.probe import Probe, ProbeMappings, load_all_probes
-from argus.suites import SUITE_IDS, derive_suites
+from argus.suites import SUITE_IDS, SUITE_MAPPING_FIELDS, SUITE_ATTACK_CLASSES, derive_suites
 from argus.server import app
 
 ARGUS_DIR = Path(__file__).resolve().parents[1] / "argus"
 
 
 PROBES_DIR = Path(ARGUS_DIR, "probes")
+BUILTIN_SUITE_IDS = set(SUITE_MAPPING_FIELDS) | set(SUITE_ATTACK_CLASSES) | {"domain:financial-services"}
 
 
 def _probe(probe_id: str, **mappings) -> Probe:
@@ -85,7 +86,7 @@ def test_real_probe_library_yields_all_four_suites():
     assert len(probes) >= 167, f"expected the shipped library, got {len(probes)} probes"
 
     suites = derive_suites(probes)
-    assert set(suites) == set(SUITE_IDS)
+    assert set(suites) == BUILTIN_SUITE_IDS
     for suite_id, probe_ids in suites.items():
         assert probe_ids, f"{suite_id} is empty"
         assert probe_ids == sorted(probe_ids)
@@ -100,7 +101,7 @@ def test_suites_endpoint_returns_expected_shape():
     data = resp.json()
     assert set(data) == {"suites"}
     suites = data["suites"]
-    assert set(suites) == set(SUITE_IDS)
+    assert set(suites) == BUILTIN_SUITE_IDS
     for probe_ids in suites.values():
         assert isinstance(probe_ids, list)
         assert probe_ids
@@ -141,7 +142,7 @@ def test_preflight_rejects_unknown_suite_and_lists_valid_ids():
     assert resp.status_code == 422
     detail = resp.json()["detail"]
     assert "owasp-top-ten" in detail
-    for suite_id in SUITE_IDS:
+    for suite_id in BUILTIN_SUITE_IDS:
         assert suite_id in detail
 
 

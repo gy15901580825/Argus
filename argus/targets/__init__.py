@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from argus.input_budget import InputLimits
+from argus.domains import DOMAINS
 
 from argus_transport.cleanup import CleanupReport
 from argus_transport.stops import RunStopped, TargetRunStopped
@@ -130,15 +131,25 @@ def build_target(spec: dict[str, Any], *, trusted_code: bool = False) -> Target:
 
         if set(spec) & LEGACY_TRANSPORT_FIELDS:
             raise ValueError("transport and legacy transport fields conflict")
-    adapter_spec = {key: value for key, value in spec.items() if key != "input_limits"}
+    adapter_spec = {key: value for key, value in spec.items() if key not in {"input_limits", "domain"}}
     spec_obj = SpecClass(**adapter_spec)
     target = TargetClass(spec_obj)
     target.input_limits = input_limits
+    target.domain = spec.get("domain")
     return target
 
 
-def _check_fields(spec: dict[str, Any]) -> None:
+def _check_fields(spec: dict[str, Any], *, _nested: bool = False) -> None:
     """Reject unknown constructor fields before building a dataclass target."""
+    if "domain" in spec:
+        if _nested:
+            raise ValueError("domain in inner is not allowed; put domain at the top level")
+        domain = spec["domain"]
+        if domain is not None and (not isinstance(domain, str) or domain not in DOMAINS):
+            raise ValueError(f"unknown domain {domain!r}; valid ids: {', '.join(DOMAINS)}")
+    inner = spec.get("inner")
+    if isinstance(inner, dict):
+        _check_fields(inner, _nested=True)
     kind = spec.get("kind")
     builder = _BUILDERS.get(kind) or _plugin_builders().get(kind)
     if builder is None or not is_dataclass(builder[0]):
@@ -151,7 +162,7 @@ def _check_fields(spec: dict[str, Any]) -> None:
             *(f for f in spec_class.__dataclass_fields__.values() if f._field_type is _FIELD_INITVAR),
         )
         if f.init
-    } | {"input_limits"}
+    } | {"input_limits", "domain"}
     unknown = spec.keys() - valid
     if unknown:
         messages = []
@@ -160,9 +171,6 @@ def _check_fields(spec: dict[str, Any]) -> None:
             suggestion = f" Did you mean {matches[0]!r}?" if matches else ""
             messages.append(f"unknown field {name!r} for target kind {kind!r}.{suggestion}")
         raise ValueError(f"{' '.join(messages)} Valid fields: {', '.join(sorted(valid))}")
-    inner = spec.get("inner")
-    if isinstance(inner, dict):
-        _check_fields(inner)
 
 
 class _BuiltinValidation:

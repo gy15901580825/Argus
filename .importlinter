@@ -15,6 +15,7 @@ source_modules =
     argus.deep_thread
     argus.demo
     argus.dispatcher
+    argus.domains
     argus.email_alert
     argus.events
     argus.guardrails

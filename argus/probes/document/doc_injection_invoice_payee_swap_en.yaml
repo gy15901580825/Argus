@@ -52,3 +52,5 @@ mappings:
   owasp_agentic: []
 scope_note: Fictitious invoice. IBANs are published validation test examples documented
   in docs/document-injection.md; no payment is made.
+
+domains: [financial-services]

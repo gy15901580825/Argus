@@ -52,3 +52,5 @@ mappings:
   - MEASURE-2.7
   owasp_agentic: []
 scope_note: Fictitious resume and synthetic qualification label; no certification authority is implied.
+
+domains: [hr-employment]

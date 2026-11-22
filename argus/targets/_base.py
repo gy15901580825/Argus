@@ -92,6 +92,7 @@ class Target(ABC):
     # advisory metadata only.
     compatible_classes: ClassVar[frozenset[str]] = frozenset()
     input_limits: InputLimits = InputLimits()
+    domain: str | None = None
 
     # Whether this adapter can carry a conversation. Adapters that cannot must
     # still accept the `history` kwarg so the runner can call them uniformly;
