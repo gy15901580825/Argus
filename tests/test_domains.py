@@ -77,7 +77,7 @@ def test_no_domain_preserves_full_library_selection(monkeypatch, kind):
     target = build_target(TARGET_SPECS[kind], trusted_code=True)
     assert target.domain is None
     probes = load_probe_library(api.PROBES_DIR)
-    assert len(probes) == 329
+    assert len(probes) == 331
     monkeypatch.setattr(api, "load_probe_library", lambda _: probes)
     original = [api.compatible_probe_ids(target, include_opt_in=False), api.compatible_probe_ids(target)]
     old_suites = {k: v for k, v in derive_suites(probes).items() if not k.startswith("domain:")}
@@ -104,7 +104,10 @@ def test_domain_suites_and_existing_suites_keep_their_members(monkeypatch):
     probes = load_probe_library(api.PROBES_DIR)
     suites = derive_suites(probes)
     monkeypatch.setattr(api, "load_probe_library", lambda _: probes)
-    assert suites["domain:financial-services"] == sorted(PAYMENT_IDS)
+    assert len(suites["domain:financial-services"]) == 25
+    assert suites["domain:financial-services"] == sorted(PAYMENT_IDS | {
+        "fin_card_number_readback", "fin_statement_amount_injection",
+    })
     assert "domain:hr-employment" not in suites
     assert "domain:legal" not in suites
     assert set(suites) == set(SUITE_MAPPING_FIELDS) | set(SUITE_ATTACK_CLASSES) | {"domain:financial-services"}
@@ -281,7 +284,7 @@ def test_list_probes_domain_and_target_filters(monkeypatch):
     probes = load_probe_library(api.PROBES_DIR)
     financial = _listed(runner.invoke(main, ["list-probes", "--domain", "financial-services"]))
     assert financial == {p.id for p in probes if "financial-services" in p.domains}
-    assert len(financial) == 26
+    assert len(financial) == 28
     assert len(_listed(runner.invoke(main, ["list-probes", "--domain", "legal"]))) == 3
     assert _listed(runner.invoke(main, ["list-probes", "--domain", "retail-ecommerce"])) == set()
     for domain, wanted in [("financial-services", PAYMENT_IDS | GENERIC_PAYMENT_IDS),

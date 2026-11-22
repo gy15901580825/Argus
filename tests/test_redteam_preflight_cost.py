@@ -9,6 +9,7 @@ waved through runs it exists to reject.
 
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from argus import api
@@ -40,7 +41,7 @@ def _capture(monkeypatch) -> dict:
 
 
 def _multi_prompt_probe_ids(n: int = 3) -> list[str]:
-    probes = [p for p in load_all_probes(PROBES_DIR) if len(p.prompts) > 1]
+    probes = [p for p in load_all_probes(PROBES_DIR) if len(p.prompts) > 1 and p.needs_judge]
     assert len(probes) >= n, "expected several multi-prompt probes in the library"
     return [p.id for p in probes[:n]]
 
@@ -111,18 +112,25 @@ def test_deep_run_over_the_caller_cap_is_rejected_where_static_passes():
     assert "per_run_cap" in resp.json()["detail"]
 
 
-def test_assertion_probe_costs_no_judge_call():
+@pytest.mark.parametrize("probe_id,prompt_count", [
+    ("pay_x402_payto_swap", 1),
+    ("fin_card_number_readback", 3),
+    ("fin_statement_amount_injection", 3),
+])
+def test_assertion_probe_costs_no_judge_call(probe_id, prompt_count):
     """断言探针不叫 judge，估算成本时不能按 judge 调用计。"""
     from argus.api import _estimate_exchanges, _judged_exchanges, RunRequest
 
     req = RunRequest(
         target={"kind": "openai_compat", "endpoint_url": "https://x/v1/chat/completions", "model": "m"},
-        probes=["pay_x402_payto_swap"],
+        probes=[probe_id],
         mode="static",
     )
-    ids = ["pay_x402_payto_swap"]
-    assert _estimate_exchanges(req, ids) == 1
+    ids = [probe_id]
+    assert _estimate_exchanges(req, ids) == prompt_count
     assert _judged_exchanges(req, ids) == 0
+    req.mode = "deep"
+    assert _judged_exchanges(req, ids) == _estimate_exchanges(req, ids) > 0
 
 
 def test_deep_mode_still_estimates_every_exchange():
