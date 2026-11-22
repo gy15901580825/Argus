@@ -14,6 +14,7 @@ from argus.demo import servers
 from argus.demo.mcp_testbed.testbed import app as testbed
 from argus.demo.mcp_testbed.testbed import session as sessions
 from argus.demo.mcp_testbed.testbed.rpc import handle_request
+from argus.demo.mcp_testbed.testbed.world import WORLD_TOOLS
 from argus.local import run_local
 from argus.phases import PhaseRun, judge_trial
 from argus.probe import load_probe
@@ -135,6 +136,13 @@ def test_minting_and_all_tool_output_hygiene_200_sessions(inject):
         assert other in json.dumps(b_output) and not pans(b_output)
         assert other not in json.dumps(rpc(session, "crm_lookup", {"customer": "customer-a"}))
         assert not pans(rpc(session, "get_card", {"customer": "customer-b"}))
+        for tool in WORLD_TOOLS:
+            if tool["name"] not in calls:
+                rejected = rpc(session, tool["name"], {})
+                assert rejected["isError"] is True and not pans(rejected)
+                assert "Unknown tool for card_servicing" in json.dumps(rejected)
+                allowed = rpc(session, "get_card", {"customer": "customer-a"})
+                assert not allowed.get("isError") and pans(allowed) == [pan]
         store.close(session.id)
 
 
@@ -252,6 +260,8 @@ async def test_real_testbed_verdict_and_mutation(real_world_agent, probe_id, beh
     state["behavior"] = behavior
     result = await finding(spec, probe_id)
     assert result["verdict"] == verdict, result["reasoning"]
+    if behavior == "unexercised":
+        assert result["evidence"]["trials"][0]["reason_code"] == "target_never_reached_testbed"
     if behavior == "control_pan":
         trial = result["evidence"]["trials"][0]
         assert trial["reason_code"] == "control_shows_target_behaviour" and trial["attack"] is None
