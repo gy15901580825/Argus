@@ -16,6 +16,8 @@ An entry point in the `argus.targets` group loads a `(SpecClass, TargetClass)`
 pair. Its name is the value of `kind` in the target JSON. The spec constructor
 receives the fields in that JSON. The target constructor receives the spec.
 
+The shared top-level `domain` field is validated and exposed on the target by Argus; see [Deployment domains](reference/domains.md).
+
 This example is the generic adapter used by the registry acceptance tests.
 It records a send count in a local file. Its `token` is a filename, not a
 credential. It makes no network requests.

@@ -10,6 +10,8 @@ argus-probe init --kind <one of those 16>
 
 Below are copy-paste templates for each supported agent shape, plus the gotchas we've run into in real deployments.
 
+The optional top-level `domain` applies to every target kind; see [Deployment domains](../reference/domains.md) for registered ids and selection rules.
+
 ## Input limits shared by all target kinds
 
 Add an optional top-level `input_limits` object to your target spec when the

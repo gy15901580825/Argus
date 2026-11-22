@@ -37,6 +37,7 @@ nav:
       - Transport specification: transport-spec.md
       - Python targets: python-target.md
       - Assertions: reference/assertions.md
+      - Deployment domains: reference/domains.md
       - Services: reference/services.md
       - Run stream: reference/run-stream.md
       - Probe mappings: probe-mapping.md

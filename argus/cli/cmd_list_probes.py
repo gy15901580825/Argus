@@ -4,6 +4,7 @@ import click
 
 from argus.cli import api_client
 from argus.probe import VALID_TARGET_CLASSES, equivalent_target_classes
+from argus.domains import DOMAINS
 
 
 def _local_probes() -> list:
@@ -36,12 +37,16 @@ def _target_probe_ids(target: str) -> set[str]:
               help="Target spec (JSON object or file): show only the probes `run --probes all` selects for it.")
 @click.option("--target-class", "target_class", type=click.Choice(sorted(VALID_TARGET_CLASSES)), default=None,
               help="Show only probes that declare this target class or an equivalent name.")
+@click.option("--domain", type=click.Choice(list(DOMAINS)), default=None,
+              help="Show only local probes tagged with this registered domain.")
 def cmd_list_probes(token: str | None, api_url: str | None, filter_substr: str, target: str | None,
-                    target_class: str | None):
+                    target_class: str | None, domain: str | None):
     """List available probe ids, locally or from a server."""
     opt_in_ids = set()
     if api_url is None:
         probes = _local_probes()
+        if domain is not None:
+            probes = [p for p in probes if domain in p.domains]
         if target_class is not None:
             classes = equivalent_target_classes(target_class)
             probes = [p for p in probes if classes.intersection(p.target_class)]
@@ -51,7 +56,7 @@ def cmd_list_probes(token: str | None, api_url: str | None, filter_substr: str, 
             fits = _target_probe_ids(target)
             ids = [i for i in ids if i in fits]
     else:
-        for flag, value in (("--target", target), ("--target-class", target_class)):
+        for flag, value in (("--target", target), ("--target-class", target_class), ("--domain", domain)):
             if value is not None:
                 # The server returns ids only; target classes live in the local library.
                 raise click.UsageError(f"{flag} filters the local library; do not combine it with --api-url")

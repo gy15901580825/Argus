@@ -151,7 +151,7 @@ def check_target_spec(
         from argus.targets.mcp_gateway import MCPGatewaySpec
 
         try:
-            MCPGatewaySpec(**{k: v for k, v in spec.items() if k != "input_limits"})
+            MCPGatewaySpec(**{k: v for k, v in spec.items() if k not in {"input_limits", "domain"}})
         except ValueError as exc:
             raise TargetLoadError(str(exc)) from exc
     if isinstance(info.validate, _BuiltinValidation):
