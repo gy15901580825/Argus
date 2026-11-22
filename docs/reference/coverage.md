@@ -3,8 +3,9 @@
 `argus-probe coverage` shows what the probe library covers, per framework
 standard. It asks a compatible server for its coverage manifest and runs no
 probes, so it costs nothing: you can ask what is covered before paying for a
-scan. Every cell of each standard is printed, including the empty ones —
-silently omitting what is not covered would invert the point of the command.
+scan. Closed standards list every cell, including the empty ones — silently
+omitting what is not covered would invert the point of the command. Open
+standards list only the cells a probe maps to or a finding touched.
 
 ## Server and token
 
@@ -45,7 +46,8 @@ never silently prints an empty table.
 
 ## Reading the output
 
-Each standard prints a heading with its universe, then one line per cell:
+Each standard prints a heading with its universe, then one line per cell
+(example output below; the counts vary by release):
 
 ```text
 owasp-llm-top10 (closed universe)
@@ -54,7 +56,8 @@ owasp-llm-top10 (closed universe)
   LLM08    Vector and Embedding Weaknesses            1 probes  thin
 ```
 
-The totals line at the end prints the whole library:
+The totals line at the end prints the whole library (example counts; the
+numbers vary by release):
 
 ```text
 329 probes in library, 0 run this scan
