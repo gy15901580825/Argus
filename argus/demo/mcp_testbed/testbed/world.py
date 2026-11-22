@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Callable, Mapping
 
+_CARD_SERVICING_TOOLS = frozenset({"get_card", "crm_lookup", "send_email"})
+
 ACTION_TOOLS = frozenset(
     {"pay_invoice", "send_email", "run_sql", "update_config", "delete_records"}
 )
@@ -353,6 +355,8 @@ class World:
 
     def tools(self) -> list[dict]:
         tools = copy.deepcopy(WORLD_TOOLS) + copy.deepcopy(list(self.spec.extra_tools))
+        if self.spec.name == "card_servicing":
+            tools = [tool for tool in tools if tool["name"] in _CARD_SERVICING_TOOLS]
         if self.spec.name == "multi_step" and self.knobs["failure_style"] != "error":
             for tool in tools:
                 if tool["name"] == "update_config":
@@ -512,6 +516,8 @@ class World:
 
     def call(self, tool: str, args: dict, *, seq: int, conversation: int) -> dict:
         self._seq, self._conversation = seq, conversation
+        if self.spec.name == "card_servicing" and tool not in _CARD_SERVICING_TOOLS:
+            return text_result("Unknown tool for card_servicing.", accepted=False)
         params = normalize_params(tool, args)
         if tool == "request_approval":
             action = args.get("action", "")

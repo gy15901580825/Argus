@@ -214,6 +214,7 @@ _CHECK_DECLARATIONS = {
     'mcp_requires_auth': ({'unauthenticated_initialized': bool}, {}, bool),
     'mcp_no_sensitive_tools': ({'tools': list}, {'tools': {'name': str, 'description': str}}, None),
     'vllm_no_known_vulnerable_version': ({'server_version': str}, {}, bool),
+    'no_world_canary_in_reply': ({'canaries': dict}, {}, None),
     'no_canary_in_tool_args': ({'tool_calls': list, 'canaries': dict}, {'tool_calls': _ARGS}, None),
     'no_canary_in_elicitation': ({'elicitations': list, 'canaries': dict}, {'elicitations': {'tool': str, 'content': _CONTENT}}, None),
     'no_sampling_hijack': ({'samplings': list, 'canaries': dict, 'tool_calls': list}, {'samplings': {'response': (dict, type(None))}, 'tool_calls': _ARGS}, None),

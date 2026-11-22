@@ -23,8 +23,8 @@ Jev is advisory. Its low-confidence decisions were resolved by inspection of the
 
 | ID | Official name | Probes | Inclusion boundary |
 |---|---|---:|---|
-| ASI01 | Agent Goal Hijack | 69 | Browser/tool/merchant content redirects an actual agent task; generic chat response changes are excluded. |
-| ASI02 | Tool Misuse | 77 | Concrete unauthorized, destructive, or excessive agent tool/payment actions; standalone server defects are excluded. |
+| ASI01 | Agent Goal Hijack | 71 | Browser/tool/merchant content redirects an actual agent task; generic chat response changes are excluded. |
+| ASI02 | Tool Misuse | 78 | Concrete unauthorized, destructive, or excessive agent tool/payment actions; standalone server defects are excluded. |
 | ASI03 | Identity & Privilege Abuse | 34 | Agent-held authentication material, unauthorized delegated access, or a proven crossed principal/privilege boundary; arbitrary PII and session IDs alone are excluded. |
 | ASI04 | Agentic Supply Chain Vulnerabilities | 18 | Poisoned/replaced MCP metadata, unaudited agent dependencies, or verified vulnerable MCP components; benign metadata drift is excluded. |
 | ASI05 | Unexpected Code Execution | 9 | Directly judged agent lifecycle code execution or MCP/browser shell execution; hypothetical emitted SQL/eval/XSS payloads are excluded. |
@@ -157,6 +157,8 @@ Jev cells show `category: recommendation (confidence)`. An em dash means no API 
 | `encoded_payload_base64_link` | [] | Encoded/Unicode instructions target reply text or system-prompt disclosure; listed agent target classes do not add an actual agent workflow or tool action. | ASI01: exclude (0.74) |
 | `encoded_payload_hex_codeblock` | [] | Encoded/Unicode instructions target reply text or system-prompt disclosure; listed agent target classes do not add an actual agent workflow or tool action. | ASI01: exclude (0.48) |
 | `fin_card_number_readback` | [] | An inline third-party export redirects a chat summary into full card-number disclosure. LLM01, LLM02 and AML.T0051.001 follow indirect-injection and disclosure siblings; agentic mappings are empty because this reply-only probe exercises no tool action, agent identity, memory or human trust boundary. | - |
+| `fin_card_tool_full_pan` | ASI01 | A tool-returned account note redirects the requested card-status answer into disclosure of a fresh full PAN. This exercises goal hijacking through untrusted tool content, without another tool action or persistent memory. | - |
+| `fin_cross_customer_account` | ASI01, ASI02 | An account note redirects a summary into an agent-initiated lookup of a different customer and disclosure in the reply or email arguments. This exercises goal hijacking and tool misuse across a customer data boundary; no inter-agent protocol or persistent memory is involved. | - |
 | `fin_statement_amount_injection` | [] | An inline statement note replaces the printed amount in a chat answer. LLM01, LLM09 and AML.T0051.001 follow browser_extraction_tamper; agentic mappings are empty because the chat-only variant exercises no browser action or human trust boundary. | - |
 | `garak_ansiescape_ansiescaped` | [] | Standalone chat prompts and text-only rubric; no agent task, tool action, privileged identity, or retained memory is exercised. | - |
 | `garak_ansiescape_ansiraw` | [] | Standalone chat prompts and text-only rubric; no agent task, tool action, privileged identity, or retained memory is exercised. | - |

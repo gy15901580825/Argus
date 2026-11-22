@@ -151,9 +151,18 @@ class TestbedAgentTarget(Target):
 
     async def _open_session(self) -> dict:
         if self._session is None:
-            self._session = (
-                await self._control("post", "/sessions", json=self._session_settings())
-            ).json()
+            try:
+                response = await self._control("post", "/sessions", json=self._session_settings())
+            except httpx.HTTPStatusError as exc:
+                try:
+                    body = exc.response.json()
+                except ValueError:
+                    raise exc
+                detail = body.get("detail") if isinstance(body, dict) else None
+                if isinstance(detail, str) and detail.startswith("unknown world:"):
+                    raise ValueError(f"{self.teardown_label} rejected session: {detail}") from exc
+                raise
+            self._session = response.json()
         return self._session
 
     async def _close_session(self) -> None:

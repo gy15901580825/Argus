@@ -509,8 +509,12 @@ def test_shipped_phased_verdict_bytes_match_baseline(tmp_path):
     result = subprocess.run([sys.executable, str(ROOT / 'tests/phased_verdict_matrix.py')],
         cwd=ROOT, env={**os.environ, 'PYTHONPATH': str(ROOT)}, capture_output=True, timeout=60)
     assert result.returncode == 0, result.stderr.decode()
-    assert len(result.stdout.splitlines()) == 600
-    assert hashlib.sha256(result.stdout).hexdigest() == '4bd9b7ef31cf3e6478dd8b7a2666342f7489b28f30074a9cee5109cb9fb7c833'
+    assert len(result.stdout.splitlines()) == 648
+    assert hashlib.sha256(result.stdout).hexdigest() == '41155af2165e603a8873db8008618f28bab273c849181ce4d16e085e6aef4d61'
+    legacy = b''.join(line for line in result.stdout.splitlines(keepends=True)
+                      if json.loads(line)['probe'] not in {'fin_card_tool_full_pan', 'fin_cross_customer_account'})
+    assert len(legacy.splitlines()) == 600
+    assert hashlib.sha256(legacy).hexdigest() == '4bd9b7ef31cf3e6478dd8b7a2666342f7489b28f30074a9cee5109cb9fb7c833'
 
 
 @pytest.mark.parametrize('bad_cursor', [False, True])
