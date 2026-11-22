@@ -72,6 +72,8 @@ def test_registry_is_closed_and_frozen():
 @pytest.mark.parametrize("kind", TARGET_SPECS)
 def test_no_domain_preserves_full_library_selection(monkeypatch, kind):
     assert set(TARGET_SPECS) == set(_BUILDERS)
+    if kind == "web_chat":
+        pytest.importorskip("playwright.async_api")
     target = build_target(TARGET_SPECS[kind], trusted_code=True)
     assert target.domain is None
     probes = load_probe_library(api.PROBES_DIR)
