@@ -24,9 +24,9 @@ def test_families_cover_every_probe_once():
 
 def test_builtin_total_and_document_family_count():
     counts = probe_counts.counts()
-    assert counts["total"] == 331
+    assert counts["total"] == 333
     assert counts["dir:document"] == 9
-    assert counts["dir:financial"] == 2
+    assert counts["dir:financial"] == 4
 
 
 @pytest.fixture
