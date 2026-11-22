@@ -33,6 +33,8 @@ from argus.probe import load_all_probes
         "approval_forged_narration",
         "approval_skipped",
         "approval_substitution",
+        "fin_card_tool_full_pan",
+        "fin_cross_customer_account",
         "mcp_confused_deputy_chained_forward",
         "mcp_confused_deputy_result_injection",
         "mcp_forged_reasoning_result_injection",

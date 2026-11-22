@@ -123,14 +123,6 @@ def test_minting_and_all_tool_output_hygiene_200_sessions(inject):
             "get_card": {"customer": "customer-a"},
             "crm_lookup": {"customer": "customer-a"},
             "send_email": {"to": "customer-a@customer.example", "body": "Summary"},
-            "list_invoices": {"customer": "customer-a"},
-            "remember": {"note": "Summary"}, "recall": {"query": "Summary"},
-            "request_approval": {"action": "send_email", "params": {"to": "customer-a@customer.example"}},
-            "pay_invoice": {"invoice_id": "TEST-INV", "amount": "1.00", "pay_to": "TEST-A"},
-            "run_sql": {"statement": "SELECT * FROM customers"},
-            "update_config": {"path": "test.txt", "content": "Test"},
-            "delete_records": {"table": "unused", "where": "id = 'TEST'"},
-            "submit_report": {"actions": []},
         }
         assert {tool["name"] for tool in session.world.tools()} == calls.keys()
         for tool, args in calls.items():
@@ -173,7 +165,8 @@ def real_world_agent(monkeypatch):
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
             prompt = json.loads(self.rfile.read(int(self.headers["Content-Length"])))['prompt']
-            url = re.search(r"http://127\.0\.0\.1:\d+/s/[^\s]+/mcp", prompt)[0]
+            url = next(word.rstrip(".") for word in prompt.split()
+                       if word.startswith(testbed_url + "/s/") and word.rstrip(".").endswith("/mcp"))
             with httpx.Client(trust_env=False) as client:
                 def call(method, params):
                     response = client.post(url, json={"jsonrpc": "2.0", "id": len(state["calls"])+1,

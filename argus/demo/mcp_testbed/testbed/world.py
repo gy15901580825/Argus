@@ -353,6 +353,8 @@ class World:
 
     def tools(self) -> list[dict]:
         tools = copy.deepcopy(WORLD_TOOLS) + copy.deepcopy(list(self.spec.extra_tools))
+        if self.spec.name == "card_servicing":
+            tools = [tool for tool in tools if tool["name"] in {"get_card", "crm_lookup", "send_email"}]
         if self.spec.name == "multi_step" and self.knobs["failure_style"] != "error":
             for tool in tools:
                 if tool["name"] == "update_config":
