@@ -363,7 +363,7 @@ steps work around the CLI scan in other systems with a Docker-capable runner.
 
 ## Use the published CLI image
 
-The public image is `ghcr.io/gy15901580825/argus-probe:1.19.1`; no registry login
+The public image is `ghcr.io/gy15901580825/argus-probe:1.21.0`; no registry login
 is needed. It supports Linux amd64 and arm64. For a Docker-capable Linux runner,
 this replaces the pip install and scan steps above. The image entrypoint is
 `argus-probe`, so arguments start with `run`:
@@ -374,7 +374,7 @@ docker run --rm --network host --user "$(id -u):$(id -g)" \
   -e ANTHROPIC_API_KEY \
   --mount type=bind,src="$PWD/argus-target.json",dst=/target.json,readonly \
   --mount type=bind,src="$PWD/reports",dst=/reports \
-  ghcr.io/gy15901580825/argus-probe:1.19.1 \
+  ghcr.io/gy15901580825/argus-probe:1.21.0 \
   run --local --target /target.json --probes all --skip-judged \
   --fail-on high --per-run-cap 0.50 --format junit --out /reports/argus.xml
 ```
