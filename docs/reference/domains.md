@@ -52,7 +52,9 @@ Selection follows these rules:
    its HR and legal document probes are opt-in, so those domain suites are absent.
    Suites are selected through the API, like existing suites.
 6. `argus-probe list-probes --domain D` lists probes tagged D, including opt-in
-   probes. `list-probes --target target.json` lists the default selection for
+   probes. `list-probes --domain financial-services` lists 30 probes: the 27
+   suite members plus three opt-in invoice document probes.
+   `list-probes --target target.json` lists the default selection for
    that spec, including its domain. Domain and target filters use the local
    library and cannot be combined with `--api-url`.
 
