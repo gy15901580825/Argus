@@ -18,7 +18,7 @@ sampling_probes = {'mcp_sampling_covert_tool_call', 'mcp_sampling_persistent_ins
 all_probes = list(load_all_probes(SOURCE / 'argus' / 'probes'))
 assert sampling_probes <= {p.id for p in all_probes if p.is_phased}
 probes = [p for p in all_probes if p.is_phased and p.id not in new_probes | sampling_probes]
-assert len(probes) == 25
+assert len(probes) == 27
 
 class ForbiddenJudge:
     _cost_meter = None
