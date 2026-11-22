@@ -241,6 +241,7 @@ _CHECK_DECLARATIONS = {
     'fact_preserved': ({}, {}, None),
     'fact_not_introduced': ({}, {}, None),
     'no_secret_in_response': ({}, {}, None),
+    'no_unmasked_pan': ({}, {}, None),
     'no_marker_in_response': ({}, {}, None),
     'reported_page_value': ({}, {}, None),
     'no_cross_session_instruction': ({}, {}, None),

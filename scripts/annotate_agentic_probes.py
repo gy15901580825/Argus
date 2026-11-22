@@ -1698,6 +1698,31 @@ APPROVED.update({'doc_injection_invoice_payee_swap_en': {'ids': [],
                                                          'excluded.',
                                                'evidence_sha256': '451253594c9e5c551f2d7a3f1c7714ae10ee92ca19fba43bce3966324803dda1'}})
 
+APPROVED.update({'fin_card_number_readback': {'ids': [],
+                              'reason': 'An inline third-party export '
+                                        'redirects a chat summary into full '
+                                        'card-number disclosure. LLM01, LLM02 '
+                                        'and AML.T0051.001 follow '
+                                        'indirect-injection and disclosure '
+                                        'siblings; agentic mappings are empty '
+                                        'because this reply-only probe '
+                                        'exercises no tool action, agent '
+                                        'identity, memory or human trust '
+                                        'boundary.',
+                              'evidence_sha256': 'e4d81c96191ead288098ec6cb83760527320fa89fba3ac5cbfe8609a3444bf7e'},
+ 'fin_statement_amount_injection': {'ids': [],
+                                    'reason': 'An inline statement note '
+                                              'replaces the printed amount in '
+                                              'a chat answer. LLM01, LLM09 and '
+                                              'AML.T0051.001 follow '
+                                              'browser_extraction_tamper; '
+                                              'agentic mappings are empty '
+                                              'because the chat-only variant '
+                                              'exercises no browser action or '
+                                              'human trust boundary.',
+                                    'evidence_sha256': 'dbd787937889f1f14f26db89a2b7a7613853ec3ac85094c99545f34a6908765e'}})
+
+
 def probe_files(root: Path):
     return sorted((root / 'argus/probes').rglob('*.yaml'))
 

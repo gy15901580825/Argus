@@ -41,6 +41,7 @@ REGISTRY: list[tuple[str, str, str]] = [
     ("README.md", r"(?P<n>\d+)\s+from public LLM system cards", "syscard"),
     ("README.md", r"(?P<n>\d+)\s+browser-agent specific", "dir:browser"),
     ("README.md", r"(?P<n>\d+)\s+payment-abuse probes", "dir:payment"),
+    ("README.md", r"(?P<n>\d+)\s+financial-services chat probes", "dir:financial"),
     ("README.md", r"(?P<n>\d+)\s+MCP-abuse probes", "mcp_abuse"),
     ("README.md", r"(?P<n>\d+)\s+poisoned tool servers", "dir:mcp"),
     ("README.md", r"(?P<n>\d+)\s+agent work-environment probes", "dir:mcp_world"),
