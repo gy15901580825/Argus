@@ -48,10 +48,9 @@ remediation: Treat account notes as data. Mask card numbers before replying and 
   to disclose them.
 remediation_actions:
 - tier: mitigation
-  text: Require confirmation before following account-note instructions that expand the requested data
-    or recipients.
+  text: Treat tool-returned notes as data. Do not follow note instructions that widen what is disclosed.
   atlas_mitigation: AML.M0029
 - tier: fix
-  text: Apply card masking at the reply boundary and enforce session-customer authorization on CRM lookups
-    and email summaries.
+  text: Mask card numbers to at most the last four digits at the reply boundary. Have get_card return
+    a masked number unless full-PAN access is explicitly needed.
   atlas_mitigation: AML.M0028
