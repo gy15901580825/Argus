@@ -6,7 +6,7 @@
 <style>
 body { font-family: -apple-system, system-ui, sans-serif; margin: 2em; max-width: 1200px; }
 h1 { border-bottom: 2px solid #333; }
-.summary { display: flex; gap: 2em; margin: 1em 0; }
+.summary { display: flex; flex-wrap: wrap; gap: 2em; margin: 1em 0; }
 .metric { padding: 1em; border: 1px solid #ddd; border-radius: 4px; min-width: 120px; }
 .metric .v { font-size: 2em; font-weight: bold; }
 .fail { color: #c00; }
@@ -17,6 +17,8 @@ h1 { border-bottom: 2px solid #333; }
 .severity-low, .severity-info { color: #888; }
 .target { color: #555; margin-top: -0.6em; }
 .finding { border: 1px solid #ddd; border-radius: 4px; padding: 1em; margin: 1em 0; }
+.finding > summary { cursor: pointer; }
+.finding > summary h3 { display: inline; }
 .finding pre { background: #f4f4f4; padding: 0.5em; overflow-x: auto; max-width: 100%; white-space: pre-wrap; }
 .evidence { border-left: 3px solid #7a5; background: #f6faf4; padding: 0.6em 0.9em; margin: 0.8em 0; }
 .evidence table { border-collapse: collapse; margin: 0.4em 0; font-size: 0.92em; }
@@ -27,15 +29,15 @@ h1 { border-bottom: 2px solid #333; }
 .mappings { margin: 0.5em 0; font-size: 0.9em; color: #666; }
 .mappings code { background: #eef; padding: 0.1em 0.4em; border-radius: 3px; margin-right: 0.4em; }
 .coverage-caveat { font-style: italic; color: #555; }
-.coverage-table { border-collapse: collapse; margin: 0.5em 0 1.5em; font-size: 0.92em; }
-.coverage-table th, .coverage-table td { border: 1px solid #ccc; padding: 0.25em 0.6em; text-align: left; }
+.coverage-table, .finding-index { border-collapse: collapse; margin: 0.5em 0 1.5em; font-size: 0.92em; }
+.coverage-table th, .coverage-table td, .finding-index th, .finding-index td { border: 1px solid #ccc; padding: 0.25em 0.6em; text-align: left; }
 .coverage-table td.library-thin { background: #ffe8b0; }
 .coverage-table td.library-absent { background: #fdd; }
 </style>
 </head>
 <body>
 <h1>Argus Red-Team Report</h1>
-<p>Run ID: <code>{{ run.id }}</code> · Status: <strong>{{ run.status }}</strong> · Probes: {{ run.findings | length }}</p>
+<p>Run ID: <code>{{ run.id }}</code> · Status: <strong>{{ run.status }}</strong> · Probes: {{ probe_count }} · Findings: {{ findings | length }}</p>
 {% if judge_blocked_note %}<p class="note">{{ judge_blocked_note }}</p>
 {% endif %}{% if run.status == "incomplete" %}<p class="incomplete" style="background:#fff3cd;border:1px solid #e0c060;padding:0.5em 0.8em"><strong>This run is incomplete.</strong> Some checks did not reach a verdict or the run stopped early, so a clean result here does not mean nothing is wrong. See Notes below.</p>
 {% endif %}{% if run.target_spec %}
@@ -57,16 +59,24 @@ h1 { border-bottom: 2px solid #333; }
 {%- endif %}
   <div class="metric"><div class="v">{{ counts.escalated }} escalated</div></div>
 </div>
+<h2>Finding index</h2>
+<table class="finding-index">
+  <thead><tr><th>Probe ID</th><th>Verdict</th><th>Severity</th><th>Trials</th></tr></thead>
+  <tbody>{% for f in findings %}
+    <tr><td><a href="#finding-{{ loop.index }}">{{ f.probe_id }}</a></td><td class="{{ f.verdict }}">{{ f.verdict }}</td><td class="severity-{{ f.severity }}">{{ f.severity }}</td><td>{{ probe_trials[f.probe_id] }}</td></tr>
+  {% endfor %}</tbody>
+</table>
 {% if run.baseline %}
 <h2>Baseline comparison</h2>
 <p>Baseline run: <code>{{ run.baseline.id }}</code> · Finished: {{ run.baseline.finished_at }}.</p>
 <p>new: {{ run.baseline.new | length }}, fixed: {{ run.baseline.fixed | length }}, still failing: {{ run.baseline.still_failing | length }}, not run: {{ run.baseline.not_run | length }}</p>
 {% if run.baseline.new %}<ul>{% for item in run.baseline.new %}<li>new · {{ item.severity }} · <code>{{ item.probe_id }}</code></li>{% endfor %}</ul>{% endif %}
 {% endif -%}
-<h2>Findings ({{ run.findings | length }})</h2>
-{% for f in run.findings %}
-<div class="finding">
-  <h3>{{ f.probe_id }} — <span class="{{ f.verdict }}">{{ f.verdict }}</span> · <span class="severity-{{ f.severity }}">{{ f.severity }}</span> · confidence {{ "%.2f"|format(f.confidence) }}</h3>
+<h2>Findings ({{ findings | length }})</h2>
+{% for f in findings %}
+{% set collapsed = f.verdict in ("pass", "skipped") %}
+<{{ "details" if collapsed else "div" }} class="finding" id="finding-{{ loop.index }}">
+  {% if collapsed %}<summary>{% endif %}<h3>{{ f.probe_id }} — <span class="{{ f.verdict }}">{{ f.verdict }}</span> · <span class="severity-{{ f.severity }}">{{ f.severity }}</span>{% if f.judge_model and f.verdict in ("fail", "warn", "pass") %} · confidence {{ "%.2f"|format(f.confidence) }}{% endif %}</h3>{% if collapsed %}</summary>{% endif %}
   <p><strong>Attack prompt:</strong></p>
   <pre>{{ f.attack_prompt }}</pre>
   <p><strong>Target response:</strong></p>
@@ -244,7 +254,7 @@ h1 { border-bottom: 2px solid #333; }
     {% endfor %}
   </details>
 {% endif %}  <p style="font-size:0.85em;color:#888">{% if f.judge_model %}judge: {{ f.judge_model }}{% if f.escalated_model %} → {{ f.escalated_model }}{% endif %}{% elif f.verdict in ("error", "blocked_by_target", "skipped", "aborted_cost") %}verdict: not judged{% else %}verdict: deterministic, from captured evidence{% endif %} · target latency: {{ "%.0f"|format(f.target_latency_ms) }}ms · probed at {{ f.probed_at }}</p>
-</div>
+</{{ "details" if collapsed else "div" }}>
 {% endfor %}
 {% if run.notes %}
 <h2>Notes</h2>
@@ -259,16 +269,17 @@ h1 { border-bottom: 2px solid #333; }
 no percentages, no scores. Cells with {{ coverage.thin_threshold }} or fewer probes in the library are marked <code>thin</code>;
 cells with none are marked <code>absent</code>.</p>
 {% for std_key, std in coverage.standards.items() %}
+{% set has_names = std_key in coverage_named_standards %}
 <h3>{{ std_key }}</h3>
 {% if std.universe == "open" %}
 <p class="coverage-caveat">Open-ended standard: this table lists only the cells this probe library's mappings touch — it is not a measurement of coverage against the full standard.</p>
 {% endif %}
 <table class="coverage-table">
-  <tr><th>ID</th><th>Name</th><th>Library status</th><th>Run status</th><th>Probes in library</th><th>Probes run</th><th>Verdicts</th></tr>
+  <tr><th>ID</th>{% if has_names %}<th>Name</th>{% endif %}<th>Library status</th><th>Run status</th><th>Probes in library</th><th>Probes run</th><th>Verdicts</th></tr>
   {% for cell in std.cells %}
   <tr>
     <td>{{ cell.id }}</td>
-    <td>{{ cell.name if cell.name is defined else "—" }}</td>
+    {% if has_names %}<td>{{ cell.name or "—" }}</td>{% endif %}
     <td class="library-{{ cell.library_status }}">{{ cell.library_status }}</td>
     <td>{{ cell.run_status }}</td>
     <td>{{ cell.probes_in_library }}</td>
@@ -277,7 +288,7 @@ cells with none are marked <code>absent</code>.</p>
   </tr>
   {% endfor %}
   {% if not std.cells %}
-  <tr><td colspan="7">no cells touched by this run's library</td></tr>
+  <tr><td colspan="{{ 7 if has_names else 6 }}">no cells touched by this run's library</td></tr>
   {% endif %}
 </table>
 {% endfor %}
