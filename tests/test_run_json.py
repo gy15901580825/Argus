@@ -288,7 +288,7 @@ def test_one_char_secret_does_not_mangle_structural_fields():
     for k in ("id", "probe_id", "verdict", "severity", "probed_at", "created_at", "confidence",
               "judge_model", "escalated_model"):
         assert got[k] == f[k], k
-    assert got["target_response"] == "******"
+    assert got["target_response"] == "a1"
 
 
 def test_key_name_rule_is_case_insensitive_and_skips_token_counters():
@@ -399,7 +399,7 @@ def test_run_json_masks_event_text_but_keeps_graph_ids():
     got = out["findings"][0]["events"]
     assert [e["event_id"] for e in got] == ["t1:E2", "t1:E3"]
     assert got[1]["parent_event_ids"] == ["t1:E2"]
-    assert got[0]["object_ref"] == "a2a.message:***"
+    assert got[0]["object_ref"] == "a2a.message:M9"
     assert got[0]["actor"] == "***" and "planner" not in got[0]["summary"]
     assert got[0]["tool_call_id"] == "***" and got[1]["tool_name"] == "***"
     assert [e["seq"] for e in got] == [0, 1]
@@ -421,7 +421,7 @@ def test_run_json_masked_object_kind_becomes_null():
     assert validate_events(events) is None
 
 
-def test_run_json_clips_summary_after_secret_masking():
+def test_run_json_preserves_clipped_summary_with_short_secret():
     from dataclasses import asdict
     from argus.events import new_event, validate_events
 
@@ -430,5 +430,5 @@ def test_run_json_clips_summary_after_secret_masking():
     out = json.loads(render_json(_run(findings=[_finding(events=[asdict(event)])]), secret_values=["a"]))
     events = out["findings"][0]["events"]
     assert len(events[0]["summary"]) == 200
-    assert events[0]["actor"] == "***" * 190
+    assert events[0]["actor"] == "a" * 190
     assert validate_events(events) is None

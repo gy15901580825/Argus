@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
+from argus.mcp_scan.known_secrets import VALUE_MIN
+
 MASK = "***"
 _SECRET_KEY_SUFFIXES = ("key", "token", "authheader")
 _SECRET_KEY_PARTS = ("secret", "password", "authorization", "credential", "cookie")
@@ -17,7 +19,7 @@ def _is_header_key(key: str) -> bool:
 
 
 def _strings(value: Any, out: list[str]) -> None:
-    """Collect every string inside a masked value, plus the credential after a scheme like "Bearer "."""
+    """Collect strings and scheme credentials, including short values for exact matching."""
     if isinstance(value, str):
         out.append(value)
         if " " in value.strip():
@@ -89,19 +91,22 @@ def _ordered(values: Iterable[str]) -> list[str]:
 
 
 def mask_text(text: str, secrets: list[str]) -> str:
-    """Replace every value of `secrets` (as returned by run_secrets) inside `text`."""
+    """Mask whole secret values; only values at least VALUE_MIN long mask substrings."""
+    if text in secrets:
+        return MASK
     for s in secrets:
-        text = text.replace(s, MASK)
+        if len(s) >= VALUE_MIN:
+            text = text.replace(s, MASK)
     return text
 
 
 def run_secrets(target_spec: dict, secret_values: Iterable[str] = ()) -> list[str]:
-    """Every value scrub_run masks for this spec: `secret_values` plus the spec's secret-named literals."""
+    """Explicit and secret-named values, retaining short secrets for whole-value masking."""
     return _ordered((*secret_values, *_redact(target_spec or {})[1]))
 
 
 def _scrub(value: Any, secrets: list[str], keys: bool = False) -> Any:
-    """Replace every secret value inside every string, longest first. Dict keys too when `keys`."""
+    """Mask strings by value or, for longer secrets, substring. Dict keys too when `keys`."""
     if isinstance(value, str):
         return mask_text(value, secrets)
     if isinstance(value, dict):
