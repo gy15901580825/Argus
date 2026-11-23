@@ -25,6 +25,8 @@ Every finding includes the relevant clauses from:
 
 These mappings help your AppSec and GRC teams find related controls. They do not establish complete coverage or compliance.
 
+To see how many probes the library holds for each cell of each standard, including cells with no probes yet, run `argus-probe coverage` — see [Framework coverage](../reference/coverage.md).
+
 ## Recommended starter sets
 
 Tell `argus-probe run` which set via `--probes <list>`, or pass `all` on its own for a full sweep (`all` cannot be mixed with explicit ids — that combination is rejected rather than silently narrowed):
