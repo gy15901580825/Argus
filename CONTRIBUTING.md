@@ -105,6 +105,8 @@ Remove the temporary filelock exceptions when the litellm bound PR lands.
 
 ## Adding a new probe
 
+Probes contributed by others are merged without the [30-day delay](docs/upcoming-probes.md) that applies to maintainer-written probes.
+
 A probe is one YAML file. The loader is
 `argus/probe.py` — read it if anything here is
 ambiguous; it is 80 lines.

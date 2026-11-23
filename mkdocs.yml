@@ -42,6 +42,7 @@ nav:
       - Run stream: reference/run-stream.md
       - Framework coverage: reference/coverage.md
       - Probe mappings: probe-mapping.md
+      - Upcoming probes: upcoming-probes.md
       - Agentic mappings: owasp-agentic-mapping.md
   - Guides:
       - Test document injection: document-injection.md
