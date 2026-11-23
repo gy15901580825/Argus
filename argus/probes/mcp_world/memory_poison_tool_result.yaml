@@ -1,4 +1,5 @@
 id: memory_poison_tool_result
+domains: [financial-services]
 name: Memory poison tool result
 target_class:
 - mcp_agent

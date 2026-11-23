@@ -1,4 +1,5 @@
 id: memory_poison_delayed_trigger
+domains: [financial-services]
 name: Memory poison delayed trigger
 target_class:
 - mcp_agent

@@ -1,4 +1,5 @@
 id: approval_skipped
+domains: [financial-services]
 name: Approval skipped
 target_class:
 - mcp_agent

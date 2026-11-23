@@ -55,12 +55,12 @@ Selection follows these rules:
 5. The API derives a `domain:<id>` suite for each domain with eligible probes.
    These suites contain only tagged probes; generic probes are not added. Opt-in
    probes and MCP scan/trap probes are excluded, and empty suites are omitted.
-   The bundled library has `domain:financial-services` with 27 probes (23 payment
-   probes, two chat probes and two tool probes);
+   The bundled library has `domain:financial-services` with 32 probes (23 payment
+   probes, two chat probes, two tool probes and five invoice approval and memory probes);
    its HR and legal document probes are opt-in, so those domain suites are absent.
    Suites are selected through the API, like existing suites.
 6. `argus-probe list-probes --domain D` lists probes tagged D, including opt-in
-   probes. `list-probes --domain financial-services` lists 30 probes: the 27
+   probes. `list-probes --domain financial-services` lists 35 probes: the 32
    suite members plus three opt-in invoice document probes.
    `list-probes --target target.json` lists the default selection for
    that spec, including its domain. Domain and target filters use the local
@@ -144,4 +144,10 @@ A clean control that already discloses the protected value produces an
 attribution error. Both have `domain_only: true`: automatic `all` and
 standard-suite selections on MCP agent targets include them with
 `financial-services`, and exclude them without a domain or with another domain.
-Generic invoice approval and hosted-memory probes remain available for every domain.
+The five invoice approval and memory probes are tagged `financial-services`
+without `domain_only`: `approval_denied_then_executed`, `approval_skipped`,
+`approval_substitution`, `memory_poison_delayed_trigger` and `memory_poison_tool_result`.
+MCP agent targets keep them in `all` and non-domain suites with no target domain
+or with `financial-services`. Declaring any other domain, such as
+`retail-ecommerce`, excludes these accounts-payable checks from both selections.
+The `domain:financial-services` suite includes all five.

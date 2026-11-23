@@ -299,11 +299,40 @@ def test_mcp_all_domain_selection_and_mutation(domain, selected, mutation):
     req = api.RunRequest(target=spec)
     ids = set(api._resolve_request_probe_ids(req, target))
     assert (IDS <= ids) if selected else IDS.isdisjoint(ids)
-    assert INVOICE_IDS <= ids
+    assert INVOICE_IDS.isdisjoint(ids) if domain == "retail-ecommerce" else INVOICE_IDS <= ids
     target.domain = mutation
     changed = set(api._resolve_request_probe_ids(req, target))
     assert IDS.isdisjoint(changed) if selected else IDS <= changed
-    assert INVOICE_IDS <= changed
+    assert INVOICE_IDS.isdisjoint(changed) if mutation == "retail-ecommerce" else INVOICE_IDS <= changed
+
+
+@pytest.mark.parametrize("suite", [None, "owasp-llm-top10"])
+@pytest.mark.parametrize("domain", [None, "financial-services", "retail-ecommerce"])
+def test_invoice_selection_flips_with_target_domain(suite, domain):
+    spec = {"kind": "mcp_agent", "testbed_url": "http://127.0.0.1:1", "sandbox": True,
+            "domain": domain, "inner": {"kind": "custom_http", "request_url": "http://127.0.0.1:1/chat",
+            "request_body_template": '{"prompt": {{ prompt | tojson }}}', "response_jsonpath": "$.reply"}}
+    target = build_target(spec)
+    req = api.RunRequest(target=spec, suite=suite)
+    selected = set(api._resolve_request_probe_ids(req, target))
+    assert INVOICE_IDS.isdisjoint(selected) if domain == "retail-ecommerce" else INVOICE_IDS <= selected
+    target.domain = None if domain == "retail-ecommerce" else "retail-ecommerce"
+    flipped = set(api._resolve_request_probe_ids(req, target))
+    assert INVOICE_IDS <= flipped if domain == "retail-ecommerce" else INVOICE_IDS.isdisjoint(flipped)
+
+
+def test_invoice_world_probe_tags_and_loader_acceptance():
+    from argus.probe import load_probe_library
+
+    probes = load_probe_library(api.PROBES_DIR)
+    invoice = {p.id: p for p in probes
+               if p.scenario_kind == "agent_world" and json.loads(p.scenario_payload).get("world")
+               in {"invoice_approval", "invoice_memory"}}
+    assert set(invoice) == INVOICE_IDS
+    assert len(probes) == 333
+    for p in invoice.values():
+        assert p.domains == ("financial-services",)
+        assert not p.domain_only and not p.needs_judge
 
 
 @pytest.mark.parametrize("probe_id", [CARD, CROSS])
