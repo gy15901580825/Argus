@@ -624,5 +624,9 @@ can align on direction. New probes should ship with `mappings`, a
 entry.
 
 For security-sensitive disclosures (e.g. a new probe that demonstrates a
-real CVE-class issue in an open-source LLM stack), email rather than
-filing a public issue.
+real CVE-class issue in an open-source LLM stack), email **contact@veyon.solutions** rather than
+filing a public issue. See [`SECURITY.md`](SECURITY.md).
+
+## Contact
+
+Argus is maintained by Veyon Solutions. Reach us at **contact@veyon.solutions**.
