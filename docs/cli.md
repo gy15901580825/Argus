@@ -980,6 +980,23 @@ argus-probe gateway-fixtures    Initialize, serve, print registration values and
 
 Each command's `--help` lists its flags.
 
+## List probes
+
+`list-probes` prints one probe id per line, followed by a blank line and the
+probe count. Opt-in probes carry an `[opt-in]` marker. Add `--long` to show
+aligned `id`, `severity`, `judge` and `name` columns. The `judge` column is
+`yes` when the probe needs a judge key and `no` otherwise. Add `--no-judge`
+to list only probes that run without a judge key; the count reflects the
+filtered list. Both flags use the local library and cannot be combined with
+`--api-url`. They combine with `--target`, `--target-class`, `--domain` and
+`--filter`.
+
+```sh
+argus-probe list-probes --long
+argus-probe list-probes --target argus-target.json --no-judge --long
+argus-probe list-probes --domain legal --no-judge
+```
+
 ## License
 
 Apache-2.0. See [LICENSE](https://github.com/gy15901580825/Argus/blob/main/LICENSE). Copyright 2026 Veyon Solutions; see [NOTICE](https://github.com/gy15901580825/Argus/blob/main/NOTICE).

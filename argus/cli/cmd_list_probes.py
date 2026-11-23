@@ -39,8 +39,11 @@ def _target_probe_ids(target: str) -> set[str]:
               help="Show only probes that declare this target class or an equivalent name.")
 @click.option("--domain", type=click.Choice(list(DOMAINS)), default=None,
               help="Show only local probes tagged with this registered domain.")
+@click.option("--long", "long_output", is_flag=True,
+              help="Show local probe ids, severity, judge requirement and name in aligned columns.")
+@click.option("--no-judge", is_flag=True, help="Show only local probes that run without a judge key.")
 def cmd_list_probes(token: str | None, api_url: str | None, filter_substr: str, target: str | None,
-                    target_class: str | None, domain: str | None):
+                    target_class: str | None, domain: str | None, long_output: bool, no_judge: bool):
     """List available probe ids, locally or from a server."""
     opt_in_ids = set()
     if api_url is None:
@@ -50,12 +53,18 @@ def cmd_list_probes(token: str | None, api_url: str | None, filter_substr: str, 
         if target_class is not None:
             classes = equivalent_target_classes(target_class)
             probes = [p for p in probes if classes.intersection(p.target_class)]
+        if no_judge:
+            probes = [p for p in probes if not p.needs_judge]
         opt_in_ids = {p.id for p in probes if getattr(p, "opt_in", False)}
+        by_id = {p.id: p for p in probes}
         ids = [p.id for p in probes]
         if target is not None:
             fits = _target_probe_ids(target)
             ids = [i for i in ids if i in fits]
     else:
+        for flag, enabled in (("--long", long_output), ("--no-judge", no_judge)):
+            if enabled:
+                raise click.UsageError(f"{flag} needs probe metadata from the local library; do not combine it with --api-url")
         for flag, value in (("--target", target), ("--target-class", target_class), ("--domain", domain)):
             if value is not None:
                 # The server returns ids only; target classes live in the local library.
@@ -65,6 +74,16 @@ def cmd_list_probes(token: str | None, api_url: str | None, filter_substr: str, 
         ids = api_client.list_probes(api_url, token)
     if filter_substr:
         ids = [i for i in ids if filter_substr.lower() in i.lower()]
-    for i in sorted(ids):
-        click.echo(i + (" [opt-in]" if i in opt_in_ids else ""))
+    if long_output:
+        rows = [("id", "severity", "judge", "name")]
+        for i in sorted(ids):
+            probe = by_id[i]
+            rows.append((i, probe.severity, "yes" if probe.needs_judge else "no",
+                         probe.name + (" [opt-in]" if i in opt_in_ids else "")))
+        widths = [max(len(row[col]) for row in rows) for col in range(3)]
+        for row in rows:
+            click.echo("  ".join(row[col].ljust(widths[col]) for col in range(3)) + "  " + row[3])
+    else:
+        for i in sorted(ids):
+            click.echo(i + (" [opt-in]" if i in opt_in_ids else ""))
     click.echo(f"\n{len(ids)} probes")
