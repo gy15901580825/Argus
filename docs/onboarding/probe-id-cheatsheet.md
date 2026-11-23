@@ -40,6 +40,18 @@ Cost figures are approximate. A run whose typical estimate is above `--per-run-c
 
 To list every probe in the installed library, run `argus-probe list-probes`. `argus-probe list-probes --target argus-target.json` shows only the probes that fit your target.
 
+Add `--long` to see aligned `id`, `severity`, `judge` and `name` columns.
+`judge` is `yes` when the probe needs a judge key and `no` otherwise.
+`--no-judge` lists only probes that run without a judge key and counts only
+those probes. Combine both flags with `--target`, `--target-class`, `--domain`
+or `--filter` to narrow the list. Both flags need the local library and cannot
+be used with `--api-url`. Without `--long`, the output stays one id per line
+with `[opt-in]` markers where applicable, then a blank line and the count.
+
+```sh
+argus-probe list-probes --target argus-target.json --no-judge --long
+```
+
 ## Severity model
 
 Each finding carries one of:
