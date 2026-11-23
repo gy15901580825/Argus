@@ -268,7 +268,7 @@ def test_preflight_with_empty_probe_ids_estimates_full_library_cost(monkeypatch)
     # the probes an openai_compat target can run.
     from argus.targets.openai_compat import OpenAICompatTarget
     expected = [p.id for p in load_probe_library(PROBES_DIR)
-                if not p.opt_in and set(p.target_class) & OpenAICompatTarget.compatible_classes]
+                if not p.opt_in and not p.domain_only and set(p.target_class) & OpenAICompatTarget.compatible_classes]
     assert len(expected) > 100
     assert captured["probe_ids"] == expected
 
@@ -295,9 +295,9 @@ def test_all_on_the_server_selects_only_compatible_probes(monkeypatch, route):
     resp = TestClient(app).post(route, json=body)
     assert resp.status_code == 402
     assert sorted(captured["probe_ids"]) == sorted(
-        p.id for p in load_probe_library(PROBES_DIR) if "mcp_agent" in p.target_class)
+        p.id for p in load_probe_library(PROBES_DIR) if "mcp_agent" in p.target_class and not p.domain_only)
     assert 0 < len(captured["probe_ids"]) < len(load_probe_library(PROBES_DIR))
-    mcp = [p for p in load_probe_library(PROBES_DIR) if "mcp_agent" in p.target_class]
+    mcp = [p for p in load_probe_library(PROBES_DIR) if "mcp_agent" in p.target_class and not p.domain_only]
     assert captured["total_exchanges"] == sum(len(p.prompts) for p in mcp if not p.assertions)
 
 
