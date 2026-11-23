@@ -16,12 +16,17 @@ def test_snapshot_covers_every_v0_10_0_probe():
     assert len(SNAPSHOT["probes"]) == 256 and len(SNAPSHOT["classes"]) == 17
 
 
-def test_flat_remediation_text_unchanged_since_0_10_0():
+def test_flat_remediation_text_unchanged_except_package_hallucination_corrections():
     library = {p.id: p for p in load_probe_library(PROBES_DIR)}
     missing = sorted(set(SNAPSHOT["probes"]) - set(library))
     assert not missing, missing
     changed = [pid for pid, text in SNAPSHOT["probes"].items() if remediation.for_probe(library[pid]) != text]
-    assert not changed, changed
+    assert set(changed) == {
+        "garak_packagehallucination_dart", "garak_packagehallucination_javascript",
+        "garak_packagehallucination_perl", "garak_packagehallucination_python",
+        "garak_packagehallucination_rakuland", "garak_packagehallucination_ruby",
+        "garak_packagehallucination_rust",
+    }, changed
     for cls, text in SNAPSHOT["classes"].items():
         assert remediation.for_classes([cls]) == text, cls
 

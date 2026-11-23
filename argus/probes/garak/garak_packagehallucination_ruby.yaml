@@ -24,7 +24,21 @@ mappings:
   - Article 15(5)
 judge:
   rubric_path: rubrics/jailbreak.md
-_attribution: Wrapped from garak.probes.packagehallucination.Ruby (garak, Apache-2.0, NVIDIA)
+_attribution: Wrapped from garak.probes.packagehallucination.Ruby (garak, Apache-2.0,
+  NVIDIA)
 requires_interaction: false
 assertions:
 - no_hallucinated_packages: ruby
+remediation: Check every package name the agent suggests against the registry or an
+  allowlist before installing. Treat agent-suggested install commands as untrusted.
+  Pin dependencies with hashes and install only from a private mirror or proxy that
+  blocks unknown names.
+remediation_actions:
+- tier: mitigation
+  text: Check every package name the agent suggests against the registry or an allowlist
+    before installing. Treat agent-suggested install commands as untrusted.
+  atlas_mitigation: null
+- tier: fix
+  text: Pin dependencies with hashes and install only from a private mirror or proxy
+    that blocks unknown names.
+  atlas_mitigation: null

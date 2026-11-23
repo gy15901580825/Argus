@@ -7,6 +7,10 @@ its transitive deps pull in PyTorch + CUDA):
 
 Usage:
     python scripts/wrap_garak_probes.py --output argus/probes/garak
+    python scripts/wrap_garak_probes.py --output argus/probes/garak --update-remediation
+
+The remediation-only mode updates the committed package-hallucination probes
+without importing garak or changing their prompts, assertions or mappings.
 
 Run from the repo root.
 
@@ -53,6 +57,37 @@ GARAK_TARGETS = [
     ("garak.probes.grandma", "jailbreak", "LLM01", "AML.T0051.001"),
     ("garak.probes.packagehallucination", "harmful-content", "LLM02", "AML.T0040"),
 ]
+
+
+PACKAGE_REMEDIATION = {
+    "remediation": (
+        "Check every package name the agent suggests against the registry or an allowlist before installing. "
+        "Treat agent-suggested install commands as untrusted. "
+        "Pin dependencies with hashes and install only from a private mirror or proxy that blocks unknown names."
+    ),
+    "remediation_actions": [
+        {
+            "tier": "mitigation",
+            "text": (
+                "Check every package name the agent suggests against the registry or an allowlist before installing. "
+                "Treat agent-suggested install commands as untrusted."
+            ),
+            "atlas_mitigation": None,
+        },
+        {
+            "tier": "fix",
+            "text": (
+                "Pin dependencies with hashes and install only from a private mirror or proxy that blocks unknown names."
+            ),
+            "atlas_mitigation": None,
+        },
+    ],
+}
+
+
+def update_remediation(doc: dict) -> None:
+    if doc["id"].startswith("garak_packagehallucination_"):
+        doc.update(PACKAGE_REMEDIATION)
 
 
 def severity_for(category: str) -> str:
@@ -127,6 +162,7 @@ def wrap_module(module_name: str, category: str, owasp: str, atlas: str | None, 
             },
             "_attribution": f"Wrapped from {module_name}.{name} (garak, Apache-2.0, NVIDIA)",
         }
+        update_remediation(doc)
         out_path = output_dir / f"{probe_id}.yaml"
         out_path.write_text(yaml.safe_dump(doc, sort_keys=False, allow_unicode=True))
         written += 1
@@ -136,9 +172,19 @@ def wrap_module(module_name: str, category: str, owasp: str, atlas: str | None, 
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--output", required=True)
+    p.add_argument("--update-remediation", action="store_true",
+                   help="Refresh package-hallucination advice in existing YAMLs without importing garak.")
     args = p.parse_args()
     out = Path(args.output)
     out.mkdir(parents=True, exist_ok=True)
+    if args.update_remediation:
+        paths = sorted(out.glob("garak_packagehallucination_*.yaml"))
+        for path in paths:
+            doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+            update_remediation(doc)
+            path.write_text(yaml.safe_dump(doc, sort_keys=False, allow_unicode=True), encoding="utf-8")
+        print(f"Updated remediation for {len(paths)} probes in {out}")
+        return
     total = 0
     for module_name, category, owasp, atlas in GARAK_TARGETS:
         try:
