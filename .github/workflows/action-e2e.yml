@@ -144,9 +144,15 @@ jobs:
         test -s "$REPORT"
         python - "$REPORT" <<'PY'
         import json, sys
-        results = json.load(open(sys.argv[1]))["runs"][0]["results"]
-        print(f"{len(results)} SARIF results")
-        assert len(results) == 12, len(results)
+        run = json.load(open(sys.argv[1]))["runs"][0]
+        results = run["results"]
+        counts = run["properties"]["verdict_counts"]
+        print(f"{len(results)} SARIF alerts; verdict counts: {counts}")
+        assert sum(counts.values()) == 12, counts
+        assert counts == {"pass": 3, "fail": 7, "warn": 0, "error": 0, "skipped": 2}, counts
+        assert len(results) == counts["fail"] + counts["warn"], (len(results), counts)
+        assert all(r["properties"]["verdict"] in {"fail", "warn"} for r in results)
+        assert len({r["ruleId"] for r in results}) == len(results)
         PY
     - name: Testbed logs
       if: always()
