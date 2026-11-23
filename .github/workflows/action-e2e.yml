@@ -16,7 +16,7 @@ jobs:
       with:
         persist-credentials: false
         repository: gy15901580825/argus-probe-action
-        ref: ${{ inputs.action-ref || 'main' }}
+        ref: ${{ inputs.action-ref || 'v2' }}
         path: .argus-probe-action
     - name: Resolve the selected Action release version
       id: version
@@ -76,16 +76,27 @@ jobs:
         EXIT_CODE: ${{ steps.argus.outputs.exit-code }}
         OUTCOME: ${{ steps.argus.outcome }}
         REPORT: ${{ steps.argus.outputs.report }}
+        ARGUS_VERSION: ${{ steps.version.outputs.version }}
       run: |
         echo "exit-code=$EXIT_CODE outcome=$OUTCOME report=$REPORT"
         test "$EXIT_CODE" = "3"
         test "$OUTCOME" = "failure"
         test -s "$REPORT"
         python - "$REPORT" <<'PY'
-        import json, sys
-        results = json.load(open(sys.argv[1]))["runs"][0]["results"]
+        import json, os, sys
+        run = json.load(open(sys.argv[1]))["runs"][0]
+        results = run["results"]
         print(f"{len(results)} SARIF results")
-        assert len(results) == 12, len(results)
+        version = tuple(int(part) for part in os.environ["ARGUS_VERSION"].split("."))
+        if version < (1, 22, 0):
+            assert len(results) == 12, len(results)
+        else:
+            counts = run["properties"]["verdict_counts"]
+            assert sum(counts.values()) == 12, counts
+            assert counts == {"pass": 3, "fail": 7, "warn": 0, "error": 0, "skipped": 2}, counts
+            assert len(results) == counts["fail"] + counts["warn"], (len(results), counts)
+            assert all(r["properties"]["verdict"] in {"fail", "warn"} for r in results)
+            assert len({r["ruleId"] for r in results}) == len(results)
         PY
     - name: Testbed logs
       if: always()

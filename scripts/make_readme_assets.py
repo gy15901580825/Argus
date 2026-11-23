@@ -40,7 +40,8 @@ COMMAND = "argus-probe quickstart"
 REPORT_CSS = """
 .finding { margin: 0; padding: 0.5em 0.8em; border-radius: 0; }
 .finding + .finding { border-top: none; }
-.finding > :not(h3) { display: none !important; }
+.finding > :not(h3):not(summary) { display: none !important; }
+.finding > summary { list-style: none; }
 .finding h3 { margin: 0; font-size: 15px; font-weight: normal; }
 """
 
