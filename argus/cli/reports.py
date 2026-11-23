@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from collections import Counter
-from urllib.parse import parse_qsl
+from pathlib import Path
+from urllib.parse import parse_qsl, quote
 from xml.etree import ElementTree as ET
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -15,6 +17,8 @@ from argus.judge_blocks import block_note
 from argus import remediation
 from argus.assertions import dialog_decisions
 from argus.deep_thread import is_deep_finding
+from argus.cli.baseline_key import baseline_key
+from argus.cli.severity import SEVERITY_ORDER
 
 _TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "templates")
 _jinja = Environment(
@@ -134,8 +138,8 @@ def remediation_markdown(actions: list[dict]) -> str:
     return "\n\n".join(sections)
 
 
-def render_sarif(run: dict) -> str:
-    """SARIF 2.1.0. Each finding is a result; severity → SARIF level."""
+def render_sarif(run: dict, *, target_path: str | None = None) -> str:
+    """SARIF 2.1.0: one fail/warn alert per probe and target, across repeated trials."""
     sev_to_level = {
         "critical": "error",
         "high": "error",
@@ -143,53 +147,84 @@ def render_sarif(run: dict) -> str:
         "low": "note",
         "info": "note",
     }
-    # Only judged verdicts map to a SARIF kind. error / skipped /
-    # blocked_by_target / aborted_cost were not judged and must not read as a
-    # pass; the real verdict stays in properties.verdict.
-    verdict_to_kind = {"fail": "fail", "warn": "review", "pass": "pass"}
+    security_scores = {"critical": "9.5", "high": "8.0", "medium": "5.5", "low": "2.0"}
+    # GitHub treats 0.0 as no security severity; omit it for informational rules.
+    verdict_to_kind = {"fail": "fail", "warn": "review"}
+    findings = run.get("findings", [])
+    counts = dict.fromkeys(("pass", "fail", "warn", "error", "skipped"), 0)
+    counts.update(Counter(f.get("verdict", "unknown") for f in findings))
+    # The same target key used by local baseline comparison; stored before redaction.
+    target_key = run.get("baseline_key") or baseline_key(run.get("target_spec") or {})
+    location_uri = "target.json"
+    location_note = "target.json fallback: no target spec path is known; this file may not exist."
+    category_target = "baseline:" + target_key
+    if target_path and not target_path.lstrip().startswith("{"):
+        path = Path(target_path).resolve()
+        category_target = "path:" + path.as_posix()
+        try:
+            relative = path.relative_to(Path.cwd())
+        except ValueError:
+            location_note = "target.json fallback: the target spec is outside the current working directory; this file may not exist."
+        else:
+            location_uri = quote(relative.as_posix(), safe="/")
+            category_target = "path:" + relative.as_posix()
+            location_note = None
+    category_key = hashlib.sha256(category_target.encode()).hexdigest()[:32]
+
+    def severity_rank(finding: dict) -> int:
+        severity = finding.get("severity", "info")
+        return SEVERITY_ORDER.index(severity) if severity in SEVERITY_ORDER else 0
 
     rules = {}
     results = []
-    for f in run.get("findings", []):
-        rid = f["probe_id"]
-        if rid not in rules:
-            rules[rid] = {
-                "id": rid,
-                "name": rid,
-                "shortDescription": {"text": rid},
-                "fullDescription": {"text": f"Argus red-team probe {rid}"},
-                "helpUri": "https://github.com/gy15901580825/Argus/tree/main/argus/probes",
-                "properties": {
-                    "atlas": f.get("atlas_id", []),
-                    "owasp_llm": f.get("owasp_id", []),
-                    "owasp_agentic": f.get("owasp_agentic", []),
-                    "tags": [f"OWASP-Agentic:{tag}" for tag in f.get("owasp_agentic", [])],
-                    "nist_ai_rmf": f.get("nist_id", []),
-                    "eu_ai_act": f.get("eu_ai_act_id", []),
-                },
-            }
-            if f.get("remediation"):
-                rules[rid]["help"] = {"text": f["remediation"]}
-                markdown = remediation_markdown(f.get("remediation_actions") or [])
-                if markdown:
-                    rules[rid]["help"]["markdown"] = markdown
+    by_probe: dict[str, list[dict]] = {}
+    for f in findings:
+        by_probe.setdefault(f["probe_id"], []).append(f)
+    for rid, trials in by_probe.items():
+        # As in compare_baseline, a failing trial wins over passes and errors.
+        # Repeating a trial must not create another alert for the same weakness.
+        alert_trials = [f for f in trials if f.get("verdict") in verdict_to_kind]
+        f = max(alert_trials or trials,
+                key=lambda f: (f.get("verdict") == "fail", severity_rank(f)))
+        rules[rid] = {
+            "id": rid,
+            "name": rid,
+            "shortDescription": {"text": rid},
+            "fullDescription": {"text": f"Argus red-team probe {rid}"},
+            "helpUri": "https://github.com/gy15901580825/Argus/tree/main/argus/probes",
+            "properties": {
+                "atlas": f.get("atlas_id", []),
+                "owasp_llm": f.get("owasp_id", []),
+                "owasp_agentic": f.get("owasp_agentic", []),
+                "tags": ["security", *[f"OWASP-Agentic:{tag}" for tag in f.get("owasp_agentic", [])]],
+                **({"security-severity": security_scores[f["severity"]]}
+                   if f.get("severity") in security_scores else {}),
+                "nist_ai_rmf": f.get("nist_id", []),
+                "eu_ai_act": f.get("eu_ai_act_id", []),
+            },
+        }
+        if f.get("remediation"):
+            rules[rid]["help"] = {"text": f["remediation"]}
+            markdown = remediation_markdown(f.get("remediation_actions") or [])
+            if markdown:
+                rules[rid]["help"]["markdown"] = markdown
+        if not alert_trials:
+            continue
+        fingerprint = hashlib.sha256(json.dumps([rid, target_key]).encode()).hexdigest()
         results.append({
             "ruleId": rid,
-            "level": sev_to_level.get(f.get("severity", "info"), "note"),
-            "kind": verdict_to_kind.get(f.get("verdict"), "notApplicable"),
-            "message": {"text": f.get("reasoning", ""),
+            "level": "warning" if f["verdict"] == "warn" else sev_to_level.get(f.get("severity", "info"), "note"),
+            "kind": verdict_to_kind[f["verdict"]],
+            "partialFingerprints": {"primaryLocationLineHash": fingerprint},
+            "message": {"text": f.get("reasoning") or f"Argus probe {rid}: {f['verdict']}",
                         **({"markdown": f.get("reasoning", "") + "\n\n" + document_arm_table(f)}
                            if (f.get("evidence") or {}).get("document") else {})},
-            # SARIF 2.1.0 requires every result to carry at least one location
-            # so GitHub code-scanning can dedupe and place alerts. Red-team
-            # findings target a deployed agent (not a source line), so we
-            # synthesize a location pointing at the target spec file the
-            # operator committed (target.json by convention). This makes the
-            # alert appear next to the file that defines what was probed.
+            # GitHub requires a location to display an alert. The target spec
+            # identifies the deployed agent; line 1 is an anchor, not vulnerable code.
             "locations": [{
                 "physicalLocation": {
                     "artifactLocation": {
-                        "uri": "target.json",
+                        "uri": location_uri,
                         "uriBaseId": "%SRCROOT%",
                     },
                     "region": {"startLine": 1, "startColumn": 1},
@@ -198,6 +233,8 @@ def render_sarif(run: dict) -> str:
             "properties": {
                 "verdict": f.get("verdict"),
                 "severity": f.get("severity"),
+                **({"trial_verdict_counts": dict(Counter(t.get("verdict", "unknown") for t in trials))}
+                   if len(trials) > 1 else {}),
                 "confidence": f.get("confidence"),
                 "attack_prompt": f.get("attack_prompt", ""),
                 "target_response": f.get("target_response", "")[:1000],
@@ -224,12 +261,17 @@ def render_sarif(run: dict) -> str:
             }
         },
         "results": results,
+        # The trailing slash makes the entire target identity a GitHub category.
+        "automationDetails": {"id": f"argus/{category_key}/"},
+        "originalUriBaseIds": {"%SRCROOT%": {"uri": Path.cwd().as_uri() + "/"}},
+        "properties": {"verdict_counts": counts,
+                       **({"target_location_note": location_note} if location_note else {})},
         "invocations": [{
             "executionSuccessful": execution_successful,
             # The real process exit code when the caller knows it (run --local).
             "exitCode": run.get("exit_code", 0 if execution_successful else 1),
-            "startTimeUtc": run.get("started_at"),
-            "endTimeUtc": run.get("finished_at"),
+            **({"startTimeUtc": run["started_at"]} if run.get("started_at") else {}),
+            **({"endTimeUtc": run["finished_at"]} if run.get("finished_at") else {}),
         }],
     }
     # Coverage is what we did NOT test — never a finding. Riding in
@@ -237,7 +279,7 @@ def render_sarif(run: dict) -> str:
     # Code Scanning's alert count.
     coverage = run.get("coverage")
     if coverage:
-        sarif_run["properties"] = {"coverage": coverage}
+        sarif_run["properties"]["coverage"] = coverage
     # Run-level caveats (e.g. scan-skill's "not proof the skill is safe") are not findings either.
     notes = [str(n) for n in run.get("notes") or []]
     if notes:

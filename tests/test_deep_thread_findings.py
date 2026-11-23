@@ -207,6 +207,7 @@ async def test_custom_early_halt_never_promotes_pass(thread_case):
 @pytest.mark.asyncio
 async def test_round_three_secret_is_masked_in_all_thread_reports(thread_case):
     c = thread_case
+    c.judge.judge.return_value = Verdict('warn', 'medium', 1.0, 'needs review', 'fixture', None)
     secret = 'fixture-private-key-round3-0123456789'
     c.target.responses[2] = 'third reply ' + secret
     found = await results(c)
@@ -317,7 +318,7 @@ def test_static_evidence_cannot_spoof_thread_metadata_to_restore_a_secret():
     evidence = {'thread_id': secret, 'persona': secret, 'strategy': secret,
                 'transcript': [{'attack_prompt': secret, 'target_response': secret,
                                 'verdict': secret, 'severity': secret, 'reasoning': secret}]}
-    finding = replace(skipped_finding(probe, 'benign'), verdict='pass', evidence=evidence)
+    finding = replace(skipped_finding(probe, 'benign'), verdict='fail', evidence=evidence)
     record = {'id': 'static-run', 'status': 'completed', 'target_spec': {'api_key': secret},
               'findings': [asdict(finding)]}
     assert secret not in run_json.render_json(record)
@@ -414,6 +415,7 @@ async def test_contact_in_later_round_counts_for_thread(thread_case):
 @pytest.mark.asyncio
 async def test_freeform_thread_evidence_secret_masked_in_every_format(thread_case):
     c = thread_case
+    c.judge.judge.return_value = Verdict('warn', 'medium', 1.0, 'needs review', 'fixture', None)
     secret = 'fixture-collected-secret-0123456789'
     c.target.collect_evidence = AsyncMock(return_value={f'observed_{secret}': secret, 'tool_calls': [{'tool': secret, 'arguments': {}}]})
     found = await results(c)

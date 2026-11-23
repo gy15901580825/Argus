@@ -33,7 +33,8 @@ Around those sits a library of 333 adversarial probes in all (OWASP LLM Top
 10, MITRE ATLAS, NIST AI RMF, garak wrappers), most of them for chat, gRPC and
 browser-using agents. Findings come out as SARIF 2.1.0, JUnit XML and HTML;
 failed findings from the library carry fix-it text, and the SARIF can be
-uploaded to GitHub Code Scanning.
+uploaded to GitHub Code Scanning: only failed and warning probes become alerts,
+with security severity labels and stable identities across repeated scans.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](pyproject.toml)
@@ -377,7 +378,10 @@ needs both too. Details are in
 
 `--probes all` runs every probe that fits the target kind;
 `argus-probe list-probes --target <spec>` shows them. `--format` is `html` (default),
-`sarif` (SARIF 2.1.0, uploads to GitHub Code Scanning) or `junit`.
+`sarif` (SARIF 2.1.0, uploads failed and warning probes to GitHub Code Scanning) or `junit`.
+SARIF anchors alerts at line 1 of the passed target spec when it is inside the
+current directory. Run from the repository root for code scanning; pull request
+annotations require that line to be in the diff. See [SARIF in CI](docs/ci.md#sarif-alerts).
 `--per-run-cap` limits what Argus spends on judge calls: a run whose typical estimate
 is above it does not start, and the in-run meter stops further calls when spend passes it.
 Deep-mode CLI lines show typical and worst-case spend. See [cost calibration](docs/cli.md#cost-controls).

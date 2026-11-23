@@ -140,6 +140,53 @@ your private repository. Set `upload-sarif: "false"` if it is unavailable; the
 artifact still works. The job guard skips fork pull requests and Dependabot
 runs whose credentials or tokens may be unavailable.
 
+## SARIF alerts
+
+Argus SARIF emits one alert per failed or warning probe and target. Repeated
+trials of a probe share that alert; a failure takes precedence over a warning,
+and the highest failing severity supplies the result. Passing, skipped and
+errored probes produce no alerts. `runs[0].properties.verdict_counts` includes
+every verdict, including zeros for pass, fail, warn, error and skipped. Repeated
+trials also have `results[].properties.trial_verdict_counts`. Errors indicate
+incomplete testing, so check the scan exit code, invocation status and run notes;
+use run.json or HTML to inspect their full evidence.
+
+Rules carry GitHub security scores: critical `9.5`, high `8.0`, medium `5.5`,
+low `2.0`. Informational rules omit the score because GitHub treats `0.0` as
+having no security severity. Failed results retain their severity-based SARIF
+level; warnings always use `warning`.
+
+Run `argus-probe run --local --target specs/agent.json` from the repository root
+to anchor alerts at `specs/agent.json`, line 1. Paths are URI encoded. Line 1
+identifies the target configuration; it does not identify vulnerable source
+code. GitHub shows a pull request annotation only when the alert's line is in
+the diff. For a spec outside the current directory, inline JSON, or
+`report --from run.json`, the location falls back to `target.json`, which may
+not exist. SARIF states this in `properties.target_location_note`. The saved
+run record does not contain the original target path.
+
+`partialFingerprints.primaryLocationLineHash` hashes the probe ID and the
+existing target baseline key, excluding timestamps, finding IDs and trial
+order. Different probes or target identities have different fingerprints.
+`automationDetails.id` uses `argus/<hash>/`: the hash comes from the normalized
+target spec path, or the target baseline key when no path is known. Keep the
+path and working directory consistent across uploads. Moving a spec changes
+its category; re-rendered reports use the fallback category, so use a consistent
+upload method. For specs outside the current directory the absolute path
+identifies the category and must stay consistent across runners.
+
+When calling `github/codeql-action/upload-sarif` directly, omit its `category`
+input to retain Argus's target categories, or set a distinct category per target.
+An upload action that sets the same category for every target can override this
+separation. The Action revision in the examples sets `category: argus-probe`;
+its multiple-target upload behavior requires a separate Action update.
+
+These choices follow GitHub's
+[SARIF support requirements](https://docs.github.com/en/code-security/code-scanning/integrating-with-code-scanning/sarif-support-for-code-scanning):
+results represent alerts, fingerprints and consistent paths match them across
+runs, security scores supply labels, and the category in `automationDetails.id`
+distinguishes analyses of different parts of a repository.
+
 ## GitLab CI
 
 Save this job in `.gitlab-ci.yml`. Add a masked `ANTHROPIC_API_KEY` CI/CD

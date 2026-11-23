@@ -82,6 +82,7 @@ def run_local_and_render(
     seed: str | None = None,
     baseline_run: dict | None = None,
     witness_wait: bool = False,
+    target_path: str | None = None,
 ) -> LocalRunResult:
     """Run the probes, print one line per finding, return the rendered report and findings.
 
@@ -124,6 +125,7 @@ def run_local_and_render(
             trials,
             baseline_run,
             baseline_key(spec),
+            **({"target_path": target_path} if target_path is not None else {}),
             **({"witness_wait": True} if witness_wait else {}),
             **options,
         )
@@ -181,6 +183,7 @@ def _run_and_render(
     max_rounds: int = 20,
     seed: str | None = None,
     witness_wait: bool = False,
+    target_path: str | None = None,
 ) -> LocalRunResult:
     from argus.local import LocalRunError, run_local
     from argus_transport.runtime_v2 import TargetRunStopped
@@ -348,7 +351,8 @@ def _run_and_render(
         "junit": reports.render_junit,
     }[report_format]
     return LocalRunResult(
-        render(run_json.scrub_run(run, secret_values)),
+        render(run_json.scrub_run(run, secret_values),
+               **({"target_path": target_path} if report_format == "sarif" else {})),
         findings,
         stopped_by,
         stop_reason,

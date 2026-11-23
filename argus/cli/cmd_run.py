@@ -140,6 +140,7 @@ def cmd_run(target: str, probe_ids: str, report_format: str, out_file: str, toke
             raise click.UsageError(f"--local runs in this process; do not pass {' or '.join(typed)}")
         baseline = load_baseline(baseline_file, spec, mode, secret_values) if baseline_file is not None else None
         _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, secret_values, skip_judged, trials,
+                     target_path=target,
                      **options, **({"witness_wait": True} if witness_wait else {}), **({"baseline_run": baseline, "baseline_file": baseline_file} if baseline is not None else {}))
         return
     if api_url is None:
@@ -344,13 +345,14 @@ def _write_report(out_file: str, report: str, encoding: str | None = None, echo=
 
 def _run_locally(spec, tokens, per_run_cap, report_format, out_file, fail_on, secret_values=(),
                  skip_judged=False, trials=None, mode="static", deep_pairs=3, max_rounds=20, seed=None,
-                 baseline_run=None, baseline_file=None, witness_wait=False) -> None:
+                 baseline_run=None, baseline_file=None, witness_wait=False, target_path=None) -> None:
     from argus_transport.runtime_v2 import TargetRunStopped
 
     try:
         options = run_options(mode, deep_pairs, max_rounds, seed)
         result = run_local_and_render(spec, tokens, per_run_cap, report_format, secret_values, fail_on,
                                       skip_judged=skip_judged, **options,
+                                      **({"target_path": target_path} if target_path is not None else {}),
                                       **({"witness_wait": True} if witness_wait else {}),
                                       **({"baseline_run": baseline_run} if baseline_run is not None else {}),
                                       **({"trials": trials} if trials is not None else {}))

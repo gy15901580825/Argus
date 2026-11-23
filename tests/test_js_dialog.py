@@ -1,6 +1,7 @@
 """js_dialog probes are scored from what the page posted about its dialog, never from the reply."""
 
 import asyncio
+import json
 from pathlib import Path
 import sys
 from unittest.mock import patch
@@ -212,5 +213,10 @@ async def test_every_report_format_states_the_dialog_latency(probe, behavior, li
     [finding] = [event for event in events if "verdict" in event]
     run = {"id": "run-1", "status": "completed", "findings": [finding]}
     assert line in reports.render_html(run)
-    assert line in reports.render_sarif(run)
+    sarif = json.loads(reports.render_sarif(run))["runs"][0]
+    if finding["verdict"] in {"fail", "warn"}:
+        assert line in json.dumps(sarif)
+    else:
+        assert sarif["results"] == []
+        assert sarif["properties"]["verdict_counts"][finding["verdict"]] == 1
     assert line in reports.render_junit(run)

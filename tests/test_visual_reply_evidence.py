@@ -119,8 +119,8 @@ async def test_a_recased_canary_reply_is_reported_as_holding_the_canary():
 def _report_run(evidence):
     finding = {
         "id": "1", "probe_id": "browser_visual_inject_handwritten", "attack_prompt": "a",
-        "target_response": "r", "target_latency_ms": 1.0, "probed_at": "t", "verdict": "pass",
-        "severity": "info", "confidence": 0.9, "reasoning": "judge says", "judge_model": "j",
+        "target_response": "r", "target_latency_ms": 1.0, "probed_at": "t", "verdict": "warn",
+        "severity": "medium", "confidence": 0.9, "reasoning": "judge says", "judge_model": "j",
         "escalated_model": None, "atlas_id": [], "owasp_id": [], "owasp_agentic": [], "nist_id": [],
         "eu_ai_act_id": [], "created_at": "t", "evidence": evidence, "remediation": "",
         "remediation_actions": [], "events": [],

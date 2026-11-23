@@ -477,6 +477,25 @@ network or model calls. `report` does not write JSON; use
 [re-render a report](https://github.com/gy15901580825/Argus/blob/main/docs/onboarding/re-render-report.md) for all formats and the
 SARIF exit code fallback when the scan's gate policy is absent from the record.
 
+SARIF includes only `fail` and `warn` alerts, grouped by probe and target across
+repeated trials. A failing trial wins; its highest severity supplies the result.
+Warnings use level `warning`. Rules carry security scores as strings: critical
+`9.5`, high `8.0`, medium `5.5`, low `2.0`; info omits the score because GitHub
+treats `0.0` as having no security severity. Run properties retain all verdict
+counts, including pass, error and skipped; errors indicate incomplete testing
+and should be investigated in the run notes, HTML or run.json.
+
+For `run --local`, SARIF locations use the passed `--target` file relative to
+the current directory, at line 1. Run from the repository root and commit the
+spec so GitHub can link it; pull request annotations require that line in the
+diff. A spec outside the current directory, inline JSON, and `report --from`
+use a documented `target.json` fallback that may not exist. The path is not
+stored in run.json. Stable fingerprints use the probe ID and target baseline
+key. Upload categories use the normalized target path, falling back to the
+target baseline key; changing paths or switching to re-rendered output changes
+the category. See [SARIF alerts in CI](https://github.com/gy15901580825/Argus/blob/main/docs/ci.md#sarif-alerts)
+for upload category handling and GitHub's requirements.
+
 Each finding from a library probe says how to fix the weakness it tests: the probe's own text when it has one (the MCP server and vLLM probes do), else a few lines for each attack class the probe covers. `scan-skill` findings have an empty `remediation` and an empty `remediation_actions` list. You find it under "How to fix" on `fail` and `warn` findings in HTML (as a "Mitigation (ship now)" list and a "Fix (design change)" list when the finding has `remediation_actions`), as the rule's `help` in SARIF (`help.text` is the `remediation` text; `help.markdown`, which GitHub code scanning shows, lists both tiers), on the last line of the `<failure>` text in JUnit, and in the `remediation` and `remediation_actions` fields in run.json.
 
 ## CI integration

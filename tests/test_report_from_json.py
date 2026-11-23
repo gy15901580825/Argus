@@ -109,7 +109,7 @@ def test_report_from_matches_direct_scan(tmp_path, loopback_target, report_forma
     rendered = rerender_path.read_text()
     assert "offline_probe" in rendered
     assert target["secret"] not in rendered
-    if report_format != "junit" or verdict == "fail":
+    if verdict == "fail" or report_format == "html":
         assert "***" in rendered
     assert normalize_report(rendered, report_format) == normalize_report(direct_path.read_text(), report_format)
     assert target["requests"] == 2
