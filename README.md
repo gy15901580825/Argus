@@ -347,6 +347,11 @@ the trap pages from a hosted trap service you deploy from
 
 To see a report first, follow [Try it in one minute](#try-it-in-one-minute).
 
+Save a local scan with `--out run.json`, then use
+`argus-probe report --from run.json --out report.sarif` to render another
+format without running probes again. `.html`, `.sarif` and `.xml` select HTML,
+SARIF and JUnit. See [re-render a report](docs/onboarding/re-render-report.md).
+
 Without `--local`, the CLI is a client of a server implementing the
 `/api/v1/redteam` API: it submits the run, polls until it finishes, and
 writes the report. Set `ARGUS_API_URL` and `ARGUS_API_TOKEN` for that

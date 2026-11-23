@@ -17,7 +17,7 @@ Argus is a black-box red-team testing tool for AI agents. Customers point Argus 
 | `mcp_testbed` | 8080 | FastAPI | Hostile MCP tool server + insecure demo agent for `mcp_agent` probes |
 | `a2a_testbed` | 8080 peer, 8081 private control | FastAPI | A2A 1.0 peer fixtures and deterministic Planner, Reviewer, Executor demo |
 
-Argus is the engine and CLI only. The CLI's server mode (`run` without `--local`, `report`, `list-probes --api-url`) talks to any server implementing the `/api/v1/redteam` API; this repo does not ship one. The self-hosted stack (`api_service`, `frontend`, `database`, `kubernets`, `terraform`) was removed after tag `v0.3-full`; check out that tag to get it back.
+Argus is the engine and CLI only. The CLI's server mode (`run` without `--local`, `report --run-id`, `list-probes --api-url`) talks to any server implementing the `/api/v1/redteam` API; this repo does not ship one. `report --from run.json` re-renders a local record offline. The self-hosted stack (`api_service`, `frontend`, `database`, `kubernets`, `terraform`) was removed after tag `v0.3-full`; check out that tag to get it back.
 
 The three legacy `testing_*` services moved to separate repositories on 2026-05-28:
 - `testing_api_service` + `testing_web_fetch_service` → https://github.com/gy15901580825/argus-api-testing
