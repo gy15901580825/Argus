@@ -139,7 +139,7 @@ async def test_probe_verdict_over_custom_http_with_mutation(chat_agent, probe_id
 
 
 @pytest.mark.parametrize("domain,selected,mutation", [
-    (None, True, "retail-ecommerce"),
+    (None, False, "financial-services"),
     ("financial-services", True, "retail-ecommerce"),
     ("retail-ecommerce", False, "financial-services"),
 ])

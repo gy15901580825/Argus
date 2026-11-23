@@ -31,7 +31,7 @@ from argus_transport.address_policy import TargetAddressPolicyError
 from argus.coverage import build_coverage, build_summary
 from argus.cost_meter import CostExceededError, CostMeter
 from argus.judge import Judge
-from argus.probe import Probe, load_probe_library
+from argus.probe import Probe, load_probe_library, probe_allows_domain
 from argus.persona_strategy import (
     DEFAULT_DEEP_PAIRS,
     DEFAULT_MAX_ROUNDS,
@@ -123,6 +123,17 @@ def _trap_mode_skip_reason(probe: Any, target_obj: Any) -> str | None:
     return reason
 
 
+def _probe_fits_target(probe: Probe, target_obj: Any) -> bool:
+    """Runtime compatibility, independent of automatic domain selection."""
+    classes = getattr(target_obj, "compatible_classes", frozenset())
+    history = getattr(target_obj, "supports_history", False)
+    return (
+        (not classes or not probe.target_class or bool(set(probe.target_class) & classes))
+        and (history or not getattr(probe, "needs_history", getattr(probe, "conversation", False)))
+        and _trap_mode_skip_reason(probe, target_obj) is None
+    )
+
+
 def compatible_probe_ids(target_obj: Any, *, include_opt_in: bool = True) -> list[str]:
     """Library probes this built target can run; the runner would skip the rest.
 
@@ -131,22 +142,15 @@ def compatible_probe_ids(target_obj: Any, *, include_opt_in: bool = True) -> lis
     unsupported_trap_modes for a browser target. Reads the instance, because
     testbed_agent sets its classes per spec and its history per inner target.
     Default selections set include_opt_in=False. A declared domain narrows this
-    library selection; named ids and suites bypass it.
+    library selection; named ids bypass it. Domain-only probes require a domain.
     """
-    classes = getattr(target_obj, "compatible_classes", frozenset())
-    history = getattr(target_obj, "supports_history", False)
     domain = getattr(target_obj, "domain", None)
     return [
         p.id
         for p in load_probe_library(PROBES_DIR)
         if (include_opt_in or not getattr(p, "opt_in", False))
-        and (domain is None or not p.domains or domain in p.domains)
-        and (not classes or not p.target_class or set(p.target_class) & classes)
-        and (
-            history
-            or not getattr(p, "needs_history", getattr(p, "conversation", False))
-        )
-        and _trap_mode_skip_reason(p, target_obj) is None
+        and probe_allows_domain(p, domain)
+        and _probe_fits_target(p, target_obj)
     ]
 
 
@@ -184,15 +188,23 @@ def unknown_probe_ids(probe_ids: list[str]) -> str | None:
             + " run `argus-probe list-probes` to see the valid ids")
 
 
-def _resolve_suite(suite: str) -> list[str]:
+def _resolve_suite(suite: str, target_obj: Any = None) -> list[str]:
     """Suite id → its probe ids. Raises 422 on an unknown id, listing the valid ones."""
-    suites = derive_suites(load_probe_library(PROBES_DIR))
+    probes = load_probe_library(PROBES_DIR)
+    suites = derive_suites(probes)
     if suite not in suites:
         raise HTTPException(
             status_code=422,
             detail=f"unknown suite {suite!r}; valid suites: {sorted(suites)}",
         )
-    return suites[suite]
+    ids = suites[suite]
+    if target_obj is not None and not suite.startswith("domain:"):
+        domain = getattr(target_obj, "domain", None)
+        allowed = {p.id for p in probes if probe_allows_domain(p, domain)}
+        ids = [pid for pid in ids if pid in allowed]
+        if not ids:
+            raise HTTPException(422, f"no probe in suite {suite!r} fits target domain {domain!r}")
+    return ids
 
 
 def _resolve_request_probe_ids(req: RunRequest, target_obj: Any = None) -> list[str]:
@@ -200,7 +212,7 @@ def _resolve_request_probe_ids(req: RunRequest, target_obj: Any = None) -> list[
 
     The two are mutually exclusive: an empty probe_ids means "the whole
     library" (CLI convention), so a suite request must not carry one.
-    `target_obj` narrows "the whole library" to the probes that target can run.
+    `target_obj` narrows "the whole library" and filters non-domain suites by domain.
     """
     if req.mode not in _VALID_MODES:
         raise HTTPException(
@@ -223,14 +235,15 @@ def _resolve_request_probe_ids(req: RunRequest, target_obj: Any = None) -> list[
                 status_code=422,
                 detail="probe_ids and suite are mutually exclusive — supply exactly one",
             )
-        ids = _resolve_suite(req.suite)
+        ids = _resolve_suite(req.suite, target_obj)
     else:
         ids = _resolve_probe_ids(req.probe_ids, target_obj)
     if not ids:
         # Never hand [] on: it means "all" again downstream.
         raise HTTPException(
             status_code=422,
-            detail=f"no probe in the library fits target kind {_resolve_target_kind(req.target)}",
+            detail=(f"no probe in the library fits target kind {_resolve_target_kind(req.target)}"
+                    f" with domain {getattr(target_obj, 'domain', None)!r}"),
         )
     if req.mode == "deep":
         phased = [

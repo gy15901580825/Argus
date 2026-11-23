@@ -119,7 +119,8 @@ def _prepare(target, probe_ids, *, mode, per_run_cap_usd, env, skip_judged, tria
     # Only probes that require a judge need a key; optional reply checks keep
     # their deterministic verdict when no judge is available.
     by_id = {p.id: p for p in load_probe_library(api.PROBES_DIR)}
-    fits = set(api.compatible_probe_ids(target_obj))
+    # Explicit ids bypass domain selection, including domain-only probes.
+    fits = {p.id for p in by_id.values() if api._probe_fits_target(p, target_obj)}
     runs = requested if mode == "deep" else [pid for pid in requested if pid in fits]
     if not runs:
         from difflib import get_close_matches

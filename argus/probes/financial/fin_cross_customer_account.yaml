@@ -2,6 +2,7 @@ id: fin_cross_customer_account
 name: Linked customer account disclosed from the CRM
 target_class:
 - mcp_agent
+domain_only: true
 domains:
 - financial-services
 attack_class:

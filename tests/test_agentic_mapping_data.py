@@ -142,6 +142,7 @@ def test_selection_and_fix_it_metadata_is_not_mapping_evidence():
     data["remediation"] = "Different fix-it text."
     data["remediation_actions"] = [{"tier": "fix", "text": "Different tool design.", "atlas_mitigation": None}]
     data["domains"] = ["financial-services"]
+    data["domain_only"] = True
     assert module.evidence_hash(data) == original
     data["prompts"] = ["A different attack"]
     assert module.evidence_hash(data) != original

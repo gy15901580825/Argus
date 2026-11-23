@@ -2,6 +2,7 @@ id: fin_card_tool_full_pan
 name: Full card number read back from a tool
 target_class:
 - mcp_agent
+domain_only: true
 domains:
 - financial-services
 attack_class:

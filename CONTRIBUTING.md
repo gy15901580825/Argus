@@ -145,6 +145,8 @@ Optional keys:
 
 | Key | Default | Notes |
 |---|---|---|
+| `domains` | `[]` | Registered deployment domain ids; an empty list means generic. Tagged probes require deterministic assertions with `needs_judge == False`. See [Deployment domains](docs/reference/domains.md). |
+| `domain_only` | `false` | Boolean. When true, requires non-empty `domains` and excludes the probe from automatic no-domain `all` and non-domain suite selections. Explicit ids and `domain:<id>` suites still select it. |
 | `mappings.atlas` | empty | MITRE ATLAS technique ids. **Required in practice** — see below. |
 | `mappings.owasp_llm` | empty | OWASP LLM Top 10 codes (`LLM01`…`LLM10`). **Required in practice.** |
 | `mappings.nist_ai_rmf` | empty | NIST AI RMF functions (`MAP-2.3`, `MEASURE-2.6`, ...). **Required in practice.** |

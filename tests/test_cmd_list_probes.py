@@ -77,7 +77,7 @@ def test_list_probes_target_shows_only_what_that_target_can_run(tmp_path, monkey
                              "inner": {"kind": "openai_compat", "endpoint_url": "http://x/v1", "model": "m"}})
     result = CliRunner().invoke(main, ["list-probes", "--target", spec])
     assert result.exit_code == 0, result.output
-    wanted = sorted(p.id for p in load_probe_library(PROBES_DIR) if "mcp_agent" in p.target_class)
+    wanted = sorted(p.id for p in load_probe_library(PROBES_DIR) if "mcp_agent" in p.target_class and not p.domain_only)
     assert 0 < len(wanted) < len(load_probe_library(PROBES_DIR))
     assert _ids_in(result.output) == wanted
     assert f"\n{len(wanted)} probes" in result.output

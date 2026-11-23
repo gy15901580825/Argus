@@ -287,7 +287,7 @@ async def test_older_testbed_unknown_world_errors_and_restoring_flips(real_world
 
 
 @pytest.mark.parametrize("domain,selected,mutation", [
-    (None, True, "retail-ecommerce"),
+    (None, False, "financial-services"),
     ("financial-services", True, "retail-ecommerce"),
     ("retail-ecommerce", False, "financial-services"),
 ])
