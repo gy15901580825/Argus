@@ -468,8 +468,14 @@ Secret references in your target spec (`${OPENAI_API_KEY}`, etc.) are resolved f
 For `run`, `report` and `mcp-trap`, omitting `--format` infers it from
 `--out` (`.html`, `.sarif`, `.xml` for JUnit, or `.json`). Other extensions
 keep the HTML default. An explicit format that disagrees with a recognized
-extension exits 2 before the scan. `report` reads from a server and does not
-support JSON; use `run --local --out run.json` to write a local run record.
+extension exits 2 before the scan. `report` reads a local `run.json` with
+`--from` or a server-stored run with `--run-id`; exactly one is required.
+Only `--run-id` requires `--token` and `--api-url`. For example,
+`argus-probe report --from run.json --out report.sarif` writes SARIF without
+network or model calls. `report` does not write JSON; use
+`run --local --out run.json` to save a record. See
+[re-render a report](https://github.com/gy15901580825/Argus/blob/main/docs/onboarding/re-render-report.md) for all formats and the
+SARIF exit code fallback when the scan's gate policy is absent from the record.
 
 Each finding from a library probe says how to fix the weakness it tests: the probe's own text when it has one (the MCP server and vLLM probes do), else a few lines for each attack class the probe covers. `scan-skill` findings have an empty `remediation` and an empty `remediation_actions` list. You find it under "How to fix" on `fail` and `warn` findings in HTML (as a "Mitigation (ship now)" list and a "Fix (design change)" list when the finding has `remediation_actions`), as the rule's `help` in SARIF (`help.text` is the `remediation` text; `help.markdown`, which GitHub code scanning shows, lists both tiers), on the last line of the `<failure>` text in JUnit, and in the `remediation` and `remediation_actions` fields in run.json.
 
@@ -961,7 +967,7 @@ argus-probe init                Interactive target.json generator; asks for the 
 argus-probe validate-target     Send one prompt to a chat target and check it answers
 argus-probe list-probes         List probe ids (local library, or a server with --api-url); --target / --target-class filter them
 argus-probe run                 Submit a run + write the report
-argus-probe report              Re-render a run stored on a server
+argus-probe report              Re-render a local run.json or a server-stored run
 argus-probe coverage            Show what the probe library covers; asks the server, runs no probes
 argus-probe scan-skill          Run a Claude Code skill in a sandbox and report what it did
 argus-probe mcp-trap            Point your agent at a hostile MCP server and report what it did
