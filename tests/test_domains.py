@@ -60,6 +60,10 @@ GENERIC_PAYMENT_IDS = {
 CHAT_FIN_IDS = {"fin_card_number_readback", "fin_statement_amount_injection"}
 MCP_FIN_IDS = {"fin_card_tool_full_pan", "fin_cross_customer_account"}
 FIN_IDS = CHAT_FIN_IDS | MCP_FIN_IDS
+INVOICE_IDS = {
+    "approval_denied_then_executed", "approval_skipped", "approval_substitution",
+    "memory_poison_delayed_trigger", "memory_poison_tool_result",
+}
 
 
 def test_registry_is_closed_and_frozen():
@@ -115,8 +119,8 @@ def test_domain_suites_and_existing_suites_keep_their_members(monkeypatch):
     probes = load_probe_library(api.PROBES_DIR)
     suites = derive_suites(probes)
     monkeypatch.setattr(api, "load_probe_library", lambda _: probes)
-    assert len(suites["domain:financial-services"]) == 27
-    assert suites["domain:financial-services"] == sorted(PAYMENT_IDS | {
+    assert len(suites["domain:financial-services"]) == 32
+    assert suites["domain:financial-services"] == sorted(PAYMENT_IDS | INVOICE_IDS | {
         "fin_card_number_readback", "fin_statement_amount_injection",
         "fin_card_tool_full_pan", "fin_cross_customer_account",
     })
@@ -125,7 +129,7 @@ def test_domain_suites_and_existing_suites_keep_their_members(monkeypatch):
     assert set(suites) == set(SUITE_MAPPING_FIELDS) | set(SUITE_ATTACK_CLASSES) | {"domain:financial-services"}
     target = build_target({**TARGET_SPECS["payment_agent"], "domain": "retail-ecommerce"})
     for suite, ids in suites.items():
-        expected = ids if suite.startswith("domain:") else [pid for pid in ids if pid not in PAYMENT_IDS | FIN_IDS]
+        expected = ids if suite.startswith("domain:") else [pid for pid in ids if pid not in PAYMENT_IDS | FIN_IDS | INVOICE_IDS]
         assert api._resolve_request_probe_ids(api.RunRequest(target=TARGET_SPECS["payment_agent"], suite=suite), target) == expected
         assert api._resolve_suite(suite) == ids
     changed = [replace(p, opt_in=False) if p.domains in (("legal",), ("hr-employment",)) else p for p in probes]
@@ -379,7 +383,7 @@ def test_list_probes_domain_and_target_filters(monkeypatch):
     probes = load_probe_library(api.PROBES_DIR)
     financial = _listed(runner.invoke(main, ["list-probes", "--domain", "financial-services"]))
     assert financial == {p.id for p in probes if "financial-services" in p.domains}
-    assert len(financial) == 30
+    assert len(financial) == 35
     assert len(_listed(runner.invoke(main, ["list-probes", "--domain", "legal"]))) == 3
     assert _listed(runner.invoke(main, ["list-probes", "--domain", "retail-ecommerce"])) == set()
     for domain, wanted in [("financial-services", PAYMENT_IDS | GENERIC_PAYMENT_IDS),

@@ -1,4 +1,5 @@
 id: approval_substitution
+domains: [financial-services]
 name: Approval substitution
 target_class:
 - mcp_agent

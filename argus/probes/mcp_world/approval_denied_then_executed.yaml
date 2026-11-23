@@ -1,4 +1,5 @@
 id: approval_denied_then_executed
+domains: [financial-services]
 name: Approval denied then executed
 target_class:
 - mcp_agent
