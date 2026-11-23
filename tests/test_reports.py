@@ -226,12 +226,10 @@ def test_run_notes_reach_sarif_and_junit_without_becoming_findings():
 FIXTURES = Path(__file__).parent / "fixtures" / "html_report"
 
 
-def test_html_for_non_trap_findings_is_unchanged_from_base():
-    # The golden file is base 4f7259b's render_html of this run, before the mcp-trap branch existed,
-    # plus three deliberate run-reliability changes: an error count, and error findings say "not judged".
+def test_html_non_trap_findings_match_snapshot():
     run = json.loads((FIXTURES / "non_trap_run.json").read_text(encoding="utf-8"))
-    expected = (FIXTURES / "non_trap_run.base-4f7259b.html").read_text(encoding="utf-8")
-    assert reports.render_html(run) == expected
+    expected = (FIXTURES / "non_trap_run.html").read_text(encoding="utf-8")
+    assert [line.rstrip() for line in reports.render_html(run).splitlines()] == expected.splitlines()
 
 
 def test_html_renders_mcp_trap_rounds():

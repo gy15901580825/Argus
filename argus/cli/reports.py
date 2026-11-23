@@ -93,11 +93,28 @@ def evidence_notes(finding: dict) -> list[str]:
 
 def render_html(run: dict) -> str:
     template = _jinja.get_template("report.html.j2")
+    verdict_order = {verdict: rank for rank, verdict in enumerate(("fail", "warn", "error", "skipped", "pass"))}
+    severity_order = {severity: rank for rank, severity in enumerate(("critical", "high", "medium", "low", "info"))}
+    findings = sorted(run.get("findings", []), key=lambda f: (
+        verdict_order.get(f.get("verdict"), len(verdict_order)),
+        severity_order.get(f.get("severity"), len(severity_order)),
+        f.get("probe_id", ""),
+    ))
+    probe_trials = Counter(f.get("probe_id", "") for f in findings)
+    coverage = run.get("coverage")
+    coverage_named_standards = {
+        key for key, standard in (coverage or {}).get("standards", {}).items()
+        if any(cell.get("name") for cell in standard.get("cells", []))
+    }
     return template.render(
         run=run,
+        findings=findings,
+        probe_trials=probe_trials,
+        probe_count=len(probe_trials),
         judge_blocked_note=block_note(build_summary(run.get("findings", []))),
         counts=_verdict_counts(run.get("findings", [])),
-        coverage=run.get("coverage"),
+        coverage=coverage,
+        coverage_named_standards=coverage_named_standards,
         atlas_names=remediation.atlas_mitigations(),
         is_deep_finding=is_deep_finding,
         evidence_notes=evidence_notes,
