@@ -69,6 +69,20 @@ def test_local_writes_sarif_without_api_url(tmp_path, monkeypatch):
     sarif = json.loads(out.read_text())
     assert len(sarif["runs"][0]["results"]) == 1
     assert sarif["runs"][0]["properties"]["coverage"] == FAKE_COVERAGE
+
+
+def test_local_sarif_uses_passed_target_path(tmp_path, monkeypatch):
+    _install_fake_engine(monkeypatch, _ok_run)
+    monkeypatch.chdir(tmp_path)
+    spec = tmp_path / "specs" / "agent.json"
+    spec.parent.mkdir()
+    spec.write_text(json.dumps({"kind": "openai_compat", "endpoint_url": "http://127.0.0.1", "model": "m"}))
+    out = tmp_path / "report.sarif"
+    result = CliRunner().invoke(cmd_run, ["--local", "--target", str(spec),
+        "--probes", "p", "--format", "sarif", "--out", str(out)])
+    assert result.exit_code == 0, result.output
+    document = json.loads(out.read_text())["runs"][0]
+    assert document["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == "specs/agent.json"
     assert "fail" in result.output and "owasp_01_prompt_injection_basic" in result.output
 
 

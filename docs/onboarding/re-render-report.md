@@ -27,8 +27,17 @@ version exits 1 with an error before writing a report. This build accepts
 The record does not store the original process exit code or `--fail-on`
 policy. Re-rendered SARIF uses the existing renderer's status fallback:
 `exitCode` is 0 for `completed`, otherwise 1. It does not reproduce the scan's
-severity gate exit 3 or cost-cap exit 4. Findings, notes and coverage remain in
-the report. A successful `report` command exits 0 even for an incomplete scan.
+severity gate exit 3 or cost-cap exit 4. SARIF emits only failed and warning
+probes as alerts, grouping repeated trials into one result per probe and target.
+Run properties retain every verdict count, notes and coverage. A successful
+`report` command exits 0 even for an incomplete scan.
+
+The record does not store the original `--target` file path. Re-rendered SARIF
+therefore anchors alerts at `target.json`, line 1, and states the fallback in
+`properties.target_location_note`; the file may not exist. Fingerprints still
+use the probe ID and stored target baseline key. Its upload category uses that
+baseline key rather than the direct scan's target path, so keep the upload
+method consistent for a target. See [SARIF alerts in CI](../ci.md#sarif-alerts).
 
 ## Server-stored run
 

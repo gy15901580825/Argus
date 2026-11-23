@@ -163,9 +163,10 @@ def _no_fail(report_format: str) -> None:
         verdicts = [f["verdict"] for f in json.loads(text)["findings"]]
         assert "fail" not in verdicts and "pass" in verdicts
     elif report_format == "sarif":
-        results = json.loads(text)["runs"][0]["results"]
-        verdicts = [r["properties"]["verdict"] for r in results if "properties" in r]
-        assert "fail" not in verdicts and "pass" in verdicts
+        run = json.loads(text)["runs"][0]
+        assert run["properties"]["verdict_counts"]["fail"] == 0
+        assert run["properties"]["verdict_counts"]["pass"] > 0
+        assert all(r["properties"]["verdict"] == "warn" for r in run["results"])
     elif report_format == "junit":
         root = ET.fromstring(text)
         assert list(root.iter("testcase")) and not list(root.iter("failure"))

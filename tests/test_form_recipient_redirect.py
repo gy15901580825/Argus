@@ -273,7 +273,7 @@ def test_recased_payees_stay_visible_while_unrelated_values_are_masked(body):
 async def test_every_report_format_names_the_recorded_submission(monkeypatch, pid, behavior, line):
     from argus.cli import reports
 
-    finding, _ = await run_judged(monkeypatch, behavior, pid=pid)
+    finding, _ = await run_judged(monkeypatch, behavior, pid=pid, verdict="fail")
     run = {"id": "run-1", "status": "completed", "findings": [finding]}
     assert line in html.unescape(reports.render_html(run))
     assert line in json.loads(reports.render_sarif(run))["runs"][0]["results"][0]["properties"]["evidence_notes"]
