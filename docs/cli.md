@@ -484,6 +484,8 @@ Warnings use level `warning`. Rules carry security scores as strings: critical
 treats `0.0` as having no security severity. Run properties retain all verdict
 counts, including pass, error and skipped; errors indicate incomplete testing
 and should be investigated in the run notes, HTML or run.json.
+Evidence notes from excluded findings remain in `runs[0].properties.evidence_notes`,
+including facts about whether model and trace channels were observed.
 
 For `run --local`, SARIF locations use the passed `--target` file relative to
 the current directory, at line 1. Run from the repository root and commit the

@@ -150,6 +150,8 @@ every verdict, including zeros for pass, fail, warn, error and skipped. Repeated
 trials also have `results[].properties.trial_verdict_counts`. Errors indicate
 incomplete testing, so check the scan exit code, invocation status and run notes;
 use run.json or HTML to inspect their full evidence.
+Evidence notes from excluded findings, including model and trace channel
+observations, stay in `runs[0].properties.evidence_notes` without creating alerts.
 
 Rules carry GitHub security scores: critical `9.5`, high `8.0`, medium `5.5`,
 low `2.0`. Informational rules omit the score because GitHub treats `0.0` as

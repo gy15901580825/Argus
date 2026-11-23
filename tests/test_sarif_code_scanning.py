@@ -135,3 +135,15 @@ def test_optional_times_are_omitted_and_result_message_is_nonempty():
     assert "startTimeUtc" not in output["invocations"][0]
     assert "endTimeUtc" not in output["invocations"][0]
     assert output["results"][0]["message"]["text"] == "Argus probe probe: fail"
+
+
+def test_non_alert_evidence_notes_survive_without_creating_results():
+    passed = finding("passed", "pass", evidence={"trap_requests": [],
+        "model_egress_notes": ["model provider requests through the relay: observed"]})
+    skipped = finding("skipped", "skipped", evidence={"trap_requests": [],
+        "trace_egress_notes": ["OTLP trace export: not observable"]})
+    output = sarif(run(passed, skipped, finding("failed")))
+    assert [r["ruleId"] for r in output["results"]] == ["failed"]
+    assert output["properties"]["evidence_notes"] == [
+        {"probe_id": "passed", "verdict": "pass", "notes": passed["evidence"]["model_egress_notes"]},
+        {"probe_id": "skipped", "verdict": "skipped", "notes": skipped["evidence"]["trace_egress_notes"]}]

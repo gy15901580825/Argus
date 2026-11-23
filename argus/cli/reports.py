@@ -280,6 +280,14 @@ def render_sarif(run: dict, *, target_path: str | None = None) -> str:
     coverage = run.get("coverage")
     if coverage:
         sarif_run["properties"]["coverage"] = coverage
+    # Channel observations and other facts remain useful when a probe is not an alert.
+    non_alert_notes = [
+        {"probe_id": f["probe_id"], "verdict": f.get("verdict"), "notes": notes}
+        for f in findings if f.get("verdict") not in verdict_to_kind
+        if (notes := evidence_notes(f))
+    ]
+    if non_alert_notes:
+        sarif_run["properties"]["evidence_notes"] = non_alert_notes
     # Run-level caveats (e.g. scan-skill's "not proof the skill is safe") are not findings either.
     notes = [str(n) for n in run.get("notes") or []]
     if notes:
