@@ -214,6 +214,7 @@ class Probe:
 
     scenario_options: Mapping[str, str] = field(default_factory=FrozenOptions)
     domains: tuple[str, ...] = ()
+    domain_only: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "scenario_options", FrozenOptions(self.scenario_options))
@@ -242,6 +243,13 @@ class Probe:
         return not self.assertions or self.judge_when_assertions_pass or self.judge_when_assertions_warn
 
 
+def probe_allows_domain(probe: Probe, domain: str | None) -> bool:
+    """Whether a probe belongs in a target's automatic domain selection."""
+    if domain is None:
+        return not probe.domain_only
+    return not probe.domains or domain in probe.domains
+
+
 @lru_cache(maxsize=512)
 def _parse_probe_yaml(source: str):
     return yaml.safe_load(source)
@@ -264,6 +272,11 @@ def load_probe(path: Path) -> Probe:
                 )
         if len(domains) != len(set(domains)):
             raise ValueError(f"{probe_name}: domains repeats an id in {path}")
+        domain_only = raw.get("domain_only", False)
+        if not isinstance(domain_only, bool):
+            raise ValueError(f"{probe_name}: domain_only must be a boolean in {path}")
+        if domain_only and not domains:
+            raise ValueError(f"{probe_name}: domain_only requires non-empty domains in {path}")
         if raw["severity"] not in VALID_SEVERITIES:
             raise ValueError(f"invalid severity {raw['severity']!r} in {path}")
         for tc in raw["target_class"]:
@@ -507,6 +520,7 @@ def load_probe(path: Path) -> Probe:
             )
         probe = Probe(
             domains=tuple(domains),
+            domain_only=domain_only,
             document=document,
             indirect=tuple(IndirectItem(**item) for item in indirect),
             requires_capabilities=tuple(capabilities),

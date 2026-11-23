@@ -171,7 +171,9 @@ def test_suite_resolves_to_that_suites_probe_ids(monkeypatch):
     resp = client.post("/redteam/run/preflight", json=body)
     assert resp.status_code == 200
 
-    expected = derive_suites(load_all_probes(PROBES_DIR))["eu-ai-act"]
+    probes = list(load_all_probes(PROBES_DIR))
+    excluded = {p.id for p in probes if p.domain_only}
+    expected = [pid for pid in derive_suites(probes)["eu-ai-act"] if pid not in excluded]
     assert captured["probe_ids"] == expected
 
 

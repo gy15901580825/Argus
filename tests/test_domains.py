@@ -57,6 +57,9 @@ GENERIC_PAYMENT_IDS = {
     "pay_wallet_key_exfil", "pay_wallet_key_exfil_compliance",
     "pay_wallet_key_exfil_encoded", "pay_wallet_key_exfil_partial",
 }
+CHAT_FIN_IDS = {"fin_card_number_readback", "fin_statement_amount_injection"}
+MCP_FIN_IDS = {"fin_card_tool_full_pan", "fin_cross_customer_account"}
+FIN_IDS = CHAT_FIN_IDS | MCP_FIN_IDS
 
 
 def test_registry_is_closed_and_frozen():
@@ -80,13 +83,21 @@ def test_no_domain_preserves_full_library_selection(monkeypatch, kind):
     assert len(probes) == 333
     monkeypatch.setattr(api, "load_probe_library", lambda _: probes)
     original = [api.compatible_probe_ids(target, include_opt_in=False), api.compatible_probe_ids(target)]
+    domain_only = {p.id for p in probes if p.domain_only}
+    assert domain_only == FIN_IDS
+    assert all(domain_only.isdisjoint(ids) for ids in original)
     old_suites = {k: v for k, v in derive_suites(probes).items() if not k.startswith("domain:")}
     for suite in old_suites:
         req = api.RunRequest(target=TARGET_SPECS[kind], suite=suite)
-        assert api._resolve_request_probe_ids(req, target) == old_suites[suite]
-    cleared = [replace(p, domains=()) for p in probes]
+        selected = api._resolve_request_probe_ids(req, target)
+        assert selected == [pid for pid in old_suites[suite] if pid not in domain_only]
+        assert domain_only.isdisjoint(selected)
+    cleared = [replace(p, domains=(), domain_only=False) for p in probes]
     monkeypatch.setattr(api, "load_probe_library", lambda _: cleared)
-    assert original == [api.compatible_probe_ids(target, include_opt_in=False), api.compatible_probe_ids(target)]
+    baseline = [api.compatible_probe_ids(target, include_opt_in=False), api.compatible_probe_ids(target)]
+    assert original == [[pid for pid in ids if pid not in domain_only] for ids in baseline]
+    for suite, ids in old_suites.items():
+        assert api._resolve_request_probe_ids(api.RunRequest(target=TARGET_SPECS[kind], suite=suite), target) == ids
     assert derive_suites(cleared) == old_suites
 
 
@@ -114,7 +125,9 @@ def test_domain_suites_and_existing_suites_keep_their_members(monkeypatch):
     assert set(suites) == set(SUITE_MAPPING_FIELDS) | set(SUITE_ATTACK_CLASSES) | {"domain:financial-services"}
     target = build_target({**TARGET_SPECS["payment_agent"], "domain": "retail-ecommerce"})
     for suite, ids in suites.items():
-        assert api._resolve_request_probe_ids(api.RunRequest(target=TARGET_SPECS["payment_agent"], suite=suite), target) == ids
+        expected = ids if suite.startswith("domain:") else [pid for pid in ids if pid not in PAYMENT_IDS | FIN_IDS]
+        assert api._resolve_request_probe_ids(api.RunRequest(target=TARGET_SPECS["payment_agent"], suite=suite), target) == expected
+        assert api._resolve_suite(suite) == ids
     changed = [replace(p, opt_in=False) if p.domains in (("legal",), ("hr-employment",)) else p for p in probes]
     changed_suites = derive_suites(changed)
     assert len(changed_suites["domain:legal"]) == len(changed_suites["domain:hr-employment"]) == 3
@@ -133,6 +146,80 @@ def test_opt_in_stays_opt_in_with_domain():
     invoice = {p.id for p in load_probe_library(api.PROBES_DIR) if p.id.startswith("doc_injection_invoice_payee_swap_")}
     assert len(invoice) == 3
     assert invoice <= set(inclusive) and invoice.isdisjoint(default)
+
+
+@pytest.mark.parametrize("kind,financial", [("custom_http", CHAT_FIN_IDS), ("mcp_agent", MCP_FIN_IDS)])
+@pytest.mark.parametrize("suite", ["owasp-llm-top10", None])
+@pytest.mark.parametrize("domain", [None, "financial-services", "healthcare"])
+def test_financial_selection_flips_with_target_domain(kind, financial, suite, domain):
+    spec = {**TARGET_SPECS[kind], "domain": domain}
+    target = build_target(spec)
+    req = api.RunRequest(target=spec, suite=suite)
+    selected = set(api._resolve_request_probe_ids(req, target))
+    if domain == "financial-services":
+        assert financial <= selected
+    else:
+        assert FIN_IDS.isdisjoint(selected)
+    target.domain = None if domain == "financial-services" else "financial-services"
+    flipped = set(api._resolve_request_probe_ids(req, target))
+    assert financial.isdisjoint(flipped) if domain == "financial-services" else financial <= flipped
+
+
+@pytest.mark.parametrize("suite", ["owasp-llm-top10", "payments", None])
+@pytest.mark.parametrize("domain", [None, "retail-ecommerce"])
+def test_payment_selection_flips_with_target_domain(suite, domain):
+    spec = {**TARGET_SPECS["payment_agent"], "domain": domain}
+    target = build_target(spec)
+    req = api.RunRequest(target=spec, suite=suite)
+    selected = set(api._resolve_request_probe_ids(req, target))
+    assert PAYMENT_IDS <= selected if domain is None else PAYMENT_IDS.isdisjoint(selected)
+    target.domain = "retail-ecommerce" if domain is None else None
+    flipped = set(api._resolve_request_probe_ids(req, target))
+    assert PAYMENT_IDS.isdisjoint(flipped) if domain is None else PAYMENT_IDS <= flipped
+
+
+def test_suite_domain_filter_empty_is_422_and_flips(monkeypatch):
+    financial = next(p for p in load_probe_library(api.PROBES_DIR) if p.id in CHAT_FIN_IDS)
+    monkeypatch.setattr(api, "load_probe_library", lambda _: [financial])
+    spec = TARGET_SPECS["custom_http"]
+    target = build_target(spec)
+    req = api.RunRequest(target=spec, suite="owasp-llm-top10")
+    with pytest.raises(api.HTTPException) as exc:
+        api._resolve_request_probe_ids(req, target)
+    assert exc.value.status_code == 422 and "domain None" in exc.value.detail
+    target.domain = "telecom"
+    with pytest.raises(api.HTTPException, match="telecom") as exc:
+        api._resolve_request_probe_ids(req, target)
+    assert exc.value.status_code == 422
+    target.domain = "financial-services"
+    assert api._resolve_request_probe_ids(req, target) == [financial.id]
+    assert api._resolve_request_probe_ids(req) == [financial.id]
+    target.domain = None
+    assert api._resolve_request_probe_ids(req.model_copy(update={"suite": "domain:financial-services"}), target) == [financial.id]
+    with pytest.raises(api.HTTPException) as exc:
+        api._resolve_request_probe_ids(req.model_copy(update={"suite": None}), target)
+    assert exc.value.status_code == 422 and "domain None" in exc.value.detail
+
+
+async def test_explicit_domain_only_probe_runs_without_domain_in_api_and_local(monkeypatch):
+    from argus import local
+
+    spec = TARGET_SPECS["custom_http"]
+    target = build_target(spec)
+    target.send_prompt = AsyncMock(return_value=("Card **** **** **** 0121.", 0.0))
+    target.aclose = AsyncMock()
+    monkeypatch.setattr(api, "build_target", lambda *_, **__: target)
+    monkeypatch.setattr(local, "build_target", lambda *_, **__: target)
+    req = api.RunRequest(target=spec, probe_ids=["fin_card_number_readback"])
+    assert "fin_card_number_readback" not in api._resolve_request_probe_ids(req.model_copy(update={"probe_ids": []}), target)
+    assert api._resolve_request_probe_ids(req, target) == req.probe_ids
+    prompts = load_probe(api.PROBES_DIR / "financial/fin_card_number_readback.yaml").prompts
+    for run in (api._run_probes(req, ""), local.run_local(spec, req.probe_ids, env={})):
+        findings = [f async for f in run if f.get("probe_id")]
+        assert len(findings) == len(prompts)
+        assert {f["probe_id"] for f in findings} == {"fin_card_number_readback"}
+        assert {f["verdict"] for f in findings} == {"pass"}
+    assert target.send_prompt.await_count == 2 * len(prompts)
 
 
 @pytest.mark.parametrize("domain", ["retail-ecommerce", "financial-services"])
@@ -168,24 +255,30 @@ def _yaml_probe(tmp_path, **overrides):
     ({"domains": ["legal", "legal"]}, "repeats"),
     ({"domains": "legal"}, "must be a list"),
     ({"domains": [42]}, "valid ids"),
+    ({"domain_only": True, "domains": []}, "domain_only requires non-empty domains"),
+    ({"domain_only": "true"}, "domain_only must be a boolean"),
 ])
 def test_probe_load_rules_flip_when_input_is_corrected(tmp_path, changes, message):
     path, raw = _yaml_probe(tmp_path, **changes)
     with pytest.raises(ValueError) as exc:
         load_probe(path)
+    with pytest.raises(ValueError):
+        load_probe_library(tmp_path)
     assert "domain_fixture" in str(exc.value) and "Domain fixture name" in str(exc.value)
     assert message in str(exc.value)
     if message == "valid ids":
         assert all(d in str(exc.value) for d in DOMAINS)
     raw.update(domains=["financial-services"], assertions=[{"response_fields": {"equals": {"$.ok": "yes"}}}],
-               judge_when_assertions_pass=False, judge_when_assertions_warn=False)
+               judge_when_assertions_pass=False, judge_when_assertions_warn=False, domain_only=True)
     path.write_text(yaml.safe_dump(raw))
     probe = load_probe(path)
-    assert probe.domains == ("financial-services",) and not probe.needs_judge
+    assert probe.domains == ("financial-services",) and probe.domain_only and not probe.needs_judge
     raw["domains"] = []
+    raw["domain_only"] = False
     raw["assertions"] = []
     path.write_text(yaml.safe_dump(raw))
     assert load_probe(path).needs_judge
+    assert not load_probe(path).domain_only
 
 
 def test_multi_domain_probe_and_absent_domains(tmp_path, monkeypatch):
@@ -208,7 +301,8 @@ def test_multi_domain_probe_and_absent_domains(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("changes", [{"domains": ["unregistered"]}, {"domains": ["legal", "legal"]},
                                      {"assertions": []}, {"judge_when_assertions_pass": True},
-                                     {"judge_when_assertions_warn": True}])
+                                     {"judge_when_assertions_warn": True},
+                                     {"domain_only": True, "domains": []}, {"domain_only": "true"}])
 def test_entry_point_pack_uses_domain_load_rules(tmp_path, monkeypatch, caplog, changes):
     pack = tmp_path / "pack"
     pack.mkdir()
@@ -220,7 +314,7 @@ def test_entry_point_pack_uses_domain_load_rules(tmp_path, monkeypatch, caplog, 
     assert "domain_fixture" in caplog.text and "Domain fixture name" in caplog.text
     for domain in DOMAINS:
         raw.update(domains=[domain], assertions=[{"response_fields": {"equals": {"$.ok": "yes"}}}],
-                   judge_when_assertions_pass=False, judge_when_assertions_warn=False)
+                   judge_when_assertions_pass=False, judge_when_assertions_warn=False, domain_only=True)
         path.write_text(yaml.safe_dump(raw))
         assert load_probe_library(builtin)[0].domains == (domain,)
 

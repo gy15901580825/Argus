@@ -1743,7 +1743,7 @@ def probe_files(root: Path):
 
 
 def evidence_hash(data: dict) -> str:
-    evidence = {key: value for key, value in data.items() if key not in {'mappings', 'remediation', 'remediation_actions', 'domains'}}
+    evidence = {key: value for key, value in data.items() if key not in {'mappings', 'remediation', 'remediation_actions', 'domains', 'domain_only'}}
     return hashlib.sha256(json.dumps(evidence, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
