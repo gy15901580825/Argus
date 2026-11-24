@@ -809,7 +809,7 @@ configures that provider; local mode also refuses them, and the CLI never config
 providers.
 
 A hosting process can call `argus.server.create_app(execution_policy_factory=factory)`.
-The synchronous factory receives `RunContext(run_id: str, request: argus.api.RunRequest)`
+The synchronous factory receives `RunContext(run_id: str, request: argus.api.RunRequest, headers: Mapping[str, str])`
 and a parsed `TransportSpec` or `TransportSpecV2`. The server generates the run id;
 preflight and execution are separate requests with separate ids. The factory returns
 an `ExecutionPolicy` with `secret_providers: Mapping[str, Callable[[str], str]]`, for
@@ -826,6 +826,12 @@ def policy_for_run(context, spec):
 
 app = create_app(execution_policy_factory=policy_for_run)
 ```
+
+The factory receives the incoming request headers as a read-only copy with
+lower-cased names, so the hosting process can bind credentials to a run. The
+hosting process must authenticate the caller before trusting any header; Argus
+does not authenticate these binding headers. Header values are excluded from
+the context's string representation and are not logged or stored by Argus.
 
 `credentials_for_request` is supplied by the hosting process and authorizes each
 reference against the validated request. The factory is called once per distinct
