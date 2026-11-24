@@ -8,8 +8,10 @@ import os
 import socket
 import stat
 from contextlib import contextmanager
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from urllib.parse import quote, quote_plus, urlsplit
 
 from .models import SecretRef, origin
@@ -21,6 +23,12 @@ class ExecutionPolicy:
     allowed_origins: frozenset[str] = frozenset()
     allowed_secret_roots: tuple[Path, ...] | None = ()
     allowed_env_names: frozenset[str] | None = frozenset()
+    secret_providers: Mapping[str, Callable[[str], str]] = field(
+        default_factory=lambda: MappingProxyType({}), repr=False
+    )
+
+    def __post_init__(self):
+        object.__setattr__(self, "secret_providers", MappingProxyType(dict(self.secret_providers)))
 
     @classmethod
     def local(cls, spec):
@@ -51,6 +59,17 @@ class ExecutionPolicy:
 
 
 _LOCAL_MODE = contextvars.ContextVar("transport_local_mode", default=False)
+_POLICY_FACTORY = contextvars.ContextVar("transport_execution_policy_factory", default=None)
+
+
+@contextmanager
+def execution_policy_scope(factory):
+    """Bind a hosting process's policy resolver to this execution context."""
+    token = _POLICY_FACTORY.set(factory)
+    try:
+        yield
+    finally:
+        _POLICY_FACTORY.reset(token)
 
 
 @contextmanager
@@ -63,6 +82,9 @@ def local_transport_mode():
 
 
 def execution_policy(spec):
+    factory = _POLICY_FACTORY.get()
+    if factory is not None:
+        return factory(spec)
     return ExecutionPolicy.local(spec) if _LOCAL_MODE.get() else ExecutionPolicy()
 
 
@@ -97,7 +119,14 @@ class Redactor:
 
 
 def resolve_secret(ref: SecretRef, policy: ExecutionPolicy):
-    if ref.source == "env":
+    if ref.source == "provider":
+        if ref.provider not in policy.secret_providers:
+            raise ValueError("Secret reference denied")
+        try:
+            value = policy.secret_providers[ref.provider](ref.name)
+        except Exception:
+            raise ValueError("Secret resolution failed") from None
+    elif ref.source == "env":
         if (
             policy.allowed_env_names is not None
             and ref.name not in policy.allowed_env_names

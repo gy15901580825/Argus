@@ -14,12 +14,13 @@ import json
 import os
 import re
 import secrets
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, AsyncIterator
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -28,6 +29,7 @@ from argus.redaction import _scrub, run_secrets
 from argus_transport.cleanup import CleanupReport, CleanupStateUnknown, run_error_detail, validate_cleanup_report
 from argus_transport.stops import RunStopped
 from argus_transport.address_policy import TargetAddressPolicyError
+from argus_transport.security import execution_policy, execution_policy_scope
 from argus.coverage import build_coverage, build_summary
 from argus.cost_meter import CostExceededError, CostMeter
 from argus.judge import Judge
@@ -95,6 +97,47 @@ class RunRequest(BaseModel):
     # A NaN cap compares false against every estimate and spend, silently
     # disabling the per-run cap, so require a finite, non-negative amount.
     per_run_cap_usd: float | None = Field(default=None, ge=0.0, allow_inf_nan=False)
+
+
+@dataclass(frozen=True)
+class RunContext:
+    """Validated request and server-generated identifier for one execution."""
+
+    run_id: str
+    request: RunRequest
+
+
+def _run_policy_factory(req: RunRequest, request: Request | None):
+    factory = getattr(request.app.state, "execution_policy_factory", None) if request else None
+    if factory is None:
+        return None
+    context = RunContext(run_id=secrets.token_hex(16), request=req)
+    policies = []
+
+    def bound(spec):
+        for existing, policy in policies:
+            if existing == spec:
+                return policy
+        policy = factory(context, spec)
+        policies.append((spec, policy))
+        return policy
+
+    return bound
+
+
+@contextmanager
+def _policy_scope(factory):
+    if factory is None:
+        yield
+    else:
+        with execution_policy_scope(factory):
+            yield
+
+
+def _bind_target_policy(target):
+    transport = getattr(getattr(target, "spec", None), "transport", None)
+    if transport is not None:
+        execution_policy(transport)
 
 
 def _resolve_target_kind(target: Any) -> str:
@@ -507,7 +550,17 @@ def finding_dict(finding, probe) -> dict:
 
 
 @router.post("/run/preflight", status_code=200)
-async def preflight(req: RunRequest):
+async def preflight(req: RunRequest, request: Request = None):
+    """Lightweight cost-cap check — no probe execution.
+
+    The calling server runs this before it records the run, so it can
+    surface a 402 to its caller.  Returns 200 {} on pass, 402 on cost exceeded.
+    """
+    with _policy_scope(_run_policy_factory(req, request)):
+        return await _preflight(req)
+
+
+async def _preflight(req: RunRequest):
     """Lightweight cost-cap check — no probe execution.
 
     The calling server runs this before it records the run, so it can
@@ -519,6 +572,7 @@ async def preflight(req: RunRequest):
         # Validate target dict is buildable before we run cost math — C1 fix.
         # Off the event loop: building renders the spec's templates once.
         target_obj = await asyncio.to_thread(build_target, req.target)
+        _bind_target_policy(target_obj)
     except (ValueError, TargetAddressPolicyError) as e:
         raise HTTPException(status_code=422, detail=str(e))
 
@@ -549,7 +603,27 @@ async def preflight(req: RunRequest):
 
 
 @router.post("/run")
-async def run(req: RunRequest):
+async def run(req: RunRequest, request: Request = None):
+    factory = _run_policy_factory(req, request)
+    with _policy_scope(factory):
+        response = await _run(req)
+    if factory is None:
+        return response
+    iterator = response.body_iterator
+
+    async def scoped_stream():
+        with _policy_scope(factory):
+            try:
+                async for frame in iterator:
+                    yield frame
+            finally:
+                await iterator.aclose()
+
+    response.body_iterator = scoped_stream()
+    return response
+
+
+async def _run(req: RunRequest):
     # Credential requirements follow the configured provider — an Azure-primary
     # deployment must not be blocked for lacking an Anthropic key. Fallback being
     # enabled makes the *other* provider's credential desirable but not mandatory;
@@ -580,6 +654,7 @@ async def run(req: RunRequest):
         # Validate early, off the event loop (building renders the spec's templates once);
         # the actual target is rebuilt inside _run_probes.
         target_obj = await asyncio.to_thread(build_target, req.target)
+        _bind_target_policy(target_obj)
     except (ValueError, TargetAddressPolicyError) as e:
         raise HTTPException(status_code=422, detail=str(e))
 

@@ -791,9 +791,57 @@ Optional response metadata selects `session_id`, `run_id`, `run_log`, and provid
 
 `session.mode: "none"` declares no conversation support. `client_generated` supports client-provided history and conversation IDs. `server_returned` requires `id_path`; bind the later request to `session_id` with `missing: "omit"`. Each new probe resets session state.
 
-Authentication takes an environment variable name or a file path, never a literal secret. For an environment reference use `{"source": "env", "name": "AGENT_API_KEY"}`. File references reject symlinks, nonregular files, empty contents, invalid encoding, and contents larger than 64 KiB. The optional newline rule removes at most one final newline.
+Authentication takes an environment variable name, file path, or hosting process provider reference, never a literal secret. For an environment reference use `{"source": "env", "name": "AGENT_API_KEY"}`. File references reject symlinks, nonregular files, empty contents, invalid encoding, and contents larger than 64 KiB. The optional newline rule removes at most one final newline.
 
 Local execution permits only the endpoint origins configured in that transport and resolves references on the local machine. Server execution denies private target addresses and secret references by default. An operator must configure authorized origins, environment names, and file roots for a remote executor. References are preserved through configuration loading and are not expanded into messages.
+
+### Credentials supplied by a hosting process
+
+A secret reference can name a credential provider:
+
+```json
+{"source": "provider", "provider": "hosting", "name": "agent-auth"}
+```
+
+Both `provider` and `name` must be nonempty strings. This source rejects `path` and
+`strip_final_newline`. Provider references are refused unless the hosting process
+configures that provider; local mode also refuses them, and the CLI never configures
+providers.
+
+A hosting process can call `argus.server.create_app(execution_policy_factory=factory)`.
+The synchronous factory receives `RunContext(run_id: str, request: argus.api.RunRequest)`
+and a parsed `TransportSpec` or `TransportSpecV2`. The server generates the run id;
+preflight and execution are separate requests with separate ids. The factory returns
+an `ExecutionPolicy` with `secret_providers: Mapping[str, Callable[[str], str]]`, for
+example:
+
+```python
+from argus.server import create_app
+from argus_transport import ExecutionPolicy
+
+def policy_for_run(context, spec):
+    def resolve(name):
+        return credentials_for_request(context.request, name)
+    return ExecutionPolicy(secret_providers={"hosting": resolve})
+
+app = create_app(execution_policy_factory=policy_for_run)
+```
+
+`credentials_for_request` is supplied by the hosting process and authorizes each
+reference against the validated request. The factory is called once per distinct
+transport spec in each preflight or execution request. Every transport operation in
+that execution, including cleanup, uses the same policy. Bindings are isolated by
+execution context and reset when the request or stream ends. Other policy fields
+still control endpoint access, environment names, and file roots.
+
+Resolvers receive `name` synchronously and must return a nonempty string valid for
+HTTP authentication. Resolver failures surface as a generic resolution error without
+the resolver's exception text. Resolved credentials follow the existing redaction
+path: raw, URL-quoted, and base64 forms are masked in transport logs, evidence, and
+reports. The provider map defaults to an immutable empty map, and omitting the app
+factory keyword preserves the default behavior. The stock server mounts `/redteam/*`;
+a hosting process implementing the CLI's `/api/v1/redteam` API must separately
+mount or forward these routes.
 
 Redirects are disabled. Header names cannot override HTTP framing, authentication headers cannot conflict with public headers, and values cannot contain line breaks. Response reads have a byte limit and share one operation deadline. New requests require identity content encoding and reject compressed responses before decompression. Streaming delivery is reserved for a later version and currently reports unsupported delivery.
 
