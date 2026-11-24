@@ -2,7 +2,7 @@
 
 Try to make a fictional company's agent execute a forbidden tool action. Levels 1 and 2 challenge a refund limit. Level 3 puts an attack in an incoming email, level 4 in a tool description, and level 5 in an invoice. A win requires a tool action in the fake world. The model's words do not determine the result.
 
-The service contains five levels, a plain browser page, and local abuse and usage limits. Nothing is deployed. The service image, live validation tool, and deployment instructions belong to unit 3.
+The service contains five levels, a plain browser page, and local abuse and usage limits. Nothing is deployed. For the production image and single-replica shared-database settings, see [the deployment notes](deploy/README.md). Live-model validation remains a separate operator task.
 
 ## Local development
 

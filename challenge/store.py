@@ -23,6 +23,7 @@ class Store:
         db = sqlite3.connect(self.path, timeout=10)
         db.row_factory = sqlite3.Row
         try:
+            db.execute("PRAGMA journal_mode=DELETE")
             with db:
                 yield db
         finally:
