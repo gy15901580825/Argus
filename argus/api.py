@@ -15,9 +15,11 @@ import os
 import re
 import secrets
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, replace
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass, field, replace
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, AsyncIterator
 
 from fastapi import APIRouter, HTTPException, Request
@@ -101,24 +103,33 @@ class RunRequest(BaseModel):
 
 @dataclass(frozen=True)
 class RunContext:
-    """Validated request and server-generated identifier for one execution."""
+    """Validated request, private headers, and identifier for one execution."""
 
     run_id: str
     request: RunRequest
+    headers: Mapping[str, str] = field(repr=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "headers", MappingProxyType({
+            name.lower(): value for name, value in self.headers.items()
+        }))
 
 
 def _run_policy_factory(req: RunRequest, request: Request | None):
     factory = getattr(request.app.state, "execution_policy_factory", None) if request else None
     if factory is None:
         return None
-    context = RunContext(run_id=secrets.token_hex(16), request=req)
+    context = RunContext(run_id=secrets.token_hex(16), request=req, headers=request.headers)
     policies = []
 
     def bound(spec):
         for existing, policy in policies:
             if existing == spec:
                 return policy
-        policy = factory(context, spec)
+        try:
+            policy = factory(context, spec)
+        except Exception:
+            raise ValueError("Execution policy factory failed") from None
         policies.append((spec, policy))
         return policy
 
