@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from collections import deque
 import math
 import os
@@ -16,6 +16,8 @@ class Settings:
     db_path: str = "challenge.sqlite3"
     model_base: str = ""
     model: str = "gpt-6-luna"
+    model_key: str = field(default="", repr=False)
+    trust_proxy: bool = False
     environment: str = "development"
     assessment_url: str = "https://at-helper.com"
     daily_budget: float = 20.0
@@ -40,7 +42,12 @@ class Settings:
             key = "CHALLENGE_ENV" if name == "environment" else "CHALLENGE_MODEL_BASE" if name == "model_base" else "CHALLENGE_" + name.upper()
             raw = os.environ.get(key)
             if raw is not None:
-                values[name] = type(getattr(defaults, name))(raw)
+                if name == "trust_proxy":
+                    if raw.casefold() not in {"true", "false", "1", "0"}:
+                        raise ValueError("CHALLENGE_TRUST_PROXY must be true, false, 1 or 0")
+                    values[name] = raw.casefold() in {"true", "1"}
+                else:
+                    values[name] = type(getattr(defaults, name))(raw)
         return cls(**values)
 
 
