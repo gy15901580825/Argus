@@ -166,6 +166,12 @@ jobs:
       - name: Run test suite without model credentials
         run: env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u AZURE_OPENAI_API_KEY -u AZURE_API_KEY python -m pytest tests/ -q
 
+      - name: Build challenge image and smoke check without model access
+        run: |
+          trap 'docker image rm challenge:ci' EXIT
+          docker build --tag challenge:ci .
+          bash scripts/smoke_image.sh challenge:ci
+
   mcp_testbed:
     name: mcp_testbed — tests
     runs-on: ubuntu-latest
