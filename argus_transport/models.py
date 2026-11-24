@@ -354,9 +354,13 @@ class SecretRef(FrozenModel):
     name: str | None = None
     path: str | None = None
     strip_final_newline: bool = False
+    provider: str | None = None
 
     @classmethod
     def from_dict(cls, data):
+        if isinstance(data, dict) and data.get("source") == "provider":
+            object_fields(data, {"source", "provider", "name"}, {"source", "provider", "name"})
+            return cls("provider", name=text(data["name"]), provider=text(data["provider"]))
         object_fields(
             data, {"source", "name", "path", "strip_final_newline"}, {"source"}
         )

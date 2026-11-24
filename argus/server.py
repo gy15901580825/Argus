@@ -5,6 +5,8 @@ import logging
 import os
 import sys
 from contextlib import asynccontextmanager
+from collections.abc import Callable
+from argus_transport import ExecutionPolicy, TransportSpec, TransportSpecV2
 from dotenv import load_dotenv
 from argus_transport.address_policy import public_only, startup_self_check
 
@@ -28,35 +30,6 @@ async def _lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(
-    lifespan=_lifespan,
-    title="Argus Orchestrator API",
-    version="1.0.0",
-    description="""
-    Argus Orchestrator API serves the red-team engine and the client-agent WebSocket hub.
-    
-    ## API Endpoints
-    
-    * `/redteam/*` - Red-team runs, probes, suites and coverage
-      (needs `Authorization: Bearer <token>` when ARGUS_SERVER_TOKEN is set)
-    * `/agent/connect` - WebSocket endpoint for agent connections
-    * `/healthz` - Version, judge models and cost caps (no token, no model call)
-    """,
-    docs_url="/docs",  # Swagger UI at /docs
-    redoc_url="/redoc",  # ReDoc at /redoc
-    openapi_url="/openapi.json",  # OpenAPI schema at /openapi.json
-)
-
-# No browser UI ships with the engine, so cross-origin access is off unless
-# CORS_ALLOW_ORIGINS (comma-separated) names the origins to allow.
-_cors_origins = [o.strip() for o in os.getenv("CORS_ALLOW_ORIGINS", "").split(",") if o.strip()]
-if _cors_origins:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=_cors_origins,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
 
 
 def log_agent_auth_mode() -> None:
@@ -129,19 +102,15 @@ def startup_error(
 
 # Import the global connection manager from separate module to avoid circular imports
 from argus.connection_manager import connection_manager
-from argus.api import health_body, router as redteam_router
+from argus.api import RunContext, health_body, router as redteam_router
 from argus.scenarios.api import router as scenario_router
-app.include_router(redteam_router, dependencies=[Depends(require_server_token)])
-app.include_router(scenario_router)
 
 
-@app.get("/healthz")
 async def healthz() -> dict:
     """Outside /redteam so load balancers can call it without the bearer token."""
     return health_body()
 
 
-@app.websocket("/agent/connect")
 async def websocket_endpoint(websocket: WebSocket):
     """
     WebSocket endpoint for agent connections.
@@ -201,6 +170,60 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception as e:
         logger.error("Error in websocket connection: %s", type(e).__name__)
         await connection_manager.disconnect(agent_id, connection=websocket)
+
+
+_APP_DESCRIPTION = (
+    '\n'
+    '    Argus Orchestrator API serves the red-team engine and the client-agent WebSocket hub.\n'
+    '    \n'
+    '    ## API Endpoints\n'
+    '    \n'
+    '    * `/redteam/*` - Red-team runs, probes, suites and coverage\n'
+    '      (needs `Authorization: Bearer <token>` when ARGUS_SERVER_TOKEN is set)\n'
+    '    * `/agent/connect` - WebSocket endpoint for agent connections\n'
+    '    * `/healthz` - Version, judge models and cost caps (no token, no model call)\n'
+    '    '
+)
+
+
+def create_app(
+    *,
+    execution_policy_factory: Callable[
+        [RunContext, TransportSpec | TransportSpecV2], ExecutionPolicy
+    ] | None = None,
+) -> FastAPI:
+    """Create the server, optionally supplying transport policies for each run."""
+    application = FastAPI(
+        lifespan=_lifespan,
+        title="Argus Orchestrator API",
+        version="1.0.0",
+        description=_APP_DESCRIPTION,
+        docs_url="/docs",  # Swagger UI at /docs
+        redoc_url="/redoc",  # ReDoc at /redoc
+        openapi_url="/openapi.json",  # OpenAPI schema at /openapi.json
+    )
+
+    # No browser UI ships with the engine, so cross-origin access is off unless
+    # CORS_ALLOW_ORIGINS (comma-separated) names the origins to allow.
+    _cors_origins = [o.strip() for o in os.getenv("CORS_ALLOW_ORIGINS", "").split(",") if o.strip()]
+    if _cors_origins:
+        application.add_middleware(
+            CORSMiddleware,
+            allow_origins=_cors_origins,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
+    application.state.execution_policy_factory = execution_policy_factory
+    application.include_router(redteam_router, dependencies=[Depends(require_server_token)])
+    application.include_router(scenario_router)
+    application.add_api_route("/healthz", healthz, methods=["GET"])
+    application.add_api_websocket_route("/agent/connect", websocket_endpoint)
+    return application
+
+
+app = create_app()
+
 
 def main() -> None:
     public_only()
