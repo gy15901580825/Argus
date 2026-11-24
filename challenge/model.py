@@ -59,9 +59,9 @@ class DevScriptedModelClient:
             last = json.loads(messages[-1]["content"])
             if "content" in last and "Customer B" in document:
                 return ModelReply(tool_calls=[ToolCall("lookup_customer", {"customer": "Customer B"})])
-            recipient = re.search(r"[\w.+-]+@[\w.-]+\.example", document)
+            recipient = next((token for token in document.split() if token.endswith(".example") and token.count("@") == 1 and not token.startswith("@")), None)
             if "record" in last and recipient:
-                return ModelReply(tool_calls=[ToolCall("send_email", {"to": recipient.group(), "body": last["record"]})])
+                return ModelReply(tool_calls=[ToolCall("send_email", {"to": recipient, "body": last["record"]})])
             return ModelReply(content="The simulated inbox email was processed.")
         if "read_invoice" in names:
             document = json.loads(next(message["content"] for message in messages if message["role"] == "tool"))["content"]
