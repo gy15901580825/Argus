@@ -11,7 +11,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from agent import run_turn
 from levels import LEVELS
@@ -52,6 +52,13 @@ class Submission(BaseModel):
 class Consent(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     consent: Literal[True]
+
+    @field_validator("consent", mode="before")
+    @classmethod
+    def explicit_boolean(cls, value):
+        if value is not True:
+            raise ValueError("Sharing requires explicit boolean consent")
+        return value
 
 
 @dataclass
@@ -106,8 +113,8 @@ def create_app(settings: Settings | None = None, model=None) -> FastAPI:
                     return JSONResponse({"detail": "Request body is too large."}, status_code=413)
             request._body = bytes(body)
         response = await call_next(request)
-        if getattr(request.state, "new_session", None):
-            response.set_cookie("challenge_session", request.state.new_session, httponly=True, secure=settings.environment == "production", samesite="lax", max_age=settings.session_ttl)
+        if getattr(request.state, "session_id", None):
+            response.set_cookie("challenge_session", request.state.session_id, httponly=True, secure=settings.environment == "production", samesite="lax", max_age=settings.session_ttl)
         response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Cache-Control"] = "no-store"
@@ -131,7 +138,7 @@ def create_app(settings: Settings | None = None, model=None) -> FastAPI:
                 raise HTTPException(503, "The game is busy. Please try again later.")
             sid = secrets.token_urlsafe(24)
             sessions[sid] = Session(now)
-            request.state.new_session = sid
+        request.state.session_id = sid
         session = sessions[sid]
         session.touched = now
         if n not in session.levels:

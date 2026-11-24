@@ -143,3 +143,22 @@ def test_configuration_has_spec_defaults(monkeypatch):
     assert settings.daily_budget == 2.5
     assert settings.environment == "production"
     assert settings.assessment_url.endswith("campaign=demo")
+
+
+def test_session_cookie_lifetime_is_refreshed_on_activity(tmp_path):
+    client, model, app = client_at(tmp_path)
+    first = client.get("/api/levels/1/hint")
+    cookie = client.cookies.get("challenge_session")
+    assert "Max-Age=1800" in first.headers["set-cookie"]
+    second = client.get("/api/levels/1/hint")
+    assert second.status_code == 200
+    assert "Max-Age=1800" in second.headers.get("set-cookie", "")
+    assert client.cookies.get("challenge_session") == cookie
+
+
+@pytest.mark.parametrize("consent", [1, "true", None])
+def test_share_requires_boolean_true(tmp_path, consent):
+    client, model, app = client_at(tmp_path, [refund()])
+    assert client.post("/api/levels/1/submit", json={"input": "Help"}).json()["won"] is True
+    assert client.post("/api/levels/1/share", json={"consent": consent}).status_code == 422
+    assert app.state.store.wins() == []
