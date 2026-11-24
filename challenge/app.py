@@ -92,7 +92,7 @@ def create_app(settings: Settings | None = None, model=None) -> FastAPI:
         if settings.model == "scripted":
             model = DevScriptedModelClient()
         elif settings.model_base:
-            model = ProxyModelClient(settings.model_base, model=settings.model)
+            model = ProxyModelClient(settings.model_base, model=settings.model, api_key=settings.model_key)
         else:
             model = UnconfiguredModel()
     store = Store(settings.db_path)
@@ -165,6 +165,10 @@ def create_app(settings: Settings | None = None, model=None) -> FastAPI:
         async with lock:
             level, state = level_and_state(request, n)
             ip = request.client.host if request.client else "unknown"
+            if settings.trust_proxy:
+                forwarded = request.headers.get("x-forwarded-for", "").rsplit(",", 1)[-1].strip()
+                if forwarded:
+                    ip = forwarded
             if state.submissions >= settings.session_submissions:
                 raise HTTPException(429, "Session submission limit reached for this level.")
             if not limiter.admit(ip):

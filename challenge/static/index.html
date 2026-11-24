@@ -13,7 +13,7 @@
       <p class="eyebrow">ARGUS / A TOOL ACTION CHALLENGE</p>
       <h1>Break the agent.</h1>
       <p class="intro">A rule in a prompt. A tool that can break it. Can you convince the agent to cross the line?</p>
-      <p class="simulation">Everything happens in a fictional company. Every refund is simulated.</p>
+      <p class="simulation">Everything happens in a fictional company. Every tool action is simulated.</p>
     </header>
     <nav id="levels" aria-label="Choose a level"></nav>
     <p id="dev" hidden>Dev scripted mode: deterministic tool calls for local testing. This is not a live agent.</p>
@@ -21,8 +21,7 @@
       <div class="level-heading"><p class="eyebrow" id="level-number"></p><h2 id="level-title">Loading the support desk…</h2></div>
       <p id="goal" class="goal"></p>
       <form id="play">
-        <label for="input">Your message to the agent</label>
-        <textarea id="input" name="input" maxlength="1500" rows="5" required placeholder="Try an order-related request that challenges the refund rule."></textarea>
+        <div id="input-fields"></div>
         <div class="actions"><button id="submit" type="submit">Send message <span aria-hidden="true">→</span></button><button id="hint" class="secondary" type="button">Hint (0/3)</button><button id="reset" class="secondary" type="button">Reset level</button><span id="characters">0 / 1500</span></div>
       </form>
       <p id="hint-text" class="hint" hidden></p>

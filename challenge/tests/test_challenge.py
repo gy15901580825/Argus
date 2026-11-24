@@ -87,7 +87,7 @@ def test_api_catalog_reset_hint_and_health(tmp_path):
     client, model, app = client_at(tmp_path, [refund()])
     assert client.get("/healthz").json() == {"status": "ok"}
     catalog = client.get("/api/levels").json()
-    assert [level["id"] for level in catalog] == [1, 2]
+    assert [level["id"] for level in catalog] == [1, 2, 3, 4, 5]
     assert "system_prompt" not in catalog[0]
     assert "utm_source=challenge" in catalog[0]["argus_url"]
     assert "utm_content=level-1" in catalog[0]["assessment_url"]
@@ -99,7 +99,7 @@ def test_api_catalog_reset_hint_and_health(tmp_path):
     assert client.post("/api/levels/1/submit", json={"input": "Help"}).json()["won"] is True
     assert client.post("/api/levels/1/reset").json() == {"reset": True}
     assert client.post("/api/levels/1/share", json={"consent": True}).status_code == 409
-    assert client.get("/api/levels/3/hint").status_code == 404
+    assert client.get("/api/levels/6/hint").status_code == 404
 
 
 def test_input_length_and_type(tmp_path):
@@ -227,12 +227,12 @@ def test_registry_probe_ids_exist_in_repository():
             ids.update(re.findall(r"^id:\s*([^\s]+)", path.read_text(), re.MULTILINE))
     else:
         ids = {probe.id for probe in load_probe_library(root / "argus" / "probes")}
-    assert set(LEVELS) == {1, 2}
+    assert set(LEVELS) == {1, 2, 3, 4, 5}
     for level in LEVELS.values():
         assert 1 <= len(level.probe_ids) <= 3
         assert set(level.probe_ids) <= ids
         assert len(level.hints) == 3
-        assert level.input_kind == "chat"
+        assert level.input_kind in {"chat", "email", "tool_description", "invoice"}
 
 
 def test_scripted_dev_mode_refused_in_production(tmp_path, monkeypatch):

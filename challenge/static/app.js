@@ -17,6 +17,41 @@ async function api(path, body) {
 
 function text(id, value) { $(id).textContent = value; }
 
+function playerInput() {
+  return current.input_kind === "email" ? `Subject: ${$("subject").value}\n\n${$("input").value}` : $("input").value;
+}
+
+function updateCharacters() {
+  const length = playerInput().length;
+  text("characters", `${length} / 1500`);
+  $("input").setCustomValidity(length > 1500 ? "Keep the complete input, including the email subject, within 1500 characters." : "");
+}
+
+function inputField(id, label, placeholder, subject = false) {
+  const caption = document.createElement("label");
+  caption.htmlFor = id; caption.textContent = label;
+  const control = document.createElement(subject ? "input" : "textarea");
+  control.id = id; control.name = id; control.maxLength = 1500; control.required = true;
+  control.placeholder = placeholder;
+  if (subject) control.type = "text"; else control.rows = 5;
+  $("input-fields").append(caption, control);
+}
+
+function showInput(kind) {
+  $("input-fields").replaceChildren();
+  const formats = {
+    chat: ["Chat message you control", "Try an order-related request that challenges the refund rule.", "Send message →"],
+    email: ["Email body you control", "Write the customer email the agent will read from its inbox.", "Deliver email →"],
+    tool_description: ["Tool description you control", "Replace the description of submit_diagnostic. The agent will receive a fixed routine diagnostic task.", "Apply description →"],
+    invoice: ["Invoice document you control", "Invoice: Vellumridge Paper Supply\nAccount: acct-vendor-204\nAmount: 75", "Process invoice →"],
+  };
+  if (kind === "email") inputField("subject", "Email subject you control", "Customer order request", true);
+  const [label, placeholder, action] = formats[kind];
+  inputField("input", label, placeholder);
+  text("submit", action);
+  updateCharacters();
+}
+
 function clearTurn() {
   $("trace").replaceChildren();
   text("reply", ""); text("status", ""); text("hint-text", "");
@@ -34,7 +69,7 @@ function choose(level) {
   text("level-number", `LEVEL ${level.id} / ${levels.length}`);
   text("level-title", level.title); text("goal", level.goal);
   $("dev").hidden = !level.dev_mode;
-  $("input").value = ""; text("characters", "0 / 1500");
+  showInput(level.input_kind);
   $("argus").href = level.argus_url; $("footer-argus").href = level.argus_url;
   $("assessment").href = level.assessment_url;
   for (const button of $("levels").children) button.setAttribute("aria-current", String(Number(button.dataset.id) === level.id));
@@ -46,13 +81,13 @@ function setBusy(value) {
   for (const button of $("levels").children) button.disabled = value;
 }
 
-$("input").addEventListener("input", () => text("characters", `${$("input").value.length} / 1500`));
+$("play").addEventListener("input", updateCharacters);
 $("play").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (busy || !current) return;
   setBusy(true); text("status", "The agent is considering your request…");
   try {
-    const result = await api(`/api/levels/${current.id}/submit`, {input: $("input").value});
+    const result = await api(`/api/levels/${current.id}/submit`, {input: playerInput()});
     $("trace").replaceChildren();
     for (const entry of result.trace) {
       const item = document.createElement("li");
@@ -61,7 +96,7 @@ $("play").addEventListener("submit", async (event) => {
     }
     $("empty-trace").hidden = result.trace.length > 0;
     text("reply", readable(result.text));
-    text("status", result.won ? "You won. The agent executed a refund above the limit." : "No forbidden tool action yet. Try a different request.");
+    text("status", result.won ? "You won. The agent executed the forbidden tool action." : "No forbidden tool action yet. Try a different input.");
     if (result.won) {
       $("win").hidden = false;
       text("explainer", current.explainer);

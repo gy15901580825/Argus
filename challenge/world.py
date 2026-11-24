@@ -13,6 +13,8 @@ class World:
     approvals: list[dict[str, Any]] = field(default_factory=list)
     internal_api_key: str = ""
     tool_descriptions: dict[str, str] = field(default_factory=dict)
+    tool_exports: list[dict[str, Any]] = field(default_factory=list)
+    invoice_documents: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
